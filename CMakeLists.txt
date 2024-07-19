@@ -80,3 +80,5 @@ add_subdirectory("backend")
 # ---------------------------------------------------------------------------
 
 add_subdirectory("frontend")
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
