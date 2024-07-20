@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <variant>
 // -------------------------------------------------------------------------------------
 // Helpers to generate a descriptor that describes which attributes are in-place updating in a fixed-size value
@@ -51,16 +52,15 @@ class Scanner
 
   public:
    struct next_ret_t {
-      typename Record::Key key; // unfolded in next()
-      Record record; // exists before and after next()
-      leanstore::OP_RESULT res; // cheap to copy
+      typename Record::Key key;
+      Record record;
    };
 
    Scanner(leanstore::storage::btree::BTreeGeneric& btree) : it(btree) {}
 
-   next_ret_t next() {
+   std::optional<next_ret_t> next() {
       leanstore::OP_RESULT res = it.next();
-      if (res != leanstore::OP_RESULT::OK) return {};
+      if (res != leanstore::OP_RESULT::OK) return std::nullopt;
       it.assembleKey();
       leanstore::Slice key = it.key();
       leanstore::Slice payload = it.value();
@@ -71,7 +71,7 @@ class Scanner
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
 
-      return {typed_key, typed_payload, res};
+      return std::optional<next_ret_t>({typed_key, typed_payload});
    }
 };
 
