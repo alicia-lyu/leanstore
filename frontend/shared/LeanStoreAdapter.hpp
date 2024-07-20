@@ -173,10 +173,10 @@ struct LeanStoreAdapter : Adapter<Record> {
 
    virtual Scanner<Record> getScanner() {
       if (FLAGS_vi) {
-         return Scanner<Record>(*static_cast<BTreeGeneric*>(const_cast<BTreeVI*>(btree)));
+         return Scanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
          
       } else {
-         return Scanner<Record>(*static_cast<BTreeGeneric*>(const_cast<BTreeLL*>(btree)));
+         return Scanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
    }
 };
@@ -303,11 +303,11 @@ struct LeanstoreMergedAdapter : MergedAdapter<Records...> {
       }, key);
    }
 
-   Scanner<Records> getScanner() {
-      if (FLAGS_vi) {
-         return Scanner<Records>(*static_cast<BTreeGeneric*>(const_cast<BTreeVI*>(btree)));
-      } else {
-         return Scanner<Records>(*static_cast<BTreeGeneric*>(const_cast<BTreeLL*>(btree)));
-      }
-   }
+   // Scanner<Records...> getScanner() {
+   //    if (FLAGS_vi) {
+   //       return Scanner<Records...>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+   //    } else {
+   //       return Scanner<Records...>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+   //    }
+   // }
 };
