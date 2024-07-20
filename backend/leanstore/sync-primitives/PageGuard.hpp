@@ -135,6 +135,7 @@ class HybridPageGuard
       // TODO: don't sync on temporary table pages like HistoryTree
       if (FLAGS_wal) {
          if (FLAGS_wal_rfa) {
+            // std::cout << bf->page.GSN << " ? " << cr::Worker::my().logging.rfa_gsn_flushed << "; " << bf->header.last_writer_worker_id << " ? " << cr::Worker::my().worker_id << std::endl;
             if (bf->page.GSN > cr::Worker::my().logging.rfa_gsn_flushed && bf->header.last_writer_worker_id != cr::Worker::my().worker_id) {  //
                cr::Worker::my().logging.remote_flush_dependency = true;
             }

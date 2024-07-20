@@ -181,30 +181,44 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    // -------------------------------------------------------------------------------------
    void findMinLeafAndLatch(HybridPageGuard<BTreeNode>& target_guard)
    {
+      btree.printInfos(8 * 1024 * 1024 * 1024);
       while (true) {
          leaf_pos_in_parent = -1;
          jumpmuTry()
          {
-               target_guard.unlock();
-               p_guard = HybridPageGuard<BTreeNode>(btree.meta_node_bf);
-               target_guard = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
-               while (!target_guard->is_leaf) {
-                  WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
-                  Swip<BTreeNode>* c_swip = &target_guard->getChild(0);
-                  p_guard = std::move(target_guard);
-                  target_guard = HybridPageGuard<BTreeNode>(p_guard, *c_swip);
-               }
-               p_guard.unlock();
-               if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-                  target_guard.toExclusive();
+            target_guard.unlock();
+            p_guard = HybridPageGuard<BTreeNode>(btree.meta_node_bf);
+            target_guard = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
+            // -------------------------------------------------------------------------------------
+            u16 volatile level = 0;
+            // -------------------------------------------------------------------------------------
+            while (!target_guard->is_leaf) {
+               WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
+               Swip<BTreeNode>* c_swip = nullptr;
+               assert(leaf->count > 0);
+               c_swip = &target_guard->getChild(0);
+               p_guard = std::move(target_guard);
+               if (level == btree.height - 1) {
+                  target_guard = HybridPageGuard(p_guard, *c_swip, mode);
                } else {
-                  target_guard.toShared();
+                  target_guard = HybridPageGuard(p_guard, *c_swip);
                }
-               prefix_copied = false;
-               if (enter_leaf_cb) {
-                  enter_leaf_cb(target_guard);
-               }
-               jumpmu_return;
+               level = level + 1;
+            }
+            // -------------------------------------------------------------------------------------
+            p_guard.unlock();
+            if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+               target_guard.toExclusive();
+            } else {
+               target_guard.toShared();
+            }
+            // -------------------------------------------------------------------------------------
+            prefix_copied = false;
+            if (enter_leaf_cb) {
+               enter_leaf_cb(target_guard);
+            }
+            // -------------------------------------------------------------------------------------
+            jumpmu_return;
          }
          jumpmuCatch() {}
       }

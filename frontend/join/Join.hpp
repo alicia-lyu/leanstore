@@ -92,7 +92,7 @@ private:
 
   void advance_left() {
     if (left_next_ret == leanstore::OP_RESULT::OK) {
-      auto ret = left_scanner.next();
+      auto ret = left_scanner.next(); // TODO: next ret changed
       left_key = ret.key;
       left_record = ret.record;
       left_next_ret = ret.res;
