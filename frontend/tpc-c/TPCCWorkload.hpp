@@ -1,12 +1,9 @@
 #pragma once
 #include "Schema.hpp"
 #include "Units.hpp"
+#include "../shared/Adapter.hpp"
 // -------------------------------------------------------------------------------------
-#include "leanstore/Config.hpp"
-#include "leanstore/KVInterface.hpp"
-#include "leanstore/concurrency-recovery/Worker.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
-#include "leanstore/storage/btree/core/WALMacros.hpp"
 #include "leanstore/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <vector>
@@ -937,6 +934,7 @@ class TPCCWorkload
                ol_delivery_d = now;
             Numeric ol_amount = (o_id < 2101) ? 0 : randomNumeric(0.01, 9999.99);
             const Integer ol_i_id = rnd(ITEMS_NO) + 1;
+            // std::cout << "ol_i_id: " << ol_i_id << " for o_id: " << o_id << std::endl;
             orderline.insert({w_id, d_id, o_id, ol_number}, {ol_i_id, w_id, ol_delivery_d, 5, ol_amount, randomastring<24>(24, 24)});
          }
          o_id++;

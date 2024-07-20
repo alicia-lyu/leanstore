@@ -174,7 +174,6 @@ struct LeanStoreAdapter : Adapter<Record> {
    virtual Scanner<Record> getScanner() {
       if (FLAGS_vi) {
          return Scanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
-         
       } else {
          return Scanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }

@@ -1,10 +1,8 @@
 #pragma once
 #include "Exceptions.hpp"
-#include "Types.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
-#include "leanstore/storage/btree/core/WALMacros.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 #include <cassert>
@@ -64,9 +62,16 @@ class Scanner
       it.assembleKey();
       leanstore::Slice key = it.key();
       leanstore::Slice payload = it.value();
-      
 
-      Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
+      // print hex string
+      // for (int i = 0; i < payload.length(); i++) {
+      //    printf("%02x", payload.data()[i]);
+      // }
+      // printf("\n");
+
+      assert(payload.length() == sizeof(Record));
+      const Record* record_ptr = reinterpret_cast<const Record*>(payload.data());
+      Record typed_payload = *record_ptr;
 
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
