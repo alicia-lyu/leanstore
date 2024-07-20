@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cstring>
 #include <functional>
+#include <variant>
 // -------------------------------------------------------------------------------------
 // Helpers to generate a descriptor that describes which attributes are in-place updating in a fixed-size value
 #define UpdateDescriptorInit(Name, Count)                                                                                                     \
@@ -43,26 +44,31 @@
    UpdateDescriptorFillSlot(Name, 2, Type, A2);                \
    UpdateDescriptorFillSlot(Name, 3, Type, A3);
 
-template <class... Records>
+template <class Record>
 class Scanner
 {
    leanstore::storage::btree::BTreeSharedIterator it;
 
   public:
+   struct next_ret_t {
+      typename Record::Key key; // unfolded in next()
+      Record& record; // exists before and after next()
+      leanstore::OP_RESULT res; // cheap to copy
+   };
+
    Scanner(leanstore::storage::btree::BTreeGeneric& btree) : it(btree) {}
 
-   std::pair<std::variant<Records...>, leanstore::OP_RESULT> next() {
+   next_ret_t next() {
+      leanstore::Slice key = it.key();
       leanstore::Slice payload = it.value();
-      leanstore::OP_RESULT ret = it.next();
+      leanstore::OP_RESULT res = it.next();
 
-      std::variant<Records...> result;
-      std::visit([&](auto&& arg) {
-         using RecordType = std::decay_t<decltype(arg)>;
-         const RecordType& typed_payload = *reinterpret_cast<const RecordType*>(payload.data());
-         result = typed_payload;
-      }, result);
+      const Record& typed_payload = *reinterpret_cast<const Record*>(payload.data());
 
-      return {result, ret};
+      typename Record::Key typed_key;
+      Record::unfoldKey(key.data(), typed_key);
+
+      return {typed_key, const_cast<Record&>(typed_payload), res};
    }
 };
 
@@ -122,5 +128,5 @@ class MergedAdapter
 
    virtual bool erase(const typename Record::Key& key) = 0;
 
-   virtual std::variant<Record, Record2> next() = 0;
+   // virtual Scanner<Records...> getScanner() { UNREACHABLE(); };
 };
