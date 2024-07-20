@@ -1,9 +1,7 @@
 #include "../shared/Adapter.hpp"
 #include "../shared/Types.hpp"
 #include "leanstore/KVInterface.hpp"
-#include <algorithm>
 #include <cassert>
-#include <limits>
 #include <optional>
 #include <vector>
 
@@ -14,22 +12,29 @@ class MergeJoin {
 public:
   MergeJoin(Scanner<Record1>& left_scanner,
             Scanner<Record2>& right_scanner)
-      : left_scanner(std::move(left_scanner)),
-        right_scanner(std::move(right_scanner))
+      : left_scanner(left_scanner),
+        right_scanner(right_scanner),
+        left_record(nullptr),
+        right_record(nullptr),
+        left_next_ret(leanstore::OP_RESULT::OK),
+        right_next_ret(leanstore::OP_RESULT::OK)
   {
-    std::tie(left_key, left_record, left_next_ret) = left_scanner.next();
-    std::tie(right_key, right_record, right_next_ret) = right_scanner.next();
+    advance_left();
+    advance_right();
   }
 
   std::optional<std::pair<typename JoinedRecord::Key, JoinedRecord>> next() {
 
     // Replace all left/right_record with both key and record
 
-    while (left_key != std::numeric_limits<typename Record1::Key>::max()) {
-      int cmp = compare_keys(left_key, right_record);
+    while (left_record != nullptr) {
+      int cmp = compare_keys();
       if (cmp == 0) {
-        auto joined_record = join_records(left_record, right_record);
-        cached_right_records.push_back(right_record);
+        auto joined_record = join_records();
+        if (cached_right_records.empty()) {
+          cached_right_key = right_key;
+        }
+        cached_right_records.push_back(*right_record);
         advance_right();
         return joined_record;
       } else if (cmp < 0) {
@@ -38,18 +43,18 @@ public:
             cached_right_records_iter = cached_right_records.begin();
             advance_left();
             continue;
-        } else if (compare_keys(left_record, *cached_right_records_iter) > 0) {
+        } else if (compare_keys(true) > 0) {
           // The cached right records will never be joined with left records beyond this point
           cached_right_records.clear();
           cached_right_records_iter = cached_right_records.begin();
-          if (right_record == std::numeric_limits<typename Record2::Key>::max()) 
+          if (right_record == nullptr) 
             break; // The following left records has no cached rows or current row to join
           advance_left();
           continue;
         }
-        assert(compare_keys(left_record, *cached_right_records_iter) == 0); // Those cached records were joined with a left record smaller than or equal to the current one
+        assert(compare_keys(true) == 0); // Those cached records were joined with a left record smaller than or equal to the current one
         auto joined_record =
-            join_records(left_record, *cached_right_records_iter);
+            join_records(true);
         ++cached_right_records_iter;
         return joined_record;
       } else {
@@ -66,68 +71,85 @@ public:
 private:
   Scanner<Record1>& left_scanner;
   Scanner<Record2>& right_scanner;
-  Record1::Key left_key;
-  Record2::Key right_key;
-  Record1 &left_record;
-  Record2 &right_record;
+  typename Record1::Key left_key;
+  typename Record2::Key right_key;
+  Record1 *left_record;
+  Record2 *right_record;
+
+  typename Record2::Key cached_right_key;
   std::vector<Record2> cached_right_records;
   typename std::vector<Record2>::iterator cached_right_records_iter;
+
   leanstore::OP_RESULT right_next_ret;
   leanstore::OP_RESULT left_next_ret;
 
   void advance_left() {
     if (left_next_ret == leanstore::OP_RESULT::OK) {
-      std::tie(left_record, left_next_ret) = left_scanner.next();
+      auto ret = left_scanner.next();
+      left_key = ret.key;
+      left_record = ret.record;
+      left_next_ret = ret.res;
     } else {
-      left_record = std::numeric_limits<typename Record1::Key>::max();
+      left_record = nullptr;
     }
   }
 
   void advance_right() {
     if (right_next_ret == leanstore::OP_RESULT::OK) {
-      std::tie(right_record, right_next_ret) = right_scanner.next();
+      auto ret = right_scanner.next();
+      right_key = ret.key;
+      right_record = ret.record;
+      right_next_ret = ret.res;
     } else {
-      right_record = std::numeric_limits<typename Record2::Key>::max();
+      right_record = nullptr;
     }
   }
 
-  int compare_keys(const Record1 &left, const Record2 &right) const {
+  int compare_keys(bool use_cached = false) const {
     // HARDCODED
     uint8_t left_joinkey[join_key_length];
     uint8_t right_joinkey[join_key_length];
 
     unsigned pos1 = 0;
-    pos1 += fold(left_joinkey, left.left.ol_w_id);
-    pos1 += fold(left_joinkey, left.left.ol_i_id);
+    pos1 += fold(left_joinkey, left_key.ol_w_id);
+    pos1 += fold(left_joinkey, left_record->ol_i_id);
 
-    unsigned pos2 = 0;
-    pos2 += fold(right_joinkey, right.right.s_w_id);
-    pos2 += fold(right_joinkey, right.right.s_i_id);
-
+    if (use_cached == false) {
+      unsigned pos2 = 0;
+      pos2 += fold(right_joinkey, right_key.s_w_id);
+      pos2 += fold(right_joinkey, right_key.s_i_id);
+    } else {
+      unsigned pos2 = 0;
+      pos2 += fold(right_joinkey, cached_right_key.s_w_id);
+      pos2 += fold(right_joinkey, cached_right_key.s_i_id);
+    }
+    
     return std::memcmp(left_joinkey, right_joinkey,
                        join_key_length);
   }
 
-  std::pair<typename JoinedRecord::Key, JoinedRecord> join_records(const Record1 &left, const Record2 &right) const {
+  std::pair<typename JoinedRecord::Key, JoinedRecord> join_records(bool used_cached = false) const {
     // HARDCODED
 
     // Populate the joined record fields from left and right records
 
+    Record2 &right = used_cached ? *cached_right_records_iter : *right_record;
+
     typename JoinedRecord::Key key {
-      left.ol_w_id,
-      left.ol_i_id,
-      left.ol_d_id,
-      left.ol_o_id,
-      left.ol_number
+      left_key.ol_w_id,
+      left_record->ol_i_id,
+      left_key.ol_d_id,
+      left_key.ol_o_id,
+      left_key.ol_number
     };
 
     JoinedRecord record {
-      left.ol_i_id,
-      left.ol_supply_w_id,
-      left.ol_delivery_d,
-      left.ol_quantity,
-      left.ol_amount,
-      left.ol_dist_info,
+      left_record->ol_i_id,
+      left_record->ol_supply_w_id,
+      left_record->ol_delivery_d,
+      left_record->ol_quantity,
+      left_record->ol_amount,
+      left_record->ol_dist_info,
       right.s_quantity,
       right.s_dist_01,
       right.s_dist_02,
