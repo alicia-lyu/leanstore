@@ -1,6 +1,7 @@
 #pragma once
 #include "Adapter.hpp"
 // -------------------------------------------------------------------------------------
+#include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 // -------------------------------------------------------------------------------------
@@ -171,11 +172,22 @@ struct LeanStoreAdapter : Adapter<Record> {
    // -------------------------------------------------------------------------------------
    u64 count() { return btree->countEntries(); }
 
-   virtual Scanner<Record> getScanner() {
+   Scanner<Record> getScanner() {
       if (FLAGS_vi) {
          return Scanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
       } else {
          return Scanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+      }
+   }
+
+   template <class Record2>
+   Scanner<Record> getScanner(leanstore::KVInterface* sec_btree) {
+      if (FLAGS_vi) {
+         return Scanner<Record, Record2>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
+         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(sec_btree)));
+      } else {
+         return Scanner<Record, Record2>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
+         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(sec_btree)));
       }
    }
 };

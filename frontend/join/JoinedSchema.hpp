@@ -5,7 +5,7 @@
 // TODO: Generate multiple schema with different included columns
 
 // Joining order line and stock
-struct order_line_ols_t {
+struct ol_join_sec_t {
   static constexpr int id = 11;
   struct Key {
     static constexpr int id = 8; // comes from table 8, i.e., orderline
@@ -25,19 +25,28 @@ struct order_line_ols_t {
       return os;
     }
   };
-  // orderline_t::Value
-  Integer ols_i_id;
-  Integer ols_supply_w_id;
-  Timestamp ols_delivery_d;
-  Numeric ols_quantity;
-  Numeric ols_amount;
-  Varchar<24> ols_dist_info;
+  // // orderline_t::Value
+  // Integer ols_i_id;
+  // Integer ols_supply_w_id;
+  // Timestamp ols_delivery_d;
+  // Numeric ols_quantity;
+  // Numeric ols_amount;
+  // Varchar<24> ols_dist_info;
 
   template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
     unsigned pos = 0;
     pos += fold(out + pos, key.ols_w_id);
     pos += fold(out + pos, key.ols_i_id);
     pos += fold(out + pos, Key::id);
+    pos += fold(out + pos, key.ols_d_id);
+    pos += fold(out + pos, key.ols_o_id);
+    pos += fold(out + pos, key.ols_number);
+    return pos;
+  }
+
+  template <class T> static unsigned foldPKey(uint8_t *out, const T &key) {
+    unsigned pos = 0;
+    pos += fold(out + pos, key.ols_w_id);
     pos += fold(out + pos, key.ols_d_id);
     pos += fold(out + pos, key.ols_o_id);
     pos += fold(out + pos, key.ols_number);
@@ -67,11 +76,15 @@ struct order_line_ols_t {
     return 0 + sizeof(Key::ols_w_id) + sizeof(Key::ols_i_id);
   }
 
-  friend std::ostream& operator<<(std::ostream& os, const order_line_ols_t& record) {
-    os << "i_id: " << record.ols_i_id << ", supply_w_id: " << record.ols_supply_w_id
-       << ", delivery_d: " << record.ols_delivery_d << ", quantity: " << record.ols_quantity << ", amount: " << record.ols_amount << ", dist_info: " << record.ols_dist_info.toString();
-    return os;
+  static constexpr unsigned primaryKeyLength() {
+    return 0 + sizeof(Key::ols_d_id) + sizeof(Key::ols_o_id) + sizeof(Key::ols_number);
   }
+
+  // friend std::ostream& operator<<(std::ostream& os, const order_line_ols_t& record) {
+  //   os << "i_id: " << record.ols_i_id << ", supply_w_id: " << record.ols_supply_w_id
+  //      << ", delivery_d: " << record.ols_delivery_d << ", quantity: " << record.ols_quantity << ", amount: " << record.ols_amount << ", dist_info: " << record.ols_dist_info.toString();
+  //   return os;
+  // }
 };
 
 struct stock_ols_t {
