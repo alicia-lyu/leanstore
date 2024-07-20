@@ -1,6 +1,5 @@
 #include "../shared/Adapter.hpp"
 #include "../shared/Types.hpp"
-#include "leanstore/KVInterface.hpp"
 #include <cassert>
 #include <optional>
 #include <vector>
@@ -13,9 +12,7 @@ public:
   MergeJoin(Scanner<Record1>& left_scanner,
             Scanner<Record2>& right_scanner)
       : left_scanner(left_scanner),
-        right_scanner(right_scanner),
-        left_next_ret(leanstore::OP_RESULT::OK),
-        right_next_ret(leanstore::OP_RESULT::OK)
+        right_scanner(right_scanner)
   {
     advance_left();
     advance_right();
@@ -23,93 +20,100 @@ public:
 
   std::optional<std::pair<typename JoinedRecord::Key, JoinedRecord>> next() {
 
-    // Replace all left/right_record with both key and record
+    std::optional<std::pair<typename JoinedRecord::Key, JoinedRecord>> joined_record = std::nullopt;
 
-    while (!is_sentinel1(left_record)) {
+    while (!left_exhausted) {
       int cmp = compare_keys();
-      if (cmp == 0) {
-        auto joined_record = join_records();
+      if (cmp == 0 && !right_exhausted) {
+        // Join current left with current right
+        joined_record = join_records();
         if (cached_right_records.empty()) {
           cached_right_key = right_key;
         }
         cached_right_records.push_back(right_record);
         advance_right();
-        return joined_record;
-      } else if (cmp < 0) {
+        break;
+      } else if ((cmp < 0 || right_exhausted) && !cached_right_records.empty()) {
+        // Join current left with cached right
         if (cached_right_records_iter == cached_right_records.end()) {
             // Next left record may join with the cached right records
             cached_right_records_iter = cached_right_records.begin();
             advance_left();
             continue;
         } else if (compare_keys(true) > 0) {
-          // The cached right records will never be joined with left records beyond this point
+          // The cached right records are too small, will never be joined with left records beyond this point
           cached_right_records.clear();
           cached_right_records_iter = cached_right_records.begin();
-          if (is_sentinel2(right_record))
-            break; // The following left records has no cached rows or current row to join
+          if (right_exhausted)
+            return std::nullopt; // The following left records has no cached rows or current row to join
           advance_left();
           continue;
         }
         assert(compare_keys(true) == 0); // Those cached records were joined with a left record smaller than or equal to the current one
-        auto joined_record =
+        joined_record =
             join_records(true);
         ++cached_right_records_iter;
-        return joined_record;
-      } else {
-        // Cached right records are even smaller
+        break;
+      } else if (!right_exhausted) {
+        // Current right record is too small. Cached right records are even smaller
         cached_right_records.clear();
         cached_right_records_iter = cached_right_records.begin();
         advance_right();
+      } else {
+        return std::nullopt;
       }
     }
-
-    return std::nullopt;
+    assert(joined_record.has_value());
+    if (produced % 1000 == 0) {
+      std::cout << "Produced " << produced << ": " << left_consumed << " " << right_consumed << std::endl;
+      std::cout << "Next joined record, key: " << joined_record.value().first << std::endl;
+      std::cout << "Payload: " << joined_record.value().second << std::endl;
+    }
+    produced++;
+    return joined_record.value();
   }
 
 private:
-  static const Record1 sentinel1;
-  static const Record2 sentinel2;
-  static bool is_sentinel1(Record1 record) {
-    return std::memcmp(&record, &sentinel1, sizeof(Record1)) == 0;
-  }
-  static bool is_sentinel2(Record2 record) {
-    return std::memcmp(&record, &sentinel2, sizeof(Record2)) == 0;
-  }
-
   Scanner<Record1>& left_scanner;
   Scanner<Record2>& right_scanner;
+  size_t left_consumed = 0;
+  size_t right_consumed = 0;
+  size_t produced = 0;
+
   typename Record1::Key left_key;
   typename Record2::Key right_key;
   Record1 left_record;
   Record2 right_record;
+  bool left_exhausted = false;
+  bool right_exhausted = false;
 
   typename Record2::Key cached_right_key;
   std::vector<Record2> cached_right_records;
   typename std::vector<Record2>::iterator cached_right_records_iter;
 
-  leanstore::OP_RESULT right_next_ret;
-  leanstore::OP_RESULT left_next_ret;
-
   void advance_left() {
-    if (left_next_ret == leanstore::OP_RESULT::OK) {
-      auto ret = left_scanner.next(); // TODO: next ret changed
-      left_key = ret.key;
-      left_record = ret.record;
-      left_next_ret = ret.res;
-    } else {
-      left_record = sentinel1;
+    assert(!left_exhausted);
+    auto ret = left_scanner.next();
+    if (!ret.has_value()) {
+      left_exhausted = true;
+      return;
     }
+    left_consumed++;
+    left_key = ret.value().key;
+    left_record = ret.value().record;
   }
 
   void advance_right() {
-    if (right_next_ret == leanstore::OP_RESULT::OK) {
-      auto ret = right_scanner.next();
-      right_key = ret.key;
-      right_record = ret.record;
-      right_next_ret = ret.res;
-    } else {
-      right_record = sentinel2;
+    // assert(!right_exhausted);
+    if (right_exhausted) return;
+    auto ret = right_scanner.next();
+    if (!ret.has_value()) {
+      right_exhausted = true;
+      return;
     }
+    right_consumed++;
+    right_key = ret.value().key;
+    right_record = ret.value().record;
   }
 
   int compare_keys(bool use_cached = false) const {
@@ -177,17 +181,3 @@ private:
     return {key, record};
   }
 };
-
-template <typename Record1, typename Record2, typename JoinedRecord>
-const Record1 MergeJoin<Record1, Record2, JoinedRecord>::sentinel1 = []() {
-  Record1 sentinel;
-  std::memset(&sentinel, 255, sizeof(Record1));
-  return sentinel;
-}();
-
-template <typename Record1, typename Record2, typename JoinedRecord>
-const Record2 MergeJoin<Record1, Record2, JoinedRecord>::sentinel2 = []() {
-  Record2 sentinel;
-  std::memset(&sentinel, 255, sizeof(Record2));
-  return sentinel;
-}();

@@ -1,4 +1,5 @@
 #pragma once
+#include <ostream>
 #include "../shared/Types.hpp"
 
 // TODO: Generate multiple schema with different included columns
@@ -16,6 +17,13 @@ struct order_line_ols_t {
     Integer ols_d_id;
     Integer ols_o_id;
     Integer ols_number;
+
+    friend std::ostream& operator<<(std::ostream& os, const Key& key) {
+      os << "w_id: " << key.ols_w_id << ", i_id: " << key.ols_i_id
+         << ", d_id: " << key.ols_d_id << ", o_id: " << key.ols_o_id
+         << ", number: " << key.ols_number;
+      return os;
+    }
   };
   // orderline_t::Value
   Integer ols_i_id;
@@ -58,6 +66,12 @@ struct order_line_ols_t {
   static constexpr unsigned joinKeyLength() {
     return 0 + sizeof(Key::ols_w_id) + sizeof(Key::ols_i_id);
   }
+
+  friend std::ostream& operator<<(std::ostream& os, const order_line_ols_t& record) {
+    os << "i_id: " << record.ols_i_id << ", supply_w_id: " << record.ols_supply_w_id
+       << ", delivery_d: " << record.ols_delivery_d << ", quantity: " << record.ols_quantity << ", amount: " << record.ols_amount << ", dist_info: " << record.ols_dist_info.toString();
+    return os;
+  }
 };
 
 struct stock_ols_t {
@@ -67,6 +81,11 @@ struct stock_ols_t {
     static constexpr int id = 10; // comes from table 10, i.e., stock
     Integer ols_w_id;
     Integer ols_i_id;
+
+    friend std::ostream& operator<<(std::ostream& os, const Key& key) {
+      os << "w_id: " << key.ols_w_id << ", i_id: " << key.ols_i_id;
+      return os;
+    }
   };
   // stock_t::Value
   Numeric ols_quantity;
@@ -110,6 +129,11 @@ struct stock_ols_t {
   static constexpr unsigned joinKeyLength() {
     return 0 + sizeof(Key::ols_w_id) + sizeof(Key::ols_i_id);
   }
+
+  friend std::ostream& operator<<(std::ostream& os, const stock_ols_t& record) {
+    os << "quantity: " << record.ols_quantity << ", dist_01: " << record.ols_dist_01.toString() << ", dist_02: " << record.ols_dist_02.toString() << ", dist_03: " << record.ols_dist_03.toString() << ", dist_04: " << record.ols_dist_04.toString() << ", dist_05: " << record.ols_dist_05.toString() << ", dist_06: " << record.ols_dist_06.toString() << ", dist_07: " << record.ols_dist_07.toString() << ", dist_08: " << record.ols_dist_08.toString() << ", dist_09: " << record.ols_dist_09.toString() << ", dist_10: " << record.ols_dist_10.toString() << ", ytd: " << record.ols_ytd << ", order_cnt: " << record.ols_order_cnt << ", remote_cnt: " << record.ols_remote_cnt << ", data: " << record.ols_data.toString();
+    return os;
+  }
 };
 
 struct joined_ols_t {
@@ -124,6 +148,13 @@ struct joined_ols_t {
     Integer ol_o_id;
     Integer ol_number;
     // stock_t::Key, none other than join key
+
+    friend std::ostream& operator<<(std::ostream& os, const Key& key) {
+      os << "w_id: " << key.w_id << ", i_id: " << key.i_id
+         << ", d_id: " << key.ol_d_id << ", o_id: " << key.ol_o_id
+         << ", number: " << key.ol_number;
+      return os;
+    }
   };
   // from order line
   Integer ol_i_id;
@@ -176,5 +207,11 @@ struct joined_ols_t {
 
   static constexpr unsigned joinKeyLength() {
     return 0 + sizeof(Key::w_id) + sizeof(Key::i_id);
+  }
+
+  friend std::ostream& operator<<(std::ostream& os, const joined_ols_t& record) {
+    os << "i_id: " << record.ol_i_id << ", supply_w_id: " << record.ol_supply_w_id
+       << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", dist_info: " << record.ol_dist_info.toString() << ", s_quantity: " << record.s_quantity << ", s_dist_01: " << record.s_dist_01.toString() << ", s_dist_02: " << record.s_dist_02.toString() << ", s_dist_03: " << record.s_dist_03.toString() << ", s_dist_04: " << record.s_dist_04.toString() << ", s_dist_05: " << record.s_dist_05.toString() << ", s_dist_06: " << record.s_dist_06.toString() << ", s_dist_07: " << record.s_dist_07.toString() << ", s_dist_08: " << record.s_dist_08.toString() << ", s_dist_09: " << record.s_dist_09.toString() << ", s_dist_10: " << record.s_dist_10.toString() << ", s_ytd: " << record.s_ytd << ", s_order_cnt: " << record.s_order_cnt << ", s_remote_cnt: " << record.s_remote_cnt << ", s_data: " << record.s_data.toString();
+    return os;
   }
 };
