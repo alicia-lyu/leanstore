@@ -59,6 +59,8 @@ int main(int argc, char** argv)
    LeanStoreAdapter<orderline_t> orderline;
    LeanStoreAdapter<item_t> item;
    LeanStoreAdapter<stock_t> stock;
+   LeanStoreAdapter<ol_join_sec_t> orderline_secondary;
+   // LeanStoreAdapter<stock_join_sec_t> stock_secondary;
    LeanStoreAdapter<joined_ols_t> joined_ols;
 
    auto& crm = db.getCRManager();
@@ -75,6 +77,8 @@ int main(int argc, char** argv)
       orderline = LeanStoreAdapter<orderline_t>(db, "orderline");
       item = LeanStoreAdapter<item_t>(db, "item");
       stock = LeanStoreAdapter<stock_t>(db, "stock");
+      orderline_secondary = LeanStoreAdapter<ol_join_sec_t>(db, "orderline_secondary");
+      // stock_secondary = LeanStoreAdapter<stock_join_sec_t>(db, "stock_secondary"); not needed because join key is its primary key
       joined_ols = LeanStoreAdapter<joined_ols_t>(db, "joined_ols");
    });
 
@@ -153,12 +157,31 @@ int main(int argc, char** argv)
    }
 
    // -------------------------------------------------------------------------------------
-   // Step 2: Perform a merge join and load the result into joined_orderline_stock
+   // Step 2: Add secondary index to orderline and stock
+   {
+      crm.scheduleJobSync(0, [&]() {
+         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+         auto orderline_scanner = orderline.getScanner();
+         while (true) {
+            auto ret = orderline_scanner.next();
+            if (!ret.has_value())
+               break;
+            auto [key, payload] = ret.value();
+            ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+            orderline_secondary.insert(sec_key, {});
+         }
+         cr::Worker::my().commitTX();
+      });
+   }
+   
+
+   // -------------------------------------------------------------------------------------
+   // Step 3: Perform a merge join and load the result into joined_orderline_stock
    {
       crm.scheduleJobSync(0, [&]() {
          std::cout << "Merging orderline and stock" << std::endl;
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         auto orderline_scanner = orderline.getScanner();
+         auto orderline_scanner = orderline.getScanner<ol_join_sec_t>(orderline_secondary.btree);
          auto stock_scanner = stock.getScanner();
          MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(orderline_scanner, stock_scanner);
 
@@ -174,7 +197,7 @@ int main(int argc, char** argv)
    }
 
    // -------------------------------------------------------------------------------------
-   // Step 3: Start write TXs into order_line and stock, and read TXs into joined_orderline_stock
+   // Step 4: Start write TXs into order_line and stock, and read TXs into joined_orderline_stock
    atomic<u64> keep_running = true;
    atomic<u64> running_threads_counter = 0;
    vector<thread> threads;

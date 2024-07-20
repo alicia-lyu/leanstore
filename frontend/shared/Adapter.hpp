@@ -47,6 +47,7 @@ template <class Record>
 class Scanner
 {
    leanstore::storage::btree::BTreeSharedIterator it;
+   std::optional<leanstore::storage::btree::BTreeSharedIterator> sec_it = std::nullopt;
 
   public:
    struct next_ret_t {
@@ -56,18 +57,39 @@ class Scanner
 
    Scanner(leanstore::storage::btree::BTreeGeneric& btree) : it(btree) {}
 
-   std::optional<next_ret_t> next() {
-      leanstore::OP_RESULT res = it.next();
-      if (res != leanstore::OP_RESULT::OK) return std::nullopt;
+   Scanner(leanstore::storage::btree::BTreeGeneric& btree, leanstore::storage::btree::BTreeGeneric& sec_btree)
+       : it(btree), sec_it(std::make_optional<leanstore::storage::btree::BTreeSharedIterator>(sec_btree))
+   {
+   }
+
+   std::optional<next_ret_t> next()
+   {
+      if (sec_it == std::nullopt) {
+         leanstore::OP_RESULT res = it.next();
+         if (res != leanstore::OP_RESULT::OK)
+            return std::nullopt;
+      } else {
+         // Guided by secondary index
+         assert(Record2 != void);
+         leanstore::OP_RESULT res2 = sec_it->next();
+         if (res2 != leanstore::OP_RESULT::OK)
+            return std::nullopt;
+         sec_it->assembleKey();
+         // Get the primary key
+         leanstore::Slice key = sec_it->key();
+         typename Record2::Key typed_key;
+         Record2::unfoldKey(key.data(), typed_key);
+         u8 primaryKeyBuffer[Record::maxFoldLength()];
+         Record2::foldPKey(primaryKeyBuffer, typed_key);
+         leanstore::Slice primaryKey(primaryKeyBuffer, Record::maxFoldLength());
+         // Search in primary index
+         auto res1 = it.seekExact(primaryKey);
+         if (res1 != leanstore::OP_RESULT::OK)
+            return std::nullopt;
+      }
       it.assembleKey();
       leanstore::Slice key = it.key();
       leanstore::Slice payload = it.value();
-
-      // print hex string
-      // for (int i = 0; i < payload.length(); i++) {
-      //    printf("%02x", payload.data()[i]);
-      // }
-      // printf("\n");
 
       assert(payload.length() == sizeof(Record));
       const Record* record_ptr = reinterpret_cast<const Record*>(payload.data());
@@ -75,11 +97,9 @@ class Scanner
 
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
-
       return std::optional<next_ret_t>({typed_key, typed_payload});
    }
 };
-
 
 // -------------------------------------------------------------------------------------
 // Unified interface used by our benchmarks for different storage engines including LeanStore
@@ -123,16 +143,16 @@ class MergedAdapter
 
   public:
    virtual void scan(const typename Record::Key& key,
-                      const std::function<bool(const typename Record::Key&, const Record&)>& found_record_cb,
-                      std::function<void()> reset_if_scan_failed_cb) = 0;
+                     const std::function<bool(const typename Record::Key&, const Record&)>& found_record_cb,
+                     std::function<void()> reset_if_scan_failed_cb) = 0;
 
    virtual void insert(const typename Record::Key& key, const Record& record) = 0;
 
    virtual void lookup(const typename Record::Key& key, const std::function<void(const Record&)>& callback) = 0;
 
    virtual void update(const typename Record::Key& key,
-                        const std::function<void(Record&)>& update_the_record_in_place_cb,
-                        leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) = 0;
+                       const std::function<void(Record&)>& update_the_record_in_place_cb,
+                       leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) = 0;
 
    virtual bool erase(const typename Record::Key& key) = 0;
 
