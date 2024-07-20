@@ -14,8 +14,6 @@ public:
             Scanner<Record2>& right_scanner)
       : left_scanner(left_scanner),
         right_scanner(right_scanner),
-        left_record(nullptr),
-        right_record(nullptr),
         left_next_ret(leanstore::OP_RESULT::OK),
         right_next_ret(leanstore::OP_RESULT::OK)
   {
@@ -27,14 +25,14 @@ public:
 
     // Replace all left/right_record with both key and record
 
-    while (left_record != nullptr) {
+    while (!is_sentinel1(left_record)) {
       int cmp = compare_keys();
       if (cmp == 0) {
         auto joined_record = join_records();
         if (cached_right_records.empty()) {
           cached_right_key = right_key;
         }
-        cached_right_records.push_back(*right_record);
+        cached_right_records.push_back(right_record);
         advance_right();
         return joined_record;
       } else if (cmp < 0) {
@@ -47,7 +45,7 @@ public:
           // The cached right records will never be joined with left records beyond this point
           cached_right_records.clear();
           cached_right_records_iter = cached_right_records.begin();
-          if (right_record == nullptr) 
+          if (is_sentinel2(right_record))
             break; // The following left records has no cached rows or current row to join
           advance_left();
           continue;
@@ -69,12 +67,21 @@ public:
   }
 
 private:
+  static const Record1 sentinel1;
+  static const Record2 sentinel2;
+  static bool is_sentinel1(Record1 record) {
+    return std::memcmp(&record, &sentinel1, sizeof(Record1)) == 0;
+  }
+  static bool is_sentinel2(Record2 record) {
+    return std::memcmp(&record, &sentinel2, sizeof(Record2)) == 0;
+  }
+
   Scanner<Record1>& left_scanner;
   Scanner<Record2>& right_scanner;
   typename Record1::Key left_key;
   typename Record2::Key right_key;
-  Record1 *left_record;
-  Record2 *right_record;
+  Record1 left_record;
+  Record2 right_record;
 
   typename Record2::Key cached_right_key;
   std::vector<Record2> cached_right_records;
@@ -90,7 +97,7 @@ private:
       left_record = ret.record;
       left_next_ret = ret.res;
     } else {
-      left_record = nullptr;
+      left_record = sentinel1;
     }
   }
 
@@ -101,7 +108,7 @@ private:
       right_record = ret.record;
       right_next_ret = ret.res;
     } else {
-      right_record = nullptr;
+      right_record = sentinel2;
     }
   }
 
@@ -112,7 +119,7 @@ private:
 
     unsigned pos1 = 0;
     pos1 += fold(left_joinkey, left_key.ol_w_id);
-    pos1 += fold(left_joinkey, left_record->ol_i_id);
+    pos1 += fold(left_joinkey, left_record.ol_i_id);
 
     if (use_cached == false) {
       unsigned pos2 = 0;
@@ -133,23 +140,23 @@ private:
 
     // Populate the joined record fields from left and right records
 
-    Record2 &right = used_cached ? *cached_right_records_iter : *right_record;
+    const Record2 &right = used_cached ? *cached_right_records_iter : right_record;
 
     typename JoinedRecord::Key key {
       left_key.ol_w_id,
-      left_record->ol_i_id,
+      left_record.ol_i_id,
       left_key.ol_d_id,
       left_key.ol_o_id,
       left_key.ol_number
     };
 
     JoinedRecord record {
-      left_record->ol_i_id,
-      left_record->ol_supply_w_id,
-      left_record->ol_delivery_d,
-      left_record->ol_quantity,
-      left_record->ol_amount,
-      left_record->ol_dist_info,
+      left_record.ol_i_id,
+      left_record.ol_supply_w_id,
+      left_record.ol_delivery_d,
+      left_record.ol_quantity,
+      left_record.ol_amount,
+      left_record.ol_dist_info,
       right.s_quantity,
       right.s_dist_01,
       right.s_dist_02,
@@ -170,3 +177,17 @@ private:
     return {key, record};
   }
 };
+
+template <typename Record1, typename Record2, typename JoinedRecord>
+const Record1 MergeJoin<Record1, Record2, JoinedRecord>::sentinel1 = []() {
+  Record1 sentinel;
+  std::memset(&sentinel, 255, sizeof(Record1));
+  return sentinel;
+}();
+
+template <typename Record1, typename Record2, typename JoinedRecord>
+const Record2 MergeJoin<Record1, Record2, JoinedRecord>::sentinel2 = []() {
+  Record2 sentinel;
+  std::memset(&sentinel, 255, sizeof(Record2));
+  return sentinel;
+}();

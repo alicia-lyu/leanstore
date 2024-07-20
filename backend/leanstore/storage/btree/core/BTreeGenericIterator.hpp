@@ -179,9 +179,60 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       }
    }
    // -------------------------------------------------------------------------------------
+   void findMinLeafAndLatch(HybridPageGuard<BTreeNode>& target_guard)
+   {
+      while (true) {
+         leaf_pos_in_parent = -1;
+         jumpmuTry()
+         {
+               target_guard.unlock();
+               p_guard = HybridPageGuard<BTreeNode>(btree.meta_node_bf);
+               target_guard = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
+               while (!target_guard->is_leaf) {
+                  WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
+                  Swip<BTreeNode>* c_swip = &target_guard->getChild(0);
+                  p_guard = std::move(target_guard);
+                  target_guard = HybridPageGuard<BTreeNode>(p_guard, *c_swip);
+               }
+               p_guard.unlock();
+               if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+                  target_guard.toExclusive();
+               } else {
+                  target_guard.toShared();
+               }
+               prefix_copied = false;
+               if (enter_leaf_cb) {
+                  enter_leaf_cb(target_guard);
+               }
+               jumpmu_return;
+         }
+         jumpmuCatch() {}
+      }
+   }
+
+   void gotoMinPage()
+   {
+      COUNTERS_BLOCK()
+      {
+         if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+               WorkerCounters::myCounters().dt_goto_page_exec[btree.dt_id]++;
+         } else {
+               WorkerCounters::myCounters().dt_goto_page_shared[btree.dt_id]++;
+         }
+      }
+      this->findMinLeafAndLatch(leaf);
+      cur = 0; // Set to the first position
+   }
+
    virtual OP_RESULT next() override
    {
       COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_next_tuple[btree.dt_id]++; }
+   // Check if the iterator is at its initial state
+      if (cur == -1) {
+         std::cout << "Going to min page" << std::endl;
+         gotoMinPage();
+         return OP_RESULT::OK;
+      }
       while (true) {
          ensure(leaf.guard.state != GUARD_STATE::OPTIMISTIC);
          if ((cur + 1) < leaf->count) {

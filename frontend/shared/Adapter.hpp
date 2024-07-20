@@ -52,23 +52,26 @@ class Scanner
   public:
    struct next_ret_t {
       typename Record::Key key; // unfolded in next()
-      Record* record; // exists before and after next()
+      Record record; // exists before and after next()
       leanstore::OP_RESULT res; // cheap to copy
    };
 
    Scanner(leanstore::storage::btree::BTreeGeneric& btree) : it(btree) {}
 
    next_ret_t next() {
+      leanstore::OP_RESULT res = it.next();
+      if (res != leanstore::OP_RESULT::OK) return {};
+      it.assembleKey();
       leanstore::Slice key = it.key();
       leanstore::Slice payload = it.value();
-      leanstore::OP_RESULT res = it.next();
+      
 
-      const Record * typed_payload = reinterpret_cast<const Record*>(payload.data());
+      Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
 
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
 
-      return {typed_key, const_cast<Record*>(typed_payload), res};
+      return {typed_key, typed_payload, res};
    }
 };
 
