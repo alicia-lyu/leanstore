@@ -1,4 +1,5 @@
 #pragma once
+#include <ostream>
 #include "../shared/Types.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -326,6 +327,12 @@ struct orderline_t {
    {
       return 0 + sizeof(Key::ol_w_id) + sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) + sizeof(Key::ol_number);
    };
+
+   friend std::ostream& operator<<(std::ostream& os, const orderline_t& record)
+   {
+      os << "ol_i_id: " << record.ol_i_id << ", ol_supply_w_id: " << record.ol_supply_w_id << ", ol_delivery_d: " << record.ol_delivery_d << ", ol_quantity: " << record.ol_quantity << ", ol_amount: " << record.ol_amount << ", ol_dist_info: " << record.ol_dist_info.toString();
+      return os;
+   }
 };
 
 struct item_t {
@@ -396,4 +403,10 @@ struct stock_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::s_w_id) + sizeof(Key::s_i_id); };
+
+   friend std::ostream& operator<<(std::ostream& os, const stock_t& record)
+   {
+      os << "s_quantity: " << record.s_quantity << ", s_dist_01: " << record.s_dist_01.toString() << ", s_dist_02: " << record.s_dist_02.toString() << ", s_dist_03: " << record.s_dist_03.toString() << ", s_dist_04: " << record.s_dist_04.toString() << ", s_dist_05: " << record.s_dist_05.toString() << ", s_dist_06: " << record.s_dist_06.toString() << ", s_dist_07: " << record.s_dist_07.toString() << ", s_dist_08: " << record.s_dist_08.toString() << ", s_dist_09: " << record.s_dist_09.toString() << ", s_dist_10: " << record.s_dist_10.toString() << ", s_ytd: " << record.s_ytd << ", s_order_cnt: " << record.s_order_cnt << ", s_remote_cnt: " << record.s_remote_cnt << ", s_data: " << record.s_data.toString();
+      return os;
+   }
 };

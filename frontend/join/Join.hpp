@@ -1,5 +1,6 @@
 #include "../shared/Adapter.hpp"
 #include "../shared/Types.hpp"
+#include "Exceptions.hpp"
 #include <cassert>
 #include <optional>
 #include <vector>
@@ -26,15 +27,21 @@ public:
       int cmp = compare_keys();
       if (cmp == 0 && !right_exhausted) {
         // Join current left with current right
-        joined_record = join_records();
+        joined_record = std::make_optional(join_records());
         if (cached_right_records.empty()) {
           cached_right_key = right_key;
         }
         cached_right_records.push_back(right_record);
         advance_right();
         break;
-      } else if ((cmp < 0 || right_exhausted) && !cached_right_records.empty()) {
+      } else if ((cmp < 0 || right_exhausted)) {
         // Join current left with cached right
+
+        if (cached_right_records.empty()) {
+          advance_left();
+          continue;
+        }
+        
         if (cached_right_records_iter == cached_right_records.end()) {
             // Next left record may join with the cached right records
             cached_right_records_iter = cached_right_records.begin();
@@ -50,27 +57,32 @@ public:
           continue;
         }
         assert(compare_keys(true) == 0); // Those cached records were joined with a left record smaller than or equal to the current one
-        joined_record =
-            join_records(true);
+        joined_record = std::make_optional(
+            join_records(true));
         ++cached_right_records_iter;
         break;
-      } else if (!right_exhausted) {
-        // Current right record is too small. Cached right records are even smaller
-        cached_right_records.clear();
-        cached_right_records_iter = cached_right_records.begin();
-        advance_right();
+      } else if (cmp > 0) {
+        if (!right_exhausted) {
+          // Current right record is too small. Cached right records are even smaller
+          cached_right_records.clear();
+          cached_right_records_iter = cached_right_records.begin();
+          advance_right();
+        } else {
+          return std::nullopt;
+        }
       } else {
-        return std::nullopt;
+        UNREACHABLE();
       }
     }
-    assert(joined_record.has_value());
-    if (produced % 1000 == 0) {
+
+    if (joined_record.has_value() && produced % 1000 == 0) {
       std::cout << "Produced " << produced << ": " << left_consumed << " " << right_consumed << std::endl;
       std::cout << "Next joined record, key: " << joined_record.value().first << std::endl;
       std::cout << "Payload: " << joined_record.value().second << std::endl;
     }
-    produced++;
-    return joined_record.value();
+    if (joined_record.has_value()) produced++;
+    
+    return joined_record;
   }
 
 private:
@@ -101,10 +113,11 @@ private:
     left_consumed++;
     left_key = ret.value().key;
     left_record = ret.value().record;
+    std::cout << "Left w_id: " << left_key.ol_w_id << ", i_id: " << left_record.ol_i_id << " for order id " << left_key.ol_o_id << std::endl;
   }
 
   void advance_right() {
-    // assert(!right_exhausted);
+    assert(!right_exhausted);
     if (right_exhausted) return;
     auto ret = right_scanner.next();
     if (!ret.has_value()) {
@@ -114,6 +127,7 @@ private:
     right_consumed++;
     right_key = ret.value().key;
     right_record = ret.value().record;
+    std::cout << "Right w_id: " << right_key.s_w_id << ", i_id: " << right_key.s_i_id << std::endl;
   }
 
   int compare_keys(bool use_cached = false) const {

@@ -1,27 +1,20 @@
 #include "../shared/LeanStoreAdapter.hpp"
-#include "JoinedSchema.hpp"
-#include "Join.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
+#include "Join.hpp"
+#include "JoinedSchema.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
-#include "leanstore/utils/Misc.hpp"
-#include "leanstore/utils/Parallelize.hpp"
-#include "leanstore/utils/RandomGenerator.hpp"
 #include "leanstore/utils/ZipfGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
-
-#include "PerfEvent.hpp"
 // -------------------------------------------------------------------------------------
 #include <unistd.h>
 
 #include <iostream>
-#include <set>
 #include <string>
-#include <vector>
 // -------------------------------------------------------------------------------------
 DEFINE_int64(tpcc_warehouse_count, 1, "");
 DEFINE_int32(tpcc_abort_pct, 0, "");
@@ -98,14 +91,14 @@ int main(int argc, char** argv)
    leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::parseIsolationLevel(FLAGS_isolation_level);
 
    const bool should_tpcc_driver_handle_isolation_anomalies = isolation_level < leanstore::TX_ISOLATION_LEVEL::SNAPSHOT_ISOLATION;
-   
+
    TPCCWorkload<LeanStoreAdapter> tpcc(warehouse, district, customer, customerwdl, history, neworder, order, order_wdc, orderline, item, stock,
                                        FLAGS_order_wdc_index, FLAGS_tpcc_warehouse_count, FLAGS_tpcc_remove,
                                        should_tpcc_driver_handle_isolation_anomalies, FLAGS_tpcc_warehouse_affinity);
 
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
-if (!FLAGS_recover) {
+   if (!FLAGS_recover) {
       cout << "Loading TPC-C" << endl;
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
@@ -167,13 +160,12 @@ if (!FLAGS_recover) {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          auto orderline_scanner = orderline.getScanner();
          auto stock_scanner = stock.getScanner();
-         MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(
-            orderline_scanner,
-            stock_scanner);
+         MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(orderline_scanner, stock_scanner);
 
          while (true) {
             auto ret = merge_join.next();
-            if (!ret.has_value()) break;
+            if (!ret.has_value())
+               break;
             auto [key, payload] = ret.value();
             joined_ols.insert(key, payload);
          }
