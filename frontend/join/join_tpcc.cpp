@@ -192,6 +192,7 @@ int main(int argc, char** argv)
             auto [key, payload] = ret.value();
             joined_ols.insert(key, payload);
          }
+         // static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(joined_ols.btree))->printInfos(8 * 1024 * 1024 * 1024);
          cr::Worker::my().commitTX();
       });
    }

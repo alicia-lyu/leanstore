@@ -295,6 +295,12 @@ struct orderline_t {
       Integer ol_d_id;
       Integer ol_o_id;
       Integer ol_number;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "ol_w_id: " << record.ol_w_id << ", ol_d_id: " << record.ol_d_id << ", ol_o_id: " << record.ol_o_id << ", ol_number: " << record.ol_number;
+         return os;
+      }
    };
    Integer ol_i_id;
    Integer ol_supply_w_id;
@@ -327,6 +333,16 @@ struct orderline_t {
    {
       return 0 + sizeof(Key::ol_w_id) + sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) + sizeof(Key::ol_number);
    };
+
+   friend bool operator==(const orderline_t& lhs, const orderline_t& rhs)
+   {
+      return lhs.ol_i_id == rhs.ol_i_id && lhs.ol_supply_w_id == rhs.ol_supply_w_id && lhs.ol_delivery_d == rhs.ol_delivery_d && lhs.ol_quantity == rhs.ol_quantity && lhs.ol_amount == rhs.ol_amount && lhs.ol_dist_info == rhs.ol_dist_info;
+   }
+
+   friend bool operator!=(const orderline_t& lhs, const orderline_t& rhs)
+   {
+      return !(lhs == rhs);
+   }
 
    friend std::ostream& operator<<(std::ostream& os, const orderline_t& record)
    {
@@ -369,6 +385,12 @@ struct stock_t {
       static constexpr int id = 10;
       Integer s_w_id;
       Integer s_i_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "s_w_id: " << record.s_w_id << ", s_i_id: " << record.s_i_id;
+         return os;
+      }
    };
    Numeric s_quantity;
    Varchar<24> s_dist_01;
@@ -403,6 +425,16 @@ struct stock_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::s_w_id) + sizeof(Key::s_i_id); };
+
+   friend bool operator==(const stock_t& lhs, const stock_t& rhs)
+   {
+      return lhs.s_quantity == rhs.s_quantity && lhs.s_dist_01 == rhs.s_dist_01 && lhs.s_dist_02 == rhs.s_dist_02 && lhs.s_dist_03 == rhs.s_dist_03 && lhs.s_dist_04 == rhs.s_dist_04 && lhs.s_dist_05 == rhs.s_dist_05 && lhs.s_dist_06 == rhs.s_dist_06 && lhs.s_dist_07 == rhs.s_dist_07 && lhs.s_dist_08 == rhs.s_dist_08 && lhs.s_dist_09 == rhs.s_dist_09 && lhs.s_dist_10 == rhs.s_dist_10 && lhs.s_ytd == rhs.s_ytd && lhs.s_order_cnt == rhs.s_order_cnt && lhs.s_remote_cnt == rhs.s_remote_cnt && lhs.s_data == rhs.s_data;
+   }
+
+   friend bool operator!=(const stock_t& lhs, const stock_t& rhs)
+   {
+      return !(lhs == rhs);
+   }
 
    friend std::ostream& operator<<(std::ostream& os, const stock_t& record)
    {
