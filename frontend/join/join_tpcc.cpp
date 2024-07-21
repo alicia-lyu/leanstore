@@ -181,9 +181,9 @@ int main(int argc, char** argv)
       crm.scheduleJobSync(0, [&]() {
          std::cout << "Merging orderline and stock" << std::endl;
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         auto orderline_scanner = orderline.getScanner<ol_join_sec_t>(orderline_secondary.btree);
+         auto orderline_scanner = orderline.getScanner<ol_join_sec_t>(&orderline_secondary);
          auto stock_scanner = stock.getScanner();
-         MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(orderline_scanner, stock_scanner);
+         MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
 
          while (true) {
             auto ret = merge_join.next();

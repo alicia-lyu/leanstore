@@ -10,10 +10,12 @@ class MergeJoin {
   constexpr static unsigned join_key_length = JoinedRecord::joinKeyLength();
 
 public:
-  MergeJoin(Scanner<Record1>& left_scanner,
-            Scanner<Record2>& right_scanner)
+  MergeJoin(Scanner<Record1>* left_scanner,
+            Scanner<Record2>* right_scanner)
       : left_scanner(left_scanner),
-        right_scanner(right_scanner)
+        right_scanner(right_scanner),
+        cached_right_key(std::nullopt),
+        cached_right_records_iter(cached_right_records.begin())
   {
     advance_left();
     advance_right();
@@ -59,7 +61,6 @@ public:
         assert(compare_keys(true) == 0); // Those cached records were joined with a left record smaller than or equal to the current one
         joined_record = std::make_optional(
             join_records(true));
-        ++cached_right_records_iter;
         break;
       } else if (cmp > 0) {
         if (!right_exhausted) {
@@ -76,7 +77,7 @@ public:
     }
 
     if (joined_record.has_value() && produced % 1000 == 0) {
-      std::cout << "Produced " << produced << ": " << left_consumed << " " << right_consumed << std::endl;
+      std::cout << "Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)" << std::endl;
       std::cout << "Next joined record, key: " << joined_record.value().first << std::endl;
       std::cout << "Payload: " << joined_record.value().second << std::endl;
     }
@@ -86,8 +87,8 @@ public:
   }
 
 private:
-  Scanner<Record1>& left_scanner;
-  Scanner<Record2>& right_scanner;
+  Scanner<Record1>* left_scanner;
+  Scanner<Record2>* right_scanner;
   size_t left_consumed = 0;
   size_t right_consumed = 0;
   size_t produced = 0;
@@ -99,13 +100,13 @@ private:
   bool left_exhausted = false;
   bool right_exhausted = false;
 
-  typename Record2::Key cached_right_key;
+  std::optional<typename Record2::Key> cached_right_key;
   std::vector<Record2> cached_right_records;
   typename std::vector<Record2>::iterator cached_right_records_iter;
 
   void advance_left() {
     assert(!left_exhausted);
-    auto ret = left_scanner.next();
+    auto ret = left_scanner->next();
     if (!ret.has_value()) {
       left_exhausted = true;
       return;
@@ -113,13 +114,13 @@ private:
     left_consumed++;
     left_key = ret.value().key;
     left_record = ret.value().record;
-    std::cout << "Left w_id: " << left_key.ol_w_id << ", i_id: " << left_record.ol_i_id << " for order id " << left_key.ol_o_id << std::endl;
+    // std::cout << "Left w_id: " << left_key.ol_w_id << ", i_id: " << left_record.ol_i_id << " for order id " << left_key.ol_o_id << std::endl;
   }
 
   void advance_right() {
     assert(!right_exhausted);
     if (right_exhausted) return;
-    auto ret = right_scanner.next();
+    auto ret = right_scanner->next();
     if (!ret.has_value()) {
       right_exhausted = true;
       return;
@@ -127,7 +128,7 @@ private:
     right_consumed++;
     right_key = ret.value().key;
     right_record = ret.value().record;
-    std::cout << "Right w_id: " << right_key.s_w_id << ", i_id: " << right_key.s_i_id << std::endl;
+    // std::cout << "Right w_id: " << right_key.s_w_id << ", i_id: " << right_key.s_i_id << std::endl;
   }
 
   int compare_keys(bool use_cached = false) const {
@@ -145,20 +146,25 @@ private:
       pos2 += fold(right_joinkey, right_key.s_i_id);
     } else {
       unsigned pos2 = 0;
-      pos2 += fold(right_joinkey, cached_right_key.s_w_id);
-      pos2 += fold(right_joinkey, cached_right_key.s_i_id);
+      pos2 += fold(right_joinkey, cached_right_key.value().s_w_id);
+      pos2 += fold(right_joinkey, cached_right_key.value().s_i_id);
     }
     
     return std::memcmp(left_joinkey, right_joinkey,
                        join_key_length);
   }
 
-  std::pair<typename JoinedRecord::Key, JoinedRecord> join_records(bool used_cached = false) const {
+  std::pair<typename JoinedRecord::Key, JoinedRecord> join_records(bool use_cached = false) {
     // HARDCODED
 
     // Populate the joined record fields from left and right records
+    if (use_cached) {
+      assert(cached_right_records_iter != cached_right_records.end());
+      assert(compare_keys(true) == 0);
+      assert(cached_right_key.has_value());
+    }
 
-    const Record2 &right = used_cached ? *cached_right_records_iter : right_record;
+    const Record2 &right = use_cached ? *cached_right_records_iter : right_record;
 
     typename JoinedRecord::Key key {
       left_key.ol_w_id,
@@ -191,6 +197,10 @@ private:
       right.s_remote_cnt,
       right.s_data
     };
+
+    if (use_cached) {
+      ++cached_right_records_iter;
+    }
 
     return {key, record};
   }
