@@ -3,10 +3,12 @@
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Join.hpp"
 #include "JoinedSchema.hpp"
+#include "TPCCJoinWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
+#include "leanstore/utils/Misc.hpp"
 #include "leanstore/utils/ZipfGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
@@ -21,17 +23,17 @@ DEFINE_int32(tpcc_abort_pct, 0, "");
 DEFINE_uint64(run_until_tx, 0, "");
 DEFINE_bool(tpcc_verify, false, "");
 DEFINE_bool(tpcc_warehouse_affinity, false, "");
-DEFINE_bool(tpcc_fast_load, false, "");
+// DEFINE_bool(tpcc_fast_load, false, "");
 DEFINE_bool(tpcc_remove, true, "");
 DEFINE_bool(order_wdc_index, true, "");
-DEFINE_uint64(tpcc_analytical_weight, 0, "");
+// DEFINE_uint64(tpcc_analytical_weight, 0, "");
 DEFINE_uint64(ch_a_threads, 0, "CH analytical threads");
 DEFINE_uint64(ch_a_rounds, 1, "");
 DEFINE_uint64(ch_a_query, 2, "");
 DEFINE_uint64(ch_a_start_delay_sec, 0, "");
 DEFINE_uint64(ch_a_process_delay_sec, 0, "");
-DEFINE_bool(ch_a_infinite, false, "");
-DEFINE_bool(ch_a_once, false, "");
+// DEFINE_bool(ch_a_infinite, false, "");
+// DEFINE_bool(ch_a_once, false, "");
 DEFINE_uint32(tpcc_threads, 0, "");
 // -------------------------------------------------------------------------------------
 using namespace std;
@@ -100,6 +102,7 @@ int main(int argc, char** argv)
                                        FLAGS_order_wdc_index, FLAGS_tpcc_warehouse_count, FLAGS_tpcc_remove,
                                        should_tpcc_driver_handle_isolation_anomalies, FLAGS_tpcc_warehouse_affinity);
 
+   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, joined_ols);
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
@@ -156,6 +159,10 @@ int main(int argc, char** argv)
       }
    }
 
+   double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+   cout << "TPC-C loaded - consumed space in GiB = " << gib << endl;
+   crm.scheduleJobSync(0, [&]() { cout << "Warehouse pages = " << warehouse.btree->countPages() << endl; });
+
    // -------------------------------------------------------------------------------------
    // Step 2: Add secondary index to orderline and stock
    {
@@ -173,13 +180,13 @@ int main(int argc, char** argv)
          cr::Worker::my().commitTX();
       });
    }
-   
 
    // -------------------------------------------------------------------------------------
    // Step 3: Perform a merge join and load the result into joined_orderline_stock
    {
       crm.scheduleJobSync(0, [&]() {
          std::cout << "Merging orderline and stock" << std::endl;
+         tpcc.prepare();
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          auto orderline_scanner = orderline.getScanner<ol_join_sec_t>(&orderline_secondary);
          auto stock_scanner = stock.getScanner();
@@ -192,10 +199,12 @@ int main(int argc, char** argv)
             auto [key, payload] = ret.value();
             joined_ols.insert(key, payload);
          }
-         // static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(joined_ols.btree))->printInfos(8 * 1024 * 1024 * 1024);
+         // static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(joined_ols.btree))->printInfos(8 *
+         // 1024 * 1024 * 1024);
          cr::Worker::my().commitTX();
       });
    }
+   crm.joinAll();
 
    // -------------------------------------------------------------------------------------
    // Step 4: Start write TXs into order_line and stock, and read TXs into joined_orderline_stock
@@ -206,53 +215,85 @@ int main(int argc, char** argv)
    db.startProfilingThread();
    u64 tx_per_thread[FLAGS_worker_threads];
 
-   // Writer threads
-   for (u64 t_i = 0; t_i < FLAGS_worker_threads / 2; t_i++) {
+   for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
       crm.scheduleJobAsync(t_i, [&, t_i]() {
          running_threads_counter++;
+         tpcc.prepare();
+         volatile u64 tx_acc = 0;
+         // cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
+         // cr::Worker::my().commitTX();
+         // // -------------------------------------------------------------------------------------
+         // if (FLAGS_ch_a_start_delay_sec) {
+         //    cr::Worker::my().cc.switchToReadCommittedMode();
+         //    sleep(FLAGS_ch_a_start_delay_sec);
+         //    cr::Worker::my().cc.switchToSnapshotIsolationMode();
+         // }
          while (keep_running) {
-            cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
-            // Perform insertions and deletions in order_line and stock
-            // Implement logic for impacting joined_orderline_stock
-            // ...
-            cr::Worker::my().commitTX();
-            WorkerCounters::myCounters().tx++;
+            utils::Timer timer(CRCounters::myCounters().cc_ms_oltp_tx);
+            jumpmuTry()
+            {
+               cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
+               u32 w_id;
+               if (FLAGS_tpcc_warehouse_affinity) {
+                  w_id = t_i + 1;
+               } else {
+                  w_id = tpcc.urand(1, FLAGS_tpcc_warehouse_count);
+               }
+               if (w_id > FLAGS_tpcc_warehouse_count) {
+                  return;
+               }
+               tpcc_join.tx(w_id);
+               if (FLAGS_tpcc_abort_pct && tpcc.urand(0, 100) <= FLAGS_tpcc_abort_pct) {
+                  cr::Worker::my().abortTX();
+               } else {
+                  cr::Worker::my().commitTX();
+               }
+               // cout << "TXs = " << WorkerCounters::myCounters().tx << " TX aborts = " << WorkerCounters::myCounters().tx_abort << endl;
+               WorkerCounters::myCounters().tx++;
+               tx_acc = tx_acc + 1;
+            }
+            jumpmuCatch()
+            {
+               WorkerCounters::myCounters().tx_abort++;
+            }
          }
+         cr::Worker::my().shutdown();
+         tx_per_thread[t_i] = tx_acc;
          running_threads_counter--;
       });
    }
 
-   // Reader threads
-   for (u64 t_i = FLAGS_worker_threads / 2; t_i < FLAGS_worker_threads; t_i++) {
-      crm.scheduleJobAsync(t_i, [&, t_i]() {
-         running_threads_counter++;
-         while (keep_running) {
-            cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
-            // Perform reads in joined_orderline_stock
-            // ...
-            cr::Worker::my().commitTX();
-            WorkerCounters::myCounters().tx++;
+   {
+      if (FLAGS_run_until_tx) {
+         while (true) {
+            if (db.getGlobalStats().accumulated_tx_counter >= FLAGS_run_until_tx) {
+               cout << FLAGS_run_until_tx << " has been reached";
+               break;
+            }
+            usleep(500);
          }
-         running_threads_counter--;
-      });
-   }
-
-   if (FLAGS_run_until_tx) {
-      while (db.getGlobalStats().accumulated_tx_counter < FLAGS_run_until_tx) {
-         usleep(500);
+      } else {
+         // Shutdown threads
+         sleep(FLAGS_run_for_seconds);
       }
-   } else {
-      sleep(FLAGS_run_for_seconds);
+      keep_running = false;
+      while (running_threads_counter) {
+      }
+      crm.joinAll();
    }
-
-   keep_running = false;
-   while (running_threads_counter) {
-      usleep(1000);
+   cout << endl;
+   {
+      u64 total = 0;
+      cout << "TXs per thread = ";
+      for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         total += tx_per_thread[t_i];
+         cout << tx_per_thread[t_i] << ", ";
+      }
+      cout << endl;
+      cout << "Total TPC-C TXs = " << total << endl;
    }
-   crm.joinAll();
-
-   // Output results
-   cout << "Experiment completed." << endl;
-
+   // -------------------------------------------------------------------------------------
+   gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+   cout << endl << "consumed space in GiB = " << gib << endl;
    return 0;
 }
