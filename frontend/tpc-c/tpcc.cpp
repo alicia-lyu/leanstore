@@ -6,20 +6,14 @@
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/utils/Misc.hpp"
-#include "leanstore/utils/Parallelize.hpp"
-#include "leanstore/utils/RandomGenerator.hpp"
 #include "leanstore/utils/ZipfGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
-
-#include "PerfEvent.hpp"
 // -------------------------------------------------------------------------------------
 #include <unistd.h>
 
 #include <iostream>
-#include <set>
 #include <string>
-#include <vector>
 // -------------------------------------------------------------------------------------
 DEFINE_int64(tpcc_warehouse_count, 1, "");
 DEFINE_int32(tpcc_abort_pct, 0, "");
