@@ -7,8 +7,6 @@
 #include <cassert>
 #include <cstring>
 #include <functional>
-#include <optional>
-#include <variant>
 // -------------------------------------------------------------------------------------
 // Helpers to generate a descriptor that describes which attributes are in-place updating in a fixed-size value
 #define UpdateDescriptorInit(Name, Count)                                                                                                     \
@@ -75,27 +73,4 @@ class Adapter
    }
 
    virtual Scanner<Record> getScanner() { UNREACHABLE(); };
-};
-
-template <class... Records>
-class MergedAdapter
-{
-   using Record = std::variant<Records...>;
-
-  public:
-   virtual void scan(const typename Record::Key& key,
-                     const std::function<bool(const typename Record::Key&, const Record&)>& found_record_cb,
-                     std::function<void()> reset_if_scan_failed_cb) = 0;
-
-   virtual void insert(const typename Record::Key& key, const Record& record) = 0;
-
-   virtual void lookup(const typename Record::Key& key, const std::function<void(const Record&)>& callback) = 0;
-
-   virtual void update(const typename Record::Key& key,
-                       const std::function<void(Record&)>& update_the_record_in_place_cb,
-                       leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) = 0;
-
-   virtual bool erase(const typename Record::Key& key) = 0;
-
-   // virtual Scanner<Records...> getScanner() { UNREACHABLE(); };
 };
