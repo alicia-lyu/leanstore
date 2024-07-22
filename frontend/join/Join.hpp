@@ -22,6 +22,12 @@ public:
     advance_right();
   }
 
+  ~MergeJoin() {
+    std::cout << "~MergeJoin(): Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)" << std::endl;
+    std::cout << "Left semi-join selectivity: " << (double)left_matched / left_consumed << std::endl;
+    std::cout << "Right semi-join selectivity: " << (double)right_matched / right_consumed << std::endl;
+  }
+
   std::optional<std::pair<typename JoinedRecord::Key, JoinedRecord>> next() {
 
     std::optional<std::pair<typename JoinedRecord::Key, JoinedRecord>> joined_record = std::nullopt;
@@ -106,12 +112,20 @@ private:
   bool left_exhausted = false;
   bool right_exhausted = false;
 
+  size_t left_matched = 0;
+  size_t right_matched = 0;
+  bool current_left_matched = false;
+  bool current_right_matched = false;
+
   std::optional<typename Record2::Key> cached_right_key;
   std::vector<Record2> cached_right_records;
   typename std::vector<Record2>::iterator cached_right_records_iter;
 
   bool advance_left() {
     assert(!left_exhausted);
+    if (current_left_matched) {
+      left_matched++;
+    }
     auto ret = left_scanner->next();
     if (!ret.has_value()) {
       left_exhausted = true;
@@ -120,12 +134,16 @@ private:
     left_consumed++;
     left_key = ret.value().key;
     left_record = ret.value().record;
+    current_left_matched = false;
     // std::cout << "Advance left: " << left_key.ol_w_id << " " << left_record.ol_i_id << std::endl;
     return true;
   }
 
   bool advance_right() {
     assert(!right_exhausted);
+    if (current_right_matched) {
+      right_matched++;
+    }
     if (right_exhausted) return false;
     auto ret = right_scanner->next();
     if (!ret.has_value()) {
@@ -135,6 +153,7 @@ private:
     right_consumed++;
     right_key = ret.value().key;
     right_record = ret.value().record;
+    current_right_matched = false;
     // std::cout << "Advance right: " << right_key.s_w_id << " " << right_key.s_i_id << std::endl;
     return true;
   }
@@ -170,12 +189,10 @@ private:
     };
 
     JoinedRecord record {
-      left_record.ol_i_id,
       left_record.ol_supply_w_id,
       left_record.ol_delivery_d,
       left_record.ol_quantity,
       left_record.ol_amount,
-      left_record.ol_dist_info,
       right.s_quantity,
       right.s_dist_01,
       right.s_dist_02,
@@ -193,17 +210,13 @@ private:
       right.s_data
     };
 
+    current_left_matched = true;
     if (use_cached) {
-      // std::cout << "Joining with cached right #" << cached_right_records_iter - cached_right_records.begin() << ": " << cached_right_key.value().s_w_id << " " << cached_right_key.value().s_i_id << std::endl;
       ++cached_right_records_iter;
-      // if (cached_right_records_iter == cached_right_records.end()) {
-      //   std::cout << "Cached right records exhausted" << std::endl;
-      // } else {
-      //   std::cout << "Next cached right # " << cached_right_records_iter - cached_right_records.begin() << std::endl;
-      // }
     } else {
+      current_right_matched = true;
       bool ret = advance_right();
-      if ((ret && compare_keys() != 0) || !ret) advance_left(); // Advance left unless the next right key can still be joined. Preventing left from joining with the same right records (cached) multiple times
+      if ((ret && compare_keys() != 0) || !ret) advance_left();
     }
 
     return {key, record};

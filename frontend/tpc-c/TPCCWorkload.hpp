@@ -8,10 +8,14 @@
 // -------------------------------------------------------------------------------------
 #include <vector>
 using std::vector;
+
+template <template <typename> class AdapterType>
+class TPCCJoinWorkload;
 // -------------------------------------------------------------------------------------
 template <template <typename> class AdapterType>
 class TPCCWorkload
 {
+   friend class TPCCJoinWorkload<AdapterType>;
   private:
    static constexpr INTEGER OL_I_ID_C = 7911;  // in range [0, 8191]
    static constexpr INTEGER C_ID_C = 259;      // in range [0, 1023]
