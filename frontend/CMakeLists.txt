@@ -64,6 +64,10 @@ target_link_libraries(lmdb_ycsb leanstore lmdb Threads::Threads)
 target_include_directories(lmdb_ycsb PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 # sudo apt-get install liblmdb-dev
 
-add_executable(join_tpcc join/join_tpcc.cpp) # Don't need to add other files in Join?
+add_executable(join_tpcc join/join_tpcc.cpp)
 target_link_libraries(join_tpcc leanstore Threads::Threads)
 target_include_directories(join_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+
+add_executable(merged_tpcc join/merged_tpcc.cpp)
+target_link_libraries(merged_tpcc leanstore Threads::Threads)
+target_include_directories(merged_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
