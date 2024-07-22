@@ -102,7 +102,7 @@ int main(int argc, char** argv)
                                        FLAGS_order_wdc_index, FLAGS_tpcc_warehouse_count, FLAGS_tpcc_remove,
                                        should_tpcc_driver_handle_isolation_anomalies, FLAGS_tpcc_warehouse_affinity);
 
-   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, joined_ols);
+   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, orderline_secondary, joined_ols);
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
@@ -220,14 +220,6 @@ int main(int argc, char** argv)
          running_threads_counter++;
          tpcc.prepare();
          volatile u64 tx_acc = 0;
-         // cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
-         // cr::Worker::my().commitTX();
-         // // -------------------------------------------------------------------------------------
-         // if (FLAGS_ch_a_start_delay_sec) {
-         //    cr::Worker::my().cc.switchToReadCommittedMode();
-         //    sleep(FLAGS_ch_a_start_delay_sec);
-         //    cr::Worker::my().cc.switchToSnapshotIsolationMode();
-         // }
          while (keep_running) {
             utils::Timer timer(CRCounters::myCounters().cc_ms_oltp_tx);
             jumpmuTry()

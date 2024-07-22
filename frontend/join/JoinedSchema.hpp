@@ -4,7 +4,7 @@
 
 // TODO: Generate multiple schema with different included columns
 
-// Joining order line and stock
+// Joining order line and stock in the same warehouse
 struct ol_join_sec_t {
   static constexpr int id = 11;
   struct Key {
@@ -170,12 +170,11 @@ struct joined_ols_t {
     }
   };
   // from order line
-  Integer ol_i_id;
-  Integer ol_supply_w_id;
+  Integer ol_supply_w_id; // In inner join results, it must be the same as w_id, but not so in outer join results, where s info are NULL for unmatched records, as information from the actual supplying warehouse is not joined.
   Timestamp ol_delivery_d;
   Numeric ol_quantity;
   Numeric ol_amount;
-  Varchar<24> ol_dist_info;
+  // Varchar<24> ol_dist_info; // Can be looked up by ol_d_id and s_dist_0x
   // From stock
   Numeric s_quantity;
   Varchar<24> s_dist_01;
@@ -223,8 +222,8 @@ struct joined_ols_t {
   }
 
   friend std::ostream& operator<<(std::ostream& os, const joined_ols_t& record) {
-    os << "i_id: " << record.ol_i_id << ", supply_w_id: " << record.ol_supply_w_id
-       << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", dist_info: " << record.ol_dist_info.toString() << ", s_quantity: " << record.s_quantity << ", s_dist_01: " << record.s_dist_01.toString() << ", s_dist_02: " << record.s_dist_02.toString() << ", s_dist_03: " << record.s_dist_03.toString() << ", s_dist_04: " << record.s_dist_04.toString() << ", s_dist_05: " << record.s_dist_05.toString() << ", s_dist_06: " << record.s_dist_06.toString() << ", s_dist_07: " << record.s_dist_07.toString() << ", s_dist_08: " << record.s_dist_08.toString() << ", s_dist_09: " << record.s_dist_09.toString() << ", s_dist_10: " << record.s_dist_10.toString() << ", s_ytd: " << record.s_ytd << ", s_order_cnt: " << record.s_order_cnt << ", s_remote_cnt: " << record.s_remote_cnt << ", s_data: " << record.s_data.toString();
+    os << ", supply_w_id: " << record.ol_supply_w_id
+       << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", s_quantity: " << record.s_quantity << ", s_dist_01: " << record.s_dist_01.toString() << ", s_dist_02: " << record.s_dist_02.toString() << ", s_dist_03: " << record.s_dist_03.toString() << ", s_dist_04: " << record.s_dist_04.toString() << ", s_dist_05: " << record.s_dist_05.toString() << ", s_dist_06: " << record.s_dist_06.toString() << ", s_dist_07: " << record.s_dist_07.toString() << ", s_dist_08: " << record.s_dist_08.toString() << ", s_dist_09: " << record.s_dist_09.toString() << ", s_dist_10: " << record.s_dist_10.toString() << ", s_ytd: " << record.s_ytd << ", s_order_cnt: " << record.s_order_cnt << ", s_remote_cnt: " << record.s_remote_cnt << ", s_data: " << record.s_data.toString();
     return os;
   }
 };
