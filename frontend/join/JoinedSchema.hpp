@@ -87,68 +87,6 @@ struct ol_join_sec_t {
   // }
 };
 
-struct stock_ols_t {
-  static constexpr int id = 12;
-  struct Key {
-    // join key & stock_t::Key
-    static constexpr int id = 10; // comes from table 10, i.e., stock
-    Integer ols_w_id;
-    Integer ols_i_id;
-
-    friend std::ostream& operator<<(std::ostream& os, const Key& key) {
-      os << "w_id: " << key.ols_w_id << ", i_id: " << key.ols_i_id;
-      return os;
-    }
-  };
-  // stock_t::Value
-  Numeric ols_quantity;
-  Varchar<24> ols_dist_01;
-  Varchar<24> ols_dist_02;
-  Varchar<24> ols_dist_03;
-  Varchar<24> ols_dist_04;
-  Varchar<24> ols_dist_05;
-  Varchar<24> ols_dist_06;
-  Varchar<24> ols_dist_07;
-  Varchar<24> ols_dist_08;
-  Varchar<24> ols_dist_09;
-  Varchar<24> ols_dist_10;
-  Numeric ols_ytd;
-  Numeric ols_order_cnt;
-  Numeric ols_remote_cnt;
-  Varchar<50> ols_data;
-
-  template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
-    unsigned pos = 0;
-    pos += fold(out + pos, key.ols_w_id);
-    pos += fold(out + pos, key.ols_i_id);
-    pos += fold(out + pos, Key::id);
-    return pos;
-  }
-
-  template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
-    unsigned pos = 0;
-    pos += unfold(in + pos, key.ols_w_id);
-    pos += unfold(in + pos, key.ols_i_id);
-    int id;
-    pos += unfold(in + pos, id);
-    assert(id == Key::id);
-    return pos;
-  }
-
-  static constexpr unsigned maxFoldLength() {
-    return 0 + sizeof(Key::ols_w_id) + sizeof(Key::ols_i_id) + sizeof(Key::id);
-  };
-
-  static constexpr unsigned joinKeyLength() {
-    return 0 + sizeof(Key::ols_w_id) + sizeof(Key::ols_i_id);
-  }
-
-  friend std::ostream& operator<<(std::ostream& os, const stock_ols_t& record) {
-    os << "quantity: " << record.ols_quantity << ", dist_01: " << record.ols_dist_01.toString() << ", dist_02: " << record.ols_dist_02.toString() << ", dist_03: " << record.ols_dist_03.toString() << ", dist_04: " << record.ols_dist_04.toString() << ", dist_05: " << record.ols_dist_05.toString() << ", dist_06: " << record.ols_dist_06.toString() << ", dist_07: " << record.ols_dist_07.toString() << ", dist_08: " << record.ols_dist_08.toString() << ", dist_09: " << record.ols_dist_09.toString() << ", dist_10: " << record.ols_dist_10.toString() << ", ytd: " << record.ols_ytd << ", order_cnt: " << record.ols_order_cnt << ", remote_cnt: " << record.ols_remote_cnt << ", data: " << record.ols_data.toString();
-    return os;
-  }
-};
-
 struct joined_ols_t {
   static constexpr int id = 11;
   struct Key {

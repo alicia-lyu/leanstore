@@ -65,8 +65,6 @@ class TPCCJoinWorkload
       // All default configs, dram_gib = 8, cardinality mostly 1 or 2. Can also be 3, etc.
    }
 
-   void addStock(stock_t new_stock_record) {}
-
    void newOrderRnd(Integer w_id)
    {
       // tpcc->newOrderRnd(w_id);
@@ -138,6 +136,7 @@ class TPCCJoinWorkload
                 rec.s_ytd += qty;
              },
              stock_update_descriptor);
+         // TODO Update join results as well
       }
 
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
