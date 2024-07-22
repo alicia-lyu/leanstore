@@ -4,7 +4,7 @@
 #include "JoinedSchema.hpp"
 #include "MergedAdapter.hpp"
 
-template <template <typename> class AdapterType, template <typename, typename> class MergedAdapterType>
+template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>
 class TPCCMergedWorkload
 {
    TPCCWorkload<AdapterType>* tpcc;
@@ -58,7 +58,7 @@ class TPCCMergedWorkload
    }
 
   public:
-   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType<ol_join_sec_t, stock_t> merged) : tpcc(tpcc), merged(merged) {}
+   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType<ol_join_sec_t, stock_t>& merged) : tpcc(tpcc), merged(merged) {}
 
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
@@ -145,7 +145,7 @@ class TPCCMergedWorkload
                  },
                  key, rec);
           },
-          []() { /* undo */});
+          []() { /* undo */ });
 
       std::cout << "Lookup cardinality: " << lookupCardinality << std::endl;
       // All default configs, dram_gib = 8, cardinality mostly 1 or 2. Can also be 3, etc.
@@ -211,8 +211,9 @@ class TPCCMergedWorkload
 
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
+         // We don't need the primary index of stock_t at all, since all its info is in merged
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
-         tpcc->stock.update1(
+         merged.update1(
              {supwares[i], itemids[i]},
              [&](stock_t& rec) {
                 auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
@@ -222,7 +223,6 @@ class TPCCMergedWorkload
                 rec.s_ytd += qty;
              },
              stock_update_descriptor);
-         // TODO update merged---Do we need this primary index at all?
       }
 
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
@@ -279,6 +279,35 @@ class TPCCMergedWorkload
       }
    }
 
+   void loadStockToMerged(Integer w_id)
+   {
+      for (Integer i = 0; i < tpcc->ITEMS_NO; i++) {
+         Varchar<50> s_data = tpcc->randomastring<50>(25, 50);
+         if (tpcc->rnd(10) == 0) {
+            s_data.length = tpcc->rnd(s_data.length - 8);
+            s_data = s_data || Varchar<10>("ORIGINAL");
+         }
+         merged.insert({w_id, i + 1}, {tpcc->randomNumeric(10, 100), tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24),
+                                       tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24),
+                                       tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24),
+                                       tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24), 0, 0, 0, s_data});
+      }
+   }
+
+   void verifyWarehouse(Integer w_id)
+   {
+      // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
+      tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
+      for (Integer d_id = 1; d_id <= 10; d_id++) {
+         for (Integer c_id = 1; c_id <= 3000; c_id++) {
+            tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
+         }
+      }
+      for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO; s_id++) {
+         merged.lookup1({w_id, s_id}, [&](const auto&) {});
+      }
+   }
+
    int tx(Integer w_id)
    {
       u64 rnd = leanstore::utils::RandomGenerator::getRand(0, 4);
@@ -300,7 +329,6 @@ class TPCCMergedWorkload
          return 0;
          // paymentRnd
          // orderStatusRnd
-         // stockLevelRnd
       }
    }
 };

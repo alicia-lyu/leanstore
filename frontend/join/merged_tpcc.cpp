@@ -3,7 +3,7 @@
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Join.hpp"
 #include "JoinedSchema.hpp"
-#include "TPCCJoinWorkload.hpp"
+#include "TPCCMergedWorkload.hpp"
 #include "LeanStoreMergedAdapter.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/concurrency-recovery/CRMG.hpp"
@@ -102,7 +102,7 @@ int main(int argc, char** argv)
                                        FLAGS_order_wdc_index, FLAGS_tpcc_warehouse_count, FLAGS_tpcc_remove,
                                        should_tpcc_driver_handle_isolation_anomalies, FLAGS_tpcc_warehouse_affinity);
 
-   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, orderline_secondary, joined_ols);
+   TPCCMergedWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpcc_merge(&tpcc, merged);
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
@@ -122,7 +122,7 @@ int main(int argc, char** argv)
                   return;
                }
                cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-               tpcc.loadStock(w_id);
+               tpcc_merge.loadStockToMerged(w_id);
                tpcc.loadDistrinct(w_id);
                for (Integer d_id = 1; d_id <= 10; d_id++) {
                   tpcc.loadCustomer(w_id, d_id);
@@ -150,7 +150,7 @@ int main(int argc, char** argv)
                      return;
                   }
                   cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
-                  tpcc.verifyWarehouse(w_id);
+                  tpcc_merge.verifyWarehouse(w_id);
                   cr::Worker::my().commitTX();
                }
             });
@@ -164,7 +164,7 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(0, [&]() { cout << "Warehouse pages = " << warehouse.btree->countPages() << endl; });
 
    // -------------------------------------------------------------------------------------
-   // Step 2: Add secondary index to orderline and stock
+   // Step 2: Add secondary index of orderline to merged
    {
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
@@ -175,39 +175,14 @@ int main(int argc, char** argv)
                break;
             auto [key, payload] = ret.value();
             ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-            orderline_secondary.insert(sec_key, {});
+            merged.insert(sec_key, {});
          }
          cr::Worker::my().commitTX();
       });
    }
 
    // -------------------------------------------------------------------------------------
-   // Step 3: Perform a merge join and load the result into joined_orderline_stock
-   {
-      crm.scheduleJobSync(0, [&]() {
-         std::cout << "Merging orderline and stock" << std::endl;
-         tpcc.prepare();
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         auto orderline_scanner = orderline.getScanner<ol_join_sec_t>(&orderline_secondary);
-         auto stock_scanner = stock.getScanner();
-         MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
-
-         while (true) {
-            auto ret = merge_join.next();
-            if (!ret.has_value())
-               break;
-            auto [key, payload] = ret.value();
-            joined_ols.insert(key, payload);
-         }
-         // static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(joined_ols.btree))->printInfos(8 *
-         // 1024 * 1024 * 1024);
-         cr::Worker::my().commitTX();
-      });
-   }
-   crm.joinAll();
-
-   // -------------------------------------------------------------------------------------
-   // Step 4: Start write TXs into order_line and stock, and read TXs into joined_orderline_stock
+   // Step 3: Start read/write TXs
    atomic<u64> keep_running = true;
    atomic<u64> running_threads_counter = 0;
    vector<thread> threads;
@@ -234,7 +209,7 @@ int main(int argc, char** argv)
                if (w_id > FLAGS_tpcc_warehouse_count) {
                   return;
                }
-               tpcc_join.tx(w_id);
+               tpcc_merge.tx(w_id);
                if (FLAGS_tpcc_abort_pct && tpcc.urand(0, 100) <= FLAGS_tpcc_abort_pct) {
                   cr::Worker::my().abortTX();
                } else {
