@@ -3,8 +3,8 @@
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Join.hpp"
 #include "JoinedSchema.hpp"
-#include "TPCCMergedWorkload.hpp"
 #include "LeanStoreMergedAdapter.hpp"
+#include "TPCCMergedWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
@@ -62,9 +62,6 @@ int main(int argc, char** argv)
    LeanStoreAdapter<orderline_t> orderline;
    LeanStoreAdapter<item_t> item;
    LeanStoreAdapter<stock_t> stock;
-   // LeanStoreAdapter<ol_join_sec_t> orderline_secondary;
-   // LeanStoreAdapter<stock_join_sec_t> stock_secondary;
-   // LeanStoreAdapter<joined_ols_t> joined_ols;
    LeanStoreMergedAdapter merged;
 
    auto& crm = db.getCRManager();
@@ -123,6 +120,7 @@ int main(int argc, char** argv)
                }
                cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
                tpcc_merge.loadStockToMerged(w_id);
+               // tpcc.loadStock(w_id);
                tpcc.loadDistrinct(w_id);
                for (Integer d_id = 1; d_id <= 10; d_id++) {
                   tpcc.loadCustomer(w_id, d_id);
@@ -151,6 +149,7 @@ int main(int argc, char** argv)
                   }
                   cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
                   tpcc_merge.verifyWarehouse(w_id);
+                  // tpcc.verifyWarehouse(w_id);
                   cr::Worker::my().commitTX();
                }
             });
@@ -159,16 +158,14 @@ int main(int argc, char** argv)
       }
    }
 
-   double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-   cout << "TPC-C loaded - consumed space in GiB = " << gib << endl;
-   crm.scheduleJobSync(0, [&]() { cout << "Warehouse pages = " << warehouse.btree->countPages() << endl; });
-
    // -------------------------------------------------------------------------------------
    // Step 2: Add secondary index of orderline to merged
    {
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          auto orderline_scanner = orderline.getScanner();
+         // cout << "After inserting stock to merged, ";
+         // merged.printTreeHeight();
          while (true) {
             auto ret = orderline_scanner.next();
             if (!ret.has_value())
@@ -177,9 +174,29 @@ int main(int argc, char** argv)
             ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
             merged.template insert<ol_join_sec_t>(sec_key, {});
          }
+         // cout << "After inserting orderline secondary index to merged, ";
+         // merged.printTreeHeight();
          cr::Worker::my().commitTX();
       });
    }
+
+   double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+   cout << "TPC-C loaded - consumed space in GiB = " << gib << endl;
+   crm.scheduleJobSync(0, [&]() {
+      cout << "Warehouse pages = " << warehouse.btree->countPages() << endl;
+      cout << "District pages = " << district.btree->countPages() << endl;
+      cout << "Customer pages = " << customer.btree->countPages() << endl;
+      cout << "CustomerWDL pages = " << customerwdl.btree->countPages() << endl;
+      cout << "History pages = " << history.btree->countPages() << endl;
+      cout << "NewOrder pages = " << neworder.btree->countPages() << endl;
+      cout << "Order pages = " << order.btree->countPages() << endl;
+      cout << "OrderWDC pages = " << order_wdc.btree->countPages() << endl;
+      cout << "OrderLine pages = " << orderline.btree->countPages() << endl;
+      cout << "Item pages = " << item.btree->countPages() << endl;
+      cout << "Merged pages = " << merged.btree->countPages() << endl;
+   });
+
+   crm.joinAll();
 
    // -------------------------------------------------------------------------------------
    // Step 3: Start read/write TXs
@@ -193,7 +210,7 @@ int main(int argc, char** argv)
    for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
       crm.scheduleJobAsync(t_i, [&, t_i]() {
          running_threads_counter++;
-         tpcc.prepare();
+         // tpcc.prepare();
          volatile u64 tx_acc = 0;
          while (keep_running) {
             utils::Timer timer(CRCounters::myCounters().cc_ms_oltp_tx);
