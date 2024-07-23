@@ -416,6 +416,13 @@ struct stock_t {
       pos += fold(out + pos, record.s_i_id);
       return pos;
    }
+
+   template <class T>
+   static unsigned foldJKey(uint8_t* out, const T& record)
+   {
+      stock_t::foldKey<T>(out, record);
+   }
+
    template <class T>
    static unsigned unfoldKey(const uint8_t* in, T& record)
    {
@@ -425,6 +432,8 @@ struct stock_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::s_w_id) + sizeof(Key::s_i_id); };
+
+   static constexpr unsigned joinKeyLength() { return stock_t::maxFoldLength(); };
 
    friend bool operator==(const stock_t& lhs, const stock_t& rhs)
    {

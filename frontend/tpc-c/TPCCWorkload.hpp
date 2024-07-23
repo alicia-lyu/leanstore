@@ -2,7 +2,6 @@
 #include "Schema.hpp"
 #include "Units.hpp"
 #include "../shared/Adapter.hpp"
-#include "../join/MergedAdapter.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/utils/RandomGenerator.hpp"
@@ -13,14 +12,16 @@ using std::vector;
 
 template <template <typename> class AdapterType>
 class TPCCJoinWorkload;
-template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>
+template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCCMergedWorkload;
 // -------------------------------------------------------------------------------------
 template <template <typename> class AdapterType>
 class TPCCWorkload
 {
    friend class TPCCJoinWorkload<AdapterType>;
-   friend class TPCCMergedWorkload<AdapterType, MergedAdapter>;
+
+   template <template <typename> class, class>
+   friend class TPCCMergedWorkload;
   private:
    static constexpr INTEGER OL_I_ID_C = 7911;  // in range [0, 8191]
    static constexpr INTEGER C_ID_C = 259;      // in range [0, 1023]
