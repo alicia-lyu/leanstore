@@ -210,7 +210,7 @@ int main(int argc, char** argv)
    for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
       crm.scheduleJobAsync(t_i, [&, t_i]() {
          running_threads_counter++;
-         // tpcc.prepare();
+         tpcc.prepare();
          volatile u64 tx_acc = 0;
          while (keep_running) {
             utils::Timer timer(CRCounters::myCounters().cc_ms_oltp_tx);

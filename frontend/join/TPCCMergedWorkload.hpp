@@ -224,7 +224,7 @@ class TPCCMergedWorkload
 
          Numeric i_price = tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
          Varchar<24> s_dist;
-         tpcc->stock.lookup1({w_id, itemid}, [&](const stock_t& rec) {
+         merged.template lookup1<stock_t>({w_id, itemid}, [&](const stock_t& rec) {
             switch (d_id) {
                case 1:
                   s_dist = rec.s_dist_01;
@@ -314,7 +314,7 @@ class TPCCMergedWorkload
          recentOrdersStockInfo(w_id, d_id, since);
          return 0;
       } else if (rnd == 2) {
-         // newOrderRnd(w_id);
+         newOrderRnd(w_id);
          // tpcc->paymentRnd(w_id);
          return 0;
       } else {
