@@ -2,20 +2,15 @@
 #include <cstdint>
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "JoinedSchema.hpp"
-#include "MergedAdapter.hpp"
 
-template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>
+template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCCMergedWorkload
 {
    TPCCWorkload<AdapterType>* tpcc;
-   MergedAdapterType<ol_join_sec_t, stock_t>& merged;
-   using merged_key_type = RecordVariant<ol_join_sec_t, stock_t>::Key;
-   using merged_value_type = RecordVariant<ol_join_sec_t, stock_t>::Value;
-   using JoinKey = stock_t::Key;  // May be different if the join key is not the primary key
+   MergedAdapterType& merged;
 
-   std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> returnCartesianProducts(
-       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>>& cached_left,
-       std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
+   std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> cartesianProducts(std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>>& cached_left,
+                                                                             std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
    {
       std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
       for (auto& left : cached_left) {
@@ -58,97 +53,91 @@ class TPCCMergedWorkload
    }
 
   public:
-   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType<ol_join_sec_t, stock_t>& merged) : tpcc(tpcc), merged(merged) {}
+   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType& merged) : tpcc(tpcc), merged(merged) {}
 
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
-      JoinKey start_key = {w_id, 0};  // Starting from the first item in the warehouse
+      stock_t::Key start_key = {w_id, 0};  // Starting from the first item in the warehouse
 
       uint64_t scanCardinality = 0;
 
-      JoinKey current_key = {w_id, 0};
+      stock_t::Key current_key = start_key;
+
       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
       std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
 
-      merged.scan(
+      merged.template scan<stock_t, ol_join_sec_t>(
           start_key,
-          [&](const merged_key_type& key, const merged_value_type& rec) {
+          [&](const stock_t::Key& key, const stock_t& rec) {
              ++scanCardinality;
-             return std::visit(
-                 [&, this](auto&& key, auto&& rec) {
-                    using KeyType = std::decay_t<decltype(key)>;
-                    if constexpr (std::is_same_v<KeyType, typename stock_t::Key>) {
-                       if (key.s_w_id != current_key.s_w_id || key.s_i_id != current_key.s_i_id) {
-                          // A new join key discovered
-                          // Do a cartesian product of current cached rows
-                          auto cartesian_products = returnCartesianProducts(cached_left, cached_right);
-                          results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
-                          // Start a new group
-                          current_key = key;
-                          cached_left.clear();
-                          cached_right.clear();
-                       }
-                       cached_right.push_back({key, rec});
-                       return true;
-                    } else {
-                       if (rec.ol_delivery_d < since || key.ols_d_id != d_id) {
-                          return true;  // continue scan
-                       }
-                       cached_left.push_back({key, rec});
-                       return true;  // continue scan
-                    }
-                 },
-                 key, rec);
+             if (key.s_w_id != current_key.s_w_id || key.s_i_id != current_key.s_i_id) {
+                // A new join key discovered
+                // Do a cartesian product of current cached rows
+                auto cartesian_products = cartesianProducts(cached_left, cached_right);
+                results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
+                // Start a new group
+                current_key = key;
+                cached_left.clear();
+                cached_right.clear();
+             }
+             cached_right.push_back({key, rec});
+             return true;
+          },
+          [&](const ol_join_sec_t::Key& key, const ol_join_sec_t& rec) {
+             ++scanCardinality;
+             bool since_condition = false;
+             tpcc->orderline.lookup1({key.ols_w_id, key.ols_d_id, key.ols_o_id, key.ols_number},
+                                                [&](const orderline_t& orderline_rec) { since_condition = orderline_rec.ol_delivery_d >= since; });
+             if (!since_condition || key.ols_d_id != d_id) {
+                return true;  // continue scan
+             }
+             cached_left.push_back({key, rec});
+             return true;  // continue scan
           },
           []() { /* undo */ });
-
       std::cout << "Scan cardinality: " << scanCardinality << std::endl;
    }
 
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
       vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
-      JoinKey start_key = {w_id, i_id};
+      stock_t::Key start_key = {w_id, i_id};
+      // Either type can be start key, as the prefix join key will be extracted in scan
+      // But as soon as you choose a type for start_key, you must put the same type in the first cb
 
       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
       uint64_t lookupCardinality = 0;
 
-      merged.scan(
+      merged.template scan<stock_t, ol_join_sec_t>(
           start_key,
-          [&](const merged_key_type& key, const merged_value_type& rec) {
-             lookupCardinality++;
-             return std::visit(
-                 [&, this](auto&& key, auto&& rec) {
-                    using KeyType = std::decay_t<decltype(key)>;
-                    if constexpr (std::is_same_v<KeyType, typename stock_t::Key>) {
-                       if (key.s_w_id != w_id || key.s_i_id != i_id) {
-                          // Finish scanning, do a cartesian product
-                          auto cartesian_products = returnCartesianProducts(cached_left, cached_right);
-                          results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
-                          return false;
-                       }
-                       cached_right.push_back({key, rec});
-                       return true;
-                    } else {
-                       assert(key.ols_i_id == i_id && key.ols_w_id == w_id);
-                       // Change only occur at a stock entry
-                       if (key.ols_d_id != d_id) {
-                          return true;  // continue scan
-                       }
-                       cached_left.push_back({key, rec});
-                       return true;  // continue scan
-                    }
-                 },
-                 key, rec);
+          [&](const stock_t::Key& key, const stock_t& rec) {
+             ++lookupCardinality;
+             if (key.s_w_id != w_id || key.s_i_id != i_id) {
+                // Finish scanning, do a cartesian product
+                auto cartesian_products = cartesianProducts(cached_left, cached_right);
+                results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
+                return false;
+             }
+             cached_right.push_back({key, rec});
+             return true;
+          },
+          [&](const ol_join_sec_t::Key& key, const ol_join_sec_t& rec) {
+             ++lookupCardinality;
+             assert(key.ols_i_id == i_id && key.ols_w_id == w_id);
+             // Change only occur at a stock entry
+             if (key.ols_d_id != d_id) {
+                return true;  // continue scan
+             }
+             cached_left.push_back({key, rec});
+             return true;  // continue scan
           },
           []() { /* undo */ });
 
       std::cout << "Lookup cardinality: " << lookupCardinality << std::endl;
-      // All default configs, dram_gib = 8, cardinality mostly 1 or 2. Can also be 3, etc.
    }
 
    void newOrderRnd(Integer w_id)
@@ -213,7 +202,7 @@ class TPCCMergedWorkload
          Integer qty = qtys[i];
          // We don't need the primary index of stock_t at all, since all its info is in merged
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
-         merged.update1(
+         merged.template update1<stock_t>(
              {supwares[i], itemids[i]},
              [&](stock_t& rec) {
                 auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
@@ -275,22 +264,23 @@ class TPCCMergedWorkload
          tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
          // TODO: i_data, s_data
          // ********** Update Secondary Index **********
-         merged.insert({w_id, itemid, d_id, o_id, lineNumber}, {});
+         merged.template insert<ol_join_sec_t>({w_id, itemid, d_id, o_id, lineNumber}, {});
       }
    }
 
    void loadStockToMerged(Integer w_id)
    {
       for (Integer i = 0; i < tpcc->ITEMS_NO; i++) {
-         Varchar<50> s_data = tpcc->randomastring<50>(25, 50);
+         Varchar<50> s_data = tpcc->template randomastring<50>(25, 50);
          if (tpcc->rnd(10) == 0) {
             s_data.length = tpcc->rnd(s_data.length - 8);
             s_data = s_data || Varchar<10>("ORIGINAL");
          }
-         merged.insert({w_id, i + 1}, {tpcc->randomNumeric(10, 100), tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24),
-                                       tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24),
-                                       tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24),
-                                       tpcc->randomastring<24>(24, 24), tpcc->randomastring<24>(24, 24), 0, 0, 0, s_data});
+         merged.template insert<stock_t>(typename stock_t::Key{w_id, i + 1},
+                       {tpcc->randomNumeric(10, 100), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
+                        tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
+                        tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
+                        tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data});
       }
    }
 
@@ -304,7 +294,7 @@ class TPCCMergedWorkload
          }
       }
       for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO; s_id++) {
-         merged.lookup1({w_id, s_id}, [&](const auto&) {});
+         merged.template lookup1<stock_t>(typename stock_t::Key{w_id, s_id}, [&](const auto&) {});
       }
    }
 

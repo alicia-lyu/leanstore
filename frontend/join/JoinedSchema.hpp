@@ -53,6 +53,13 @@ struct ol_join_sec_t {
     return pos;
   }
 
+  template <class T> static unsigned foldJKey(uint8_t *out, const T &key) {
+    unsigned pos = 0;
+    pos += fold(out + pos, key.ols_w_id);
+    pos += fold(out + pos, key.ols_i_id);
+    return pos;
+  }
+
   template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
     unsigned pos = 0;
     pos += unfold(in + pos, key.ols_w_id);

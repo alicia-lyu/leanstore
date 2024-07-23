@@ -65,7 +65,7 @@ int main(int argc, char** argv)
    // LeanStoreAdapter<ol_join_sec_t> orderline_secondary;
    // LeanStoreAdapter<stock_join_sec_t> stock_secondary;
    // LeanStoreAdapter<joined_ols_t> joined_ols;
-   LeanStoreMergedAdapter<ol_join_sec_t, stock_t> merged;
+   LeanStoreMergedAdapter merged;
 
    auto& crm = db.getCRManager();
    // -------------------------------------------------------------------------------------
@@ -81,7 +81,7 @@ int main(int argc, char** argv)
       orderline = LeanStoreAdapter<orderline_t>(db, "orderline");
       item = LeanStoreAdapter<item_t>(db, "item");
       stock = LeanStoreAdapter<stock_t>(db, "stock");
-      merged = LeanStoreMergedAdapter<ol_join_sec_t, stock_t>(db, "merged");
+      merged = LeanStoreMergedAdapter(db, "merged");
    });
 
    db.registerConfigEntry("tpcc_warehouse_count", FLAGS_tpcc_warehouse_count);
@@ -175,7 +175,7 @@ int main(int argc, char** argv)
                break;
             auto [key, payload] = ret.value();
             ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-            merged.insert(sec_key, {});
+            merged.template insert<ol_join_sec_t>(sec_key, {});
          }
          cr::Worker::my().commitTX();
       });
