@@ -17,3 +17,5 @@ debug*
 release*
 clang*
 paper*
+*.err
+*.out

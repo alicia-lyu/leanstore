@@ -97,7 +97,8 @@ class TPCCMergedWorkload
              return true;  // continue scan
           },
           []() { /* undo */ });
-      std::cout << "Scan cardinality: " << scanCardinality << std::endl;
+      // std::cout << "Scan cardinality: " << scanCardinality << std::endl;
+      // All default configs, dram_gib = 8, cardinality = 385752
    }
 
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
@@ -137,7 +138,8 @@ class TPCCMergedWorkload
           },
           []() { /* undo */ });
 
-      std::cout << "Lookup cardinality: " << lookupCardinality << std::endl;
+      // std::cout << "Lookup cardinality: " << lookupCardinality << std::endl;
+      // All default configs, dram_gib = 8, cardinality = 2--8
    }
 
    void newOrderRnd(Integer w_id)
@@ -312,10 +314,11 @@ class TPCCMergedWorkload
          recentOrdersStockInfo(w_id, d_id, since);
          return 0;
       } else if (rnd == 2) {
-         newOrderRnd(w_id);
+         // newOrderRnd(w_id);
+         // tpcc->paymentRnd(w_id);
          return 0;
       } else {
-         tpcc->deliveryRnd(w_id);
+         // tpcc->deliveryRnd(w_id);
          return 0;
          // paymentRnd
          // orderStatusRnd

@@ -76,7 +76,7 @@ class ScannerSec : public Scanner<Record1>
       assert(key == primaryKey);
       leanstore::Slice payload = this->it.value();
 
-      assert(payload.length() == sizeof(Record));
+      assert(payload.length() == sizeof(Record1));
       const Record1* record_ptr = reinterpret_cast<const Record1*>(payload.data());
       Record1 typed_payload = *record_ptr;
 

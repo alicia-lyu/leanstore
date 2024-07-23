@@ -1,5 +1,6 @@
 #include "LeanStore.hpp"
 
+#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/profiling/counters/PPCounters.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
@@ -111,6 +112,7 @@ LeanStore::LeanStore()
    // -------------------------------------------------------------------------------------
    buffer_manager->startBackgroundThreads();
 }
+
 // -------------------------------------------------------------------------------------
 void LeanStore::startProfilingThread()
 {

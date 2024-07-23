@@ -10,7 +10,9 @@ struct LeanStoreMergedAdapter {
    leanstore::KVInterface* btree;
    string name;
 
-   LeanStoreMergedAdapter() = default;
+   LeanStoreMergedAdapter() {
+      // hack
+   }
 
    LeanStoreMergedAdapter(LeanStore& db, string name) : name(name)
    {

@@ -420,7 +420,7 @@ struct stock_t {
    template <class T>
    static unsigned foldJKey(uint8_t* out, const T& record)
    {
-      stock_t::foldKey<T>(out, record);
+      return stock_t::foldKey<T>(out, record);
    }
 
    template <class T>
