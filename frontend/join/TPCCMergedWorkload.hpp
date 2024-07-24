@@ -13,6 +13,8 @@ class TPCCMergedWorkload
                                                                              std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
    {
       std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
+      results.reserve(cached_left.size() * cached_right.size()); // Reserve memory to avoid reallocations
+
       for (auto& left : cached_left) {
          for (auto& right : cached_right) {
             joined_ols_t::Key joined_key = {left.first.ols_w_id, left.first.ols_i_id, left.first.ols_d_id, left.first.ols_o_id,
@@ -66,6 +68,9 @@ class TPCCMergedWorkload
       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
+      cached_left.reserve(100); // Multiple order lines can be associated with a single stock item
+      cached_right.reserve(2);
+
       std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
 
       merged.template scan<stock_t, ol_join_sec_t>(
@@ -97,6 +102,11 @@ class TPCCMergedWorkload
              return true;  // continue scan
           },
           []() { /* undo */ });
+
+      // Final cartesian product for any remaining cached elements
+      auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
+      results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
+
       // std::cout << "Scan cardinality: " << scanCardinality << std::endl;
       // All default configs, dram_gib = 8, cardinality = 385752
    }
@@ -110,6 +120,9 @@ class TPCCMergedWorkload
 
       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
+
+      cached_left.reserve(100);
+      cached_right.reserve(2);
 
       uint64_t lookupCardinality = 0;
 
@@ -138,6 +151,10 @@ class TPCCMergedWorkload
           },
           []() { /* undo */ });
 
+      // Final cartesian product if the scan is complete without hitting the end condition
+      auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
+      results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
+
       // std::cout << "Lookup cardinality: " << lookupCardinality << std::endl;
       // All default configs, dram_gib = 8, cardinality = 2--8
    }
@@ -150,13 +167,15 @@ class TPCCMergedWorkload
       Integer ol_cnt = tpcc->urand(5, 15);
 
       vector<Integer> lineNumbers;
-      lineNumbers.reserve(15);
       vector<Integer> supwares;
-      supwares.reserve(15);
       vector<Integer> itemids;
-      itemids.reserve(15);
       vector<Integer> qtys;
+
+      lineNumbers.reserve(15);
+      supwares.reserve(15);
+      itemids.reserve(15);
       qtys.reserve(15);
+
       for (Integer i = 1; i <= ol_cnt; i++) {
          Integer supware = w_id;
          if (!tpcc->warehouse_affinity && tpcc->urand(1, 100) == 1)  // ATTN:remote transaction
@@ -200,6 +219,7 @@ class TPCCMergedWorkload
       }
       tpcc->neworder.insert({w_id, d_id, o_id}, {});
 
+      // Batch update stock records
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
          // We don't need the primary index of stock_t at all, since all its info is in merged
@@ -216,6 +236,7 @@ class TPCCMergedWorkload
              stock_update_descriptor);
       }
 
+      // Batch insert orderline records
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer lineNumber = lineNumbers[i];
          Integer supware = supwares[i];
@@ -264,8 +285,7 @@ class TPCCMergedWorkload
          Numeric ol_amount = qty * i_price * (1.0 + w_tax + d_tax) * (1.0 - c_discount);
          Timestamp ol_delivery_d = 0;  // NULL
          tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
-         // TODO: i_data, s_data
-         // ********** Update Secondary Index **********
+         // ********** Update Merged Index **********
          merged.template insert<ol_join_sec_t>({w_id, itemid, d_id, o_id, lineNumber}, {});
       }
    }
@@ -296,32 +316,26 @@ class TPCCMergedWorkload
          }
       }
       for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO; s_id++) {
-         merged.template lookup1<stock_t>(typename stock_t::Key{w_id, s_id}, [&](const auto&) {});
+         merged.template lookup1<stock_t>({w_id, s_id}, [&](const auto&) {});
       }
    }
 
-   int tx(Integer w_id)
+   int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage)
    {
-      u64 rnd = leanstore::utils::RandomGenerator::getRand(0, 4);
-      if (rnd == 0) {
+      u64 rnd = leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
+      if (rnd < read_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
          Integer i_id = leanstore::utils::RandomGenerator::getRand(1, 100001);
          ordersByItemId(w_id, d_id, i_id);
          return 0;
-      } else if (rnd == 1) {
+      } else if (rnd < read_percentage + scan_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
          Timestamp since = 1;
          recentOrdersStockInfo(w_id, d_id, since);
          return 0;
-      } else if (rnd == 2) {
-         newOrderRnd(w_id);
-         // tpcc->paymentRnd(w_id);
-         return 0;
       } else {
-         // tpcc->deliveryRnd(w_id);
+         newOrderRnd(w_id);
          return 0;
-         // paymentRnd
-         // orderStatusRnd
       }
    }
 };

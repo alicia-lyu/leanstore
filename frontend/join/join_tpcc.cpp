@@ -35,6 +35,9 @@ DEFINE_uint64(ch_a_process_delay_sec, 0, "");
 // DEFINE_bool(ch_a_infinite, false, "");
 // DEFINE_bool(ch_a_once, false, "");
 DEFINE_uint32(tpcc_threads, 0, "");
+DEFINE_uint32(read_rercentage, 0, "");
+DEFINE_uint32(scan_percentage, 0, "");
+DEFINE_uint32(write_percentage, 100, "");
 // -------------------------------------------------------------------------------------
 using namespace std;
 using namespace leanstore;
@@ -44,6 +47,7 @@ int main(int argc, char** argv)
    gflags::SetUsageMessage("Leanstore Join TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    assert(FLAGS_tpcc_warehouse_count > 0);
+   assert(FLAGS_read_rercentage + FLAGS_scan_percentage + FLAGS_write_percentage == 100);
    LeanStore::addS64Flag("TPC_SCALE", &FLAGS_tpcc_warehouse_count);
    // -------------------------------------------------------------------------------------
    // Check arguments
@@ -249,7 +253,7 @@ int main(int argc, char** argv)
                if (w_id > FLAGS_tpcc_warehouse_count) {
                   return;
                }
-               tpcc_join.tx(w_id);
+               tpcc_join.tx(w_id, FLAGS_read_rercentage, FLAGS_scan_percentage, FLAGS_write_percentage);
                if (FLAGS_tpcc_abort_pct && tpcc.urand(0, 100) <= FLAGS_tpcc_abort_pct) {
                   cr::Worker::my().abortTX();
                } else {

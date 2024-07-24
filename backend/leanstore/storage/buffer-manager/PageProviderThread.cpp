@@ -315,8 +315,8 @@ void BufferManager::pageProviderThread(u64 p_begin, u64 p_end)  // [p_begin, p_e
       }
       COUNTERS_BLOCK() { PPCounters::myCounters().pp_thread_rounds++; }
    }
-   bg_threads_counter--;
    cr::CRManager::global->deleteSpecialWorker();
+   bg_threads_counter--;
 }
 // -------------------------------------------------------------------------------------
 }  // namespace storage
