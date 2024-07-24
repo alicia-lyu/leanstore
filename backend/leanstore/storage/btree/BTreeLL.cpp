@@ -160,6 +160,9 @@ OP_RESULT BTreeLL::insert(u8* o_key, u16 o_key_length, u8* o_value, u16 o_value_
    {
       BTreeExclusiveIterator iterator(*static_cast<BTreeGeneric*>(this));
       OP_RESULT ret = iterator.insertKV(key, value);
+      if (ret != OP_RESULT::OK) {
+         std::cout << "OP_RESULT:" << std::to_string((int)ret) << " key:" << std::string((char*)o_key, o_key_length) << std::endl;
+      }
       ensure(ret == OP_RESULT::OK);
       if (config.enable_wal) {
          auto wal_entry = iterator.leaf.reserveWALEntry<WALInsert>(key.length() + value.length());
