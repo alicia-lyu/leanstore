@@ -16,7 +16,6 @@ join-exp-disk: # on-disk ratio: 1:8, 1:16, 1:32, 1:64
 	./experiment.sh join 1 16 1 1 98
 	./experiment.sh join 1 32 1 1 98
 	./experiment.sh join 1 64 1 1 98
-	./experiment.sh join 1 128 1 1 98
 
 join-exp-rsw: # read/scan/write ratio
 	make join-rel
@@ -54,7 +53,6 @@ merged-exp-disk: # on-disk ratio: 1:8, 1:16, 1:32, 1:64
 	./experiment.sh merged 1 16 1 1 98
 	./experiment.sh merged 1 32 1 1 98
 	./experiment.sh merged 1 64 1 1 98
-	./experiment.sh merged 1 128 1 1 98
 
 merged-exp-rsw: # read/scan/write ratio
 	make merged-rel
@@ -73,6 +71,10 @@ merged-exp-rsw: # read/scan/write ratio
 merged-exp:
 	make merged-exp-disk > ~/logs/merged-exp-disk.log
 	make merged-exp-rsw > ~/logs/merged-exp-rsw.log
+
+exp:
+	make join-exp
+	make merged-exp
 
 tpcc:
 	cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && make -j

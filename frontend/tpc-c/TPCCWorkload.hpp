@@ -58,9 +58,11 @@ class TPCCWorkload
       // As defined in TPC-C: https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-c_v5.11.0.pdf
 
       if (FLAGS_target_gib == 0) {
+         std::cout << "WARNING: target_gib is 0, using scale factor 1.0" << std::endl;
          return 1.0;
       }
 
+      // TODO: This is key size only
       uint64_t size = warehouse_t::maxFoldLength() +
          district_t::maxFoldLength() * 10 +
          customer_t::maxFoldLength() * CUSTOMER_SCALE +
@@ -887,8 +889,10 @@ class TPCCWorkload
          warehouseCount(warehouse_count),
          tpcc_remove(tpcc_remove),
          manually_handle_isolation_anomalies(manually_handle_isolation_anomalies),
-         warehouse_affinity(warehouse_affinity)
+         warehouse_affinity(warehouse_affinity),
+         scale_factor(calculate_scale_factor())
    {
+      std::cout << "TPCC scale factor: " << scale_factor << std::endl;
    }
    // -------------------------------------------------------------------------------------
    // [0, n)
@@ -926,11 +930,11 @@ class TPCCWorkload
       }
    }
    // -------------------------------------------------------------------------------------
-   void loadDistrinct(Integer w_id)
+   void loadDistrict(Integer w_id)
    {
       for (Integer i = 1; i < 11; i++) {
          district.insert({w_id, i}, {randomastring<10>(6, 10), randomastring<20>(10, 20), randomastring<20>(10, 20), randomastring<20>(10, 20),
-                                     randomastring<2>(2, 2), randomzip(), randomNumeric(0.0000, 0.2000), 3000000, 3001});
+                                     randomastring<2>(2, 2), randomzip(), randomNumeric(0.0000, 0.2000), 3000000, static_cast<Integer>(ceil(CUSTOMER_SCALE * scale_factor) + 1)});
       }
    }
    // -------------------------------------------------------------------------------------
@@ -1016,11 +1020,11 @@ class TPCCWorkload
       // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
       warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
-         for (Integer c_id = 1; c_id <= 3000; c_id++) {
+         for (Integer c_id = 1; c_id <= CUSTOMER_SCALE * scale_factor; c_id++) {
             customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
          }
       }
-      for (Integer s_id = 1; s_id <= ITEMS_NO; s_id++) {
+      for (Integer s_id = 1; s_id <= ITEMS_NO * scale_factor; s_id++) {
          stock.lookup1({w_id, s_id}, [&](const auto&) {});
       }
    }

@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Reset the image file
+rm ~/tmp/image
+touch ~/tmp/image
+
 # Ensure the script is called with the correct number of parameters
 if [ "$#" -ne 6 ] || [ "$1" != "join" ] && [ "$1" != "merged" ]; then
     echo "Usage: $0 <join|merged> <dram_gib> <target_gib> <read_percentage> <scan_percentage> <write_percentage>"
