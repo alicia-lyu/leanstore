@@ -1,12 +1,14 @@
 #pragma once
+#include <sys/types.h>
 #include "Schema.hpp"
 #include "Units.hpp"
 #include "../shared/Adapter.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/utils/RandomGenerator.hpp"
+#include "leanstore/Config.hpp"
 // -------------------------------------------------------------------------------------
-#include <any>
+#include <cstdint>
 #include <vector>
 using std::vector;
 
@@ -29,8 +31,11 @@ class TPCCWorkload
    // be within [65, 119]
    static constexpr INTEGER C_LAST_LOAD_C = 157;  // in range [0, 255]
    static constexpr INTEGER C_LAST_RUN_C = 223;   // in range [0, 255]
-   static constexpr INTEGER ITEMS_NO = 100000;    // 100K
-                                                  // -------------------------------------------------------------------------------------
+
+   static constexpr INTEGER CUSTOMER_SCALE = 30000;
+   static constexpr INTEGER ITEMS_NO = 100000; // independent of warehouse count
+   static constexpr INTEGER NO_SCALE = 9000;
+
    AdapterType<warehouse_t>& warehouse;
    AdapterType<district_t>& district;
    AdapterType<customer_t>& customer;
@@ -47,6 +52,35 @@ class TPCCWorkload
    const Integer tpcc_remove;
    const bool manually_handle_isolation_anomalies;
    const bool warehouse_affinity;
+   const double scale_factor;
+
+   double calculate_scale_factor() const {
+      // As defined in TPC-C: https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-c_v5.11.0.pdf
+
+      if (FLAGS_target_gib == 0) {
+         return 1.0;
+      }
+
+      uint64_t size = warehouse_t::maxFoldLength() +
+         district_t::maxFoldLength() * 10 +
+         customer_t::maxFoldLength() * CUSTOMER_SCALE +
+         customer_wdl_t::maxFoldLength() * CUSTOMER_SCALE +
+         history_t::maxFoldLength() * CUSTOMER_SCALE +
+         order_t::maxFoldLength() * CUSTOMER_SCALE +
+         neworder_t::maxFoldLength() * NO_SCALE +
+         orderline_t::maxFoldLength() * CUSTOMER_SCALE * 10 +
+         stock_t::maxFoldLength() * ITEMS_NO;
+
+      if (order_wdc_index) {
+         size += order_wdc_t::maxFoldLength() * CUSTOMER_SCALE;
+      }
+
+      size = size * warehouseCount + item_t::maxFoldLength() * ITEMS_NO;
+
+      double scale = ((double) FLAGS_target_gib * 1024 * 1024 * 1024) / size;
+
+      return scale;
+   }
    // -------------------------------------------------------------------------------------
    Integer urandexcept(Integer low, Integer high, Integer v)
    {
@@ -125,12 +159,12 @@ class TPCCWorkload
    inline Integer getItemID()
    {
       // OL_I_ID_C
-      return nurand(8191, 1, ITEMS_NO, OL_I_ID_C);
+      return nurand(8191, 1, ITEMS_NO * scale_factor, OL_I_ID_C);
    }
    inline Integer getCustomerID()
    {
       // C_ID_C
-      return nurand(1023, 1, 3000, C_ID_C);
+      return nurand(1023, 1, CUSTOMER_SCALE * scale_factor, C_ID_C);
       // return urand(1, 3000);
    }
    inline Integer getNonUniformRandomLastNameForRun()
@@ -880,7 +914,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void loadStock(Integer w_id)
    {
-      for (Integer i = 0; i < ITEMS_NO; i++) {
+      for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
          Varchar<50> s_data = randomastring<50>(25, 50);
          if (rnd(10) == 0) {
             s_data.length = rnd(s_data.length - 8);
@@ -903,7 +937,7 @@ class TPCCWorkload
    void loadCustomer(Integer w_id, Integer d_id)
    {
       Timestamp now = currentTimestamp();
-      for (Integer i = 0; i < 3000; i++) {
+      for (Integer i = 0; i < CUSTOMER_SCALE * scale_factor; i++) {
          Varchar<16> c_last;
          if (i < 1000)
             c_last = genName(i);
@@ -917,6 +951,7 @@ class TPCCWorkload
          customerwdl.insert({w_id, d_id, c_last, c_first}, {i + 1});
          Integer t_id = (Integer)leanstore::WorkerCounters::myCounters().t_id;
          Integer h_id = (Integer)leanstore::WorkerCounters::myCounters().variable_for_workload++;
+         // Each history for each customer
          history.insert({t_id, h_id}, {i + 1, d_id, w_id, d_id, w_id, now, 10.00, randomastring<24>(12, 24)});
       }
    }
@@ -925,10 +960,12 @@ class TPCCWorkload
    {
       Timestamp now = currentTimestamp();
       vector<Integer> c_ids;
-      for (Integer i = 1; i <= 3000; i++)
+      for (Integer i = 1; i <= CUSTOMER_SCALE * scale_factor; i++)
          c_ids.push_back(i);
       random_shuffle(c_ids.begin(), c_ids.end());
       Integer o_id = 1;
+      // Every order for each customer
+      // Each order has 5-15 lines
       for (Integer o_c_id : c_ids) {
          Integer o_carrier_id = (o_id < 2101) ? rnd(10) + 1 : 0;
          Numeric o_ol_cnt = rnd(10) + 5;
@@ -950,13 +987,13 @@ class TPCCWorkload
          o_id++;
       }
 
-      for (Integer i = 2100; i <= 3000; i++)
+      for (Integer i = (ITEMS_NO - NO_SCALE) * scale_factor; i <= ITEMS_NO * scale_factor; i++)
          neworder.insert({w_id, d_id, i}, {});
    }
    // -------------------------------------------------------------------------------------
    void loadItem()
    {
-      for (Integer i = 1; i <= ITEMS_NO; i++) {
+      for (Integer i = 1; i <= ITEMS_NO * scale_factor; i++) {
          Varchar<50> i_data = randomastring<50>(25, 50);
          if (rnd(10) == 0) {
             i_data.length = rnd(i_data.length - 8);
@@ -990,7 +1027,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void verifyItems()
    {
-      for (Integer i = 1; i <= ITEMS_NO; i++) {
+      for (Integer i = 1; i <= ITEMS_NO * scale_factor; i++) {
          item.lookup1({i}, [&](const auto&) {});
       }
    }
