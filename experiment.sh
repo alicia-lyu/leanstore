@@ -19,7 +19,7 @@ SCAN_PERCENTAGE=$5
 WRITE_PERCENTAGE=$6
 
 # Run the command
-./build-release/frontend/${METHOD}_tpcc --ssd_path=/home/alicia.w.lyu/tmp/image --vi=false --mv=false --isolation_level=ser --csv_path=./build-release/log --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE}
+./build-release/frontend/${METHOD}_tpcc --ssd_path=/home/alicia.w.lyu/tmp/image --vi=false --mv=false --isolation_level=ser --csv_path=./build-release/log --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE} --run_for_seconds=120 --pp_threads=2
 
 # Create the logs directory if it doesn't exist
 mkdir -p ~/logs

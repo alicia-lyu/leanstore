@@ -34,6 +34,8 @@ struct warehouse_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::w_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(w_name) + sizeof(w_street_1) + sizeof(w_street_2) + sizeof(w_city) + sizeof(w_state) + sizeof(w_zip) + sizeof(w_tax) + sizeof(w_ytd); };
 };
 
 struct district_t {
@@ -70,6 +72,8 @@ struct district_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::d_w_id) + sizeof(Key::d_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(d_name) + sizeof(d_street_1) + sizeof(d_street_2) + sizeof(d_city) + sizeof(d_state) + sizeof(d_zip) + sizeof(d_tax) + sizeof(d_ytd) + sizeof(d_next_o_id); };
 };
 
 struct customer_t { // 712B
@@ -118,6 +122,8 @@ struct customer_t { // 712B
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::c_w_id) + sizeof(Key::c_d_id) + sizeof(Key::c_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(c_first) + sizeof(c_middle) + sizeof(c_last) + sizeof(c_street_1) + sizeof(c_street_2) + sizeof(c_city) + sizeof(c_state) + sizeof(c_zip) + sizeof(c_phone) + sizeof(c_since) + sizeof(c_credit) + sizeof(c_credit_lim) + sizeof(c_discount) + sizeof(c_balance) + sizeof(c_ytd_payment) + sizeof(c_payment_cnt) + sizeof(c_delivery_cnt) + sizeof(c_data); };
 };
 
 struct customer_wdl_t {
@@ -152,6 +158,8 @@ struct customer_wdl_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::c_w_id) + sizeof(Key::c_d_id) + sizeof(Key::c_last) + sizeof(Key::c_first); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(c_id); };
 };
 
 struct history_t {
@@ -187,6 +195,8 @@ struct history_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::thread_id) + sizeof(Key::h_pk); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(h_c_id) + sizeof(h_c_d_id) + sizeof(h_c_w_id) + sizeof(h_d_id) + sizeof(h_w_id) + sizeof(h_date) + sizeof(h_amount) + sizeof(h_data); };
 };
 
 struct neworder_t {
@@ -217,6 +227,8 @@ struct neworder_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::no_w_id) + sizeof(Key::no_d_id) + sizeof(Key::no_o_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength(); };
 };
 
 struct order_t {
@@ -252,6 +264,8 @@ struct order_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::o_w_id) + sizeof(Key::o_d_id) + sizeof(Key::o_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(o_c_id) + sizeof(o_entry_d) + sizeof(o_carrier_id) + sizeof(o_ol_cnt) + sizeof(o_all_local); };
 };
 
 struct order_wdc_t {
@@ -285,6 +299,8 @@ struct order_wdc_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::o_w_id) + sizeof(Key::o_d_id) + sizeof(Key::o_c_id) + sizeof(Key::o_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength(); };
 };
 
 struct orderline_t {
@@ -334,6 +350,8 @@ struct orderline_t {
       return 0 + sizeof(Key::ol_w_id) + sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) + sizeof(Key::ol_number);
    };
 
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(ol_i_id) + sizeof(ol_supply_w_id) + sizeof(ol_delivery_d) + sizeof(ol_quantity) + sizeof(ol_amount) + sizeof(ol_dist_info); };
+
    friend bool operator==(const orderline_t& lhs, const orderline_t& rhs)
    {
       return lhs.ol_i_id == rhs.ol_i_id && lhs.ol_supply_w_id == rhs.ol_supply_w_id && lhs.ol_delivery_d == rhs.ol_delivery_d && lhs.ol_quantity == rhs.ol_quantity && lhs.ol_amount == rhs.ol_amount && lhs.ol_dist_info == rhs.ol_dist_info;
@@ -377,6 +395,8 @@ struct item_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::i_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(i_im_id) + sizeof(i_name) + sizeof(i_price) + sizeof(i_data); };
 };
 
 struct stock_t {
@@ -432,6 +452,8 @@ struct stock_t {
       return pos;
    }
    static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::s_w_id) + sizeof(Key::s_i_id); };
+
+   static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(s_quantity) + sizeof(s_dist_01) + sizeof(s_dist_02) + sizeof(s_dist_03) + sizeof(s_dist_04) + sizeof(s_dist_05) + sizeof(s_dist_06) + sizeof(s_dist_07) + sizeof(s_dist_08) + sizeof(s_dist_09) + sizeof(s_dist_10) + sizeof(s_ytd) + sizeof(s_order_cnt) + sizeof(s_remote_cnt) + sizeof(s_data); };
 
    static constexpr unsigned joinKeyLength() { return stock_t::maxFoldLength(); };
 

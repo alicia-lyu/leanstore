@@ -63,23 +63,27 @@ class TPCCWorkload
       }
 
       // TODO: This is key size only
-      uint64_t size = warehouse_t::maxFoldLength() +
-         district_t::maxFoldLength() * 10 +
-         customer_t::maxFoldLength() * CUSTOMER_SCALE +
-         customer_wdl_t::maxFoldLength() * CUSTOMER_SCALE +
-         history_t::maxFoldLength() * CUSTOMER_SCALE +
-         order_t::maxFoldLength() * CUSTOMER_SCALE +
-         neworder_t::maxFoldLength() * NO_SCALE +
-         orderline_t::maxFoldLength() * CUSTOMER_SCALE * 10 +
-         stock_t::maxFoldLength() * ITEMS_NO;
+      uint64_t size = warehouse_t::rowSize() +
+         district_t::rowSize() * 10 +
+         customer_t::rowSize() * CUSTOMER_SCALE +
+         customer_wdl_t::rowSize() * CUSTOMER_SCALE +
+         history_t::rowSize() * CUSTOMER_SCALE +
+         order_t::rowSize() * CUSTOMER_SCALE +
+         neworder_t::rowSize() * NO_SCALE +
+         orderline_t::rowSize() * CUSTOMER_SCALE * 10 +
+         stock_t::rowSize() * ITEMS_NO;
 
       if (order_wdc_index) {
-         size += order_wdc_t::maxFoldLength() * CUSTOMER_SCALE;
+         size += order_wdc_t::rowSize() * CUSTOMER_SCALE;
       }
 
-      size = size * warehouseCount + item_t::maxFoldLength() * ITEMS_NO;
+      size = size * warehouseCount + item_t::rowSize() * ITEMS_NO;
 
-      double scale = ((double) FLAGS_target_gib * 1024 * 1024 * 1024) / size;
+      double empirical_adjustment = 3; // Observed that the actual size is 3x---Why?
+
+      double scale = ((double) FLAGS_target_gib * 1024 * 1024 * 1024) / (size * empirical_adjustment);
+
+      std::cout << "Size of " << warehouseCount << " warehouses: " << size << " bytes, scale factor: " << scale << std::endl;
 
       return scale;
    }
@@ -166,7 +170,7 @@ class TPCCWorkload
    inline Integer getCustomerID()
    {
       // C_ID_C
-      return nurand(1023, 1, CUSTOMER_SCALE * scale_factor, C_ID_C);
+      return nurand(1023, 1, CUSTOMER_SCALE * scale_factor / 10, C_ID_C);
       // return urand(1, 3000);
    }
    inline Integer getNonUniformRandomLastNameForRun()
@@ -892,7 +896,6 @@ class TPCCWorkload
          warehouse_affinity(warehouse_affinity),
          scale_factor(calculate_scale_factor())
    {
-      std::cout << "TPCC scale factor: " << scale_factor << std::endl;
    }
    // -------------------------------------------------------------------------------------
    // [0, n)
@@ -904,6 +907,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void prepare()
    {
+      std::cout << "Preparing TPC-C" << std::endl;
       Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
       Integer h_id = 0;
       history.scanDesc(
@@ -918,6 +922,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void loadStock(Integer w_id)
    {
+      std::cout << "Loading " << ITEMS_NO * scale_factor << " stock" << std::endl;
       for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
          Varchar<50> s_data = randomastring<50>(25, 50);
          if (rnd(10) == 0) {
@@ -934,14 +939,15 @@ class TPCCWorkload
    {
       for (Integer i = 1; i < 11; i++) {
          district.insert({w_id, i}, {randomastring<10>(6, 10), randomastring<20>(10, 20), randomastring<20>(10, 20), randomastring<20>(10, 20),
-                                     randomastring<2>(2, 2), randomzip(), randomNumeric(0.0000, 0.2000), 3000000, static_cast<Integer>(ceil(CUSTOMER_SCALE * scale_factor) + 1)});
+                                     randomastring<2>(2, 2), randomzip(), randomNumeric(0.0000, 0.2000), 3000000, static_cast<Integer>(CUSTOMER_SCALE * scale_factor / 10 + 1)});
       }
    }
    // -------------------------------------------------------------------------------------
    void loadCustomer(Integer w_id, Integer d_id)
    {
+      std::cout << "Loading " << CUSTOMER_SCALE * scale_factor / 10 << " customers for district " << d_id << std::endl;
       Timestamp now = currentTimestamp();
-      for (Integer i = 0; i < CUSTOMER_SCALE * scale_factor; i++) {
+      for (Integer i = 0; i < CUSTOMER_SCALE * scale_factor / 10; i++) {
          Varchar<16> c_last;
          if (i < 1000)
             c_last = genName(i);
@@ -962,9 +968,10 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void loadOrders(Integer w_id, Integer d_id)
    {
+      std::cout << "Loading " << CUSTOMER_SCALE * scale_factor / 10 << " orders for district " << d_id << std::endl;
       Timestamp now = currentTimestamp();
       vector<Integer> c_ids;
-      for (Integer i = 1; i <= CUSTOMER_SCALE * scale_factor; i++)
+      for (Integer i = 1; i <= CUSTOMER_SCALE * scale_factor / 10; i++)
          c_ids.push_back(i);
       random_shuffle(c_ids.begin(), c_ids.end());
       Integer o_id = 1;
@@ -997,6 +1004,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void loadItem()
    {
+      std::cout << "Loading " << ITEMS_NO * scale_factor << " items" << std::endl;
       for (Integer i = 1; i <= ITEMS_NO * scale_factor; i++) {
          Varchar<50> i_data = randomastring<50>(25, 50);
          if (rnd(10) == 0) {
@@ -1017,10 +1025,11 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void verifyWarehouse(Integer w_id)
    {
+      std::cout << "Verifying warehouse " << w_id << std::endl;
       // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
       warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
-         for (Integer c_id = 1; c_id <= CUSTOMER_SCALE * scale_factor; c_id++) {
+         for (Integer c_id = 1; c_id <= CUSTOMER_SCALE * scale_factor / 10; c_id++) {
             customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
          }
       }
@@ -1031,6 +1040,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void verifyItems()
    {
+      std::cout << "Verifying items" << std::endl;
       for (Integer i = 1; i <= ITEMS_NO * scale_factor; i++) {
          item.lookup1({i}, [&](const auto&) {});
       }
