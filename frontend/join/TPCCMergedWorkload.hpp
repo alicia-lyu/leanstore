@@ -292,7 +292,7 @@ class TPCCMergedWorkload
 
    void loadStockToMerged(Integer w_id)
    {
-      for (Integer i = 0; i < tpcc->ITEMS_NO; i++) {
+      for (Integer i = 0; i < tpcc->ITEMS_NO * tpcc->scale_factor; i++) {
          Varchar<50> s_data = tpcc->template randomastring<50>(25, 50);
          if (tpcc->rnd(10) == 0) {
             s_data.length = tpcc->rnd(s_data.length - 8);
@@ -311,11 +311,11 @@ class TPCCMergedWorkload
       // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
       tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
-         for (Integer c_id = 1; c_id <= 3000; c_id++) {
+         for (Integer c_id = 1; c_id <= tpcc->CUSTOMER_SCALE * tpcc->scale_factor; c_id++) {
             tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
          }
       }
-      for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO; s_id++) {
+      for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO * tpcc->scale_factor; s_id++) {
          merged.template lookup1<stock_t>({w_id, s_id}, [&](const auto&) {});
       }
    }
