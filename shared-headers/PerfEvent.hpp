@@ -99,7 +99,7 @@ struct PerfEvent {
       auto& event = events[i];
       event.fd = syscall(__NR_perf_event_open, &event.pe, 0, -1, -1, 0);
       if (event.fd < 0) {
-        std::cerr << "Error opening counter " << names[i] << std::endl;
+        std::cerr << "Trying to initialize PerfEvent... Error opening counter " << names[i] << std::endl;
         events.resize(0);
         names.resize(0);
         return;

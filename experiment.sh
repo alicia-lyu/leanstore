@@ -21,27 +21,35 @@ echo "./build-release/frontend/${METHOD}_tpcc \
 --recover_file=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json \
 --csv_path=./build-release/log --csv_truncate=true \
 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false \
---run_for_seconds=60 --pp_threads=2 \
+--run_for_seconds=120 --pp_threads=2 \
 --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} \
 --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE} \
-> ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log"
+>> ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log"
 
 
 touch ~/tmp/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.image
 
-# Run the command
+TIME=$(date -u +"%m-%dT%H:%M:%SZ")
+
+echo "${TIME}. Running experiment with method: ${METHOD}, DRAM: ${DRAM_GIB} GiB, target: ${TARGET_GIB} GiB, read: ${READ_PERCENTAGE}%, scan: ${SCAN_PERCENTAGE}%, write: ${WRITE_PERCENTAGE}%" > ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log
+
 ./build-release/frontend/${METHOD}_tpcc \
 --ssd_path=/home/alicia.w.lyu/tmp/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.image \
 --persist_file=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json \
 --recover_file=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json \
---csv_path=./build-release/log --csv_truncate=true \
+--csv_path=./build-release/log --csv_truncate=true --profile_latency=true \
 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false \
---run_for_seconds=60 --pp_threads=2 \
+--run_for_seconds=120 --pp_threads=2 \
 --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} \
 --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE} \
-> ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log
+>> ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log
 
-# Create the logs directory if it doesn't exist
+if [ $? -ne 0 ]; then
+    echo "Experiment failed"
+    rm -f "./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json" # Must load next time
+    exit 1
+fi
+
 mkdir -p ~/logs
 
 move_log_file() {
