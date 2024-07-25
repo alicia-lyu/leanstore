@@ -88,11 +88,11 @@ public:
       }
     }
 
-    // if (joined_record.has_value() && produced % 10000 == 0) {
-    //   std::cout << "Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)" << std::endl;
-    //   std::cout << "Next joined record, key: " << joined_record.value().first << std::endl;
-    //   // std::cout << "Payload: " << joined_record.value().second << std::endl;
-    // }
+    if (joined_record.has_value() && produced % 100000 == 0) {
+      std::cout << "Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)" << std::endl;
+      std::cout << "Next joined record, key: " << joined_record.value().first << std::endl;
+      // std::cout << "Payload: " << joined_record.value().second << std::endl;
+    }
     if (joined_record.has_value()) produced++;
     
     return joined_record;
