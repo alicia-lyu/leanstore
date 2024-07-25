@@ -26,7 +26,7 @@ join-exp-disk: # on-disk ratio: 1:8, 1:16, 1:32, 1:64
 	# ./experiment.sh join 1 64 $(default_read) $(default_scan) $(default_write)
 
 default_dram = 1
-default_target = 1
+default_target = 2
 
 join-exp-rsw: # read/scan/write ratio
 	make join-rel

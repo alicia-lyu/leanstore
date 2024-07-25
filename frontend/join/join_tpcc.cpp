@@ -263,7 +263,7 @@ int main(int argc, char** argv)
          sleep(FLAGS_run_for_seconds);
       }
       keep_running = false;
-      std::cout << "Waiting for existing threads to join..." << std::endl;
+
       while (running_threads_counter) {
       }
       crm.joinAll();
