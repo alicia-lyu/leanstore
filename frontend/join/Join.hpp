@@ -1,3 +1,4 @@
+#pragma once
 #include "../shared/Adapter.hpp"
 #include "../shared/Types.hpp"
 #include "Exceptions.hpp"

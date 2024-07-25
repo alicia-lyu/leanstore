@@ -181,7 +181,6 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    // -------------------------------------------------------------------------------------
    void findMinLeafAndLatch(HybridPageGuard<BTreeNode>& target_guard)
    {
-      btree.printInfos(8 * 1024 * 1024 * 1024);
       while (true) {
          leaf_pos_in_parent = -1;
          jumpmuTry()

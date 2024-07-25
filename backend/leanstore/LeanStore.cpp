@@ -26,6 +26,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <filesystem>
 #include <locale>
 #include <sstream>
 // -------------------------------------------------------------------------------------
@@ -38,7 +39,7 @@ namespace leanstore
 LeanStore::LeanStore()
 {
    // LeanStore::addStringFlag("ssd_path", &FLAGS_ssd_path);
-   if (FLAGS_recover_file != "./leanstore.json") {
+   if (FLAGS_recover_file != "./leanstore.json" && std::filesystem::exists(FLAGS_recover_file)) {
       FLAGS_recover = true;
    }
    if (FLAGS_persist_file != "./leanstore.json") {
@@ -53,7 +54,7 @@ LeanStore::LeanStore()
       SetupFailed("You have to enable WAL");
    }
    if (FLAGS_isolation_level == "si" && (!FLAGS_mv | !FLAGS_vi)) {
-      SetupFailed("You have to enable mv an vi (multi-versioning)");
+      SetupFailed("You have to enable mv and vi (multi-versioning) for snapshot isolation.");
    }
    // -------------------------------------------------------------------------------------
    // Set the default logger to file logger
