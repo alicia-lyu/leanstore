@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "JoinedSchema.hpp"
+#include "Join.hpp"
 
 template <template <typename> class AdapterType>
 class TPCCJoinWorkload
@@ -226,15 +227,14 @@ class TPCCJoinWorkload
          // ********** Update Join Results **********
          // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
          stock_t stock_rec;
-         tpcc->stock.lookup1({w_id, itemid}, [&](const stock_t& rec) {
-            stock_rec = rec;
-         });
+         tpcc->stock.lookup1({w_id, itemid}, [&](const stock_t& rec) { stock_rec = rec; });
          joined_ols.insert(
              {w_id, itemid, d_id, o_id, lineNumber},
              {
                  supware, ol_delivery_d, qty, ol_amount,  // the same info inserted into orderline
-                 stock_rec.s_quantity, stock_rec.s_dist_01, stock_rec.s_dist_02, stock_rec.s_dist_03, stock_rec.s_dist_04, stock_rec.s_dist_05, stock_rec.s_dist_06, stock_rec.s_dist_07,
-                 stock_rec.s_dist_08, stock_rec.s_dist_09, stock_rec.s_dist_10, stock_rec.s_ytd, stock_rec.s_order_cnt, stock_rec.s_remote_cnt, stock_rec.s_data  // lookedup from stock
+                 stock_rec.s_quantity, stock_rec.s_dist_01, stock_rec.s_dist_02, stock_rec.s_dist_03, stock_rec.s_dist_04, stock_rec.s_dist_05,
+                 stock_rec.s_dist_06, stock_rec.s_dist_07, stock_rec.s_dist_08, stock_rec.s_dist_09, stock_rec.s_dist_10, stock_rec.s_ytd,
+                 stock_rec.s_order_cnt, stock_rec.s_remote_cnt, stock_rec.s_data  // lookedup from stock
              });
       }
    }
@@ -255,6 +255,36 @@ class TPCCJoinWorkload
       } else {
          newOrderRnd(w_id);
          return 0;
+      }
+   }
+
+   void loadOrderlineSecondary()
+   {
+      auto orderline_scanner = tpcc->orderline.getScanner();
+      while (true) {
+         auto ret = orderline_scanner.next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+         orderline_secondary.insert(sec_key, {});
+      }
+   }
+
+   void joinOrderlineAndStock()
+   {
+      auto orderline_scanner = tpcc->orderline.template getScanner<ol_join_sec_t>(&orderline_secondary);
+
+      auto stock_scanner = tpcc->stock.getScanner();
+      
+      MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
+
+      while (true) {
+         auto ret = merge_join.next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         joined_ols.insert(key, payload);
       }
    }
 };

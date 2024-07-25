@@ -13,7 +13,7 @@ class TPCCMergedWorkload
                                                                              std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
    {
       std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
-      results.reserve(cached_left.size() * cached_right.size()); // Reserve memory to avoid reallocations
+      results.reserve(cached_left.size() * cached_right.size());  // Reserve memory to avoid reallocations
 
       for (auto& left : cached_left) {
          for (auto& right : cached_right) {
@@ -68,7 +68,7 @@ class TPCCMergedWorkload
       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
-      cached_left.reserve(100); // Multiple order lines can be associated with a single stock item
+      cached_left.reserve(100);  // Multiple order lines can be associated with a single stock item
       cached_right.reserve(2);
 
       std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
@@ -94,7 +94,7 @@ class TPCCMergedWorkload
              ++scanCardinality;
              bool since_condition = false;
              tpcc->orderline.lookup1({key.ols_w_id, key.ols_d_id, key.ols_o_id, key.ols_number},
-                                                [&](const orderline_t& orderline_rec) { since_condition = orderline_rec.ol_delivery_d >= since; });
+                                     [&](const orderline_t& orderline_rec) { since_condition = orderline_rec.ol_delivery_d >= since; });
              if (!since_condition || key.ols_d_id != d_id) {
                 return true;  // continue scan
              }
@@ -292,17 +292,35 @@ class TPCCMergedWorkload
 
    void loadStockToMerged(Integer w_id)
    {
+      std::cout << "Loading stock of warehouse " << w_id << " to merged" << std::endl;
       for (Integer i = 0; i < tpcc->ITEMS_NO * tpcc->scale_factor; i++) {
          Varchar<50> s_data = tpcc->template randomastring<50>(25, 50);
          if (tpcc->rnd(10) == 0) {
             s_data.length = tpcc->rnd(s_data.length - 8);
             s_data = s_data || Varchar<10>("ORIGINAL");
          }
-         merged.template insert<stock_t>(typename stock_t::Key{w_id, i + 1},
-                       {tpcc->randomNumeric(10, 100), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
-                        tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
-                        tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
-                        tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data});
+         merged.template insert<stock_t>(
+             typename stock_t::Key{w_id, i + 1},
+             {tpcc->randomNumeric(10, 100), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
+              tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
+              tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
+              tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data});
+      }
+   }
+
+   void loadOrderlineSecondaryToMerged()
+   {
+      std::cout << "Loading orderline secondary index to merged" << std::endl;
+      auto orderline_scanner = tpcc->orderline.getScanner();
+      // cout << "After inserting stock to merged, ";
+      // merged.printTreeHeight();
+      while (true) {
+         auto ret = orderline_scanner.next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+         merged.template insert<ol_join_sec_t>(sec_key, {});
       }
    }
 

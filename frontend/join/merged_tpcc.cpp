@@ -135,15 +135,26 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      crm.scheduleJobSync(0, [&]() {
+         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+         tpcc_merge.loadOrderlineSecondaryToMerged();
+         cr::Worker::my().commitTX();
+      });
+
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          cout << "Verifying TPC-C" << endl;
-         crm.scheduleJobSync(0, [&]() {
+         goto verify;
+      }
+   } else {
+      std::cout << "Recovered TPC-C. Verifying..." << std::endl;
+   verify:
+      crm.scheduleJobSync(0, [&]() {
             cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
             tpcc.verifyItems();
             cr::Worker::my().commitTX();
          });
-         g_w_id = 1;
+         std::atomic<u32> g_w_id = 1;
          for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
             crm.scheduleJobAsync(t_i, [&]() {
                while (true) {
@@ -159,30 +170,9 @@ int main(int argc, char** argv)
             });
             crm.joinAll();
          }
-      }
    }
 
    // -------------------------------------------------------------------------------------
-   // Step 2: Add secondary index of orderline to merged
-   {
-      crm.scheduleJobSync(0, [&]() {
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         auto orderline_scanner = orderline.getScanner();
-         // cout << "After inserting stock to merged, ";
-         // merged.printTreeHeight();
-         while (true) {
-            auto ret = orderline_scanner.next();
-            if (!ret.has_value())
-               break;
-            auto [key, payload] = ret.value();
-            ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-            merged.template insert<ol_join_sec_t>(sec_key, {});
-         }
-         // cout << "After inserting orderline secondary index to merged, ";
-         // merged.printTreeHeight();
-         cr::Worker::my().commitTX();
-      });
-   }
 
    double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
    cout << "TPC-C loaded - consumed space in GiB = " << gib << endl;
@@ -202,8 +192,6 @@ int main(int argc, char** argv)
          cout << "Merged pages = " << merged.btree->countPages() << endl;
       }
    });
-
-   crm.joinAll();
 
    // -------------------------------------------------------------------------------------
    // Step 3: Start read/write TXs
@@ -268,6 +256,7 @@ int main(int argc, char** argv)
          sleep(FLAGS_run_for_seconds);
       }
       keep_running = false;
+      std::cout << "Waiting for existing threads to join..." << std::endl;
       while (running_threads_counter) {
       }
       crm.joinAll();

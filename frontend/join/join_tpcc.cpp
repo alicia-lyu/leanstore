@@ -1,7 +1,6 @@
 #include "../shared/LeanStoreAdapter.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
-#include "Join.hpp"
 #include "JoinedSchema.hpp"
 #include "TPCCJoinWorkload.hpp"
 // -------------------------------------------------------------------------------------
@@ -138,73 +137,48 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+
+      crm.scheduleJobSync(0, [&]() -> void {
+         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+         tpcc_join.loadOrderlineSecondary();
+         cr::Worker::my().commitTX();
+      });
+      crm.scheduleJobSync(0, [&]() -> void {
+         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+         tpcc_join.joinOrderlineAndStock();
+         cr::Worker::my().commitTX();
+      });
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
-         cout << "Verifying TPC-C" << endl;
-         crm.scheduleJobSync(0, [&]() {
-            cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
-            tpcc.verifyItems();
-            cr::Worker::my().commitTX();
-         });
-         g_w_id = 1;
-         for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-            crm.scheduleJobAsync(t_i, [&]() {
-               while (true) {
-                  u32 w_id = g_w_id++;
-                  if (w_id > FLAGS_tpcc_warehouse_count) {
-                     return;
-                  }
-                  cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
-                  tpcc.verifyWarehouse(w_id);
-                  cr::Worker::my().commitTX();
+         goto verify;
+      }
+   } else {  // verify and warm up
+      std::cout << "Recovered TPC-C. Verifying..." << std::endl;
+   verify:
+      cout << "Verifying TPC-C" << endl;
+      crm.scheduleJobSync(0, [&]() {
+         cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
+         tpcc.verifyItems();
+         cr::Worker::my().commitTX();
+      });
+      std::atomic<u32> g_w_id = 1;
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         crm.scheduleJobAsync(t_i, [&]() {
+            while (true) {
+               u32 w_id = g_w_id++;
+               if (w_id > FLAGS_tpcc_warehouse_count) {
+                  return;
                }
-            });
-            crm.joinAll();
-         }
+               cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
+               tpcc.verifyWarehouse(w_id);
+               cr::Worker::my().commitTX();
+            }
+         });
+         crm.joinAll();
       }
    }
 
    // -------------------------------------------------------------------------------------
-   // Step 2: Add secondary index to orderline and stock
-   {
-      crm.scheduleJobSync(0, [&]() {
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         auto orderline_scanner = orderline.getScanner();
-         while (true) {
-            auto ret = orderline_scanner.next();
-            if (!ret.has_value())
-               break;
-            auto [key, payload] = ret.value();
-            ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-            orderline_secondary.insert(sec_key, {});
-         }
-         cr::Worker::my().commitTX();
-      });
-   }
-
-   // -------------------------------------------------------------------------------------
-   // Step 3: Perform a merge join and load the result into joined_orderline_stock
-   {
-      crm.scheduleJobSync(0, [&]() {
-         std::cout << "Merging orderline and stock" << std::endl;
-         tpcc.prepare();
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         auto orderline_scanner = orderline.getScanner<ol_join_sec_t>(&orderline_secondary);
-         auto stock_scanner = stock.getScanner();
-         MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
-
-         while (true) {
-            auto ret = merge_join.next();
-            if (!ret.has_value())
-               break;
-            auto [key, payload] = ret.value();
-            joined_ols.insert(key, payload);
-         }
-         // static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(joined_ols.btree))->printInfos(8 *
-         // 1024 * 1024 * 1024);
-         cr::Worker::my().commitTX();
-      });
-   }
 
    double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
    cout << "TPC-C loaded - consumed space in GiB = " << gib << endl;
@@ -225,8 +199,6 @@ int main(int argc, char** argv)
          cout << "JoinedOrderLineStock pages = " << joined_ols.btree->countPages() << endl;
       }
    });
-
-   crm.joinAll();
 
    // -------------------------------------------------------------------------------------
    // Step 4: Start write TXs into order_line and stock, and read TXs into joined_orderline_stock
@@ -291,6 +263,7 @@ int main(int argc, char** argv)
          sleep(FLAGS_run_for_seconds);
       }
       keep_running = false;
+      std::cout << "Waiting for existing threads to join..." << std::endl;
       while (running_threads_counter) {
       }
       crm.joinAll();
