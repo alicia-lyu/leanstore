@@ -242,7 +242,6 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_next_tuple[btree.dt_id]++; }
    // Check if the iterator is at its initial state
       if (cur == -1) {
-         std::cout << "Going to min page" << std::endl;
          gotoMinPage();
          return OP_RESULT::OK;
       }
