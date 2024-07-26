@@ -329,7 +329,7 @@ class TPCCMergedWorkload
       // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
       tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
-         for (Integer c_id = 1; c_id <= tpcc->CUSTOMER_SCALE * tpcc->scale_factor; c_id++) {
+         for (Integer c_id = 1; c_id <= tpcc->CUSTOMER_SCALE * tpcc->scale_factor / 10; c_id++) {
             tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
          }
       }
