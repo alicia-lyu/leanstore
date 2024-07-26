@@ -24,7 +24,7 @@ touch ${IMAGE_FILE}
 if [ "$WRITE_PERCENTAGE" -gt 0 ]; then
     PERSIST_FILE="./leanstore.json" # Do not persist
 else
-    PERSIST_FILE=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json
+    PERSIST_FILE=${RECOVERY_FILE}
 fi
 
 echo "************************************************************ NEW EXPERIMENT ************************************************************"
@@ -52,6 +52,6 @@ echo "${TIME}. Running experiment with method: ${METHOD}, DRAM: ${DRAM_GIB} GiB,
 
 if [ $? -ne 0 ]; then
     echo "Experiment failed"
-    rm -f ${RECOVERY_FILE} # Must load next time
+    rm -f ${PERSIST_FILE} # Must load next time
     exit 1
 fi
