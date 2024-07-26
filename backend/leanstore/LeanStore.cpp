@@ -218,7 +218,7 @@ void LeanStore::startProfilingThread()
                            std::to_string(olap_tx), bm_table.get("0", "w_mib"), bm_table.get("0", "r_mib"), std::to_string(instr_per_tx),
                            std::to_string(cycles_per_tx), std::to_string(cpu_table.workers_agg_events["CPU"]), std::to_string(l1_per_tx),
                            std::to_string(llc_per_tx), std::to_string(cpu_table.workers_agg_events["GHz"]), cr_table.get("0", "wal_write_gib"),
-                           cr_table.get("0", "gct_write_gib"), bm_table.get("0", "space_usage_gib"), cr_table.get("0", "gct_rounds"), std::to_string((dt_page_writes_acc) / (double) tx), std::to_string((dt_page_reads_acc) / (double) tx)});
+                           cr_table.get("0", "gct_write_gib"), bm_table.get("0", "space_usage_gib"), cr_table.get("0", "gct_rounds"), std::to_string(dt_page_reads_acc / (double) tx), std::to_string(dt_page_writes_acc / (double) tx)});
             // -------------------------------------------------------------------------------------
             table.format().width(10);
             table.column(0).format().width(5);

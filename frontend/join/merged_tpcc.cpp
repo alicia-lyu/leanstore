@@ -179,7 +179,7 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(0, [&]() {
       cout << "Warehouse pages = " << warehouse.btree->countPages() << endl;
       cout << "District pages = " << district.btree->countPages() << endl;
-      if (FLAGS_target_gib > 1) {
+      if (FLAGS_target_gib < 1) {
          cout << "Customer pages = " << customer.btree->countPages() << endl;
          cout << "CustomerWDL pages = " << customerwdl.btree->countPages() << endl;
          cout << "History pages = " << history.btree->countPages() << endl;
@@ -189,8 +189,8 @@ int main(int argc, char** argv)
          cout << "OrderLine pages = " << orderline.btree->countPages() << endl;
          cout << "Item pages = " << item.btree->countPages() << endl;
          cout << "Stock pages = " << stock.btree->countPages() << endl;
-         cout << "Merged pages = " << merged.btree->countPages() << endl;
       }
+      cout << "Merged pages = " << merged.btree->countPages() << endl;
    });
 
    // -------------------------------------------------------------------------------------

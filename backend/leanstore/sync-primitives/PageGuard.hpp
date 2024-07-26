@@ -124,7 +124,7 @@ class HybridPageGuard
    {
       assert(bf != nullptr);
       assert(bf->page.GSN <= cr::Worker::my().logging.getCurrentGSN());
-      bf->page.PLSN++;
+      bf->page.PLSN++; // Only used in BTreeVI
       bf->page.GSN = cr::Worker::my().logging.getCurrentGSN() + 1;
       bf->header.last_writer_worker_id = cr::Worker::my().worker_id;  // RFA
       cr::Worker::my().logging.setCurrentGSN(std::max<LID>(cr::Worker::my().logging.getCurrentGSN(), bf->page.GSN));
