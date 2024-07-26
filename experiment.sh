@@ -14,53 +14,44 @@ READ_PERCENTAGE=$4
 SCAN_PERCENTAGE=$5
 WRITE_PERCENTAGE=$6
 
+RECOVERY_FILE=./build-release/${METHOD}-target${TARGET_GIB}g.json
+IMAGE_FILE=/home/alicia.w.lyu/tmp/${METHOD}-target${TARGET_GIB}g.image
+LOG_DIR=/home/alicia.w.lyu/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}
+
+mkdir -p ${LOG_DIR}
+touch ${IMAGE_FILE}
+
+if [ "$WRITE_PERCENTAGE" -gt 0 ]; then
+    PERSIST_FILE="./leanstore.json" # Do not persist
+else
+    PERSIST_FILE=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json
+fi
+
 echo "************************************************************ NEW EXPERIMENT ************************************************************"
 echo "./build-release/frontend/${METHOD}_tpcc \
---ssd_path=/home/alicia.w.lyu/tmp/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.image \
---persist_file=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json \
---recover_file=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json \
---csv_path=./build-release/log --csv_truncate=true \
+--ssd_path=${IMAGE_FILE} --persist_file=${PERSIST_FILE} --recover_file=${RECOVERY_FILE} \
+--csv_path=${LOG_DIR} --csv_truncate=true \
 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false \
 --run_for_seconds=120 --pp_threads=2 \
 --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} \
 --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE} \
->> ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log"
-
-
-touch ~/tmp/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.image
+>> ${LOG_DIR}/output.log"
 
 TIME=$(date -u +"%m-%dT%H:%M:%SZ")
 
-echo "${TIME}. Running experiment with method: ${METHOD}, DRAM: ${DRAM_GIB} GiB, target: ${TARGET_GIB} GiB, read: ${READ_PERCENTAGE}%, scan: ${SCAN_PERCENTAGE}%, write: ${WRITE_PERCENTAGE}%" > ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log
+echo "${TIME}. Running experiment with method: ${METHOD}, DRAM: ${DRAM_GIB} GiB, target: ${TARGET_GIB} GiB, read: ${READ_PERCENTAGE}%, scan: ${SCAN_PERCENTAGE}%, write: ${WRITE_PERCENTAGE}%" > ${LOG_DIR}/output.log
 
 ./build-release/frontend/${METHOD}_tpcc \
---ssd_path=/home/alicia.w.lyu/tmp/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.image \
---persist_file=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json \
---recover_file=./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json \
---csv_path=./build-release/log --csv_truncate=true --profile_latency=true \
+--ssd_path=${IMAGE_FILE} --persist_file=${PERSIST_FILE} --recover_file=${RECOVERY_FILE} \
+--csv_path=${LOG_DIR} --csv_truncate=true \
 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false \
 --run_for_seconds=120 --pp_threads=2 \
 --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} \
 --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE} \
->> ~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.log
+>> ${LOG_DIR}/output.log
 
 if [ $? -ne 0 ]; then
     echo "Experiment failed"
-    rm -f "./build-release/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}.json" # Must load next time
+    rm -f ${RECOVERY_FILE} # Must load next time
     exit 1
 fi
-
-mkdir -p ~/logs
-
-move_log_file() {
-    local log_file=$1
-    suffix=$(basename "$log_file" | sed "s/log//")
-    new_log_file=~/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}$suffix
-    echo "Moving $log_file to $new_log_file"
-    mv -f ${log_file} ${new_log_file}
-}
-
-# Find and move log files
-find ./build-release -type f -name "log*" | while read -r log_file; do
-    move_log_file $log_file
-done
