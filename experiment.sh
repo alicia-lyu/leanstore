@@ -26,21 +26,24 @@ else
     PERSIST_FILE="${RECOVERY_FILE}"
 fi
 
-if [ -e "${RECOVERY_FILE}" ]; then
-    RUN_FOR_SECONDS=120
-    RERUN=false
-else 
-    RUN_FOR_SECONDS=10
-    RERUN=true
+if [ -e "${RECOVERY_FILE}" ] && [ "$SCAN_PERCENTAGE" -lt 100 ]; then
+    TERM_COND="--run_for_seconds=120"
+    TRUNC=false
+elif [ ! -e "${RECOVERY_FILE}" ]; then
+    TERM_COND="--run_for_seconds=180"
+    TRUNC=true
+else
+    TERM_COND="--run_until_tx=30"
+    TRUNC=false
 fi
 
 echo "************************************************************ NEW EXPERIMENT ************************************************************"
 
 CMD="./build-release/frontend/${METHOD}_tpcc \
 --ssd_path=${IMAGE_FILE} --persist_file=${PERSIST_FILE} --recover_file=${RECOVERY_FILE} \
---csv_path=${LOG_DIR} --csv_truncate=true \
+--csv_path=${LOG_DIR}/log --csv_truncate=true --trunc=${TRUNC} \
 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false \
---run_for_seconds=${RUN_FOR_SECONDS} --pp_threads=2 \
+${TERM_COND} --pp_threads=2 \
 --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} \
 --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE} \
 >> ${LOG_DIR}/output.log"
@@ -52,12 +55,6 @@ TIME=$(date -u +"%m-%dT%H:%M:%SZ")
 echo "${TIME}. Running experiment with method: ${METHOD}, DRAM: ${DRAM_GIB} GiB, target: ${TARGET_GIB} GiB, read: ${READ_PERCENTAGE}%, scan: ${SCAN_PERCENTAGE}%, write: ${WRITE_PERCENTAGE}%" > "${LOG_DIR}/output.log"
 
 eval "${CMD}"
-
-if [ "$RERUN" = true ]; then
-    echo "Rerunning experiment after loading..."
-    RUN_FOR_SECONDS=120
-    eval "${CMD}"
-fi
 
 if [ $? -ne 0 ]; then
     echo "Experiment failed"

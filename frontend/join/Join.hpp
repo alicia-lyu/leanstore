@@ -166,13 +166,13 @@ private:
       if (w_diff != 0) {
         return w_diff;
       }
-      return left_record.ol_i_id - right_key.s_i_id;
+      return left_key.ol_i_id - right_key.s_i_id;
     } else {
       s32 w_diff = left_key.ol_w_id - cached_right_key.value().s_w_id;
       if (w_diff != 0) {
         return w_diff;
       }
-      return left_record.ol_i_id - cached_right_key.value().s_i_id;
+      return left_key.ol_i_id - cached_right_key.value().s_i_id;
     }
   }
 
@@ -183,7 +183,7 @@ private:
 
     typename JoinedRecord::Key key {
       left_key.ol_w_id,
-      left_record.ol_i_id,
+      left_key.ol_i_id,
       left_key.ol_d_id,
       left_key.ol_o_id,
       left_key.ol_number

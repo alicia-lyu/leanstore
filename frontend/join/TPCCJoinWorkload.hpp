@@ -22,7 +22,7 @@ class TPCCJoinWorkload
    // When this query can be realistic: Keep track of stock information for recent orders
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
-      vector<joined_ols_t> results;
+      // vector<joined_ols_t> results;
       joined_ols_t::Key start_key = {w_id, 0, d_id, 0, 0};  // Starting from the first item in the warehouse and district
 
       uint64_t scanCardinality = 0;
@@ -32,7 +32,7 @@ class TPCCJoinWorkload
           [&](const joined_ols_t::Key& key, const joined_ols_t& rec) {
              scanCardinality++;
              if (rec.ol_delivery_d >= since) {
-                results.push_back(rec);
+               //  results.push_back(rec);
              }
              return true;
           },
@@ -223,7 +223,7 @@ class TPCCJoinWorkload
          // TODO: i_data, s_data
          // ********** Update Secondary Index **********
          // std::cout << "Line number #" << i << ": Updating secondary index" << std::endl;
-         orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, {});
+         orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, {supware, ol_delivery_d, qty, ol_amount, s_dist});
          // ********** Update Join Results **********
          // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
          stock_t stock_rec;
@@ -241,7 +241,7 @@ class TPCCJoinWorkload
 
    int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage)
    {
-      u64 rnd = leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
+      int rnd = (int) leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
       if (rnd < read_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
          Integer i_id = leanstore::utils::RandomGenerator::getRand(1, 100001);
@@ -267,17 +267,18 @@ class TPCCJoinWorkload
             break;
          auto [key, payload] = ret.value();
          ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-         orderline_secondary.insert(sec_key, {});
+         ol_join_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount, payload.ol_dist_info};
+         orderline_secondary.insert(sec_key, sec_payload);
       }
    }
 
    void joinOrderlineAndStock()
    {
-      auto orderline_scanner = tpcc->orderline.template getScanner<ol_join_sec_t>(&orderline_secondary);
+      auto orderline_scanner = orderline_secondary.getScanner();
 
       auto stock_scanner = tpcc->stock.getScanner();
       
-      MergeJoin<orderline_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
+      MergeJoin<ol_join_sec_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
 
       while (true) {
          auto ret = merge_join.next();

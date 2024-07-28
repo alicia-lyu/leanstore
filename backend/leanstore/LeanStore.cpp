@@ -180,45 +180,117 @@ void LeanStore::startProfilingThread()
             // TODO: Websocket, CLI
          }
          // -------------------------------------------------------------------------------------
+         std::vector<variant<std::string, const char *, Table>> tx_console_header;
+         std::vector<variant<std::string, const char *, Table>> tx_console_data;
+         tx_console_header.reserve(20);
+         tx_console_data.reserve(20);
+         tx_console_header.push_back("t");
+         tx_console_data.push_back(std::to_string(seconds));
+
          const u64 tx = std::stoi(cr_table.get("0", "tx"));
-         const u64 olap_tx = std::stoi(cr_table.get("0", "olap_tx"));
+         tx_console_header.push_back("OLTP TX");
+         tx_console_data.push_back(std::to_string(tx));
+
          const double tx_abort = std::stoi(cr_table.get("0", "tx_abort"));
          const double tx_abort_pct = tx_abort * 100.0 / (tx_abort + tx);
+         tx_console_header.push_back("Abort%");
+         tx_console_data.push_back(std::to_string(tx_abort_pct));
+
          const double rfa_pct = std::stod(cr_table.get("0", "rfa_committed_tx")) * 100.0 / tx;
          const double remote_flushes_pct = 100.0 - rfa_pct;
+         tx_console_header.push_back("RF %");
+         tx_console_data.push_back(std::to_string(remote_flushes_pct));
+
+         const u64 olap_tx = std::stoi(cr_table.get("0", "olap_tx"));
+         tx_console_header.push_back("OLAP TX");
+         tx_console_data.push_back(std::to_string(olap_tx));
+
+         tx_console_header.push_back("W MiB");
+         tx_console_data.push_back(bm_table.get("0", "w_mib"));
+
+         tx_console_header.push_back("R MiB");
+         tx_console_data.push_back(bm_table.get("0", "r_mib"));
+
          // const double committed_gct_pct = std::stoi(cr_table.get("0", "gct_committed_tx")) * 100.0 / committed_tx;
          // Global Stats
          global_stats.accumulated_tx_counter += tx;
          // -------------------------------------------------------------------------------------
          // Console
          // -------------------------------------------------------------------------------------
-         const double instr_per_tx = cpu_table.workers_agg_events["instr"] / tx;
-         const double cycles_per_tx = cpu_table.workers_agg_events["cycle"] / tx;
-         const double l1_per_tx = cpu_table.workers_agg_events["L1-miss"] / tx;
-         const double llc_per_tx = cpu_table.workers_agg_events["LLC-miss"] / tx;
+         if (cpu_table.workers_agg_events.contains("instr"))
+         {
+            const double instr_per_tx = cpu_table.workers_agg_events["instr"] / tx;
+            tx_console_header.push_back("Instrs/TX");
+            tx_console_data.push_back(std::to_string(instr_per_tx));
+         }
+         
+         if (cpu_table.workers_agg_events.contains("cycle"))
+         {
+            const double cycles_per_tx = cpu_table.workers_agg_events["cycle"] / tx;
+            tx_console_header.push_back("Cycles/TX");
+            tx_console_data.push_back(std::to_string(cycles_per_tx));
+         }
 
+         if (cpu_table.workers_agg_events.contains("CPU"))
+         {
+            tx_console_header.push_back("Utilized CPUs");
+            tx_console_data.push_back(std::to_string(cpu_table.workers_agg_events["CPU"]));
+         }
+
+         if (cpu_table.workers_agg_events.contains("task"))
+         {
+            tx_console_header.push_back("CPUTime/TX (ms)");
+            tx_console_data.push_back(std::to_string(
+               ((double) cpu_table.workers_agg_events["task"]) / tx * 1e-6));
+         }
+
+         if (cpu_table.workers_agg_events.contains("L1-miss"))
+         {
+            const double l1_per_tx = cpu_table.workers_agg_events["L1-miss"] / tx;
+            tx_console_header.push_back("L1/TX");
+            tx_console_data.push_back(std::to_string(l1_per_tx));
+         }
+
+         if (cpu_table.workers_agg_events.contains("LLC-miss"))
+         {
+            const double llc_per_tx = cpu_table.workers_agg_events["LLC-miss"] / tx;
+            tx_console_header.push_back("LLC/TX");
+            tx_console_data.push_back(std::to_string(llc_per_tx));
+         }
+
+         if (cpu_table.workers_agg_events.contains("GHz"))
+         {
+            tx_console_header.push_back("GHz");
+            tx_console_data.push_back(std::to_string(cpu_table.workers_agg_events["GHz"]));
+         }
+
+         tx_console_header.push_back("WAL GiB/s");
+         tx_console_data.push_back(cr_table.get("0", "wal_write_gib"));
+
+         tx_console_header.push_back("GCT GiB/s");
+         tx_console_data.push_back(cr_table.get("0", "gct_write_gib"));
          
          u64 dt_page_reads_acc = 0;
          const profiling::Column& dt_page_reads = dt_table["dt_page_reads"];
          for (u64 r_i = 0; r_i < dt_page_reads.values.size(); r_i++) {
             dt_page_reads_acc += std::stoi(dt_page_reads.values[r_i]);
          }
+         tx_console_header.push_back("SSDReads/TX");
+         tx_console_data.push_back(std::to_string(dt_page_reads_acc / (double) tx));
+
          u64 dt_page_writes_acc = 0;
          const profiling::Column& dt_page_writes = dt_table["dt_page_writes"];
          for (u64 r_i = 0; r_i < dt_page_writes.values.size(); r_i++) {
             dt_page_writes_acc += std::stoi(dt_page_writes.values[r_i]);
          }
+         tx_console_header.push_back("SSDWrites/TX");
+         tx_console_data.push_back(std::to_string(dt_page_writes_acc / (double) tx));
 
          // using RowType = std::vector<variant<std::string, const char*, Table>>;
          if (FLAGS_print_tx_console) {
             tabulate::Table table;
-            table.add_row({"t", "OLTP TX", "RF %", "Abort%", "OLAP TX", "W MiB", "R MiB", "Instrs/TX", "Cycles/TX", "CPUs", "L1/TX", "LLC/TX", "GHz",
-                           "WAL GiB/s", "GCT GiB/s", "Space G", "GCT Rounds", "SSDReads/TX", "SSDWrites/TX"});
-            table.add_row({std::to_string(seconds), std::to_string(tx), std::to_string(remote_flushes_pct), std::to_string(tx_abort_pct),
-                           std::to_string(olap_tx), bm_table.get("0", "w_mib"), bm_table.get("0", "r_mib"), std::to_string(instr_per_tx),
-                           std::to_string(cycles_per_tx), std::to_string(cpu_table.workers_agg_events["CPU"]), std::to_string(l1_per_tx),
-                           std::to_string(llc_per_tx), std::to_string(cpu_table.workers_agg_events["GHz"]), cr_table.get("0", "wal_write_gib"),
-                           cr_table.get("0", "gct_write_gib"), bm_table.get("0", "space_usage_gib"), cr_table.get("0", "gct_rounds"), std::to_string(dt_page_reads_acc / (double) tx), std::to_string(dt_page_writes_acc / (double) tx)});
+            table.add_row(tx_console_header);
+            table.add_row(tx_console_data);
             // -------------------------------------------------------------------------------------
             table.format().width(10);
             table.column(0).format().width(5);
