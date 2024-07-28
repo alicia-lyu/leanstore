@@ -10,88 +10,81 @@ struct ol_join_sec_t {
   struct Key {
     static constexpr int id = 8; // comes from table 8, i.e., orderline
     // join key
-    Integer ols_w_id;
-    Integer ols_i_id;
+    Integer ol_w_id;
+    Integer ol_i_id;
     // orderline_t::Key, included in Key to allow duplicate join keys from
     // orderline
-    Integer ols_d_id;
-    Integer ols_o_id;
-    Integer ols_number;
+    Integer ol_d_id;
+    Integer ol_o_id;
+    Integer ol_number;
 
     friend std::ostream& operator<<(std::ostream& os, const Key& key) {
-      os << "w_id: " << key.ols_w_id << ", i_id: " << key.ols_i_id
-         << ", d_id: " << key.ols_d_id << ", o_id: " << key.ols_o_id
-         << ", number: " << key.ols_number;
+      os << "w_id: " << key.ol_w_id << ", i_id: " << key.ol_i_id
+         << ", d_id: " << key.ol_d_id << ", o_id: " << key.ol_o_id
+         << ", number: " << key.ol_number;
       return os;
     }
   };
-  // // orderline_t::Value
-  // Integer ols_i_id;
-  // Integer ols_supply_w_id;
-  // Timestamp ols_delivery_d;
-  // Numeric ols_quantity;
-  // Numeric ols_amount;
-  // Varchar<24> ols_dist_info;
+  // orderline_t::Value
+  Integer ol_supply_w_id;
+  Timestamp ol_delivery_d;
+  Numeric ol_quantity;
+  Numeric ol_amount;
+  Varchar<24> ol_dist_info;
 
   template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
     unsigned pos = 0;
-    pos += fold(out + pos, key.ols_w_id);
-    pos += fold(out + pos, key.ols_i_id);
+    pos += fold(out + pos, key.ol_w_id);
+    pos += fold(out + pos, key.ol_i_id);
     pos += fold(out + pos, Key::id);
-    pos += fold(out + pos, key.ols_d_id);
-    pos += fold(out + pos, key.ols_o_id);
-    pos += fold(out + pos, key.ols_number);
+    pos += fold(out + pos, key.ol_d_id);
+    pos += fold(out + pos, key.ol_o_id);
+    pos += fold(out + pos, key.ol_number);
     return pos;
   }
 
   template <class T> static unsigned foldPKey(uint8_t *out, const T &key) {
     unsigned pos = 0;
-    pos += fold(out + pos, key.ols_w_id);
-    pos += fold(out + pos, key.ols_d_id);
-    pos += fold(out + pos, key.ols_o_id);
-    pos += fold(out + pos, key.ols_number);
+    pos += fold(out + pos, key.ol_w_id);
+    pos += fold(out + pos, key.ol_d_id);
+    pos += fold(out + pos, key.ol_o_id);
+    pos += fold(out + pos, key.ol_number);
     return pos;
   }
 
   template <class T> static unsigned foldJKey(uint8_t *out, const T &key) {
     unsigned pos = 0;
-    pos += fold(out + pos, key.ols_w_id);
-    pos += fold(out + pos, key.ols_i_id);
+    pos += fold(out + pos, key.ol_w_id);
+    pos += fold(out + pos, key.ol_i_id);
     return pos;
   }
 
   template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
     unsigned pos = 0;
-    pos += unfold(in + pos, key.ols_w_id);
-    pos += unfold(in + pos, key.ols_i_id);
+    pos += unfold(in + pos, key.ol_w_id);
+    pos += unfold(in + pos, key.ol_i_id);
     int id;
     pos += unfold(in + pos, id);
     assert(id == Key::id);
-    pos += unfold(in + pos, key.ols_d_id);
-    pos += unfold(in + pos, key.ols_o_id);
-    pos += unfold(in + pos, key.ols_number);
+    pos += unfold(in + pos, key.ol_d_id);
+    pos += unfold(in + pos, key.ol_o_id);
+    pos += unfold(in + pos, key.ol_number);
     return pos;
   }
 
   static constexpr unsigned maxFoldLength() {
-    return 0 + sizeof(Key::ols_w_id) + sizeof(Key::ols_i_id) + sizeof(Key::id) +
-           sizeof(Key::ols_d_id) + sizeof(Key::ols_o_id) +
-           sizeof(Key::ols_number);
+    return 0 + sizeof(Key::ol_w_id) + sizeof(Key::ol_i_id) + sizeof(Key::id) +
+           sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) +
+           sizeof(Key::ol_number);
   };
 
   static constexpr unsigned joinKeyLength() {
-    return 0 + sizeof(Key::ols_w_id) + sizeof(Key::ols_i_id);
+    return 0 + sizeof(Key::ol_w_id) + sizeof(Key::ol_i_id);
   }
 
   static constexpr unsigned primaryKeyLength() {
-    return 0 + sizeof(Key::ols_d_id) + sizeof(Key::ols_o_id) + sizeof(Key::ols_number);
+    return 0 + sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) + sizeof(Key::ol_number);
   }
-
-  // friend std::ostream& operator<<(std::ostream& os, const order_line_ols_t& record) {
-  //   os << "i_id: " << record.ols_i_id << ", supply_w_id: " << record.ols_supply_w_id
-  //      << ", delivery_d: " << record.ols_delivery_d << ", quantity: " << record.ols_quantity << ", amount: " << record.ols_amount << ", dist_info: " << record.ols_dist_info.toString();
-  //   return os;
-  // }
 };
 
 struct joined_ols_t {

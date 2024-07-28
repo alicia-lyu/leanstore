@@ -9,21 +9,20 @@ class TPCCMergedWorkload
    TPCCWorkload<AdapterType>* tpcc;
    MergedAdapterType& merged;
 
-   std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> cartesianProducts(std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>>& cached_left,
-                                                                             std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
+   std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> cartesianProducts(std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>>& cached_left, std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
    {
       std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
       results.reserve(cached_left.size() * cached_right.size());  // Reserve memory to avoid reallocations
 
       for (auto& left : cached_left) {
          for (auto& right : cached_right) {
-            joined_ols_t::Key joined_key = {left.first.ols_w_id, left.first.ols_i_id, left.first.ols_d_id, left.first.ols_o_id,
-                                            left.first.ols_number};
+            joined_ols_t::Key joined_key = {left.first.ol_w_id, left.first.ol_i_id, left.first.ol_d_id, left.first.ol_o_id,
+                                            left.first.ol_number};
 
-            joined_ols_t joined_rec = {0,
-                                       0,
-                                       0,
-                                       0,
+            joined_ols_t joined_rec = {left.second.ol_supply_w_id,
+                                       left.second.ol_delivery_d,
+                                       left.second.ol_quantity,
+                                       left.second.ol_amount,
                                        right.second.s_quantity,
                                        right.second.s_dist_01,
                                        right.second.s_dist_02,
@@ -39,14 +38,6 @@ class TPCCMergedWorkload
                                        right.second.s_order_cnt,
                                        right.second.s_remote_cnt,
                                        right.second.s_data};
-
-            tpcc->orderline.lookup1({left.first.ols_w_id, left.first.ols_d_id, left.first.ols_o_id, left.first.ols_number},
-                                    [&](const orderline_t& orderline_rec) {
-                                       joined_rec.ol_supply_w_id = orderline_rec.ol_supply_w_id;
-                                       joined_rec.ol_delivery_d = orderline_rec.ol_delivery_d;
-                                       joined_rec.ol_quantity = orderline_rec.ol_quantity;
-                                       joined_rec.ol_amount = orderline_rec.ol_amount;
-                                    });
 
             results.push_back({joined_key, joined_rec});
          }
@@ -68,10 +59,11 @@ class TPCCMergedWorkload
       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
-      cached_left.reserve(100);  // Multiple order lines can be associated with a single stock item
-      cached_right.reserve(2);
+      // cached_left.reserve(100);  // Multiple order lines can be associated with a single stock item
+      // cached_right.reserve(2);
 
-      std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
+      // std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results; // Assuming we don't want the final results per se, but only scan it with
+      // some predicate / task, similar to btree->scan
 
       merged.template scan<stock_t, ol_join_sec_t>(
           start_key,
@@ -81,7 +73,7 @@ class TPCCMergedWorkload
                 // A new join key discovered
                 // Do a cartesian product of current cached rows
                 auto cartesian_products = cartesianProducts(cached_left, cached_right);
-                results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
+                //  results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
                 // Start a new group
                 current_key = key;
                 cached_left.clear();
@@ -92,10 +84,7 @@ class TPCCMergedWorkload
           },
           [&](const ol_join_sec_t::Key& key, const ol_join_sec_t& rec) {
              ++scanCardinality;
-             bool since_condition = false;
-             tpcc->orderline.lookup1({key.ols_w_id, key.ols_d_id, key.ols_o_id, key.ols_number},
-                                     [&](const orderline_t& orderline_rec) { since_condition = orderline_rec.ol_delivery_d >= since; });
-             if (!since_condition || key.ols_d_id != d_id) {
+             if (!(rec.ol_delivery_d < since) || key.ol_d_id != d_id) {
                 return true;  // continue scan
              }
              cached_left.push_back({key, rec});
@@ -105,7 +94,7 @@ class TPCCMergedWorkload
 
       // Final cartesian product for any remaining cached elements
       auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
-      results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
+      // results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
 
       // std::cout << "Scan cardinality: " << scanCardinality << std::endl;
       // All default configs, dram_gib = 8, cardinality = 385752
@@ -121,8 +110,8 @@ class TPCCMergedWorkload
       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
-      cached_left.reserve(100);
-      cached_right.reserve(2);
+      // cached_left.reserve(100);
+      // cached_right.reserve(2);
 
       uint64_t lookupCardinality = 0;
 
@@ -141,9 +130,9 @@ class TPCCMergedWorkload
           },
           [&](const ol_join_sec_t::Key& key, const ol_join_sec_t& rec) {
              ++lookupCardinality;
-             assert(key.ols_i_id == i_id && key.ols_w_id == w_id);
+             assert(key.ol_i_id == i_id && key.ol_w_id == w_id);
              // Change only occur at a stock entry
-             if (key.ols_d_id != d_id) {
+             if (key.ol_d_id != d_id) {
                 return true;  // continue scan
              }
              cached_left.push_back({key, rec});
@@ -327,6 +316,7 @@ class TPCCMergedWorkload
    void verifyWarehouse(Integer w_id)
    {
       // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
+      std::cout << "Verifying warehouse " << w_id << std::endl;
       tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
          for (Integer c_id = 1; c_id <= tpcc->CUSTOMER_SCALE * tpcc->scale_factor / 10; c_id++) {

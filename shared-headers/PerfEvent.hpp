@@ -27,6 +27,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #if defined(__linux__)
 
+#include <sys/types.h>
+#include <cstdint>
+#include <limits>
 #include <asm/unistd.h>
 #include <linux/perf_event.h>
 #include <sys/ioctl.h>
@@ -82,32 +85,22 @@ struct PerfEvent {
     return false;
 #endif
   }
+
   PerfEvent(bool inherit = true) : inherit(inherit), printHeader(true)
   {
-    registerCounter("cycle", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
-    registerCounter("cycle-kernel", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES, 1);
-    registerCounter("instr", PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
+    registerCounter("cycle", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES, false, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK);
+    registerCounter("cycle-kernel", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES, true); // no fall back to software
+    registerCounter("instr", PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS); // no fall back to software
     registerCounter("L1-miss", PERF_TYPE_HW_CACHE,
-                    PERF_COUNT_HW_CACHE_L1D | (PERF_COUNT_HW_CACHE_OP_READ << 8) | (PERF_COUNT_HW_CACHE_RESULT_MISS << 16));
+                    PERF_COUNT_HW_CACHE_L1D | (PERF_COUNT_HW_CACHE_OP_READ << 8) | (PERF_COUNT_HW_CACHE_RESULT_MISS << 16)); // no fall back to software
     if (isIntel())
-      registerCounter("LLC-miss", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_MISSES);
-    registerCounter("br-miss", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
-    registerCounter("task", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK);
+      registerCounter("LLC-miss", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_MISSES); // no fall back to software
+    registerCounter("br-miss", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES); // no fall back to software
+    registerCounter("task", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK, false, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK);
     // additional counters can be found in linux/perf_event.h
-
-    for (unsigned i = 0; i < events.size(); i++) {
-      auto& event = events[i];
-      event.fd = syscall(__NR_perf_event_open, &event.pe, 0, -1, -1, 0);
-      if (event.fd < 0) {
-        std::cerr << "Trying to initialize PerfEvent... Error opening counter " << names[i] << std::endl;
-        events.resize(0);
-        names.resize(0);
-        return;
-      }
-    }
   }
 
-  void registerCounter(const std::string& name, uint64_t type, uint64_t eventID, const bool exclude_user = false)
+  void registerCounter(const std::string& name, uint64_t type, uint64_t eventID, const bool exclude_user = false, uint64_t fallback_type = std::numeric_limits<uint64_t>::max(), uint64_t fallback_eventID = std::numeric_limits<uint64_t>::max())
   {
     names.push_back(name);
     events.push_back(event());
@@ -124,6 +117,25 @@ struct PerfEvent {
     pe.exclude_kernel = false;
     pe.exclude_hv = false;
     pe.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+
+    event.fd = syscall(__NR_perf_event_open, &event.pe, 0, -1, -1, 0);
+    if (event.fd < 0) {
+      if (fallback_type != std::numeric_limits<uint64_t>::max() && fallback_eventID != std::numeric_limits<uint64_t>::max()) {
+        event.pe.type = fallback_type;
+        event.pe.config = fallback_eventID;
+        event.fd = syscall(__NR_perf_event_open, &event.pe, 0, -1, -1, 0);
+        if (event.fd >= 0) {
+        // fall back works
+          std::cout << "PerfEvent::PerfEvent(): Fallback counter " << name << " is used" << std::endl;
+          return;
+        }
+      }
+      std::cerr << "PerfEvent::PerfEvent() Warning: Proceed without counter " << name << std::endl;
+      events.pop_back();
+      names.pop_back();
+      return;
+    }
+    std::cout << "PerfEvent::PerfEvent(): Counter " << name << " is registered" << std::endl;
   }
 
   void startCounters()
@@ -158,10 +170,13 @@ struct PerfEvent {
 
   double getDuration() { return std::chrono::duration<double>(stopTime - startTime).count(); }
 
+  bool IPCAvailable() { return std::find(names.begin(), names.end(), "instr") != names.end() && std::find(names.begin(), names.end(), "cycle") != names.end(); }
   double getIPC() { return getCounter("instr") / getCounter("cycle"); }
 
+  bool CPUsAvailable() { return std::find(names.begin(), names.end(), "task") != names.end(); }
   double getCPUs() { return getCounter("task") / (getDuration() * 1e9); }
 
+  bool GHzAvailable() { return std::find(names.begin(), names.end(), "cycle") != names.end() && std::find(names.begin(), names.end(), "task") != names.end(); }
   double getGHz() { return getCounter("cycle") / getCounter("task"); }
 
   double getCounter(const std::string& name)
@@ -209,9 +224,14 @@ struct PerfEvent {
     printCounter(headerOut, dataOut, "scale", normalizationConstant);
 
     // derived metrics
-    printCounter(headerOut, dataOut, "IPC", getIPC());
-    printCounter(headerOut, dataOut, "CPU", getCPUs());
-    printCounter(headerOut, dataOut, "GHz", getGHz(), false);
+    if (IPCAvailable())
+      printCounter(headerOut, dataOut, "IPC", getIPC());
+
+    if (CPUsAvailable())
+      printCounter(headerOut, dataOut, "CPU", getCPUs());
+    
+    if (GHzAvailable())
+      printCounter(headerOut, dataOut, "GHz", getGHz(), false);
   }
   // -------------------------------------------------------------------------------------
   void printCSVHeaders(std::ostream& headerOut)
@@ -225,12 +245,14 @@ struct PerfEvent {
     }
 
     // derived metrics
-    headerOut << ","
-              << "IPC";
-    headerOut << ","
-              << "CPU";
-    headerOut << ","
-              << "GHz";
+    if (IPCAvailable())
+      headerOut << "," << "IPC";
+
+    if (CPUsAvailable())
+      headerOut << "," << "CPU";
+
+    if (GHzAvailable())
+      headerOut << "," << "GHz";
   }
   // -------------------------------------------------------------------------------------
   void printCSVData(std::ostream& dataOut, uint64_t normalizationConstant)
@@ -242,9 +264,12 @@ struct PerfEvent {
       dataOut << "," << events[i].readCounter() / normalizationConstant;
     }
     // derived metrics
-    dataOut << "," << getIPC();
-    dataOut << "," << getCPUs();
-    dataOut << "," << getGHz();
+    if (IPCAvailable())
+      dataOut << "," << getIPC();
+    if (CPUsAvailable())
+      dataOut << "," << getCPUs();
+    if (GHzAvailable())
+      dataOut << "," << getGHz();
   }
   // -------------------------------------------------------------------------------------
   std::vector<std::string> getEventsName()
@@ -253,22 +278,28 @@ struct PerfEvent {
     for (auto& name : names) {
       extendedNames.push_back(name);
     }
-    extendedNames.push_back("IPC");
-    extendedNames.push_back("CPU");
-    extendedNames.push_back("GHz");
+    if (IPCAvailable())
+      extendedNames.push_back("IPC");
+    if (CPUsAvailable())
+      extendedNames.push_back("CPU");
+    if (GHzAvailable())
+      extendedNames.push_back("GHz");
     return extendedNames;
   }
-  std::unordered_map<string, double> getCountersMap()
+  std::unordered_map<std::string, double> getCountersMap()
   {
-    std::unordered_map<string, double> res;
+    std::unordered_map<std::string, double> res;
     // print all metrics
     for (unsigned i = 0; i < events.size(); i++) {
       res[names[i]] = events[i].readCounter();
     }
     // derived metrics
-    res["IPC"] = getIPC();
-    res["CPU"] = getCPUs();
-    res["GHz"] = getGHz();
+    if (IPCAvailable())
+      res["IPC"] = getIPC();
+    if (CPUsAvailable())
+      res["CPU"] = getCPUs();
+    if (GHzAvailable())
+      res["GHz"] = getGHz();
     return res;
   }
   // -------------------------------------------------------------------------------------
