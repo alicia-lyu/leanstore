@@ -19,6 +19,7 @@ public:
         cached_right_key(std::nullopt),
         cached_right_records_iter(cached_right_records.begin())
   {
+    cached_right_records.reserve(100);
     advance_left();
     advance_right();
   }
@@ -37,13 +38,11 @@ public:
       int cmp = compare_keys();
       if (cmp == 0 && !right_exhausted) {
         // Join current left with current right
-        if (cached_right_records.empty()) {
+        if (!cached_right_key.has_value() || cached_right_key->s_w_id != right_key.s_w_id || cached_right_key->s_i_id != right_key.s_i_id) {
           cached_right_key = right_key;
+          cached_right_records.clear();
         }
-        // Use of cached_right_records_iter is continuous---no sporadically insertions or deletions
-        assert(cached_right_records_iter == cached_right_records.begin());
         cached_right_records.push_back(right_record);
-        // std::cout << "Caching right: " << right_key << "; payload: " << right_record << "because it joined with left: " << left_key << std::endl;
         // Reset iterator after modifying cached_right_records
         cached_right_records_iter = cached_right_records.begin();
 
@@ -53,6 +52,7 @@ public:
         // Join current left with cached right
 
         if (cached_right_records.empty()) {
+          // std::cout << "Advance left because no cached right records" << std::endl;
           advance_left();
           continue;
         }
@@ -60,14 +60,14 @@ public:
         if (cached_right_records_iter == cached_right_records.end()) {
             // Next left record may join with the cached right records
             cached_right_records_iter = cached_right_records.begin();
+            // std::cout << "Advance left because cached right records exhausted" << std::endl;
             advance_left();
             continue;
         } else if (compare_keys(true) > 0) {
           // The cached right records are too small, will never be joined with left records beyond this point
-          cached_right_records.clear();
-          cached_right_records_iter = cached_right_records.begin();
           if (right_exhausted)
             return std::nullopt; // The following left records has no cached rows or current row to join
+          // std::cout << "Advance left because cached right records too small" << std::endl;
           advance_left();
           continue;
         }
@@ -78,8 +78,6 @@ public:
       } else if (cmp > 0) {
         if (!right_exhausted) {
           // Current right record is too small. Cached right records are even smaller
-          cached_right_records.clear();
-          cached_right_records_iter = cached_right_records.begin();
           advance_right();
         } else {
           return std::nullopt;
@@ -127,6 +125,15 @@ private:
     if (current_left_matched) {
       left_matched++;
     }
+    // else {
+    //   // Shouldn't happen in the current setting
+    //   std::cout << "Left Key: " << left_key << std::endl;
+    //   std::cout << "Right Key: " << right_key << std::endl;
+    //   if (cached_right_key.has_value())
+    //     std::cout << "Cached Right Key: " << cached_right_key.value() << " (size: " << cached_right_records.size() << ")" << std::endl;
+    //   else
+    //     std::cout << "Cached Right Key: None (size: " << cached_right_records.size() << ")" << std::endl;
+    // }
     auto ret = left_scanner->next();
     if (!ret.has_value()) {
       left_exhausted = true;
@@ -136,7 +143,7 @@ private:
     left_key = ret.value().key;
     left_record = ret.value().record;
     current_left_matched = false;
-    // std::cout << "Advance left: " << left_key.ol_w_id << " " << left_record.ol_i_id << std::endl;
+    // std::cout << "Advance left: " << left_key << std::endl;
     return true;
   }
 
@@ -155,7 +162,7 @@ private:
     right_key = ret.value().key;
     right_record = ret.value().record;
     current_right_matched = false;
-    // std::cout << "Advance right: " << right_key.s_w_id << " " << right_key.s_i_id << std::endl;
+    // std::cout << "Advance right: " << right_key << std::endl;
     return true;
   }
 
@@ -213,8 +220,10 @@ private:
 
     current_left_matched = true;
     if (use_cached) {
+      // std::cout << "Joined left key " << left_key << " with cached right key " << cached_right_key.value() << std::endl;
       ++cached_right_records_iter;
     } else {
+      // std::cout << "Joined left key " << left_key << " with right key " << right_key << std::endl;
       current_right_matched = true;
       bool ret = advance_right();
       if ((ret && compare_keys() != 0) || !ret) advance_left();

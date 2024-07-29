@@ -141,15 +141,20 @@ void LeanStore::startProfilingThread()
       } else {
          open_flags = ios::app;
       }
-      for (u64 t_i = 0; t_i < tables.size(); t_i++) {
-         tables[t_i]->open();
+      for (u64 t_i = 0; t_i < tables.size() + 1; t_i++) {
+         if (t_i < tables.size()) {
+            tables[t_i]->open();
+         }
          // -------------------------------------------------------------------------------------
          csvs.emplace_back();
          auto& csv = csvs.back();
-         csv.open(FLAGS_csv_path + "_" + tables[t_i]->getName() + ".csv", open_flags);
+         if (t_i < tables.size())
+            csv.open(FLAGS_csv_path + "_" + tables[t_i]->getName() + ".csv", open_flags);
+         else
+            csv.open(FLAGS_csv_path + "_sum.csv", open_flags); // summary
          csv.seekp(0, ios::end);
          csv << std::setprecision(2) << std::fixed;
-         if (csv.tellp() == 0) {
+         if (csv.tellp() == 0 && t_i < tables.size()) { // summary is output below
             csv << "t,c_hash";
             for (auto& c : tables[t_i]->getColumns()) {
                csv << "," << c.first;
@@ -285,6 +290,18 @@ void LeanStore::startProfilingThread()
          }
          tx_console_header.push_back("SSDWrites/TX");
          tx_console_data.push_back(std::to_string(dt_page_writes_acc / (double) tx));
+
+         auto& csv_sum = csvs.back();
+         if (seconds == 0) {
+            for (auto& h: tx_console_header) {
+               std::visit([&csv_sum](auto&& arg) { csv_sum << "," << arg; }, h);
+            }
+            csv_sum << endl;
+         }
+         for (auto& d: tx_console_data) {
+            std::visit([&csv_sum](auto&& arg) { csv_sum << "," << arg; }, d);
+         }
+         csv_sum << endl;
 
          // using RowType = std::vector<variant<std::string, const char*, Table>>;
          if (FLAGS_print_tx_console) {

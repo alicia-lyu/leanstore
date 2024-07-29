@@ -62,7 +62,6 @@ class TPCCWorkload
          return 1.0;
       }
 
-      // TODO: This is key size only
       uint64_t size = warehouse_t::rowSize() +
          district_t::rowSize() * 10 +
          customer_t::rowSize() * CUSTOMER_SCALE +
@@ -79,7 +78,7 @@ class TPCCWorkload
 
       size = size * warehouseCount + item_t::rowSize() * ITEMS_NO;
 
-      double empirical_adjustment = 3; // Observed that the actual size is 3x---Why?
+      double empirical_adjustment = 4; // Observed that the actual size is 3x---Why?
 
       double scale = ((double) FLAGS_target_gib * 1024 * 1024 * 1024) / (size * empirical_adjustment);
 
@@ -991,9 +990,9 @@ class TPCCWorkload
             if (o_id < 2101)
                ol_delivery_d = now;
             Numeric ol_amount = (o_id < 2101) ? 0 : randomNumeric(0.01, 9999.99);
-            const Integer ol_i_id = rnd(ITEMS_NO) + 1;
+            const Integer ol_i_id = rnd(ITEMS_NO * scale_factor) + 1; // May not cover all items in stock
             // std::cout << "ol_i_id: " << ol_i_id << " for o_id: " << o_id << std::endl;
-            orderline.insert({w_id, d_id, o_id, ol_number}, {ol_i_id, w_id, ol_delivery_d, 5, ol_amount, randomastring<24>(24, 24)});
+            orderline.insert({w_id, d_id, o_id, ol_number}, {ol_i_id, w_id, ol_delivery_d, 5, ol_amount, randomastring<24>(24, 24)}); // All supplied by the same warehouse
          }
          o_id++;
       }

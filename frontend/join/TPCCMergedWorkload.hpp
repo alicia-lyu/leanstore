@@ -120,9 +120,6 @@ class TPCCMergedWorkload
           [&](const stock_t::Key& key, const stock_t& rec) {
              ++lookupCardinality;
              if (key.s_w_id != w_id || key.s_i_id != i_id) {
-                // Finish scanning, do a cartesian product
-                auto cartesian_products = cartesianProducts(cached_left, cached_right);
-                results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
                 return false;
              }
              cached_right.push_back({key, rec});
@@ -330,7 +327,7 @@ class TPCCMergedWorkload
 
    int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage)
    {
-      u64 rnd = leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
+      int rnd = (int) leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
       if (rnd < read_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
          Integer i_id = leanstore::utils::RandomGenerator::getRand(1, 100001);
