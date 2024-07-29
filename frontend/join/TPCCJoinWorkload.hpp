@@ -29,7 +29,7 @@ class TPCCJoinWorkload
 
       joined_ols.scan(
           start_key,
-          [&](const joined_ols_t::Key& key, const joined_ols_t& rec) {
+          [&](const joined_ols_t::Key&, const joined_ols_t& rec) {
              scanCardinality++;
              if (rec.ol_delivery_d >= since) {
                //  results.push_back(rec);

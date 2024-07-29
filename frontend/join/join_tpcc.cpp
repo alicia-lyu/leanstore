@@ -196,8 +196,10 @@ int main(int argc, char** argv)
          cout << "Item pages = " << item.btree->countPages() << endl;
          cout << "Stock pages = " << stock.btree->countPages() << endl;
       }
-      cout << "OrderLineSecondary pages = " << orderline_secondary.btree->countPages() << endl;
-      cout << "JoinedOrderLineStock pages = " << joined_ols.btree->countPages() << endl;
+      if (FLAGS_target_gib < 2) {
+         cout << "OrderLineSecondary pages = " << orderline_secondary.btree->countPages() << endl;
+         cout << "JoinedOrderLineStock pages = " << joined_ols.btree->countPages() << endl;
+      }
    });
 
    // -------------------------------------------------------------------------------------

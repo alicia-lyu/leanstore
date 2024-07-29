@@ -190,7 +190,9 @@ int main(int argc, char** argv)
          cout << "Item pages = " << item.btree->countPages() << endl;
          cout << "Stock pages = " << stock.btree->countPages() << endl;
       }
-      cout << "Merged pages = " << merged.btree->countPages() << endl;
+      if (FLAGS_target_gib < 2) {
+         cout << "Merged pages = " << merged.btree->countPages() << endl;
+      }
    });
 
    // -------------------------------------------------------------------------------------

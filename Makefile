@@ -3,7 +3,7 @@ default_read := 2
 default_scan := 0
 default_write := 98
 default_dram := 1
-target_gib ?= 1
+target_gib ?= 2
 
 # Paths
 SSD_PATH := /home/alicia.w.lyu/tmp/image
@@ -23,14 +23,12 @@ CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
 CMAKE_RELWITHDEBINFO := cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 CMAKE_RELEASE := cmake -DCMAKE_BUILD_TYPE=Release ..
 
-# Define the Cartesian product of build directories and executables
 BUILD_DIRS := $(BUILD_DEBUG_DIR) $(BUILD_RELEASE_DIR) $(BUILD_DIR)
 EXECS := $(JOIN_EXEC) $(MERGED_EXEC)
 
 # Create Cartesian product for targets
 TARGETS := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)$(exec)))
 
-# Define build rules
 $(foreach dir, $(BUILD_DIRS), \
   $(foreach exec, $(EXECS), \
     $(eval $(dir)$(exec): DIR := $(dir)) \
@@ -39,10 +37,17 @@ $(foreach dir, $(BUILD_DIRS), \
   ) \
 ))
 
-# Pattern rule to build executables
-$(TARGETS):
+PERF_PARANOID := $(shell sysctl -n kernel.perf_event_paranoid)
+
+check_perf_event_paranoid:
+	@if [ $(PERF_PARANOID) -gt 0 ]; then \
+		echo "Error: kernel.perf_event_paranoid is set to $(PERF_PARANOID). Must be 0."; \
+		echo "Hint: sudo sysctl -w kernel.perf_event_paranoid=0"; \
+		exit 1; \
+	fi
+
+$(TARGETS): check_perf_event_paranoid
 	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) && make -j
-	sudo setcap cap_perfmon+ep "$(DIR)$(EXEC)"
 
 join-lldb: $(BUILD_DIR)$(JOIN_EXEC)
 	lldb -- "$(BUILD_DIR)$(JOIN_EXEC)" --ssd_path=$(SSD_PATH) --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH)

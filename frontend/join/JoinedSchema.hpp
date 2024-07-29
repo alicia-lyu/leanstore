@@ -85,6 +85,12 @@ struct ol_join_sec_t {
   static constexpr unsigned primaryKeyLength() {
     return 0 + sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) + sizeof(Key::ol_number);
   }
+
+  friend std::ostream& operator<<(std::ostream& os, const ol_join_sec_t& record) {
+    os << ", supply_w_id: " << record.ol_supply_w_id
+       << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", dist_info: " << record.ol_dist_info.toString();
+    return os;
+  }
 };
 
 struct joined_ols_t {
