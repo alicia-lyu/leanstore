@@ -29,15 +29,12 @@ else
     PERSIST_FILE="${RECOVERY_FILE}"
 fi
 
-if [ -e "${RECOVERY_FILE}" ] && [ "$SCAN_PERCENTAGE" -lt 100 ]; then
-    TERM_COND="--run_for_seconds=60"
+if [ -e "${RECOVERY_FILE}" ]; then
+    TERM_COND="--run_for_seconds=240"
     TRUNC=false
 elif [ ! -e "${RECOVERY_FILE}" ]; then
-    TERM_COND="--run_for_seconds=90"
+    TERM_COND="--run_for_seconds=300"
     TRUNC=true
-else
-    TERM_COND="--run_until_tx=240"
-    TRUNC=false
 fi
 
 echo "************************************************************ NEW EXPERIMENT ************************************************************"

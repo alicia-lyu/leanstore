@@ -155,7 +155,7 @@ class TPCCJoinWorkload
          // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
          UpdateDescriptorGenerator4(joined_ols_descriptor, joined_ols_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
          for (auto key : keys) {
-            if (key.ol_o_id == o_id && key.ol_d_id == d_id) {
+            if (key.ol_o_id == o_id && key.ol_d_id == d_id && key.w_id == w_id) {
                std::cout << "d_id: " << d_id << ", o_id: " << o_id << std::endl;
                throw std::runtime_error("newOrderRnd: duplicate key");
             }
@@ -244,7 +244,7 @@ class TPCCJoinWorkload
       int rnd = (int) leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
       if (rnd < read_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
-         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, 100001);
+         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, (int)(tpcc->ITEMS_NO * tpcc->scale_factor) + 1);
          ordersByItemId(w_id, d_id, i_id);
          return 0;
       } else if (rnd < read_percentage + scan_percentage) {
@@ -258,25 +258,36 @@ class TPCCJoinWorkload
       }
    }
 
-   void loadOrderlineSecondary()
+   void loadOrderlineSecondary(Integer w_id = std::numeric_limits<Integer>::max())
    {
+      std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
       auto orderline_scanner = tpcc->orderline.getScanner();
+      if (w_id != std::numeric_limits<Integer>::max()) {
+         orderline_scanner.seek({w_id, 0, 0, 0});
+      }
       while (true) {
          auto ret = orderline_scanner.next();
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
+         if (key.ol_w_id != w_id)
+            break;
          ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
          ol_join_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount, payload.ol_dist_info};
          orderline_secondary.insert(sec_key, sec_payload);
       }
    }
 
-   void joinOrderlineAndStock()
+   void joinOrderlineAndStock(Integer w_id = std::numeric_limits<Integer>::max())
    {
+      std::cout << "Joining orderline and stock for warehouse " << w_id << std::endl;
       auto orderline_scanner = orderline_secondary.getScanner();
-
       auto stock_scanner = tpcc->stock.getScanner();
+
+      if (w_id != std::numeric_limits<Integer>::max()) {
+         orderline_scanner.seek({w_id, 0, 0, 0, 0});
+         stock_scanner.seek({w_id, 0});
+      }
       
       MergeJoin<ol_join_sec_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
 
@@ -285,6 +296,8 @@ class TPCCJoinWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
+         if (key.w_id != w_id)
+            break;
          joined_ols.insert(key, payload);
       }
    }
