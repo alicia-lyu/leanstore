@@ -294,12 +294,12 @@ void LeanStore::startProfilingThread()
          auto& csv_sum = csvs.back();
          if (seconds == 0) {
             for (auto& h: tx_console_header) {
-               std::visit([&csv_sum](auto&& arg) { csv_sum << "," << arg; }, h);
+               std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, h);
             }
             csv_sum << endl;
          }
          for (auto& d: tx_console_data) {
-            std::visit([&csv_sum](auto&& arg) { csv_sum << "," << arg; }, d);
+            std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, d);
          }
          csv_sum << endl;
 

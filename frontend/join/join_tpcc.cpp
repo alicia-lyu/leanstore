@@ -137,17 +137,36 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-
-      crm.scheduleJobSync(0, [&]() -> void {
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpcc_join.loadOrderlineSecondary();
-         cr::Worker::my().commitTX();
-      });
-      crm.scheduleJobSync(0, [&]() -> void {
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpcc_join.joinOrderlineAndStock();
-         cr::Worker::my().commitTX();
-      });
+      g_w_id = 1;
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         crm.scheduleJobAsync(t_i, [&]() {
+            while (true) {
+               u32 w_id = g_w_id++;
+               if (w_id > FLAGS_tpcc_warehouse_count) {
+                  return;
+               }
+               cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+               tpcc_join.loadOrderlineSecondary(w_id);
+               cr::Worker::my().commitTX();
+            }
+         });
+      }
+      crm.joinAll();
+      g_w_id = 1;
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         crm.scheduleJobAsync(t_i, [&]() {
+            while (true) {
+               u32 w_id = g_w_id++;
+               if (w_id > FLAGS_tpcc_warehouse_count) {
+                  return;
+               }
+               cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+               tpcc_join.joinOrderlineAndStock(w_id);
+               cr::Worker::my().commitTX();
+            }
+         });
+      }
+      crm.joinAll();
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          goto verify;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
@@ -10,6 +11,7 @@ class Scanner
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
    BTreeIt it;
+   bool afterSeek = false;
 
   public:
    struct next_ret_t {
@@ -19,11 +21,27 @@ class Scanner
 
    Scanner(BTree& btree) : it(btree) {}
 
+   virtual bool seek(typename Record::Key key)
+   {
+      u8 keyBuffer[Record::maxFoldLength()];
+      Record::foldKey(keyBuffer, key);
+      leanstore::Slice keySlice(keyBuffer, Record::maxFoldLength());
+      leanstore::OP_RESULT res = it.seek(keySlice);
+      if (res == leanstore::OP_RESULT::OK)
+         afterSeek = true;
+      return res == leanstore::OP_RESULT::OK;
+   }
+
    virtual std::optional<next_ret_t> next()
    {
-      leanstore::OP_RESULT res = it.next();
-      if (res != leanstore::OP_RESULT::OK)
-         return std::nullopt;
+      if (!afterSeek)
+      {
+         leanstore::OP_RESULT res = it.next();
+         if (res != leanstore::OP_RESULT::OK)
+            return std::nullopt;
+      } else {
+         afterSeek = false;
+      }
       it.assembleKey();
       leanstore::Slice key = it.key();
       leanstore::Slice payload = it.value();
@@ -51,12 +69,28 @@ class ScannerSec : public Scanner<Record1>
   public:
    ScannerSec(BTree& btree, BTree& sec_btree) : Base(btree), sec_it(sec_btree) {}
 
+   bool seek(typename Record2::Key typed_key)
+   {
+      u8 keyBuffer[Record2::maxFoldLength()];
+      Record2::foldKey(keyBuffer, typed_key);
+      leanstore::Slice key(keyBuffer, Record2::maxFoldLength());
+      leanstore::OP_RESULT res = sec_it.seek(key);
+      if (res == leanstore::OP_RESULT::OK)
+         this->afterSeek = true;
+      return res == leanstore::OP_RESULT::OK;
+   }
+
    std::optional<next_ret_t> next()
    {
       // Guided by secondary index
-      leanstore::OP_RESULT res2 = sec_it.next();
-      if (res2 != leanstore::OP_RESULT::OK)
-         return std::nullopt;
+      if (!this->afterSeek)
+      {
+         leanstore::OP_RESULT res = sec_it.next();
+         if (res != leanstore::OP_RESULT::OK)
+            return std::nullopt;
+      } else {
+         this->afterSeek = false;
+      }
       sec_it.assembleKey();
       leanstore::Slice sec_key = sec_it.key();
 

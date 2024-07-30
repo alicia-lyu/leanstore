@@ -50,7 +50,7 @@ $(TARGETS): check_perf_event_paranoid
 	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) && make -j
 
 join-lldb: $(BUILD_DIR)$(JOIN_EXEC)
-	lldb -- "$(BUILD_DIR)$(JOIN_EXEC)" --ssd_path=$(SSD_PATH) --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH)
+	lldb -- "$(BUILD_DIR)$(JOIN_EXEC)" --ssd_path=$(SSD_PATH) --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2
 
 .PHONY: $(TARGETS)
 
@@ -85,9 +85,15 @@ merged-exp: merged-exp-disk merged-exp-rsw
 
 exp: join-exp merged-exp
 
-exp-rsw:
-	make join-exp-rsw
-	make merged-exp-rsw
+exp-rsw: $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
+	./experiment.sh join $(default_dram) $(target_gib) 100 0 0
+	./experiment.sh merged $(default_dram) $(target_gib) 100 0 0
+
+	./experiment.sh join $(default_dram) $(target_gib) 0 0 100
+	./experiment.sh merged $(default_dram) $(target_gib) 0 0 100
+
+	./experiment.sh join $(default_dram) $(target_gib) 0 100 0
+	./experiment.sh merged $(default_dram) $(target_gib) 0 100 0
 
 scan: $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
 	./experiment.sh join 1 1 0 100 0

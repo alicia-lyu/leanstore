@@ -944,7 +944,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void loadCustomer(Integer w_id, Integer d_id)
    {
-      std::cout << "Loading " << CUSTOMER_SCALE * scale_factor / 10 << " customers for district " << d_id << std::endl;
+      std::cout << "Loading " << CUSTOMER_SCALE * scale_factor / 10 << " customers for district " << d_id << ", warehouse " << w_id << std::endl;
       Timestamp now = currentTimestamp();
       for (Integer i = 0; i < CUSTOMER_SCALE * scale_factor / 10; i++) {
          Varchar<16> c_last;
@@ -967,7 +967,7 @@ class TPCCWorkload
    // -------------------------------------------------------------------------------------
    void loadOrders(Integer w_id, Integer d_id)
    {
-      std::cout << "Loading " << CUSTOMER_SCALE * scale_factor / 10 << " orders for district " << d_id << std::endl;
+      std::cout << "Loading " << CUSTOMER_SCALE * scale_factor / 10 << " orders for district " << d_id << ", warehouse " << w_id << std::endl;
       Timestamp now = currentTimestamp();
       vector<Integer> c_ids;
       for (Integer i = 1; i <= CUSTOMER_SCALE * scale_factor / 10; i++)
@@ -1010,7 +1010,7 @@ class TPCCWorkload
             i_data.length = rnd(i_data.length - 8);
             i_data = i_data || Varchar<10>("ORIGINAL");
          }
-         item.insert({i}, {randomId(1, 10000), randomastring<24>(14, 24), randomNumeric(1.00, 100.00), i_data});
+         item.insert({i}, {randomId(1, ITEMS_NO * scale_factor), randomastring<24>(14, 24), randomNumeric(1.00, 100.00), i_data});
       }
    }
    // -------------------------------------------------------------------------------------
