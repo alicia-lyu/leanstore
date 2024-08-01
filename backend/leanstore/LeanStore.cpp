@@ -166,6 +166,8 @@ void LeanStore::startProfilingThread()
       config_hash = configs_table.hash();
       // -------------------------------------------------------------------------------------
       u64 seconds = 0;
+      u64 dt_page_reads_acc = 0;
+      u64 dt_page_writes_acc = 0;
       while (bg_threads_keep_running) {
          for (u64 t_i = 0; t_i < tables.size(); t_i++) {
             tables[t_i]->next();
@@ -275,7 +277,6 @@ void LeanStore::startProfilingThread()
          tx_console_header.push_back("GCT GiB/s");
          tx_console_data.push_back(cr_table.get("0", "gct_write_gib"));
          
-         u64 dt_page_reads_acc = 0;
          const profiling::Column& dt_page_reads = dt_table["dt_page_reads"];
          for (u64 r_i = 0; r_i < dt_page_reads.values.size(); r_i++) {
             dt_page_reads_acc += std::stoi(dt_page_reads.values[r_i]);
@@ -283,13 +284,17 @@ void LeanStore::startProfilingThread()
          tx_console_header.push_back("SSDReads/TX");
          tx_console_data.push_back(std::to_string(dt_page_reads_acc / (double) tx));
 
-         u64 dt_page_writes_acc = 0;
          const profiling::Column& dt_page_writes = dt_table["dt_page_writes"];
          for (u64 r_i = 0; r_i < dt_page_writes.values.size(); r_i++) {
             dt_page_writes_acc += std::stoi(dt_page_writes.values[r_i]);
          }
          tx_console_header.push_back("SSDWrites/TX");
          tx_console_data.push_back(std::to_string(dt_page_writes_acc / (double) tx));
+         
+         if (tx != 0) {
+            dt_page_reads_acc = 0;
+            dt_page_writes_acc = 0;
+         }
 
          auto& csv_sum = csvs.back();
          if (seconds == 0) {

@@ -39,6 +39,7 @@ DEFINE_uint32(tpcc_threads, 0, "");
 DEFINE_uint32(read_percentage, 1, "");
 DEFINE_uint32(scan_percentage, 1, "");
 DEFINE_uint32(write_percentage, 98, "");
+DEFINE_uint32(order_size, 5, "Number of lines in a new order");
 // -------------------------------------------------------------------------------------
 using namespace std;
 using namespace leanstore;
@@ -48,7 +49,7 @@ int main(int argc, char** argv)
    gflags::SetUsageMessage("Leanstore Join TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    assert(FLAGS_tpcc_warehouse_count > 0);
-   assert(FLAGS_read_rercentage + FLAGS_scan_percentage + FLAGS_write_percentage == 100);
+   assert(FLAGS_read_percentage + FLAGS_scan_percentage + FLAGS_write_percentage == 100);
    LeanStore::addS64Flag("TPC_SCALE", &FLAGS_tpcc_warehouse_count);
    // -------------------------------------------------------------------------------------
    // Check arguments
@@ -123,7 +124,7 @@ int main(int argc, char** argv)
                   return;
                }
                cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-               tpcc_merge.loadStockToMerged(w_id);
+               tpcc_merge.loadStockToMerged(w_id, FLAGS_semijoin_selectivity);
                // tpcc.loadStock(w_id);
                tpcc.loadDistrict(w_id);
                for (Integer d_id = 1; d_id <= 10; d_id++) {
@@ -223,7 +224,7 @@ int main(int argc, char** argv)
                if (w_id > FLAGS_tpcc_warehouse_count) {
                   return;
                }
-               tpcc_merge.tx(w_id, FLAGS_read_percentage, FLAGS_scan_percentage, FLAGS_write_percentage);
+               tpcc_merge.tx(w_id, FLAGS_read_percentage, FLAGS_scan_percentage, FLAGS_write_percentage, FLAGS_order_size);
                if (FLAGS_tpcc_abort_pct && tpcc.urand(0, 100) <= FLAGS_tpcc_abort_pct) {
                   cr::Worker::my().abortTX();
                } else {

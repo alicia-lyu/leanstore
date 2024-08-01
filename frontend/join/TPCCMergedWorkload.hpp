@@ -1,7 +1,10 @@
 #pragma once
+#include <gflags/gflags.h>
 #include <cstdint>
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "JoinedSchema.hpp"
+
+DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock"); // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be lower. Empirically 90+% items are present in some orderline, picking out those in stock.
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCCMergedWorkload
@@ -145,12 +148,12 @@ class TPCCMergedWorkload
       // All default configs, dram_gib = 8, cardinality = 2--8
    }
 
-   void newOrderRnd(Integer w_id)
+   void newOrderRnd(Integer w_id, Integer order_size = 5)
    {
       // tpcc->newOrderRnd(w_id);
       Integer d_id = tpcc->urand(1, 10);
       Integer c_id = tpcc->getCustomerID();
-      Integer ol_cnt = tpcc->urand(5, 15);
+      Integer ol_cnt = tpcc->urand(order_size, order_size * 3);
 
       vector<Integer> lineNumbers;
       vector<Integer> supwares;
@@ -208,6 +211,10 @@ class TPCCMergedWorkload
       // Batch update stock records
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
+         Integer item_id = itemids[i];
+         if (item_id % 100 > FLAGS_semijoin_selectivity) {
+            continue;
+         }
          // We don't need the primary index of stock_t at all, since all its info is in merged
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
          merged.template update1<stock_t>(
@@ -230,8 +237,8 @@ class TPCCMergedWorkload
          Numeric qty = qtys[i];
 
          Numeric i_price = tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
-         Varchar<24> s_dist;
-         merged.template lookup1<stock_t>({w_id, itemid}, [&](const stock_t& rec) {
+         Varchar<24> s_dist = tpcc->template randomastring<24>(24, 24);
+         bool ret = merged.template tryLookup<stock_t>({w_id, itemid}, [&](const stock_t& rec) {
             switch (d_id) {
                case 1:
                   s_dist = rec.s_dist_01;
@@ -272,14 +279,17 @@ class TPCCMergedWorkload
          Timestamp ol_delivery_d = 0;  // NULL
          tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
          // ********** Update Merged Index **********
-         merged.template insert<ol_join_sec_t>({w_id, itemid, d_id, o_id, lineNumber}, {});
+         merged.template insert<ol_join_sec_t>({w_id, itemid, d_id, o_id, lineNumber}, {}); // Basically outer join result. No need to act on ret == false.
       }
    }
 
-   void loadStockToMerged(Integer w_id)
+   void loadStockToMerged(Integer w_id, Integer semijoin_selectivity = 100) // TODO
    {
       std::cout << "Loading stock of warehouse " << w_id << " to merged" << std::endl;
       for (Integer i = 0; i < tpcc->ITEMS_NO * tpcc->scale_factor; i++) {
+         if ((i + 1) % 100 > semijoin_selectivity) {
+            continue;
+         }
          Varchar<50> s_data = tpcc->template randomastring<50>(25, 50);
          if (tpcc->rnd(10) == 0) {
             s_data.length = tpcc->rnd(s_data.length - 8);
@@ -321,16 +331,21 @@ class TPCCMergedWorkload
          }
       }
       for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO * tpcc->scale_factor; s_id++) {
-         merged.template lookup1<stock_t>({w_id, s_id}, [&](const auto&) {});
+         bool ret = merged.template tryLookup<stock_t>({w_id, s_id}, [&](const auto&) {});
+         if (s_id % 100 > FLAGS_semijoin_selectivity) {
+            ensure(!ret);
+         } else {
+            ensure(ret);
+         }
       }
    }
 
-   int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage)
+   int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage, Integer order_size = 5)
    {
       int rnd = (int) leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
       if (rnd < read_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
-         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, 100001);
+         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, (int)(tpcc->ITEMS_NO * tpcc->scale_factor) + 1);
          ordersByItemId(w_id, d_id, i_id);
          return 0;
       } else if (rnd < read_percentage + scan_percentage) {
@@ -339,7 +354,7 @@ class TPCCMergedWorkload
          recentOrdersStockInfo(w_id, d_id, since);
          return 0;
       } else {
-         newOrderRnd(w_id);
+         newOrderRnd(w_id, order_size);
          return 0;
       }
    }
