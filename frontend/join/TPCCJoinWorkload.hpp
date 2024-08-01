@@ -6,6 +6,7 @@
 #include "JoinedSchema.hpp"
 #include "Join.hpp"
 
+DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock"); // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be lower. Empirically 90+% items are present in some orderline, picking out those in stock.
 template <template <typename> class AdapterType>
 class TPCCJoinWorkload
 {
@@ -68,12 +69,12 @@ class TPCCJoinWorkload
       // All default configs, dram_gib = 8, cardinality mostly 1 or 2. Can also be 3, etc.
    }
 
-   void newOrderRnd(Integer w_id)
+   void newOrderRnd(Integer w_id, Integer order_size = 5)
    {
       // tpcc->newOrderRnd(w_id);
       Integer d_id = tpcc->urand(1, 10);
       Integer c_id = tpcc->getCustomerID();
-      Integer ol_cnt = tpcc->urand(5, 15);
+      Integer ol_cnt = tpcc->urand(order_size, order_size * 3);
 
       vector<Integer> lineNumbers;
       lineNumbers.reserve(15);
@@ -128,6 +129,10 @@ class TPCCJoinWorkload
 
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
+         Integer item_id = itemids[i];
+         if (item_id % 100 > FLAGS_semijoin_selectivity) {
+            continue;
+         }
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
          tpcc->stock.update1(
              {supwares[i], itemids[i]},
@@ -179,8 +184,10 @@ class TPCCJoinWorkload
          Numeric qty = qtys[i];
 
          Numeric i_price = tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
-         Varchar<24> s_dist;
-         tpcc->stock.lookup1({w_id, itemid}, [&](const stock_t& rec) {
+         Varchar<24> s_dist = tpcc->template randomastring<24>(24, 24);
+         stock_t stock_rec;
+         bool ret = tpcc->stock.tryLookup({w_id, itemid}, [&](const stock_t& rec) {
+            stock_rec = rec;
             switch (d_id) {
                case 1:
                   s_dist = rec.s_dist_01;
@@ -226,9 +233,8 @@ class TPCCJoinWorkload
          orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, {supware, ol_delivery_d, qty, ol_amount, s_dist});
          // ********** Update Join Results **********
          // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
-         stock_t stock_rec;
-         tpcc->stock.lookup1({w_id, itemid}, [&](const stock_t& rec) { stock_rec = rec; });
-         joined_ols.insert(
+         if (ret) {
+            joined_ols.insert(
              {w_id, itemid, d_id, o_id, lineNumber},
              {
                  supware, ol_delivery_d, qty, ol_amount,  // the same info inserted into orderline
@@ -236,10 +242,11 @@ class TPCCJoinWorkload
                  stock_rec.s_dist_06, stock_rec.s_dist_07, stock_rec.s_dist_08, stock_rec.s_dist_09, stock_rec.s_dist_10, stock_rec.s_ytd,
                  stock_rec.s_order_cnt, stock_rec.s_remote_cnt, stock_rec.s_data  // lookedup from stock
              });
+         }
       }
    }
 
-   int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage)
+   int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage, Integer order_size = 5)
    {
       int rnd = (int) leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
       if (rnd < read_percentage) {
@@ -253,7 +260,7 @@ class TPCCJoinWorkload
          recentOrdersStockInfo(w_id, d_id, since);
          return 0;
       } else {
-         newOrderRnd(w_id);
+         newOrderRnd(w_id, order_size);
          return 0;
       }
    }
@@ -299,6 +306,26 @@ class TPCCJoinWorkload
          if (key.w_id != w_id)
             break;
          joined_ols.insert(key, payload);
+      }
+   }
+
+      void verifyWarehouse(Integer w_id)
+   {
+      // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
+      std::cout << "Verifying warehouse " << w_id << std::endl;
+      tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
+      for (Integer d_id = 1; d_id <= 10; d_id++) {
+         for (Integer c_id = 1; c_id <= tpcc->CUSTOMER_SCALE * tpcc->scale_factor / 10; c_id++) {
+            tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
+         }
+      }
+      for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO * tpcc->scale_factor; s_id++) {
+         bool ret = tpcc->stock.tryLookup({w_id, s_id}, [&](const auto&) {});
+         if (s_id % 100 > FLAGS_semijoin_selectivity) {
+            ensure(!ret);
+         } else {
+            ensure(ret);
+         }
       }
    }
 };

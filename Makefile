@@ -1,29 +1,22 @@
-# Default values
+# ----------------- VARIABLES -----------------
 default_read := 2
 default_scan := 0
 default_write := 98
 default_dram := 1
-target_gib ?= 2
+default_target := 4
+default_update_size := 5
+default_selectivity := 100
 
-# Paths
-SSD_PATH := /home/alicia.w.lyu/tmp/image
-CSV_PATH := ./build/log
-
-# Directories
-BUILD_DEBUG_DIR := ./build-debug
-BUILD_RELEASE_DIR := ./build-release
-BUILD_DIR := ./build
-
-# Executables
-JOIN_EXEC := /frontend/join_tpcc
-MERGED_EXEC := /frontend/merged_tpcc
-
-# Compilation commands
 CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
 CMAKE_RELWITHDEBINFO := cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 CMAKE_RELEASE := cmake -DCMAKE_BUILD_TYPE=Release ..
 
-BUILD_DIRS := $(BUILD_DEBUG_DIR) $(BUILD_RELEASE_DIR) $(BUILD_DIR)
+# ----------------- TARGETS -----------------
+BUILD_DIR := ./build
+BUILD_RELEASE_DIR := ./build-release
+JOIN_EXEC := /frontend/join_tpcc
+MERGED_EXEC := /frontend/merged_tpcc
+BUILD_DIRS := $(BUILD_DIR) $(BUILD_RELEASE_DIR)
 EXECS := $(JOIN_EXEC) $(MERGED_EXEC)
 
 # Create Cartesian product for targets
@@ -46,55 +39,60 @@ check_perf_event_paranoid:
 		exit 1; \
 	fi
 
+.PHONY: check_perf_event_paranoid
+
 $(TARGETS): check_perf_event_paranoid
-	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) && make -j
+	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) && $(MAKE) -j
+
+executables: $(TARGETS)
+.PHONY: executables
+
+# ----------------- DEBUG -----------------
+SSD_PATH := /home/alicia.w.lyu/tmp/image
+CSV_PATH := ./build/log
+lldb_flags := --ssd_path=$(SSD_PATH) --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50
 
 join-lldb: $(BUILD_DIR)$(JOIN_EXEC)
-	lldb -- "$(BUILD_DIR)$(JOIN_EXEC)" --ssd_path=$(SSD_PATH) --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2
+	lldb -- ./build/frontend/join_tpcc $(lldb_flags)
 
-.PHONY: $(TARGETS)
+merged-lldb: $(BUILD_DIR)$(MERGED_EXEC)
+	lldb -- ./build/frontend/merged_tpcc $(lldb_flags)
 
-# Experiment rules
-join-exp-disk: $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
-	./experiment.sh join 1 1 $(default_read) $(default_scan) $(default_write)
-	./experiment.sh join 1 2 $(default_read) $(default_scan) $(default_write)
-	./experiment.sh join 1 4 $(default_read) $(default_scan) $(default_write)
+.PHONY: join-lldb
 
-join-exp-rsw: $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
-	./experiment.sh join $(default_dram) $(target_gib) 100 0 0
-	./experiment.sh join $(default_dram) $(target_gib) 0 100 0
-	./experiment.sh join $(default_dram) $(target_gib) 0 0 100
+# ----------------- EXPERIMENTS -----------------
+both: local_dram ?= $(default_dram)
+both: local_target ?= $(default_target)
+both: local_read ?= $(default_read)
+both: local_scan ?= $(default_scan)
+both: local_write ?= $(default_write)
+both: local_update_size ?= $(default_update_size)
+both: local_selectivity ?= $(default_selectivity)
 
-join-exp: join-exp-disk join-exp-rsw
+both: $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
+	./experiment.sh join $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity)
+	./experiment.sh merged $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity)
 
-join-recover: $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
-	./experiment.sh join $(default_dram) $(target_gib) $(default_read) $(default_scan) $(default_write) # first run
-	./experiment.sh join $(default_dram) $(target_gib) $(default_read) $(default_scan) $(default_write) # recover run
+read: 
+	$(MAKE) both local_read=100 local_scan=0 local_write=0
 
-merged-exp-disk: $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh merged 1 1 $(default_read) $(default_scan) $(default_write)
-	./experiment.sh merged 1 2 $(default_read) $(default_scan) $(default_write)
-	./experiment.sh merged 1 4 $(default_read) $(default_scan) $(default_write)
+scan:
+	$(MAKE) both local_read=0 local_scan=100 local_write=0
 
-merged-exp-rsw: $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh merged $(default_dram) $(target_gib) 100 0 0
-	./experiment.sh merged $(default_dram) $(target_gib) 0 100 0
-	./experiment.sh merged $(default_dram) $(target_gib) 0 0 100
+write:
+	$(MAKE) both local_read=0 local_scan=0 local_write=100
 
-merged-exp: merged-exp-disk merged-exp-rsw
+all-tx-types: read scan write
 
-exp: join-exp merged-exp
+update-size:
+# $(MAKE) write local_update_size=5 # refer to write expriments
+	$(MAKE) write local_update_size=10
+	$(MAKE) write local_update_size=20
 
-exp-rsw: $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
-	./experiment.sh join $(default_dram) $(target_gib) 100 0 0
-	./experiment.sh merged $(default_dram) $(target_gib) 100 0 0
+selectivity:
+# Affects read, scan, and write
+# for selectivity=100, refer to all-tx-types experiments
+	$(MAKE) all-tx-types local_selectivity=50
+	$(MAKE) all-tx-types local_selectivity=10
 
-	./experiment.sh join $(default_dram) $(target_gib) 0 0 100
-	./experiment.sh merged $(default_dram) $(target_gib) 0 0 100
-
-	./experiment.sh join $(default_dram) $(target_gib) 0 100 0
-	./experiment.sh merged $(default_dram) $(target_gib) 0 100 0
-
-scan: $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh join 1 1 0 100 0
-	./experiment.sh merged 1 1 0 100 0
+.PHONY: both read scan write all-tx-types update-size selectivity

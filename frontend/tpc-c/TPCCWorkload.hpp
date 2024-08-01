@@ -1,12 +1,12 @@
 #pragma once
 #include <sys/types.h>
+#include "../shared/Adapter.hpp"
 #include "Schema.hpp"
 #include "Units.hpp"
-#include "../shared/Adapter.hpp"
 // -------------------------------------------------------------------------------------
+#include "leanstore/Config.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/utils/RandomGenerator.hpp"
-#include "leanstore/Config.hpp"
 // -------------------------------------------------------------------------------------
 #include <cstdint>
 #include <vector>
@@ -24,6 +24,7 @@ class TPCCWorkload
 
    template <template <typename> class, class>
    friend class TPCCMergedWorkload;
+
   private:
    static constexpr INTEGER OL_I_ID_C = 7911;  // in range [0, 8191]
    static constexpr INTEGER C_ID_C = 259;      // in range [0, 1023]
@@ -33,7 +34,7 @@ class TPCCWorkload
    static constexpr INTEGER C_LAST_RUN_C = 223;   // in range [0, 255]
 
    static constexpr INTEGER CUSTOMER_SCALE = 30000;
-   static constexpr INTEGER ITEMS_NO = 100000; // independent of warehouse count
+   static constexpr INTEGER ITEMS_NO = 100000;  // independent of warehouse count
    static constexpr INTEGER NO_SCALE = 9000;
 
    AdapterType<warehouse_t>& warehouse;
@@ -54,7 +55,8 @@ class TPCCWorkload
    const bool warehouse_affinity;
    const double scale_factor;
 
-   double calculate_scale_factor() const {
+   double calculate_scale_factor() const
+   {
       // As defined in TPC-C: https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-c_v5.11.0.pdf
 
       if (FLAGS_target_gib == 0) {
@@ -62,15 +64,9 @@ class TPCCWorkload
          return 1.0;
       }
 
-      uint64_t size = warehouse_t::rowSize() +
-         district_t::rowSize() * 10 +
-         customer_t::rowSize() * CUSTOMER_SCALE +
-         customer_wdl_t::rowSize() * CUSTOMER_SCALE +
-         history_t::rowSize() * CUSTOMER_SCALE +
-         order_t::rowSize() * CUSTOMER_SCALE +
-         neworder_t::rowSize() * NO_SCALE +
-         orderline_t::rowSize() * CUSTOMER_SCALE * 10 +
-         stock_t::rowSize() * ITEMS_NO;
+      uint64_t size = warehouse_t::rowSize() + district_t::rowSize() * 10 + customer_t::rowSize() * CUSTOMER_SCALE +
+                      customer_wdl_t::rowSize() * CUSTOMER_SCALE + history_t::rowSize() * CUSTOMER_SCALE + order_t::rowSize() * CUSTOMER_SCALE +
+                      neworder_t::rowSize() * NO_SCALE + orderline_t::rowSize() * CUSTOMER_SCALE * 10 + stock_t::rowSize() * ITEMS_NO;
 
       if (order_wdc_index) {
          size += order_wdc_t::rowSize() * CUSTOMER_SCALE;
@@ -78,9 +74,9 @@ class TPCCWorkload
 
       size = size * warehouseCount + item_t::rowSize() * ITEMS_NO;
 
-      double empirical_adjustment = 4; // Observed that the actual size is 3x---Why?
+      double empirical_adjustment = 4;  // Observed that the actual size is 3x---Why?
 
-      double scale = ((double) FLAGS_target_gib * 1024 * 1024 * 1024) / (size * empirical_adjustment);
+      double scale = ((double)FLAGS_target_gib * 1024 * 1024 * 1024) / (size * empirical_adjustment);
 
       std::cout << "Size of " << warehouseCount << " warehouses: " << size << " bytes, scale factor: " << scale << std::endl;
 
@@ -382,8 +378,7 @@ class TPCCWorkload
          }
          // -------------------------------------------------------------------------------------
          UpdateDescriptorGenerator1(order_update_descriptor, order_t, o_carrier_id);
-         order.update1(
-             {w_id, d_id, o_id}, [&](order_t& rec) { rec.o_carrier_id = carrier_id; }, order_update_descriptor);
+         order.update1({w_id, d_id, o_id}, [&](order_t& rec) { rec.o_carrier_id = carrier_id; }, order_update_descriptor);
          // -------------------------------------------------------------------------------------
          if (manually_handle_isolation_anomalies) {
             // First check if all orderlines have been inserted, a hack because of the missing transaction and concurrency control
@@ -641,8 +636,7 @@ class TPCCWorkload
       });
       // -------------------------------------------------------------------------------------
       UpdateDescriptorGenerator1(warehouse_update_descriptor, warehouse_t, w_ytd);
-      warehouse.update1(
-          {w_id}, [&](warehouse_t& rec) { rec.w_ytd += h_amount; }, warehouse_update_descriptor);
+      warehouse.update1({w_id}, [&](warehouse_t& rec) { rec.w_ytd += h_amount; }, warehouse_update_descriptor);
       Varchar<10> d_name;
       Varchar<20> d_street_1;
       Varchar<20> d_street_2;
@@ -661,8 +655,7 @@ class TPCCWorkload
       });
       // UpdateDescriptorGenerator2(district_update_descriptor, district_t, d_next_o_id, d_ytd);
       UpdateDescriptorGenerator1(district_update_descriptor, district_t, d_ytd);
-      district.update1(
-          {w_id, d_id}, [&](district_t& rec) { rec.d_ytd += h_amount; }, district_update_descriptor);
+      district.update1({w_id, d_id}, [&](district_t& rec) { rec.d_ytd += h_amount; }, district_update_descriptor);
 
       Varchar<500> c_data;
       Varchar<2> c_credit;
@@ -744,8 +737,7 @@ class TPCCWorkload
       });
       // -------------------------------------------------------------------------------------
       UpdateDescriptorGenerator1(warehouse_update_descriptor, warehouse_t, w_ytd);
-      warehouse.update1(
-          {w_id}, [&](warehouse_t& rec) { rec.w_ytd += h_amount; }, warehouse_update_descriptor);
+      warehouse.update1({w_id}, [&](warehouse_t& rec) { rec.w_ytd += h_amount; }, warehouse_update_descriptor);
       // -------------------------------------------------------------------------------------
       Varchar<10> d_name;
       Varchar<20> d_street_1;
@@ -765,8 +757,7 @@ class TPCCWorkload
       });
       UpdateDescriptorGenerator1(district_update_descriptor, district_t, d_ytd);
       // UpdateDescriptorGenerator2(district_update_descriptor, district_t, d_next_o_id, d_ytd);
-      district.update1(
-          {w_id, d_id}, [&](district_t& rec) { rec.d_ytd += h_amount; }, district_update_descriptor);
+      district.update1({w_id, d_id}, [&](district_t& rec) { rec.d_ytd += h_amount; }, district_update_descriptor);
 
       // Get customer id by name
       vector<Integer> ids;
@@ -919,10 +910,13 @@ class TPCCWorkload
       leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
    }
    // -------------------------------------------------------------------------------------
-   void loadStock(Integer w_id)
+   void loadStock(Integer w_id, Integer semijoin_selectivity = 100)  // TODO
    {
       std::cout << "Loading " << ITEMS_NO * scale_factor << " stock" << std::endl;
       for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
+         if ((i + 1) % 100 > semijoin_selectivity) {
+            continue;
+         }
          Varchar<50> s_data = randomastring<50>(25, 50);
          if (rnd(10) == 0) {
             s_data.length = rnd(s_data.length - 8);
@@ -938,7 +932,8 @@ class TPCCWorkload
    {
       for (Integer i = 1; i < 11; i++) {
          district.insert({w_id, i}, {randomastring<10>(6, 10), randomastring<20>(10, 20), randomastring<20>(10, 20), randomastring<20>(10, 20),
-                                     randomastring<2>(2, 2), randomzip(), randomNumeric(0.0000, 0.2000), 3000000, static_cast<Integer>(CUSTOMER_SCALE * scale_factor / 10 + 1)});
+                                     randomastring<2>(2, 2), randomzip(), randomNumeric(0.0000, 0.2000), 3000000,
+                                     static_cast<Integer>(CUSTOMER_SCALE * scale_factor / 10 + 1)});
       }
    }
    // -------------------------------------------------------------------------------------
@@ -990,9 +985,10 @@ class TPCCWorkload
             if (o_id < 2101)
                ol_delivery_d = now;
             Numeric ol_amount = (o_id < 2101) ? 0 : randomNumeric(0.01, 9999.99);
-            const Integer ol_i_id = rnd(ITEMS_NO * scale_factor) + 1; // May not cover all items in stock
+            const Integer ol_i_id = rnd(ITEMS_NO * scale_factor) + 1;  // May not cover all items in stock
             // std::cout << "ol_i_id: " << ol_i_id << " for o_id: " << o_id << std::endl;
-            orderline.insert({w_id, d_id, o_id, ol_number}, {ol_i_id, w_id, ol_delivery_d, 5, ol_amount, randomastring<24>(24, 24)}); // All supplied by the same warehouse
+            orderline.insert({w_id, d_id, o_id, ol_number},
+                             {ol_i_id, w_id, ol_delivery_d, 5, ol_amount, randomastring<24>(24, 24)});  // All supplied by the same warehouse
          }
          o_id++;
       }
@@ -1116,8 +1112,7 @@ class TPCCWorkload
    {
       typename Relation::Key key;
       std::memset(&key, 0, sizeof(typename Relation::Key));
-      adapter.scan(
-          key, [&](const typename Relation::Key&, const Relation&) { return true; }, [&]() {});
+      adapter.scan(key, [&](const typename Relation::Key&, const Relation&) { return true; }, [&]() {});
    }
    // -------------------------------------------------------------------------------------
    void analyticalQuery(s32 query_no = 0)
@@ -1176,7 +1171,10 @@ class TPCCWorkload
          neworder.scan(
              {0, 0, 0},
              [&](const neworder_t::Key& key, const neworder_t&) {
-                COUNTERS_BLOCK() { leanstore::WorkerCounters::myCounters().olap_scanned_tuples++; }
+                COUNTERS_BLOCK()
+                {
+                   leanstore::WorkerCounters::myCounters().olap_scanned_tuples++;
+                }
                 if (last_key.no_o_id != -1) {
                    if (!(last_key.no_w_id != key.no_w_id || last_key.no_d_id != key.no_d_id || last_key.no_o_id + 1 == key.no_o_id)) {
                       cout << last_key.no_w_id << "," << key.no_w_id << endl;

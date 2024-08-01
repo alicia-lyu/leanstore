@@ -85,6 +85,27 @@ struct LeanStoreMergedAdapter {
       }
       ensure(res == leanstore::OP_RESULT::OK);
    }
+
+   template <class Record>
+   bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& cb)
+   {
+      u8 folded_key[Record::maxFoldLength()];
+      u16 folded_key_len = Record::foldKey(folded_key, key);
+      const OP_RESULT res = btree->lookup(folded_key, folded_key_len, [&](const u8* payload, u16 payload_length) {
+         static_cast<void>(payload_length);
+         assert(payload_length == sizeof(Record));
+         const Record& typed_payload = *reinterpret_cast<const Record*>(payload);
+         cb(typed_payload);
+      });
+      if (res == leanstore::OP_RESULT::ABORT_TX) {
+         cr::Worker::my().abortTX();
+      }
+      if (res != leanstore::OP_RESULT::OK) {
+         return false;
+      } else {
+         return true;
+      }
+   }
    // -------------------------------------------------------------------------------------
    template <class Record>
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb, UpdateSameSizeInPlaceDescriptor& update_descriptor)
