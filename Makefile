@@ -15,9 +15,9 @@ CMAKE_RELEASE := cmake -DCMAKE_BUILD_TYPE=Release ..
 CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -DINCLUDE_COLUMNS=${included_columns}"
 
 # ----------------- TARGETS -----------------
-BUILD_DIR := ./build
-BUILD_RELEASE_DIR := ./build-release
-JOIN_EXEC := /frontend/join_tpcc
+BUILD_DIR := ./build-$(included_columns)
+BUILD_RELEASE_DIR := ./build-release-$(included_columns)
+JOIN_EXEC := /frontend/join_tpcc-$(included_columns)
 MERGED_EXEC := /frontend/merged_tpcc
 BUILD_DIRS := $(BUILD_DIR) $(BUILD_RELEASE_DIR)
 EXECS := $(JOIN_EXEC) $(MERGED_EXEC)

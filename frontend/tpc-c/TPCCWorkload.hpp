@@ -13,6 +13,8 @@
 using std::vector;
 
 template <template <typename> class AdapterType>
+class TPCCBaseWorkload;
+template <template <typename> class AdapterType>
 class TPCCJoinWorkload;
 template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCCMergedWorkload;
@@ -20,6 +22,7 @@ class TPCCMergedWorkload;
 template <template <typename> class AdapterType>
 class TPCCWorkload
 {
+   friend class TPCCBaseWorkload<AdapterType>;
    friend class TPCCJoinWorkload<AdapterType>;
 
    template <template <typename> class, class>
