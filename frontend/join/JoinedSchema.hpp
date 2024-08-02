@@ -91,6 +91,48 @@ struct ol_join_sec_t {
        << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", dist_info: " << record.ol_dist_info.toString();
     return os;
   }
+
+  ol_join_sec_t expand() const {
+    return *this;
+  }
+};
+
+struct ol_sec_key_only_t {
+  using Key = ol_join_sec_t::Key;
+
+  template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
+    return ol_join_sec_t::foldKey(out, key);
+  }
+
+  template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
+    return ol_join_sec_t::unfoldKey(in, key);
+  }
+
+  static constexpr unsigned maxFoldLength() {
+    return ol_join_sec_t::maxFoldLength();
+  };
+
+  static constexpr unsigned joinKeyLength() {
+    return ol_join_sec_t::joinKeyLength();
+  }
+
+  static constexpr unsigned primaryKeyLength() {
+    return ol_join_sec_t::primaryKeyLength();
+  }
+
+  friend std::ostream& operator<<(std::ostream& os, const ol_sec_key_only_t& record) {
+    os << "ol_sec_key_only";
+  }
+
+  ol_join_sec_t expand() const {
+    return ol_join_sec_t {
+      .ol_supply_w_id = 0,
+      .ol_delivery_d = Timestamp(),
+      .ol_quantity = Numeric(),
+      .ol_amount = Numeric(),
+      .ol_dist_info = Varchar<24>()
+    };
+  }
 };
 
 struct joined_ols_t {
@@ -169,5 +211,58 @@ struct joined_ols_t {
     os << ", supply_w_id: " << record.ol_supply_w_id
        << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", s_quantity: " << record.s_quantity << ", s_dist_01: " << record.s_dist_01.toString() << ", s_dist_02: " << record.s_dist_02.toString() << ", s_dist_03: " << record.s_dist_03.toString() << ", s_dist_04: " << record.s_dist_04.toString() << ", s_dist_05: " << record.s_dist_05.toString() << ", s_dist_06: " << record.s_dist_06.toString() << ", s_dist_07: " << record.s_dist_07.toString() << ", s_dist_08: " << record.s_dist_08.toString() << ", s_dist_09: " << record.s_dist_09.toString() << ", s_dist_10: " << record.s_dist_10.toString() << ", s_ytd: " << record.s_ytd << ", s_order_cnt: " << record.s_order_cnt << ", s_remote_cnt: " << record.s_remote_cnt << ", s_data: " << record.s_data.toString();
     return os;
+  }
+
+  joined_ols_t expand() const {
+    return *this;
+  }
+};
+
+struct joined_ols_key_only_t {
+  using Key = joined_ols_t::Key;
+
+  template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
+    return joined_ols_t::foldKey(out, key);
+  }
+
+  template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
+    return joined_ols_t::unfoldKey(in, key);
+  }
+
+  static constexpr unsigned maxFoldLength() {
+    return joined_ols_t::maxFoldLength();
+  };
+
+  static constexpr unsigned joinKeyLength() {
+    return joined_ols_t::joinKeyLength();
+  }
+
+  friend std::ostream& operator<<(std::ostream& os, const joined_ols_key_only_t& record) {
+    os << "joined_ols_key_only";
+    return os;
+  }
+
+  joined_ols_t expand() const {
+    return joined_ols_t {
+      .ol_supply_w_id = 0,
+      .ol_delivery_d = Timestamp(),
+      .ol_quantity = Numeric(),
+      .ol_amount = Numeric(),
+      .s_quantity = Numeric(),
+      .s_dist_01 = Varchar<24>(),
+      .s_dist_02 = Varchar<24>(),
+      .s_dist_03 = Varchar<24>(),
+      .s_dist_04 = Varchar<24>(),
+      .s_dist_05 = Varchar<24>(),
+      .s_dist_06 = Varchar<24>(),
+      .s_dist_07 = Varchar<24>(),
+      .s_dist_08 = Varchar<24>(),
+      .s_dist_09 = Varchar<24>(),
+      .s_dist_10 = Varchar<24>(),
+      .s_ytd = Numeric(),
+      .s_order_cnt = Numeric(),
+      .s_remote_cnt = Numeric(),
+      .s_data = Varchar<50>()
+    };
   }
 };

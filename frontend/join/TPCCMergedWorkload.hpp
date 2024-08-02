@@ -3,8 +3,17 @@
 #include <cstdint>
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "JoinedSchema.hpp"
+#include "Units.hpp"
 
 DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock"); // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be lower. Empirically 90+% items are present in some orderline, picking out those in stock.
+
+#ifdef INCLUDED_COLUMNS
+   #if INCLUDED_COLUMNS == 0
+      #define ORDERLINE_SCHEMA ol_sec_key_only_t
+   #else
+      #define ORDERLINE_SCHEMA ol_join_sec_t
+   #endif
+#endif
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCCMergedWorkload

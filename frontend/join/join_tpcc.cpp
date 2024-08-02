@@ -46,6 +46,8 @@ using namespace leanstore;
 // -------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;
+   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
    gflags::SetUsageMessage("Leanstore Join TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    assert(FLAGS_tpcc_warehouse_count > 0);
@@ -67,9 +69,9 @@ int main(int argc, char** argv)
    LeanStoreAdapter<orderline_t> orderline;
    LeanStoreAdapter<item_t> item;
    LeanStoreAdapter<stock_t> stock;
-   LeanStoreAdapter<ol_join_sec_t> orderline_secondary;
+   LeanStoreAdapter<orderline_sec_t> orderline_secondary;
    // LeanStoreAdapter<stock_join_sec_t> stock_secondary;
-   LeanStoreAdapter<joined_ols_t> joined_ols;
+   LeanStoreAdapter<joined_t> joined_ols;
 
    auto& crm = db.getCRManager();
    // -------------------------------------------------------------------------------------
@@ -85,9 +87,9 @@ int main(int argc, char** argv)
       orderline = LeanStoreAdapter<orderline_t>(db, "orderline");
       item = LeanStoreAdapter<item_t>(db, "item");
       stock = LeanStoreAdapter<stock_t>(db, "stock");
-      orderline_secondary = LeanStoreAdapter<ol_join_sec_t>(db, "orderline_secondary");
+      orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary");
       // stock_secondary = LeanStoreAdapter<stock_join_sec_t>(db, "stock_secondary"); not needed because join key is its primary key
-      joined_ols = LeanStoreAdapter<joined_ols_t>(db, "joined_ols");
+      joined_ols = LeanStoreAdapter<joined_t>(db, "joined_ols");
    });
 
    db.registerConfigEntry("tpcc_warehouse_count", FLAGS_tpcc_warehouse_count);
