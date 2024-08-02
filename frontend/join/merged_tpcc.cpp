@@ -1,8 +1,6 @@
 #include "../shared/LeanStoreAdapter.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
-#include "Join.hpp"
-#include "JoinedSchema.hpp"
 #include "LeanStoreMergedAdapter.hpp"
 #include "TPCCMergedWorkload.hpp"
 // -------------------------------------------------------------------------------------
@@ -18,28 +16,6 @@
 
 #include <iostream>
 #include <string>
-// -------------------------------------------------------------------------------------
-DEFINE_int64(tpcc_warehouse_count, 1, "");
-DEFINE_int32(tpcc_abort_pct, 0, "");
-DEFINE_uint64(run_until_tx, 0, "");
-DEFINE_bool(tpcc_verify, false, "");
-DEFINE_bool(tpcc_warehouse_affinity, false, "");
-// DEFINE_bool(tpcc_fast_load, false, "");
-DEFINE_bool(tpcc_remove, true, "");
-DEFINE_bool(order_wdc_index, true, "");
-// DEFINE_uint64(tpcc_analytical_weight, 0, "");
-DEFINE_uint64(ch_a_threads, 0, "CH analytical threads");
-DEFINE_uint64(ch_a_rounds, 1, "");
-DEFINE_uint64(ch_a_query, 2, "");
-DEFINE_uint64(ch_a_start_delay_sec, 0, "");
-DEFINE_uint64(ch_a_process_delay_sec, 0, "");
-// DEFINE_bool(ch_a_infinite, false, "");
-// DEFINE_bool(ch_a_once, false, "");
-DEFINE_uint32(tpcc_threads, 0, "");
-DEFINE_uint32(read_percentage, 1, "");
-DEFINE_uint32(scan_percentage, 1, "");
-DEFINE_uint32(write_percentage, 98, "");
-DEFINE_uint32(order_size, 5, "Number of lines in a new order");
 // -------------------------------------------------------------------------------------
 using namespace std;
 using namespace leanstore;

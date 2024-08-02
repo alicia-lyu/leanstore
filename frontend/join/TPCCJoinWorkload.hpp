@@ -11,7 +11,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
 {
    using Base = TPCCBaseWorkload<AdapterType>;
    using orderline_sec_t = typename Base::orderline_sec_t;
-   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
+   using joined_t = typename Base::joined_t;
    AdapterType<orderline_sec_t>& orderline_secondary;
    AdapterType<joined_t>& joined_ols;
 
@@ -25,7 +25,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
       // vector<joined_t> results;
-      joined_t::Key start_key = {w_id, 0, d_id, 0, 0};  // Starting from the first item in the warehouse and district
+      typename joined_t::Key start_key = {w_id, 0, d_id, 0, 0};  // Starting from the first item in the warehouse and district
 
       uint64_t scanCardinality = 0;
 
@@ -62,7 +62,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
       vector<joined_t> results;
-      joined_t::Key start_key = {w_id, i_id, d_id, 0, 0};  // Starting from the first item in the warehouse and district
+      typename joined_t::Key start_key = {w_id, i_id, d_id, 0, 0};  // Starting from the first item in the warehouse and district
 
       uint64_t lookupCardinality = 0;
 
