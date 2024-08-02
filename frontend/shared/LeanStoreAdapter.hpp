@@ -82,7 +82,10 @@ struct LeanStoreAdapter : Adapter<Record> {
       if (res == leanstore::OP_RESULT::ABORT_TX) {
          cr::Worker::my().abortTX();
       }
-      ensure(res == leanstore::OP_RESULT::OK);
+      if (res != leanstore::OP_RESULT::OK) {
+         std::cout << std::to_string((int) res) << key << std::endl;
+         ensure(false);
+      }
    }
 
    bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& cb)

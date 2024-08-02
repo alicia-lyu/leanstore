@@ -119,6 +119,8 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+      cout << "TPC-C core loaded - consumed space in GiB = " << gib << endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {

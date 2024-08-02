@@ -112,6 +112,8 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+      cout << "TPC-C core loaded - consumed space in GiB = " << gib << endl;
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          tpcc_merge.loadOrderlineSecondaryToMerged();

@@ -33,6 +33,8 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
              scanCardinality++;
+             if (key.w_id != w_id) return false; // passed
+             if (key.ol_d_id != d_id) return true; // skip this
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
                 joined_ols_t joined_rec = rec.expand();
                 if (joined_rec.ol_delivery_d >= since) {
@@ -70,7 +72,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
              lookupCardinality++;
-             if (key.i_id != i_id) {
+             if (key.i_id != i_id || key.w_id != w_id || key.ol_d_id != d_id) { // passed
                 return false;
              }
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
