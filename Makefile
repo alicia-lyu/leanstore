@@ -17,7 +17,7 @@ CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -DINCLUDE_COLUMNS=${inclu
 # ----------------- TARGETS -----------------
 BUILD_DIR := ./build-$(included_columns)
 BUILD_RELEASE_DIR := ./build-release-$(included_columns)
-JOIN_EXEC := /frontend/join_tpcc-$(included_columns)
+JOIN_EXEC := /frontend/join_tpcc
 MERGED_EXEC := /frontend/merged_tpcc
 BUILD_DIRS := $(BUILD_DIR) $(BUILD_RELEASE_DIR)
 EXECS := $(JOIN_EXEC) $(MERGED_EXEC)
@@ -73,8 +73,8 @@ both: local_update_size ?= $(default_update_size)
 both: local_selectivity ?= $(default_selectivity)
 
 both: $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh join $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity)
-	./experiment.sh merged $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
 
 read: 
 	$(MAKE) both local_read=100 local_scan=0 local_write=0
@@ -97,5 +97,8 @@ selectivity:
 # for selectivity=100, refer to all-tx-types experiments
 	$(MAKE) all-tx-types local_selectivity=50
 	$(MAKE) all-tx-types local_selectivity=10
+
+no-columns:
+	$(MAKE) all-tx-types included_columns=0
 
 .PHONY: both read scan write all-tx-types update-size selectivity

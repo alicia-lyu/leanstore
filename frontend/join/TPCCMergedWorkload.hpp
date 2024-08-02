@@ -1,64 +1,36 @@
 #pragma once
 #include <gflags/gflags.h>
 #include <cstdint>
+#include <type_traits>
 #include "../tpc-c/TPCCWorkload.hpp"
+#include "TPCCBaseWorkload.hpp"
 #include "JoinedSchema.hpp"
+#include "Join.hpp"
 #include "Units.hpp"
 
-DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock"); // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be lower. Empirically 90+% items are present in some orderline, picking out those in stock.
-
-#ifdef INCLUDED_COLUMNS
-   #if INCLUDED_COLUMNS == 0
-      #define ORDERLINE_SCHEMA ol_sec_key_only_t
-   #else
-      #define ORDERLINE_SCHEMA ol_join_sec_t
-   #endif
-#endif
-
 template <template <typename> class AdapterType, class MergedAdapterType>
-class TPCCMergedWorkload
+class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
 {
-   TPCCWorkload<AdapterType>* tpcc;
+   using Base = TPCCBaseWorkload<AdapterType>;
+   using orderline_sec_t = typename Base::orderline_sec_t;
+   using joined_t = typename Base::joined_t;
    MergedAdapterType& merged;
 
-   std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> cartesianProducts(std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>>& cached_left, std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
+   std::vector<std::pair<typename joined_t::Key, joined_t>> cartesianProducts(std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>>& cached_left, std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
    {
-      std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
+      std::vector<std::pair<typename joined_t::Key, joined_t>> results;
       results.reserve(cached_left.size() * cached_right.size());  // Reserve memory to avoid reallocations
 
       for (auto& left : cached_left) {
          for (auto& right : cached_right) {
-            joined_ols_t::Key joined_key = {left.first.ol_w_id, left.first.ol_i_id, left.first.ol_d_id, left.first.ol_o_id,
-                                            left.first.ol_number};
-
-            joined_ols_t joined_rec = {left.second.ol_supply_w_id,
-                                       left.second.ol_delivery_d,
-                                       left.second.ol_quantity,
-                                       left.second.ol_amount,
-                                       right.second.s_quantity,
-                                       right.second.s_dist_01,
-                                       right.second.s_dist_02,
-                                       right.second.s_dist_03,
-                                       right.second.s_dist_04,
-                                       right.second.s_dist_05,
-                                       right.second.s_dist_06,
-                                       right.second.s_dist_07,
-                                       right.second.s_dist_08,
-                                       right.second.s_dist_09,
-                                       right.second.s_dist_10,
-                                       right.second.s_ytd,
-                                       right.second.s_order_cnt,
-                                       right.second.s_remote_cnt,
-                                       right.second.s_data};
-
-            results.push_back({joined_key, joined_rec});
+            results.push_back(MergeJoin<orderline_sec_t, stock_t, joined_t>::merge_records(left.first, left.second, right.first, right.second));
          }
       }
       return results;
    }
 
   public:
-   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType& merged) : tpcc(tpcc), merged(merged) {}
+   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType& merged) : TPCCBaseWorkload<AdapterType>(tpcc), merged(merged) {}
 
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
@@ -68,16 +40,16 @@ class TPCCMergedWorkload
 
       stock_t::Key current_key = start_key;
 
-      std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
+      std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
       // cached_left.reserve(100);  // Multiple order lines can be associated with a single stock item
       // cached_right.reserve(2);
 
-      // std::vector<std::pair<joined_ols_t::Key, joined_ols_t>> results; // Assuming we don't want the final results per se, but only scan it with
+      // std::vector<std::pair<joined_t::Key, joined_t>> results; // Assuming we don't want the final results per se, but only scan it with
       // some predicate / task, similar to btree->scan
 
-      merged.template scan<stock_t, ol_join_sec_t>(
+      merged.template scan<stock_t, orderline_sec_t>(
           start_key,
           [&](const stock_t::Key& key, const stock_t& rec) {
              ++scanCardinality;
@@ -94,11 +66,23 @@ class TPCCMergedWorkload
              cached_right.push_back({key, rec});
              return true;
           },
-          [&](const ol_join_sec_t::Key& key, const ol_join_sec_t& rec) {
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++scanCardinality;
-             if (!(rec.ol_delivery_d < since) || key.ol_d_id != d_id) {
-                return true;  // continue scan
+             if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
+               ol_join_sec_t expanded_rec = rec.expand();
+               if (!(expanded_rec.ol_delivery_d < since) || key.ol_d_id != d_id) {
+                  return true;  // continue scan
+               }
+             } else {
+               bool since_flag = true;
+               this->tpcc->orderline.lookup1({w_id, d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& ol_rec) {
+                  if (!(ol_rec.ol_delivery_d < since)) {
+                     since_flag = false;
+                  }
+               });
+               if (!since_flag) return true;
              }
+             
              cached_left.push_back({key, rec});
              return true;  // continue scan
           },
@@ -114,12 +98,12 @@ class TPCCMergedWorkload
 
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
-      vector<std::pair<joined_ols_t::Key, joined_ols_t>> results;
+      vector<std::pair<typename joined_t::Key, joined_t>> results;
       stock_t::Key start_key = {w_id, i_id};
       // Either type can be start key, as the prefix join key will be extracted in scan
       // But as soon as you choose a type for start_key, you must put the same type in the first cb
 
-      std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
+      std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
       // cached_left.reserve(100);
@@ -127,7 +111,7 @@ class TPCCMergedWorkload
 
       uint64_t lookupCardinality = 0;
 
-      merged.template scan<stock_t, ol_join_sec_t>(
+      merged.template scan<stock_t, orderline_sec_t>(
           start_key,
           [&](const stock_t::Key& key, const stock_t& rec) {
              ++lookupCardinality;
@@ -137,7 +121,7 @@ class TPCCMergedWorkload
              cached_right.push_back({key, rec});
              return true;
           },
-          [&](const ol_join_sec_t::Key& key, const ol_join_sec_t& rec) {
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++lookupCardinality;
              assert(key.ol_i_id == i_id && key.ol_w_id == w_id);
              // Change only occur at a stock entry
@@ -159,10 +143,10 @@ class TPCCMergedWorkload
 
    void newOrderRnd(Integer w_id, Integer order_size = 5)
    {
-      // tpcc->newOrderRnd(w_id);
-      Integer d_id = tpcc->urand(1, 10);
-      Integer c_id = tpcc->getCustomerID();
-      Integer ol_cnt = tpcc->urand(order_size, order_size * 3);
+      // this->tpcc->newOrderRnd(w_id);
+      Integer d_id = this->tpcc->urand(1, 10);
+      Integer c_id = this->tpcc->getCustomerID();
+      Integer ol_cnt = this->tpcc->urand(order_size, order_size * 3);
 
       vector<Integer> lineNumbers;
       vector<Integer> supwares;
@@ -176,28 +160,28 @@ class TPCCMergedWorkload
 
       for (Integer i = 1; i <= ol_cnt; i++) {
          Integer supware = w_id;
-         if (!tpcc->warehouse_affinity && tpcc->urand(1, 100) == 1)  // ATTN:remote transaction
-            supware = tpcc->urandexcept(1, tpcc->warehouseCount, w_id);
-         Integer itemid = tpcc->getItemID();
-         if (false && (i == ol_cnt) && (tpcc->urand(1, 100) == 1))  // invalid item => random
+         if (!this->tpcc->warehouse_affinity && this->tpcc->urand(1, 100) == 1)  // ATTN:remote transaction
+            supware = this->tpcc->urandexcept(1, this->tpcc->warehouseCount, w_id);
+         Integer itemid = this->tpcc->getItemID();
+         if (false && (i == ol_cnt) && (this->tpcc->urand(1, 100) == 1))  // invalid item => random
             itemid = 0;
          lineNumbers.push_back(i);
          supwares.push_back(supware);
          itemids.push_back(itemid);
-         qtys.push_back(tpcc->urand(1, 10));
+         qtys.push_back(this->tpcc->urand(1, 10));
       }
 
-      Timestamp timestamp = tpcc->currentTimestamp();
+      Timestamp timestamp = this->tpcc->currentTimestamp();
 
-      // tpcc->newOrder
-      Numeric w_tax = tpcc->warehouse.lookupField({w_id}, &warehouse_t::w_tax);
-      Numeric c_discount = tpcc->customer.lookupField({w_id, d_id, c_id}, &customer_t::c_discount);
+      // this->tpcc->newOrder
+      Numeric w_tax = this->tpcc->warehouse.lookupField({w_id}, &warehouse_t::w_tax);
+      Numeric c_discount = this->tpcc->customer.lookupField({w_id, d_id, c_id}, &customer_t::c_discount);
       Numeric d_tax;
       Integer o_id;
 
       UpdateDescriptorGenerator1(district_update_descriptor, district_t, d_next_o_id);
       // UpdateDescriptorGenerator2(district_update_descriptor, district_t, d_next_o_id, d_ytd);
-      tpcc->district.update1(
+      this->tpcc->district.update1(
           {w_id, d_id},
           [&](district_t& rec) {
              d_tax = rec.d_tax;
@@ -211,11 +195,11 @@ class TPCCMergedWorkload
             all_local = 0;
       Numeric cnt = lineNumbers.size();
       Integer carrier_id = 0; /*null*/
-      tpcc->order.insert({w_id, d_id, o_id}, {c_id, timestamp, carrier_id, cnt, all_local});
-      if (tpcc->order_wdc_index) {
-         tpcc->order_wdc.insert({w_id, d_id, c_id, o_id}, {});
+      this->tpcc->order.insert({w_id, d_id, o_id}, {c_id, timestamp, carrier_id, cnt, all_local});
+      if (this->tpcc->order_wdc_index) {
+         this->tpcc->order_wdc.insert({w_id, d_id, c_id, o_id}, {});
       }
-      tpcc->neworder.insert({w_id, d_id, o_id}, {});
+      this->tpcc->neworder.insert({w_id, d_id, o_id}, {});
 
       // Batch update stock records
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
@@ -245,8 +229,8 @@ class TPCCMergedWorkload
          Integer itemid = itemids[i];
          Numeric qty = qtys[i];
 
-         Numeric i_price = tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
-         Varchar<24> s_dist = tpcc->template randomastring<24>(24, 24);
+         Numeric i_price = this->tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
+         Varchar<24> s_dist = this->tpcc->template randomastring<24>(24, 24);
          bool ret = merged.template tryLookup<stock_t>({w_id, itemid}, [&](const stock_t& rec) {
             switch (d_id) {
                case 1:
@@ -286,37 +270,41 @@ class TPCCMergedWorkload
          });
          Numeric ol_amount = qty * i_price * (1.0 + w_tax + d_tax) * (1.0 - c_discount);
          Timestamp ol_delivery_d = 0;  // NULL
-         tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
+         this->tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
          // ********** Update Merged Index **********
-         merged.template insert<ol_join_sec_t>({w_id, itemid, d_id, o_id, lineNumber}, {}); // Basically outer join result. No need to act on ret == false.
+         if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
+            merged.template insert<ol_join_sec_t>({w_id, itemid, d_id, o_id, lineNumber}, {supware, ol_delivery_d, qty, ol_amount, s_dist});
+         } else {
+            merged.template insert<ol_sec_key_only_t>({w_id, itemid, d_id, o_id, lineNumber}, {});
+         }
       }
    }
 
    void loadStockToMerged(Integer w_id, Integer semijoin_selectivity = 100) // TODO
    {
       std::cout << "Loading stock of warehouse " << w_id << " to merged" << std::endl;
-      for (Integer i = 0; i < tpcc->ITEMS_NO * tpcc->scale_factor; i++) {
+      for (Integer i = 0; i < this->tpcc->ITEMS_NO * this->tpcc->scale_factor; i++) {
          if ((i + 1) % 100 > semijoin_selectivity) {
             continue;
          }
-         Varchar<50> s_data = tpcc->template randomastring<50>(25, 50);
-         if (tpcc->rnd(10) == 0) {
-            s_data.length = tpcc->rnd(s_data.length - 8);
+         Varchar<50> s_data = this->tpcc->template randomastring<50>(25, 50);
+         if (this->tpcc->rnd(10) == 0) {
+            s_data.length = this->tpcc->rnd(s_data.length - 8);
             s_data = s_data || Varchar<10>("ORIGINAL");
          }
          merged.template insert<stock_t>(
              typename stock_t::Key{w_id, i + 1},
-             {tpcc->randomNumeric(10, 100), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
-              tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
-              tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24),
-              tpcc->template randomastring<24>(24, 24), tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data});
+             {this->tpcc->randomNumeric(10, 100), this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data});
       }
    }
 
    void loadOrderlineSecondaryToMerged()
    {
       std::cout << "Loading orderline secondary index to merged" << std::endl;
-      auto orderline_scanner = tpcc->orderline.getScanner();
+      auto orderline_scanner = this->tpcc->orderline.getScanner();
       // cout << "After inserting stock to merged, ";
       // merged.printTreeHeight();
       while (true) {
@@ -324,8 +312,12 @@ class TPCCMergedWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-         merged.template insert<ol_join_sec_t>(sec_key, {});
+         typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+         if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
+            merged.template insert<ol_join_sec_t>(sec_key, {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount, payload.ol_dist_info});
+         } else {
+            merged.template insert<ol_sec_key_only_t>(sec_key, {});
+         }
       }
    }
 
@@ -333,38 +325,19 @@ class TPCCMergedWorkload
    {
       // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
       std::cout << "Verifying warehouse " << w_id << std::endl;
-      tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
+      this->tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
-         for (Integer c_id = 1; c_id <= tpcc->CUSTOMER_SCALE * tpcc->scale_factor / 10; c_id++) {
-            tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
+         for (Integer c_id = 1; c_id <= this->tpcc->CUSTOMER_SCALE * this->tpcc->scale_factor / 10; c_id++) {
+            this->tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
          }
       }
-      for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO * tpcc->scale_factor; s_id++) {
+      for (Integer s_id = 1; s_id <= this->tpcc->ITEMS_NO * this->tpcc->scale_factor; s_id++) {
          bool ret = merged.template tryLookup<stock_t>({w_id, s_id}, [&](const auto&) {});
          if (s_id % 100 > FLAGS_semijoin_selectivity) {
             ensure(!ret);
          } else {
             ensure(ret);
          }
-      }
-   }
-
-   int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage, Integer order_size = 5)
-   {
-      int rnd = (int) leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
-      if (rnd < read_percentage) {
-         Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
-         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, (int)(tpcc->ITEMS_NO * tpcc->scale_factor) + 1);
-         ordersByItemId(w_id, d_id, i_id);
-         return 0;
-      } else if (rnd < read_percentage + scan_percentage) {
-         Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
-         Timestamp since = 1;
-         recentOrdersStockInfo(w_id, d_id, since);
-         return 0;
-      } else {
-         newOrderRnd(w_id, order_size);
-         return 0;
       }
    }
 };
