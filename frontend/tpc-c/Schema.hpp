@@ -9,6 +9,12 @@ struct warehouse_t {
    struct Key {
       static constexpr int id = 0;
       Integer w_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "w_id: " << record.w_id;
+         return os;
+      }
    };
    Varchar<10> w_name;
    Varchar<20> w_street_1;
@@ -44,6 +50,12 @@ struct district_t {
       static constexpr int id = 1;
       Integer d_w_id;
       Integer d_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "d_w_id: " << record.d_w_id << ", d_id: " << record.d_id;
+         return os;
+      }
    };
    Varchar<10> d_name;
    Varchar<20> d_street_1;
@@ -83,6 +95,12 @@ struct customer_t { // 712B
       Integer c_w_id;
       Integer c_d_id;
       Integer c_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "c_w_id: " << record.c_w_id << ", c_d_id: " << record.c_d_id << ", c_id: " << record.c_id;
+         return os;
+      }
    };
    Varchar<16> c_first;
    Varchar<2> c_middle;
@@ -134,6 +152,12 @@ struct customer_wdl_t {
       Integer c_d_id;
       Varchar<16> c_last;
       Varchar<16> c_first;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "c_w_id: " << record.c_w_id << ", c_d_id: " << record.c_d_id << ", c_last: " << record.c_last.toString() << ", c_first: " << record.c_first.toString();
+         return os;
+      }
    };
    Integer c_id;
 
@@ -168,6 +192,12 @@ struct history_t {
       static constexpr int id = 4;
       Integer thread_id;
       Integer h_pk;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "thread_id: " << record.thread_id << ", h_pk: " << record.h_pk;
+         return os;
+      }
    };
    Integer h_c_id;
    Integer h_c_d_id;
@@ -206,6 +236,12 @@ struct neworder_t {
       Integer no_w_id;
       Integer no_d_id;
       Integer no_o_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "no_w_id: " << record.no_w_id << ", no_d_id: " << record.no_d_id << ", no_o_id: " << record.no_o_id;
+         return os;
+      }
    };
 
    template <class T>
@@ -238,6 +274,12 @@ struct order_t {
       Integer o_w_id;
       Integer o_d_id;
       Integer o_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "o_w_id: " << record.o_w_id << ", o_d_id: " << record.o_d_id << ", o_id: " << record.o_id;
+         return os;
+      }
    };
    Integer o_c_id;
    Timestamp o_entry_d;
@@ -276,6 +318,12 @@ struct order_wdc_t {
       Integer o_d_id;
       Integer o_c_id;
       Integer o_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "o_w_id: " << record.o_w_id << ", o_d_id: " << record.o_d_id << ", o_c_id: " << record.o_c_id << ", o_id: " << record.o_id;
+         return os;
+      }
    };
 
    template <class T>
@@ -374,6 +422,12 @@ struct item_t {
    struct Key {
       static constexpr int id = 9;
       Integer i_id;
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& record)
+      {
+         os << "i_id: " << record.i_id;
+         return os;
+      }
    };
    Integer i_im_id;
    Varchar<24> i_name;

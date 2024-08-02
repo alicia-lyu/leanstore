@@ -53,6 +53,9 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
           start_key,
           [&](const stock_t::Key& key, const stock_t& rec) {
              ++scanCardinality;
+             if (key.s_w_id != w_id) {
+               return false;
+             }
              if (key.s_w_id != current_key.s_w_id || key.s_i_id != current_key.s_i_id) {
                 // A new join key discovered
                 // Do a cartesian product of current cached rows
@@ -68,10 +71,14 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++scanCardinality;
+             assert(key.s_w_id == w_id); // change only occur at a stock entry
+             if (key.ol_d_id != d_id) {
+               return true; // next item may still be in the same district
+             }
              if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
                ol_join_sec_t expanded_rec = rec.expand();
-               if (!(expanded_rec.ol_delivery_d < since) || key.ol_d_id != d_id) {
-                  return true;  // continue scan
+               if (expanded_rec.ol_delivery_d < since) {
+                  return true;  // Skip this record
                }
              } else {
                bool since_flag = true;
@@ -126,7 +133,7 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
              assert(key.ol_i_id == i_id && key.ol_w_id == w_id);
              // Change only occur at a stock entry
              if (key.ol_d_id != d_id) {
-                return true;  // continue scan
+                return false; // passed
              }
              cached_left.push_back({key, rec});
              return true;  // continue scan

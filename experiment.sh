@@ -8,7 +8,7 @@ fi
 
 EXECUTABLE_PATH=$1
 # Extract the method name using basename and parameter expansion
-METHOD=$(basename "$EXECUTABLE_PATH"_tpcc)
+METHOD=$(basename "$EXECUTABLE_PATH" _tpcc)
 # Extract the build directory using parameter expansion
 BUILD_DIR=$(dirname "$(dirname "$EXECUTABLE_PATH")")
 echo "Method: $METHOD"
@@ -30,7 +30,7 @@ elif [ "$READ_PERCENTAGE" -eq 0 ] && [ "$SCAN_PERCENTAGE" -eq 100 ] && [ "$WRITE
 elif [ "$READ_PERCENTAGE" -eq 0 ] && [ "$SCAN_PERCENTAGE" -eq 0 ] && [ "$WRITE_PERCENTAGE" -eq 100 ]; then
   LOG_DIR="/home/alicia.w.lyu/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-write"
 else
-  LOG_DIR="/home/alicia.w.lyu/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}"
+  LOG_DIR="/home/alicia.w.lyu/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-mixed-${READ_PERCENTAGE}-${SCAN_PERCENTAGE}-${WRITE_PERCENTAGE}"
 fi
 
 if [ "$ORDER_SIZE" -ne 5 ]; then

@@ -64,16 +64,22 @@ merged-lldb: $(BUILD_DIR)$(MERGED_EXEC)
 .PHONY: join-lldb
 
 # ----------------- EXPERIMENTS -----------------
-both: local_dram ?= $(default_dram)
-both: local_target ?= $(default_target)
-both: local_read ?= $(default_read)
-both: local_scan ?= $(default_scan)
-both: local_write ?= $(default_write)
-both: local_update_size ?= $(default_update_size)
-both: local_selectivity ?= $(default_selectivity)
+local_dram ?= $(default_dram)
+local_target ?= $(default_target)
+local_read ?= $(default_read)
+local_scan ?= $(default_scan)
+local_write ?= $(default_write)
+local_update_size ?= $(default_update_size)
+local_selectivity ?= $(default_selectivity)
 
 both: $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
 	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
+
+join: $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
+
+merged: $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
 	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
 
 read: 
