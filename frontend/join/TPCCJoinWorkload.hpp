@@ -1,37 +1,24 @@
 #pragma once
-#include <gflags/gflags_declare.h>
+#include "TPCCBaseWorkload.hpp"
+
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
-#include "../tpc-c/TPCCWorkload.hpp"
-#include "JoinedSchema.hpp"
 #include "Join.hpp"
 
-DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock"); // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be lower. Empirically 90+% items are present in some orderline, picking out those in stock.
-#ifndef INCLUDE_COLUMNS
-   #define INCLUDE_COLUMNS 1 // All columns, unless defined. Now included columns in orderline secondary and joined results are the same. Maybe should be different.
-#endif
-
 template <template <typename> class AdapterType>
-class TPCCJoinWorkload
+class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
 {
-   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;
+   using Base = TPCCBaseWorkload<AdapterType>;
+   using orderline_sec_t = typename Base::orderline_sec_t;
    using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
-   TPCCWorkload<AdapterType>* tpcc;
    AdapterType<orderline_sec_t>& orderline_secondary;
    AdapterType<joined_t>& joined_ols;
 
   public:
    TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>& orderline_secondary, AdapterType<joined_t>& joined_ols)
-       : tpcc(tpcc), orderline_secondary(orderline_secondary), joined_ols(joined_ols)
+       : TPCCBaseWorkload<AdapterType>(tpcc), orderline_secondary(orderline_secondary), joined_ols(joined_ols)
    {
-      if constexpr (INCLUDE_COLUMNS == 0) {
-         std::cout << "Columns included: Key only" << std::endl;
-      } else if constexpr (INCLUDE_COLUMNS == 1) {
-         std::cout << "Columns included: All" << std::endl;
-      } else {
-         throw std::runtime_error("Invalid INCLUDE_COLUMNS value");
-      }
    }
 
    // When this query can be realistic: Keep track of stock information for recent orders
@@ -47,19 +34,21 @@ class TPCCJoinWorkload
           [&](const joined_t::Key& key, const joined_t& rec) {
              scanCardinality++;
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-               joined_ols_t joined_rec = rec.expand();
-               if (joined_rec.ol_delivery_d >= since) {
-                  //  results.push_back(rec);
-               }
+                joined_ols_t joined_rec = rec.expand();
+                if (joined_rec.ol_delivery_d >= since) {
+                   //  results.push_back(rec);
+                }
              } else {
-               tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& orderline_rec) { // ATTN: BTree operation in call back function
-                  if (orderline_rec.ol_delivery_d >= since) {
-                     tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) { // ATTN: BTree operation in call back function
-                        // Only emulating BTree operations, not concatenating stock_rec and joined_rec
-                        //  results.push_back(rec);
-                     });
-                  }
-               });
+                this->tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number},
+                                        [&](const orderline_t& orderline_rec) {  // ATTN: BTree operation in call back function
+                                           if (orderline_rec.ol_delivery_d >= since) {
+                                              this->tpcc->stock.lookup1({key.w_id, key.i_id},
+                                                                  [&](const stock_t&) {  // ATTN: BTree operation in call back function
+                                                                     // Only emulating BTree operations, not concatenating stock_rec and joined_rec
+                                                                     //  results.push_back(rec);
+                                                                  });
+                                           }
+                                        });
              }
              return true;
           },
@@ -87,8 +76,8 @@ class TPCCJoinWorkload
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
                 results.push_back(rec);
              } else {
-                tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t& stock_rec) { // ATTN: BTree operation in call back function
-                  // Only emulating BTree operations, not concatenating stock_rec and joined_rec
+                this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t& stock_rec) {  // ATTN: BTree operation in call back function
+                   // Only emulating BTree operations, not concatenating stock_rec and joined_rec
                    results.push_back(rec);
                 });
              }
@@ -104,10 +93,10 @@ class TPCCJoinWorkload
 
    void newOrderRnd(Integer w_id, Integer order_size = 5)
    {
-      // tpcc->newOrderRnd(w_id);
-      Integer d_id = tpcc->urand(1, 10);
-      Integer c_id = tpcc->getCustomerID();
-      Integer ol_cnt = tpcc->urand(order_size, order_size * 3);
+      // this->tpcc->newOrderRnd(w_id);
+      Integer d_id = this->tpcc->urand(1, 10);
+      Integer c_id = this->tpcc->getCustomerID();
+      Integer ol_cnt = this->tpcc->urand(order_size, order_size * 3);
 
       vector<Integer> lineNumbers;
       lineNumbers.reserve(15);
@@ -119,28 +108,28 @@ class TPCCJoinWorkload
       qtys.reserve(15);
       for (Integer i = 1; i <= ol_cnt; i++) {
          Integer supware = w_id;
-         if (!tpcc->warehouse_affinity && tpcc->urand(1, 100) == 1)  // ATTN:remote transaction
-            supware = tpcc->urandexcept(1, tpcc->warehouseCount, w_id);
-         Integer itemid = tpcc->getItemID();
-         if (false && (i == ol_cnt) && (tpcc->urand(1, 100) == 1))  // invalid item => random
+         if (!this->tpcc->warehouse_affinity && this->tpcc->urand(1, 100) == 1)  // ATTN:remote transaction
+            supware = this->tpcc->urandexcept(1, this->tpcc->warehouseCount, w_id);
+         Integer itemid = this->tpcc->getItemID();
+         if (false && (i == ol_cnt) && (this->tpcc->urand(1, 100) == 1))  // invalid item => random
             itemid = 0;
          lineNumbers.push_back(i);
          supwares.push_back(supware);
          itemids.push_back(itemid);
-         qtys.push_back(tpcc->urand(1, 10));
+         qtys.push_back(this->tpcc->urand(1, 10));
       }
 
-      Timestamp timestamp = tpcc->currentTimestamp();
+      Timestamp timestamp = this->tpcc->currentTimestamp();
 
-      // tpcc->newOrder
-      Numeric w_tax = tpcc->warehouse.lookupField({w_id}, &warehouse_t::w_tax);
-      Numeric c_discount = tpcc->customer.lookupField({w_id, d_id, c_id}, &customer_t::c_discount);
+      // this->tpcc->newOrder
+      Numeric w_tax = this->tpcc->warehouse.lookupField({w_id}, &warehouse_t::w_tax);
+      Numeric c_discount = this->tpcc->customer.lookupField({w_id, d_id, c_id}, &customer_t::c_discount);
       Numeric d_tax;
       Integer o_id;
 
       UpdateDescriptorGenerator1(district_update_descriptor, district_t, d_next_o_id);
       // UpdateDescriptorGenerator2(district_update_descriptor, district_t, d_next_o_id, d_ytd);
-      tpcc->district.update1(
+      this->tpcc->district.update1(
           {w_id, d_id},
           [&](district_t& rec) {
              d_tax = rec.d_tax;
@@ -154,11 +143,11 @@ class TPCCJoinWorkload
             all_local = 0;
       Numeric cnt = lineNumbers.size();
       Integer carrier_id = 0; /*null*/
-      tpcc->order.insert({w_id, d_id, o_id}, {c_id, timestamp, carrier_id, cnt, all_local});
-      if (tpcc->order_wdc_index) {
-         tpcc->order_wdc.insert({w_id, d_id, c_id, o_id}, {});
+      this->tpcc->order.insert({w_id, d_id, o_id}, {c_id, timestamp, carrier_id, cnt, all_local});
+      if (this->tpcc->order_wdc_index) {
+         this->tpcc->order_wdc.insert({w_id, d_id, c_id, o_id}, {});
       }
-      tpcc->neworder.insert({w_id, d_id, o_id}, {});
+      this->tpcc->neworder.insert({w_id, d_id, o_id}, {});
 
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
@@ -167,7 +156,7 @@ class TPCCJoinWorkload
             continue;
          }
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
-         tpcc->stock.update1(
+         this->tpcc->stock.update1(
              {supwares[i], itemids[i]},
              [&](stock_t& rec) {
                 auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
@@ -182,15 +171,15 @@ class TPCCJoinWorkload
          if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
             std::vector<joined_ols_t::Key> keys;
             joined_ols.scan(
-               {supwares[i], itemids[i], 0, 0, 0},
-               [&](const joined_ols_t::Key& key, const joined_ols_t&) {
-                  if (key.w_id != supwares[i] || key.i_id != itemids[i]) {
-                     return false;
-                  }
-                  keys.push_back(key);
-                  return true;
-               },
-               [&]() { /* undo */ });
+                {supwares[i], itemids[i], 0, 0, 0},
+                [&](const joined_ols_t::Key& key, const joined_ols_t&) {
+                   if (key.w_id != supwares[i] || key.i_id != itemids[i]) {
+                      return false;
+                   }
+                   keys.push_back(key);
+                   return true;
+                },
+                [&]() { /* undo */ });
             // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
             UpdateDescriptorGenerator4(joined_ols_descriptor, joined_ols_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
             for (auto key : keys) {
@@ -199,15 +188,15 @@ class TPCCJoinWorkload
                   throw std::runtime_error("newOrderRnd: duplicate key");
                }
                joined_ols.update1(
-                  key,
-                  [&](joined_ols_t& rec) {
-                     auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
-                     s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
-                     rec.s_remote_cnt += (supwares[i] != w_id);
-                     rec.s_order_cnt++;
-                     rec.s_ytd += qty;
-                  },
-                  joined_ols_descriptor);
+                   key,
+                   [&](joined_ols_t& rec) {
+                      auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
+                      s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
+                      rec.s_remote_cnt += (supwares[i] != w_id);
+                      rec.s_order_cnt++;
+                      rec.s_ytd += qty;
+                   },
+                   joined_ols_descriptor);
             }
          }
       }
@@ -218,10 +207,10 @@ class TPCCJoinWorkload
          Integer itemid = itemids[i];
          Numeric qty = qtys[i];
 
-         Numeric i_price = tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
-         Varchar<24> s_dist = tpcc->template randomastring<24>(24, 24);
+         Numeric i_price = this->tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
+         Varchar<24> s_dist = this->tpcc->template randomastring<24>(24, 24);
          stock_t stock_rec;
-         bool ret = tpcc->stock.tryLookup({w_id, itemid}, [&](const stock_t& rec) {
+         bool ret = this->tpcc->stock.tryLookup({w_id, itemid}, [&](const stock_t& rec) {
             stock_rec = rec;
             switch (d_id) {
                case 1:
@@ -261,7 +250,7 @@ class TPCCJoinWorkload
          });
          Numeric ol_amount = qty * i_price * (1.0 + w_tax + d_tax) * (1.0 - c_discount);
          Timestamp ol_delivery_d = 0;  // NULL
-         tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
+         this->tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
          // TODO: i_data, s_data
          // ********** Update Secondary Index **********
          // std::cout << "Line number #" << i << ": Updating secondary index" << std::endl;
@@ -275,11 +264,25 @@ class TPCCJoinWorkload
          // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
          if (ret) {
             if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-               joined_ols_t joined_rec = {
-                  supware, ol_delivery_d, qty, ol_amount,
-                  stock_rec.s_quantity, stock_rec.s_dist_01, stock_rec.s_dist_02, stock_rec.s_dist_03, stock_rec.s_dist_04, stock_rec.s_dist_05,
-                  stock_rec.s_dist_06, stock_rec.s_dist_07, stock_rec.s_dist_08, stock_rec.s_dist_09, stock_rec.s_dist_10, stock_rec.s_ytd,
-                  stock_rec.s_order_cnt, stock_rec.s_remote_cnt, stock_rec.s_data};
+               joined_ols_t joined_rec = {supware,
+                                          ol_delivery_d,
+                                          qty,
+                                          ol_amount,
+                                          stock_rec.s_quantity,
+                                          stock_rec.s_dist_01,
+                                          stock_rec.s_dist_02,
+                                          stock_rec.s_dist_03,
+                                          stock_rec.s_dist_04,
+                                          stock_rec.s_dist_05,
+                                          stock_rec.s_dist_06,
+                                          stock_rec.s_dist_07,
+                                          stock_rec.s_dist_08,
+                                          stock_rec.s_dist_09,
+                                          stock_rec.s_dist_10,
+                                          stock_rec.s_ytd,
+                                          stock_rec.s_order_cnt,
+                                          stock_rec.s_remote_cnt,
+                                          stock_rec.s_data};
                joined_ols.insert({w_id, itemid, d_id, o_id, lineNumber}, joined_rec);
             } else {
                joined_ols.insert({w_id, itemid, d_id, o_id, lineNumber}, {});
@@ -288,29 +291,10 @@ class TPCCJoinWorkload
       }
    }
 
-   int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage, Integer order_size = 5)
-   {
-      int rnd = (int) leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
-      if (rnd < read_percentage) {
-         Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
-         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, (int)(tpcc->ITEMS_NO * tpcc->scale_factor) + 1);
-         ordersByItemId(w_id, d_id, i_id);
-         return 0;
-      } else if (rnd < read_percentage + scan_percentage) {
-         Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
-         Timestamp since = 1;
-         recentOrdersStockInfo(w_id, d_id, since);
-         return 0;
-      } else {
-         newOrderRnd(w_id, order_size);
-         return 0;
-      }
-   }
-
    void loadOrderlineSecondary(Integer w_id = std::numeric_limits<Integer>::max())
    {
       std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
-      auto orderline_scanner = tpcc->orderline.getScanner();
+      auto orderline_scanner = this->tpcc->orderline.getScanner();
       if (w_id != std::numeric_limits<Integer>::max()) {
          orderline_scanner.seek({w_id, 0, 0, 0});
       }
@@ -321,11 +305,12 @@ class TPCCJoinWorkload
          auto [key, payload] = ret.value();
          if (key.ol_w_id != w_id)
             break;
-         orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+         typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
             orderline_secondary.insert(sec_key, {});
          } else {
-            orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount, payload.ol_dist_info};
+            orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
+                                           payload.ol_dist_info};
             orderline_secondary.insert(sec_key, sec_payload);
          }
       }
@@ -335,13 +320,13 @@ class TPCCJoinWorkload
    {
       std::cout << "Joining orderline and stock for warehouse " << w_id << std::endl;
       auto orderline_scanner = orderline_secondary.getScanner();
-      auto stock_scanner = tpcc->stock.getScanner();
+      auto stock_scanner = this->tpcc->stock.getScanner();
 
       if (w_id != std::numeric_limits<Integer>::max()) {
          orderline_scanner.seek({w_id, 0, 0, 0, 0});
          stock_scanner.seek({w_id, 0});
       }
-      
+
       MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(&orderline_scanner, &stock_scanner);
 
       while (true) {
@@ -355,18 +340,18 @@ class TPCCJoinWorkload
       }
    }
 
-      void verifyWarehouse(Integer w_id)
+   void verifyWarehouse(Integer w_id)
    {
       // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
       std::cout << "Verifying warehouse " << w_id << std::endl;
-      tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
+      this->tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
-         for (Integer c_id = 1; c_id <= tpcc->CUSTOMER_SCALE * tpcc->scale_factor / 10; c_id++) {
-            tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
+         for (Integer c_id = 1; c_id <= this->tpcc->CUSTOMER_SCALE * this->tpcc->scale_factor / 10; c_id++) {
+            this->tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
          }
       }
-      for (Integer s_id = 1; s_id <= tpcc->ITEMS_NO * tpcc->scale_factor; s_id++) {
-         bool ret = tpcc->stock.tryLookup({w_id, s_id}, [&](const auto&) {});
+      for (Integer s_id = 1; s_id <= this->tpcc->ITEMS_NO * this->tpcc->scale_factor; s_id++) {
+         bool ret = this->tpcc->stock.tryLookup({w_id, s_id}, [&](const auto&) {});
          if (s_id % 100 > FLAGS_semijoin_selectivity) {
             ensure(!ret);
          } else {
