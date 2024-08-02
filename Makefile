@@ -6,10 +6,13 @@ default_dram := 1
 default_target := 4
 default_update_size := 5
 default_selectivity := 100
+included_columns ?= 1
 
 CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
 CMAKE_RELWITHDEBINFO := cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 CMAKE_RELEASE := cmake -DCMAKE_BUILD_TYPE=Release ..
+
+CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -DINCLUDE_COLUMNS=${included_columns}"
 
 # ----------------- TARGETS -----------------
 BUILD_DIR := ./build
@@ -42,7 +45,7 @@ check_perf_event_paranoid:
 .PHONY: check_perf_event_paranoid
 
 $(TARGETS): check_perf_event_paranoid
-	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) && $(MAKE) -j
+	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) -j
 
 executables: $(TARGETS)
 .PHONY: executables

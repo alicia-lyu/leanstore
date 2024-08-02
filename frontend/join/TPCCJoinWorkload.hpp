@@ -1,39 +1,65 @@
 #pragma once
 #include <gflags/gflags_declare.h>
 #include <cstdint>
+#include <iostream>
 #include <stdexcept>
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "JoinedSchema.hpp"
 #include "Join.hpp"
 
 DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock"); // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be lower. Empirically 90+% items are present in some orderline, picking out those in stock.
+#ifndef INCLUDE_COLUMNS
+   #define INCLUDE_COLUMNS 1 // All columns, unless defined. Now included columns in orderline secondary and joined results are the same. Maybe should be different.
+#endif
+
 template <template <typename> class AdapterType>
 class TPCCJoinWorkload
 {
+   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;
+   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
    TPCCWorkload<AdapterType>* tpcc;
-   AdapterType<ol_join_sec_t>& orderline_secondary;
-   AdapterType<joined_ols_t>& joined_ols;
+   AdapterType<orderline_sec_t>& orderline_secondary;
+   AdapterType<joined_t>& joined_ols;
 
   public:
-   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<ol_join_sec_t>& orderline_secondary, AdapterType<joined_ols_t>& joined_ols)
+   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>& orderline_secondary, AdapterType<joined_t>& joined_ols)
        : tpcc(tpcc), orderline_secondary(orderline_secondary), joined_ols(joined_ols)
    {
+      if constexpr (INCLUDE_COLUMNS == 0) {
+         std::cout << "Columns included: Key only" << std::endl;
+      } else if constexpr (INCLUDE_COLUMNS == 1) {
+         std::cout << "Columns included: All" << std::endl;
+      } else {
+         throw std::runtime_error("Invalid INCLUDE_COLUMNS value");
+      }
    }
 
    // When this query can be realistic: Keep track of stock information for recent orders
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
-      // vector<joined_ols_t> results;
-      joined_ols_t::Key start_key = {w_id, 0, d_id, 0, 0};  // Starting from the first item in the warehouse and district
+      // vector<joined_t> results;
+      joined_t::Key start_key = {w_id, 0, d_id, 0, 0};  // Starting from the first item in the warehouse and district
 
       uint64_t scanCardinality = 0;
 
       joined_ols.scan(
           start_key,
-          [&](const joined_ols_t::Key&, const joined_ols_t& rec) {
+          [&](const joined_t::Key& key, const joined_t& rec) {
              scanCardinality++;
-             if (rec.ol_delivery_d >= since) {
-               //  results.push_back(rec);
+             if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
+               joined_ols_t joined_rec = rec.expand();
+               if (joined_rec.ol_delivery_d >= since) {
+                  //  results.push_back(rec);
+               }
+             } else {
+               tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& orderline_rec) { // ATTN: BTree operation in call back function
+                  if (orderline_rec.ol_delivery_d >= since) {
+                     tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) { // ATTN: BTree operation in call back function
+                        // Only emulating BTree operations, not concatenating stock_rec and joined_rec
+                        //  results.push_back(rec);
+                     });
+                  }
+               });
              }
              return true;
           },
@@ -46,19 +72,26 @@ class TPCCJoinWorkload
    // When this query can be realistic: Find all orderlines and stock level for a specific item. Act on those orders according to the information.
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
-      vector<joined_ols_t> results;
-      joined_ols_t::Key start_key = {w_id, i_id, d_id, 0, 0};  // Starting from the first item in the warehouse and district
+      vector<joined_t> results;
+      joined_t::Key start_key = {w_id, i_id, d_id, 0, 0};  // Starting from the first item in the warehouse and district
 
       uint64_t lookupCardinality = 0;
 
       joined_ols.scan(
           start_key,
-          [&](const joined_ols_t::Key& key, const joined_ols_t& rec) {
+          [&](const joined_t::Key& key, const joined_t& rec) {
              lookupCardinality++;
              if (key.i_id != i_id) {
                 return false;
              }
-             results.push_back(rec);
+             if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
+                results.push_back(rec);
+             } else {
+                tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t& stock_rec) { // ATTN: BTree operation in call back function
+                  // Only emulating BTree operations, not concatenating stock_rec and joined_rec
+                   results.push_back(rec);
+                });
+             }
              return true;
           },
           []() {
@@ -146,34 +179,36 @@ class TPCCJoinWorkload
              stock_update_descriptor);
          // ********** Update to stock_t causes updates to join results **********
          // std::cout << "Line number #" << i << ": Updating stock_t causes updates to join results" << std::endl;
-         std::vector<joined_ols_t::Key> keys;
-         joined_ols.scan(
-             {supwares[i], itemids[i], 0, 0, 0},
-             [&](const joined_ols_t::Key& key, const joined_ols_t&) {
-                if (key.w_id != supwares[i] || key.i_id != itemids[i]) {
-                   return false;
-                }
-                keys.push_back(key);
-                return true;
-             },
-             [&]() { /* undo */ });
-         // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
-         UpdateDescriptorGenerator4(joined_ols_descriptor, joined_ols_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
-         for (auto key : keys) {
-            if (key.ol_o_id == o_id && key.ol_d_id == d_id && key.w_id == w_id) {
-               std::cout << "d_id: " << d_id << ", o_id: " << o_id << std::endl;
-               throw std::runtime_error("newOrderRnd: duplicate key");
+         if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
+            std::vector<joined_ols_t::Key> keys;
+            joined_ols.scan(
+               {supwares[i], itemids[i], 0, 0, 0},
+               [&](const joined_ols_t::Key& key, const joined_ols_t&) {
+                  if (key.w_id != supwares[i] || key.i_id != itemids[i]) {
+                     return false;
+                  }
+                  keys.push_back(key);
+                  return true;
+               },
+               [&]() { /* undo */ });
+            // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
+            UpdateDescriptorGenerator4(joined_ols_descriptor, joined_ols_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
+            for (auto key : keys) {
+               if (key.ol_o_id == o_id && key.ol_d_id == d_id && key.w_id == w_id) {
+                  std::cout << "d_id: " << d_id << ", o_id: " << o_id << std::endl;
+                  throw std::runtime_error("newOrderRnd: duplicate key");
+               }
+               joined_ols.update1(
+                  key,
+                  [&](joined_ols_t& rec) {
+                     auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
+                     s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
+                     rec.s_remote_cnt += (supwares[i] != w_id);
+                     rec.s_order_cnt++;
+                     rec.s_ytd += qty;
+                  },
+                  joined_ols_descriptor);
             }
-            joined_ols.update1(
-                key,
-                [&](joined_ols_t& rec) {
-                   auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
-                   s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
-                   rec.s_remote_cnt += (supwares[i] != w_id);
-                   rec.s_order_cnt++;
-                   rec.s_ytd += qty;
-                },
-                joined_ols_descriptor);
          }
       }
 
@@ -230,18 +265,25 @@ class TPCCJoinWorkload
          // TODO: i_data, s_data
          // ********** Update Secondary Index **********
          // std::cout << "Line number #" << i << ": Updating secondary index" << std::endl;
-         orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, {supware, ol_delivery_d, qty, ol_amount, s_dist});
+         if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
+            orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, {});
+         } else {
+            ol_join_sec_t payload = {supware, ol_delivery_d, qty, ol_amount, s_dist};
+            orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, payload);
+         }
          // ********** Update Join Results **********
          // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
          if (ret) {
-            joined_ols.insert(
-             {w_id, itemid, d_id, o_id, lineNumber},
-             {
-                 supware, ol_delivery_d, qty, ol_amount,  // the same info inserted into orderline
-                 stock_rec.s_quantity, stock_rec.s_dist_01, stock_rec.s_dist_02, stock_rec.s_dist_03, stock_rec.s_dist_04, stock_rec.s_dist_05,
-                 stock_rec.s_dist_06, stock_rec.s_dist_07, stock_rec.s_dist_08, stock_rec.s_dist_09, stock_rec.s_dist_10, stock_rec.s_ytd,
-                 stock_rec.s_order_cnt, stock_rec.s_remote_cnt, stock_rec.s_data  // lookedup from stock
-             });
+            if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
+               joined_ols_t joined_rec = {
+                  supware, ol_delivery_d, qty, ol_amount,
+                  stock_rec.s_quantity, stock_rec.s_dist_01, stock_rec.s_dist_02, stock_rec.s_dist_03, stock_rec.s_dist_04, stock_rec.s_dist_05,
+                  stock_rec.s_dist_06, stock_rec.s_dist_07, stock_rec.s_dist_08, stock_rec.s_dist_09, stock_rec.s_dist_10, stock_rec.s_ytd,
+                  stock_rec.s_order_cnt, stock_rec.s_remote_cnt, stock_rec.s_data};
+               joined_ols.insert({w_id, itemid, d_id, o_id, lineNumber}, joined_rec);
+            } else {
+               joined_ols.insert({w_id, itemid, d_id, o_id, lineNumber}, {});
+            }
          }
       }
    }
@@ -279,9 +321,13 @@ class TPCCJoinWorkload
          auto [key, payload] = ret.value();
          if (key.ol_w_id != w_id)
             break;
-         ol_join_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-         ol_join_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount, payload.ol_dist_info};
-         orderline_secondary.insert(sec_key, sec_payload);
+         orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+         if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
+            orderline_secondary.insert(sec_key, {});
+         } else {
+            orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount, payload.ol_dist_info};
+            orderline_secondary.insert(sec_key, sec_payload);
+         }
       }
    }
 
@@ -296,7 +342,7 @@ class TPCCJoinWorkload
          stock_scanner.seek({w_id, 0});
       }
       
-      MergeJoin<ol_join_sec_t, stock_t, joined_ols_t> merge_join(&orderline_scanner, &stock_scanner);
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(&orderline_scanner, &stock_scanner);
 
       while (true) {
          auto ret = merge_join.next();
