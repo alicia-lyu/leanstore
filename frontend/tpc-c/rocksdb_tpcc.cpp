@@ -84,7 +84,7 @@ int main(int argc, char** argv)
              {
                rocks_db.startTX();
                tpcc.loadStock(w_id);
-               tpcc.loadDistrinct(w_id);
+               tpcc.loadDistrict(w_id);
                for (Integer d_id = 1; d_id <= 10; d_id++) {
                  tpcc.loadCustomer(w_id, d_id);
                  tpcc.loadOrders(w_id, d_id);

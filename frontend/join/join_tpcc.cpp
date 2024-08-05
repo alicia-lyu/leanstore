@@ -15,6 +15,7 @@
 // -------------------------------------------------------------------------------------
 #include <unistd.h>
 
+#include <filesystem>
 #include <iostream>
 #include <string>
 // -------------------------------------------------------------------------------------
@@ -93,6 +94,11 @@ int main(int argc, char** argv)
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
       cout << "Loading TPC-C" << endl;
+      filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "join_size.csv";
+      bool csv_exists = std::filesystem::exists(csv_path);
+      std::ofstream csv_file(csv_path, std::ios::app);
+      if (!csv_exists)
+         csv_file << "table(s),config,size" << std::endl;
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          tpcc.loadItem();
@@ -119,8 +125,11 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-      cout << "TPC-C core loaded - consumed space in GiB = " << gib << endl;
+      double gib0 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+      cout << "TPC-C core loaded - consumed space in GiB = " << gib0 << endl;
+      csv_file << "core," 
+      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
+      << gib0 << std::endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -136,6 +145,11 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      double gib1 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+      cout << "Orderline secondary loaded - consumed space in GiB = " << gib1 - gib0 << endl;
+      csv_file << "orderline_secondary,"
+      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
+      << gib1 - gib0 << std::endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -151,6 +165,11 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      double gib2 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+      cout << "Join results loaded - consumed space in GiB = " << gib2 - gib1 << endl;
+      csv_file << "join_results,"
+      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
+      << gib2 - gib1 << std::endl;
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          goto verify;
