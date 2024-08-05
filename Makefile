@@ -71,16 +71,17 @@ local_scan ?= $(default_scan)
 local_write ?= $(default_write)
 local_update_size ?= $(default_update_size)
 local_selectivity ?= $(default_selectivity)
+extra_args ?= ""
 
 both: $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
 
 join: $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
 
 merged: $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns)
+	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
 
 read: 
 	$(MAKE) both local_read=100 local_scan=0 local_write=0
@@ -106,5 +107,15 @@ selectivity:
 
 no-columns:
 	$(MAKE) all-tx-types included_columns=0
+
+table-size:
+	find . -regextype posix-extended -regex './build-release-(0|1)/(merged|join)-target$(local_target)g.*\.json' -exec rm {} \;
+	rm -f "~/logs/join_size.csv"
+	rm -f "~/logs/merged_size.csv"
+	@for sel in 100 50 10; do \
+		for col in 0 1; do \
+			$(MAKE) both local_selectivity=$$sel included_columns=$$col extra_args=10; \
+		done \
+	done
 
 .PHONY: both read scan write all-tx-types update-size selectivity

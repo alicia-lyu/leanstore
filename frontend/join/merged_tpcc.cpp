@@ -2,8 +2,10 @@
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "LeanStoreMergedAdapter.hpp"
+#include "TPCCBaseWorkload.hpp"
 #include "TPCCMergedWorkload.hpp"
 // -------------------------------------------------------------------------------------
+#include "leanstore/Config.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
@@ -14,6 +16,7 @@
 // -------------------------------------------------------------------------------------
 #include <unistd.h>
 
+#include <filesystem>
 #include <iostream>
 #include <string>
 // -------------------------------------------------------------------------------------
@@ -85,6 +88,11 @@ int main(int argc, char** argv)
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
       cout << "Loading TPC-C" << endl;
+      filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "merged_size.csv";
+      bool file_exists = filesystem::exists(csv_path);
+      std::ofstream csv_file(csv_path, std::ios::app);
+      if (!file_exists)
+         csv_file << "table(s),config,size" << std::endl;
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          tpcc.loadItem();
@@ -100,7 +108,6 @@ int main(int argc, char** argv)
                   return;
                }
                cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-               tpcc_merge.loadStockToMerged(w_id, FLAGS_semijoin_selectivity);
                // tpcc.loadStock(w_id);
                tpcc.loadDistrict(w_id);
                for (Integer d_id = 1; d_id <= 10; d_id++) {
@@ -112,14 +119,32 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-      cout << "TPC-C core loaded - consumed space in GiB = " << gib << endl;
-      crm.scheduleJobSync(0, [&]() {
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpcc_merge.loadOrderlineSecondaryToMerged();
-         cr::Worker::my().commitTX();
-      });
-
+      double gib0 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+      cout << "TPC-C core loaded - consumed space in GiB = " << gib0 << endl;
+      csv_file << "core," 
+      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
+      << gib0 << std::endl;
+      g_w_id = 1;
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         crm.scheduleJobAsync(t_i, [&]() {
+            while (true) {
+               u32 w_id = g_w_id++;
+               if (w_id > FLAGS_tpcc_warehouse_count) {
+                  return;
+               }
+               cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+               tpcc_merge.loadStockToMerged(w_id, FLAGS_semijoin_selectivity);
+               tpcc_merge.loadOrderlineSecondaryToMerged(w_id);
+               cr::Worker::my().commitTX();
+            }
+         });
+      }
+      crm.joinAll();
+      double gib1 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
+      cout << "Merged index loaded - consumed space in GiB = " << gib1 - gib0 << endl;
+      csv_file << "merged_index,"
+      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
+      << gib1 - gib0 << std::endl;
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          cout << "Verifying TPC-C" << endl;

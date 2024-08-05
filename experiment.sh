@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Ensure the script is called with the correct number of parameters
-if [ "$#" -ne 9 ] || [ ! -e $1 ] ; then
+if [ "$#" -lt 9 ] || [ ! -e $1 ] ; then
     echo "Usage: $0 <executable> <dram_gib> <target_gib> <read_percentage> <scan_percentage> <write_percentage> <order_size> <selectivity> <included_columns>"
     exit 1
 fi
@@ -21,7 +21,7 @@ SCAN_PERCENTAGE=$5
 WRITE_PERCENTAGE=$6
 ORDER_SIZE=$7
 SELECTIVITY=$8
-INCLUDED_COLUMNS=$9
+INCLUDED_COLUMNS=$9 # In compiler flags
 
 if [ "$READ_PERCENTAGE" -eq 100 ] && [ "$SCAN_PERCENTAGE" -eq 0 ] && [ "$WRITE_PERCENTAGE" -eq 0 ]; then
   LOG_DIR="/home/alicia.w.lyu/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-read"
@@ -75,10 +75,20 @@ else
 fi
 
 if [ -e "${RECOVERY_FILE}" ]; then
-    TERM_COND="--run_for_seconds=360"
+    if [ -z "$10" ]; then
+        SECONDS=$10
+    else
+        SECONDS=360
+    fi
+    TERM_COND="--run_for_seconds=${SECONDS}"
     TRUNC=false
 elif [ ! -e "${RECOVERY_FILE}" ]; then
-    TERM_COND="--run_for_seconds=480"
+    if [ -z "$10" ]; then
+        SECONDS=$10
+    else
+        SECONDS=480
+    fi
+    TERM_COND="--run_for_seconds=${SECONDS}"
     TRUNC=true
 fi
 

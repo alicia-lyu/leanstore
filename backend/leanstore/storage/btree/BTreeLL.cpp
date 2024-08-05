@@ -1,11 +1,14 @@
 #include "BTreeLL.hpp"
 
 #include "core/BTreeGenericIterator.hpp"
+#include "leanstore/KVInterface.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 // -------------------------------------------------------------------------------------
 #include "gflags/gflags.h"
+#include "leanstore/concurrency-recovery/Worker.hpp"
 // -------------------------------------------------------------------------------------
 #include <signal.h>
+#include <cstdlib>
 // -------------------------------------------------------------------------------------
 using namespace std;
 using namespace leanstore::storage;
@@ -164,7 +167,10 @@ OP_RESULT BTreeLL::insert(u8* o_key, u16 o_key_length, u8* o_value, u16 o_value_
       if (ret != OP_RESULT::OK) {
          std::cout << "OP_RESULT:" << std::to_string((int)ret) << " key:" << std::string((char*)o_key, o_key_length) << std::endl;
       }
-      ensure(ret == OP_RESULT::OK);
+      if (ret != OP_RESULT::OK) {
+         std::cout << "Insert failed" << std::endl;
+         jumpmu_return OP_RESULT::ABORT_TX;
+      }
       if (config.enable_wal) {
          auto wal_entry = iterator.leaf.reserveWALEntry<WALInsert>(key.length() + value.length());
          wal_entry->type = WAL_LOG_TYPE::WALInsert;
