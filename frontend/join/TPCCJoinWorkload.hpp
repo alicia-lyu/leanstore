@@ -298,10 +298,10 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
       auto orderline_scanner = this->tpcc->orderline.getScanner();
       if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner.seek({w_id, 0, 0, 0});
+         orderline_scanner->seek({w_id, 0, 0, 0});
       }
       while (true) {
-         auto ret = orderline_scanner.next();
+         auto ret = orderline_scanner->next();
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
@@ -325,11 +325,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       auto stock_scanner = this->tpcc->stock.getScanner();
 
       if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner.seek({w_id, 0, 0, 0, 0});
-         stock_scanner.seek({w_id, 0});
+         orderline_scanner->seek({w_id, 0, 0, 0, 0});
+         stock_scanner->seek({w_id, 0});
       }
 
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(&orderline_scanner, &stock_scanner);
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
 
       while (true) {
          auto ret = merge_join.next();

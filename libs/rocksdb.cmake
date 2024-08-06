@@ -18,7 +18,7 @@ ExternalProject_Add(
         CONFIGURE_COMMAND ""
         UPDATE_COMMAND ""
         INSTALL_COMMAND ""
-        BUILD_COMMAND $(MAKE) static_lib
+        BUILD_COMMAND $(MAKE) static_lib USE_RTTI=1
         BUILD_IN_SOURCE TRUE
 )
 

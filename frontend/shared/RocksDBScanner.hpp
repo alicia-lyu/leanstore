@@ -2,10 +2,11 @@
 
 #include <rocksdb/iterator.h>
 #include <rocksdb/slice.h>
+#include "Units.hpp"
 #include "RocksDBAdapter.hpp"
 
 template <class Record>
-class RocksDBScanner
+class RocksDBScanner: public Scanner<Record>
 {
    rocksdb::Iterator* it;
    bool afterSeek = false;

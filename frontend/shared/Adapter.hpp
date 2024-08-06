@@ -72,5 +72,5 @@ class Adapter
       UNREACHABLE();
    }
 
-   virtual Scanner<Record> getScanner() { UNREACHABLE(); };
+   virtual std::unique_ptr<Scanner<Record>> getScanner() { UNREACHABLE(); };
 };
