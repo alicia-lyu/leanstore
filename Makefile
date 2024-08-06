@@ -10,17 +10,17 @@ included_columns ?= 1
 
 CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
 CMAKE_RELWITHDEBINFO := cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
-CMAKE_RELEASE := cmake -DCMAKE_BUILD_TYPE=Release ..
 
 CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -DINCLUDE_COLUMNS=${included_columns}"
 
 # ----------------- TARGETS -----------------
-BUILD_DIR := ./build-$(included_columns)
-BUILD_RELEASE_DIR := ./build-release-$(included_columns)
+BUILD_DIR := ./build
+BUILD_DIRS := $(BUILD_DIR)
+
 JOIN_EXEC := /frontend/join_tpcc
 MERGED_EXEC := /frontend/merged_tpcc
 ROCKSDB_JOIN_EXEC := /frontend/rocksdb_join_tpcc
-BUILD_DIRS := $(BUILD_DIR) $(BUILD_RELEASE_DIR)
+
 EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC)
 
 # Create Cartesian product for targets
@@ -30,7 +30,7 @@ $(foreach dir, $(BUILD_DIRS), \
   $(foreach exec, $(EXECS), \
     $(eval $(dir)$(exec): DIR := $(dir)) \
     $(eval $(dir)$(exec): EXEC := $(exec)) \
-    $(eval $(dir)$(exec): CMAKE := $(if $(findstring debug,$(dir)),$(CMAKE_DEBUG),$(if $(findstring release,$(dir)),$(CMAKE_RELEASE),$(CMAKE_RELWITHDEBINFO))) \
+    $(eval $(dir)$(exec): CMAKE := $(if $(findstring debug,$(dir)),$(CMAKE_DEBUG),$(CMAKE_RELWITHDEBINFO)) \
   ) \
 ))
 
@@ -46,24 +46,25 @@ check_perf_event_paranoid:
 .PHONY: check_perf_event_paranoid
 
 $(TARGETS): check_perf_event_paranoid
-	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) -j
+	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) -j2
 
 executables: $(TARGETS)
 .PHONY: executables
 
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
+SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
 CSV_PATH := ./build/log
-lldb_flags := --ssd_path=$(SSD_PATH) --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50
+lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50
 
 join-lldb: $(BUILD_DIR)$(JOIN_EXEC)
-	lldb -- ./build/frontend/join_tpcc $(lldb_flags)
+	lldb -- ./build/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) 
 
 merged-lldb: $(BUILD_DIR)$(MERGED_EXEC)
-	lldb -- ./build/frontend/merged_tpcc $(lldb_flags)
+	lldb -- ./build/frontend/merged_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH)
 
 rocksdb-join-lldb: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC)
-	lldb -- ./build/frontend/rocksdb_join_tpcc $(lldb_flags)
+	lldb -- ./build/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR)
 
 .PHONY: join-lldb
 
@@ -123,3 +124,7 @@ table-size:
 	done
 
 .PHONY: both read scan write all-tx-types update-size selectivity
+
+# ----------------- CLEAN -----------------
+clean:
+	rm -rf $(BUILD_DIRS)

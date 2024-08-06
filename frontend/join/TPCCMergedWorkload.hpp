@@ -313,10 +313,10 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
       std::cout << "Loading orderline secondary index to merged for warehouse " << w_id << std::endl;
       auto orderline_scanner = this->tpcc->orderline.getScanner();
       if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner.seek({w_id, 0, 0, 0});
+         orderline_scanner->seek({w_id, 0, 0, 0});
       }
       while (true) {
-         auto ret = orderline_scanner.next();
+         auto ret = orderline_scanner->next();
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();

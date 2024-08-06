@@ -20,6 +20,7 @@ class Scanner
    };
 
    Scanner(BTree& btree) : it(btree) {}
+   virtual ~Scanner() {}
 
    virtual bool seek(typename Record::Key key)
    {
@@ -68,8 +69,9 @@ class ScannerSec : public Scanner<Record1>
 
   public:
    ScannerSec(BTree& btree, BTree& sec_btree) : Base(btree), sec_it(sec_btree) {}
+   virtual ~ScannerSec() {}
 
-   bool seek(typename Record2::Key typed_key)
+   virtual bool seek(typename Record2::Key typed_key)
    {
       u8 keyBuffer[Record2::maxFoldLength()];
       Record2::foldKey(keyBuffer, typed_key);
@@ -80,7 +82,7 @@ class ScannerSec : public Scanner<Record1>
       return res == leanstore::OP_RESULT::OK;
    }
 
-   std::optional<next_ret_t> next()
+   virtual std::optional<next_ret_t> next()
    {
       // Guided by secondary index
       if (!this->afterSeek)

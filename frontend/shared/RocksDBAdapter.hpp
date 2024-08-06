@@ -1,5 +1,6 @@
 #pragma once
 #include <rocksdb/statistics.h>
+#include <rocksdb/wide_columns.h>
 #include "Adapter.hpp"
 #include "Types.hpp"
 // -------------------------------------------------------------------------------------
@@ -63,6 +64,7 @@ struct RocksDB {
    ~RocksDB() { delete db; }
    void startTX()
    {
+      assert(txn == nullptr);
       rocksdb::Status s;
       if (type == DB_TYPE::TransactionDB) {
          txn = tx_db->BeginTransaction(wo, {});
@@ -143,6 +145,9 @@ struct RocksDB {
    }
 };
 // -------------------------------------------------------------------------------------
+template <class Record>
+class RocksDBScanner;
+
 template <class Record>
 struct RocksDBAdapter : public Adapter<Record> {
    using SEP = u32;  // use 32-bits integer as separator instead of column family
@@ -296,5 +301,10 @@ struct RocksDBAdapter : public Adapter<Record> {
       });
       assert(found);
       return local_f;
+   }
+
+   std::unique_ptr<Scanner<Record>> getScanner()
+   {
+      return std::make_unique<RocksDBScanner<Record>>(map);
    }
 };
