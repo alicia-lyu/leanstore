@@ -19,8 +19,9 @@ BUILD_DIR := ./build-$(included_columns)
 BUILD_RELEASE_DIR := ./build-release-$(included_columns)
 JOIN_EXEC := /frontend/join_tpcc
 MERGED_EXEC := /frontend/merged_tpcc
+ROCKSDB_JOIN_EXEC := /frontend/rocksdb_join_tpcc
 BUILD_DIRS := $(BUILD_DIR) $(BUILD_RELEASE_DIR)
-EXECS := $(JOIN_EXEC) $(MERGED_EXEC)
+EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC)
 
 # Create Cartesian product for targets
 TARGETS := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)$(exec)))
@@ -60,6 +61,9 @@ join-lldb: $(BUILD_DIR)$(JOIN_EXEC)
 
 merged-lldb: $(BUILD_DIR)$(MERGED_EXEC)
 	lldb -- ./build/frontend/merged_tpcc $(lldb_flags)
+
+rocksdb-join-lldb: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC)
+	lldb -- ./build/frontend/rocksdb_join_tpcc $(lldb_flags)
 
 .PHONY: join-lldb
 
