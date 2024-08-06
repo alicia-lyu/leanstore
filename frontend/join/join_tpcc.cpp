@@ -33,8 +33,6 @@ int main(int argc, char** argv)
    assert(FLAGS_read_percentage + FLAGS_scan_percentage + FLAGS_write_percentage == 100);
    LeanStore::addS64Flag("TPC_SCALE", &FLAGS_tpcc_warehouse_count);
    // -------------------------------------------------------------------------------------
-   // Check arguments
-   ensure(FLAGS_ch_a_threads < FLAGS_worker_threads);
    // -------------------------------------------------------------------------------------
    LeanStore db;
    LeanStoreAdapter<warehouse_t> warehouse;
@@ -74,11 +72,6 @@ int main(int argc, char** argv)
    db.registerConfigEntry("tpcc_warehouse_count", FLAGS_tpcc_warehouse_count);
    db.registerConfigEntry("tpcc_warehouse_affinity", FLAGS_tpcc_warehouse_affinity);
    db.registerConfigEntry("tpcc_threads", FLAGS_tpcc_threads);
-   db.registerConfigEntry("ch_a_threads", FLAGS_ch_a_threads);
-   db.registerConfigEntry("ch_a_rounds", FLAGS_ch_a_rounds);
-   db.registerConfigEntry("ch_a_query", FLAGS_ch_a_query);
-   db.registerConfigEntry("ch_a_start_delay_sec", FLAGS_ch_a_start_delay_sec);
-   db.registerConfigEntry("ch_a_process_delay_sec", FLAGS_ch_a_process_delay_sec);
    db.registerConfigEntry("run_until_tx", FLAGS_run_until_tx);
 
    leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::parseIsolationLevel(FLAGS_isolation_level);
