@@ -8,9 +8,9 @@
 #include <rocksdb/db.h>
 
 #include "leanstore/Config.hpp"
-#include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/utils/JumpMU.hpp"
 #include "leanstore/utils/Misc.hpp"
+#include "leanstore/profiling/counters/CPUCounters.hpp"
 // -------------------------------------------------------------------------------------
 
 #include <chrono>
@@ -166,6 +166,7 @@ int main(int argc, char** argv)
       // -------------------------------------------------------------------------------------
       threads.emplace_back([&, t_i]() {
          running_threads_counter++;
+         leanstore::CPUCounters::registerThread("worker_" + std::to_string(t_i), false);
          if (FLAGS_pin_threads) {
             leanstore::utils::pinThisThread(t_i);
          }
