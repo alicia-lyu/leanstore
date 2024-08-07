@@ -8,7 +8,7 @@
 struct ol_join_sec_t {
   static constexpr int id = 11;
   struct Key {
-    static constexpr int id = 8; // comes from table 8, i.e., orderline
+    static constexpr int id = 11; // comes from table 8, i.e., orderline
     // join key
     Integer ol_w_id;
     Integer ol_i_id;
@@ -136,9 +136,9 @@ struct ol_sec_key_only_t {
 };
 
 struct joined_ols_t {
-  static constexpr int id = 11;
+  static constexpr int id = 12;
   struct Key {
-    static constexpr int id = 11;
+    static constexpr int id = 12;
     // join key
     Integer w_id;
     Integer i_id;

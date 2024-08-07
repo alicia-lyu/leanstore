@@ -30,6 +30,8 @@ public:
     std::cout << "~MergeJoin(): Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)" << std::endl;
     std::cout << "Left semi-join selectivity: " << (double)left_matched / left_consumed << std::endl;
     std::cout << "Right semi-join selectivity: " << (double)right_matched / right_consumed << std::endl;
+    std::cout << "Last left: " << left_key << std::endl;
+    std::cout << "Last right: " << right_key << std::endl;
   }
 
   std::optional<std::pair<typename JoinedRecord::Key, JoinedRecord>> next() {
