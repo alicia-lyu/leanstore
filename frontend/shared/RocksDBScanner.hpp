@@ -2,8 +2,9 @@
 
 #include <rocksdb/iterator.h>
 #include <rocksdb/slice.h>
+#include "Scanner.hpp"
 #include "Units.hpp"
-#include "RocksDBAdapter.hpp"
+#include "RocksDB.hpp"
 
 template <class Record>
 class RocksDBScanner: public Scanner<Record>
@@ -11,12 +12,15 @@ class RocksDBScanner: public Scanner<Record>
    rocksdb::Iterator* it;
    bool afterSeek = false;
 
+   template <typename T>
+   rocksdb::Slice RSlice(T* ptr, u64 len)
+   {
+      return rocksdb::Slice(reinterpret_cast<const char*>(ptr), len);
+   }
+
   public:
    using SEP = u32;
-   struct next_ret_t {
-      typename Record::Key key;
-      Record record;
-   };
+   using next_ret_t = typename Scanner<Record>::next_ret_t;
 
    RocksDBScanner(RocksDB& map) : it(map.db->NewIterator(map.ro)) {}
 
