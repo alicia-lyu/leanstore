@@ -55,7 +55,7 @@ executables: $(TARGETS)
 SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
 CSV_PATH := ./build/log
-lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50
+lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50 --csv_truncate=true
 
 join-lldb: $(BUILD_DIR)$(JOIN_EXEC)
 	lldb -- ./build/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) 

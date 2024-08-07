@@ -5,6 +5,7 @@
 #include <iostream>
 #include <stdexcept>
 #include "Join.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 
 template <template <typename> class AdapterType>
 class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
@@ -139,6 +140,8 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           },
           district_update_descriptor);
 
+      std::cout << "New order: w_id: " << w_id << ", d_id: " << d_id << ", o_id: " << o_id << ", c_id: " << c_id << ", timestamp: " << timestamp << std::endl;
+
       Numeric all_local = 1;
       for (Integer sw : supwares)
          if (sw != w_id)
@@ -185,10 +188,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
             // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
             UpdateDescriptorGenerator4(joined_ols_descriptor, joined_ols_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
             for (auto key : keys) {
-               if (key.ol_o_id == o_id && key.ol_d_id == d_id && key.w_id == w_id) {
-                  std::cout << "d_id: " << d_id << ", o_id: " << o_id << std::endl;
-                  throw std::runtime_error("newOrderRnd: duplicate key");
-               }
+               // if (key.ol_o_id == o_id && key.ol_d_id == d_id && key.w_id == w_id) {
+               //    std::cout << "newOrderRnd: duplicate key: " << key << std::endl;
+               //    // throw std::runtime_error("newOrderRnd: duplicate key");
+               //    jumpmu::jump();
+               // }
                joined_ols.update1(
                    key,
                    [&](joined_ols_t& rec) {

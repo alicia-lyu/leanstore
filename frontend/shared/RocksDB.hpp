@@ -5,6 +5,7 @@
 #include "Types.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
+#include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/utils/Misc.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/optimistic_transaction_db.h"
@@ -106,6 +107,9 @@ struct RocksDB {
          leanstore::utils::pinThisThread(((FLAGS_pin_threads) ? FLAGS_worker_threads : 0) + FLAGS_wal + FLAGS_pp_threads);
          running_threads_counter++;
 
+         leanstore::profiling::CPUTable cpu_table;
+         cpu_table.open();
+
          u64 time = 0;
          std::ofstream::openmode open_flags;
          if (FLAGS_csv_truncate) {
@@ -118,7 +122,7 @@ struct RocksDB {
          csv << std::setprecision(2) << std::fixed;
 
          if (print_header) {
-            csv << "t,tag,oltp_committed,oltp_aborted,SSTReads/TX,SST/Writes/TX" << endl;
+            csv << "t,tag,oltp_committed,oltp_aborted,SSTReads/TX,SST/Writes/TX,GHz,Cycles/TX" << endl;
          }
          uint64_t sst_read_prev = 0, sst_write_prev = 0;
          while (keep_running) {
@@ -129,15 +133,31 @@ struct RocksDB {
                total_committed += thread_committed[t_i].exchange(0);
                total_aborted += thread_aborted[t_i].exchange(0);
             }
-            csv << total_committed << "," << total_aborted << endl;
-            sleep(1);
+            csv << total_committed << "," << total_aborted << ",";
+
             std::shared_ptr<rocksdb::Statistics> stats = db->GetDBOptions().statistics;
             rocksdb::HistogramData sst_read_hist;
             stats->histogramData(rocksdb::Histograms::SST_READ_MICROS, &sst_read_hist);
             rocksdb::HistogramData sst_write_hist;
             stats->histogramData(rocksdb::Histograms::SST_WRITE_MICROS, &sst_write_hist);
-            csv << (sst_read_hist.sum - sst_read_prev) / (total_aborted + total_committed) << ","
-                 << (sst_write_hist.sum - sst_write_prev) / (total_aborted + total_committed) << endl;
+            if (total_aborted + total_committed > 0) {
+               csv << (sst_read_hist.sum - sst_read_prev) / (total_aborted + total_committed) << ","
+                 << (sst_write_hist.sum - sst_write_prev) / (total_aborted + total_committed) << ",";
+               sst_read_prev = sst_read_hist.sum;
+               sst_write_prev = sst_write_hist.sum;
+            } else {
+               csv << "0,0,";
+            }
+
+            csv << std::to_string(cpu_table.workers_agg_events["GHz"]) << ",";
+
+            if (total_aborted + total_committed > 0) {
+               csv << std::to_string(cpu_table.workers_agg_events["cycle"] / (total_aborted + total_committed)) << endl;
+            } else {
+               csv << "0" << endl;
+            }
+            cpu_table.next();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
          }
          running_threads_counter--;
       });
