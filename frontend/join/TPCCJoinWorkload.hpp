@@ -140,7 +140,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           },
           district_update_descriptor);
 
-      std::cout << "New order: w_id: " << w_id << ", d_id: " << d_id << ", o_id: " << o_id << ", c_id: " << c_id << ", timestamp: " << timestamp << std::endl;
+      // std::cout << "New order: w_id: " << w_id << ", d_id: " << d_id << ", o_id: " << o_id << ", c_id: " << c_id << ", timestamp: " << timestamp << std::endl;
 
       Numeric all_local = 1;
       for (Integer sw : supwares)

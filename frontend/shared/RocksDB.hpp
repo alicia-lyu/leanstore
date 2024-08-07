@@ -126,6 +126,7 @@ struct RocksDB {
          }
          uint64_t sst_read_prev = 0, sst_write_prev = 0;
          while (keep_running) {
+            cpu_table.next();
             csv << time++ << "," << FLAGS_tag << ",";
             u64 total_committed = 0, total_aborted = 0;
             // -------------------------------------------------------------------------------------
@@ -149,14 +150,13 @@ struct RocksDB {
                csv << "0,0,";
             }
 
-            csv << std::to_string(cpu_table.workers_agg_events["GHz"]) << ",";
+            csv << cpu_table.workers_agg_events["GHz"] << ",";
 
             if (total_aborted + total_committed > 0) {
-               csv << std::to_string(cpu_table.workers_agg_events["cycle"] / (total_aborted + total_committed)) << endl;
+               csv << cpu_table.workers_agg_events["cycle"] / (total_aborted + total_committed) << endl;
             } else {
                csv << "0" << endl;
             }
-            cpu_table.next();
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
          }
          running_threads_counter--;

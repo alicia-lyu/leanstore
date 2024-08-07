@@ -78,15 +78,15 @@ local_update_size ?= $(default_update_size)
 local_selectivity ?= $(default_selectivity)
 extra_args ?= ""
 
-both: $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+both: $(BUILD_DIR)$(JOIN_EXEC) $(BUILD_DIR)$(MERGED_EXEC)
+	./experiment.sh $(BUILD_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+	./experiment.sh $(BUILD_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
 
-join: $(BUILD_RELEASE_DIR)$(JOIN_EXEC)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+join: $(BUILD_DIR)$(JOIN_EXEC)
+	./experiment.sh $(BUILD_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
 
-merged: $(BUILD_RELEASE_DIR)$(MERGED_EXEC)
-	./experiment.sh $(BUILD_RELEASE_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+merged: $(BUILD_DIR)$(MERGED_EXEC)
+	./experiment.sh $(BUILD_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
 
 read: 
 	$(MAKE) both local_read=100 local_scan=0 local_write=0
