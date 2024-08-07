@@ -3,6 +3,7 @@
 // -------------------------------------------------------------------------------------
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
+#include "LeanStoreScanner.hpp"
 // -------------------------------------------------------------------------------------
 #include <cassert>
 #include <cstring>
@@ -193,9 +194,9 @@ struct LeanStoreAdapter : Adapter<Record> {
 
    std::unique_ptr<Scanner<Record>> getScanner() {
       if (FLAGS_vi) {
-         return std::make_unique<Scanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+         return std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
       } else {
-         return std::make_unique<Scanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+         return std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
    }
 
@@ -203,10 +204,10 @@ struct LeanStoreAdapter : Adapter<Record> {
    std::unique_ptr<ScannerSec<Record, Record2>> getScanner(Adapter<Record2>* sec_adapter) {
       leanstore::KVInterface* sec_btree = dynamic_cast<LeanStoreAdapter<Record2>*>(sec_adapter)->btree; // OPTIMIZATION: Not requiring adapter to be the same type
       if (FLAGS_vi) {
-         return std::make_unique<ScannerSec<Record, Record2>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
+         return std::make_unique<LeanStoreScannerSec<Record, Record2>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
          *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(sec_btree)));
       } else {
-         return std::make_unique<ScannerSec<Record, Record2>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
+         return std::make_unique<LeanStoreScannerSec<Record, Record2>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
          *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(sec_btree)));
       }
    }
