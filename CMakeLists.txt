@@ -81,9 +81,7 @@ add_subdirectory("backend")
 # ---------------------------------------------------------------------------
 # Executable
 # ---------------------------------------------------------------------------
-# Add an option to set INCLUDED_COLUMNS as an integer
-set(INCLUDED_COLUMNS 1 CACHE STRING "Include additional columns")
 
-add_compile_definitions(INCLUDE_COLUMNS=${INCLUDED_COLUMNS})
+set(INCLUDED_COLUMNS 1 CACHE STRING "Include columns")
 
 add_subdirectory("frontend")

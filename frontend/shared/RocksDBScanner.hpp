@@ -52,13 +52,8 @@ class RocksDBScanner: public Scanner<Record>
          afterSeek = false;
       }
 
-      if (!it->Valid()) {
+      if (!it->Valid() || getId(it->key()) != Record::id) {
          return std::nullopt;
-      }
-
-      if (getId(it->key()) != Record::id) {
-         // return next();
-         return std::nullopt; // In one LSM forest but it is ordered on id
       }
 
       typename Record::Key s_key;

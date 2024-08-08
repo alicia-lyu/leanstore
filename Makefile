@@ -11,11 +11,12 @@ included_columns ?= 1
 CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
 CMAKE_RELWITHDEBINFO := cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 
-CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -DINCLUDE_COLUMNS=${included_columns}"
+CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS} -DINCLUDED_COLUMNS=${included_columns}
 
 # ----------------- TARGETS -----------------
 BUILD_DIR := ./build
-BUILD_DIRS := $(BUILD_DIR)
+BUILD_DIR_DEBUG := $(BUILD_DIR)-debug
+BUILD_DIRS := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 
 JOIN_EXEC := /frontend/join_tpcc
 MERGED_EXEC := /frontend/merged_tpcc
@@ -46,7 +47,7 @@ check_perf_event_paranoid:
 .PHONY: check_perf_event_paranoid
 
 $(TARGETS): check_perf_event_paranoid
-	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) -j2
+	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) -j
 
 executables: $(TARGETS)
 .PHONY: executables
@@ -57,14 +58,14 @@ SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
 CSV_PATH := ./build/log
 lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50 --csv_truncate=true
 
-join-lldb: $(BUILD_DIR)$(JOIN_EXEC)
-	lldb -- ./build/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) 
+join-lldb: $(BUILD_DIR_DEBUG)$(JOIN_EXEC)
+	lldb -- ./build-debug/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) 
 
-merged-lldb: $(BUILD_DIR)$(MERGED_EXEC)
-	lldb -- ./build/frontend/merged_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH)
+merged-lldb: $(BUILD_DIR_DEBUG)$(MERGED_EXEC)
+	lldb -- ./build-debug/frontend/merged_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH)
 
-rocksdb-join-lldb: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC)
-	lldb -- ./build/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR)
+rocksdb-join-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
+	lldb -- ./build-debug/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR)
 
 .PHONY: join-lldb
 
@@ -114,11 +115,11 @@ no-columns:
 	$(MAKE) all-tx-types included_columns=0
 
 table-size:
-	find . -regextype posix-extended -regex './build-release-(0|1)/(merged|join)-target$(local_target)g.*\.json' -exec rm {} \;
+	find . -regextype posix-extended -regex './build/(merged|join)-target$(local_target)g.*\.json' -exec rm {} \;
 	rm -f "~/logs/join_size.csv"
 	rm -f "~/logs/merged_size.csv"
-	@for sel in 100 50 10; do \
-		for col in 0 1; do \
+	@for col in 0 1; do \
+		for sel in 100 50 10; do \
 			$(MAKE) both local_selectivity=$$sel included_columns=$$col extra_args=10; \
 		done \
 	done

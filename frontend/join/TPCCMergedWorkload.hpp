@@ -71,7 +71,7 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++scanCardinality;
-             assert(key.s_w_id == w_id); // change only occur at a stock entry
+             assert(key.ol_w_id == w_id); // change only occur at a stock entry
              if (key.ol_d_id != d_id) {
                return true; // next item may still be in the same district
              }

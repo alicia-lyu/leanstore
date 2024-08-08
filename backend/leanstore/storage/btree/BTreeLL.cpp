@@ -6,6 +6,7 @@
 // -------------------------------------------------------------------------------------
 #include "gflags/gflags.h"
 #include "leanstore/concurrency-recovery/Worker.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 // -------------------------------------------------------------------------------------
 #include <signal.h>
 #include <cstdlib>
@@ -165,11 +166,7 @@ OP_RESULT BTreeLL::insert(u8* o_key, u16 o_key_length, u8* o_value, u16 o_value_
       BTreeExclusiveIterator iterator(*static_cast<BTreeGeneric*>(this));
       OP_RESULT ret = iterator.insertKV(key, value);
       if (ret != OP_RESULT::OK) {
-         std::cout << "OP_RESULT:" << std::to_string((int)ret) << " key:" << std::string((char*)o_key, o_key_length) << std::endl;
-      }
-      if (ret != OP_RESULT::OK) {
-         std::cout << "Insert failed" << std::endl;
-         jumpmu_return OP_RESULT::ABORT_TX;
+         jumpmu_return ret;
       }
       if (config.enable_wal) {
          auto wal_entry = iterator.leaf.reserveWALEntry<WALInsert>(key.length() + value.length());
@@ -184,7 +181,9 @@ OP_RESULT BTreeLL::insert(u8* o_key, u16 o_key_length, u8* o_value, u16 o_value_
       }
       jumpmu_return OP_RESULT::OK;
    }
-   jumpmuCatch() {}
+   jumpmuCatch() {
+      jumpmu_return OP_RESULT::ABORT_TX;
+   }
    UNREACHABLE();
    return OP_RESULT::OTHER;
 }
@@ -556,7 +555,8 @@ u64 BTreeLL::getHeight()
 void BTreeLL::undo(void*, const u8*, const u64)
 {
    // TODO: undo for storage
-   TODOException();
+   // TODOException();
+   std::cerr << "BTreeLL::undo not implemented" << std::endl;
 }
 // -------------------------------------------------------------------------------------
 void BTreeLL::todo(void*, const u8*, const u64, const u64, const bool)

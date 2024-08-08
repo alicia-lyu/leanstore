@@ -1,8 +1,10 @@
 #pragma once
 
+#include <rocksdb/slice.h>
 #include <rocksdb/statistics.h>
 #include <rocksdb/wide_columns.h>
 #include "Types.hpp"
+#include "../join/TPCCBaseWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
@@ -14,6 +16,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <string>
@@ -85,16 +88,28 @@ struct RocksDB {
    }
    void prepareThread() {}
 
-   std::unordered_map<std::string, uint64_t> getSizes()
+   void getSizes()
    {
-      rocksdb::TablePropertiesCollection props;
-      db->GetPropertiesOfAllTables(&props);
-      std::unordered_map<std::string, uint64_t> sizes;
-      for (auto& prop : props) {
-         sizes[prop.first] = prop.second->data_size;
-         std::cout << prop.first << " " << prop.second->data_size << std::endl;
+      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "join_size.csv";
+      bool csv_exists = std::filesystem::exists(csv_path);
+      std::ofstream csv_file(csv_path, std::ios::app);
+      if (!csv_exists)
+         csv_file << "table(s),config,size" << std::endl;
+      rocksdb::Range ranges[13];
+      for (u32 i = 0; i <= 12; i++) {
+         u8 start[sizeof(u32)];
+         const u32 folded_key_len = fold(start, i);
+         rocksdb::Slice start_slice((const char*)start, folded_key_len);
+         u8 limit[sizeof(u32)];
+         const u32 folded_limit_len = fold(limit, i + 1);
+         rocksdb::Slice limit_slice((const char*)limit, folded_limit_len);
+         ranges[i] = rocksdb::Range(start_slice, limit_slice);
       }
-      return sizes;
+      uint64_t sizes[13];
+      db->GetApproximateSizes(ranges, 13, sizes);
+      for (u32 i = 0; i <= 12; i++) {
+         csv_file << i << "," << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << "," << sizes[i] << std::endl;
+      }
    }
 
    void startProfilingThread(std::atomic<u64>& running_threads_counter,
