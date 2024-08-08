@@ -91,7 +91,8 @@ struct RocksDB {
    template <int id_count>
    void logSizes(std::array<uint64_t, id_count - 10>* times = nullptr)
    {
-      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "join_size.csv";
+      std::string file_name = id_count == 13 ? "join_size.csv" : "merged_size.csv";
+      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / file_name;
       bool csv_exists = std::filesystem::exists(csv_path);
       std::ofstream csv_file(csv_path, std::ios::app);
       if (!csv_exists)
