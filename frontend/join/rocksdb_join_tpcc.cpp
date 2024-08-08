@@ -67,6 +67,7 @@ int main(int argc, char** argv)
    std::vector<thread> threads;
    std::atomic<u32> g_w_id = 1;
    if (!FLAGS_recover) {
+      std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
       rocks_db.startTX();
       tpcc.loadItem();
       tpcc.loadWarehouse();
@@ -100,6 +101,7 @@ int main(int argc, char** argv)
          thread.join();
       }
       threads.clear();
+      std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
@@ -125,6 +127,7 @@ int main(int argc, char** argv)
          thread.join();
       }
       threads.clear();
+      std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
@@ -150,9 +153,16 @@ int main(int argc, char** argv)
          thread.join();
       }
       threads.clear();
+      std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
+      uint64_t core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+      uint64_t secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+      uint64_t join_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+      std::array<uint64_t, 3> times = {core_time, secondary_time, join_time};
+      rocks_db.logSizes<13>(&times);
+   } else {
+      rocks_db.logSizes<13>();
    }
    // -------------------------------------------------------------------------------------
-   rocks_db.getSizes();
    atomic<u64> running_threads_counter = 0;
    atomic<u64> keep_running = true;
    std::atomic<u64> thread_committed[FLAGS_worker_threads];
