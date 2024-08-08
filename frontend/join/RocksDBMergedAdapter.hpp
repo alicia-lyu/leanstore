@@ -2,6 +2,7 @@
 #include "../shared/RocksDBAdapter.hpp"
 #include "Units.hpp"
 
+template <u32 merged_id>
 struct RocksDBMergedAdapter {
    using SEP = u32;  // use 32-bits integer as separator instead of column family
    RocksDB& map;
@@ -17,7 +18,7 @@ struct RocksDBMergedAdapter {
    void insert(const typename Record::Key& key, const Record& record)
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
-      const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);
+      const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
       if (map.type == RocksDB::DB_TYPE::DB) {
@@ -36,7 +37,7 @@ struct RocksDBMergedAdapter {
    void lookup1(const typename Record::Key& key, const std::function<void(const Record&)>& fn)
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
-      const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);
+      const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
       // -------------------------------------------------------------------------------------
       rocksdb::PinnableSlice value;
       rocksdb::Status s;
@@ -55,7 +56,7 @@ struct RocksDBMergedAdapter {
    bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& fn)
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
-      const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);
+      const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
       // -------------------------------------------------------------------------------------
       rocksdb::PinnableSlice value;
       rocksdb::Status s;
@@ -86,7 +87,7 @@ struct RocksDBMergedAdapter {
    bool erase(const typename Record::Key& key)
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
-      const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);
+      const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
       if (map.type == RocksDB::DB_TYPE::DB) {
@@ -119,7 +120,7 @@ struct RocksDBMergedAdapter {
              std::function<void()>)
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
-      const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);
+      const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
       u8 folded_key2[OtherRec::maxFoldLength() + sizeof(SEP)];
       const u32 folded_key_len2 = fold(folded_key2, OtherRec::id) + OtherRec::foldKey(folded_key2 + sizeof(SEP), key);
       rocksdb::Slice start_key;
@@ -131,13 +132,13 @@ struct RocksDBMergedAdapter {
       // -------------------------------------------------------------------------------------
       rocksdb::Iterator* it = map.db->NewIterator(map.ro);
       for (it->Seek(start_key); it->Valid(); it->Next()) {
-         if (getId(it->key()) == Record::id) {
+         if (it->key().size() == Record::maxFoldLength() + sizeof(SEP)) {
             typename Record::Key s_key;
             Record::unfoldKey(reinterpret_cast<const u8*>(it->key().data() + sizeof(SEP)), s_key);
             const Record& s_value = *reinterpret_cast<const Record*>(it->value().data());
             if (!fn(s_key, s_value))
                break;
-         } else if (getId(it->key()) == OtherRec::id) {
+         } else if (it->key().size() == OtherRec::maxFoldLength() + sizeof(SEP)) {
             typename OtherRec::Key s_key;
             OtherRec::unfoldKey(reinterpret_cast<const u8*>(it->key().data() + sizeof(SEP)), s_key);
             const OtherRec& s_value = *reinterpret_cast<const OtherRec*>(it->value().data());
