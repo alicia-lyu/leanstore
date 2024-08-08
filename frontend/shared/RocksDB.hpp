@@ -161,7 +161,7 @@ struct RocksDB {
          csv << std::setprecision(2) << std::fixed;
 
          if (print_header) {
-            csv << "t,tag,oltp_committed,oltp_aborted,SSTReads/TX,SST/Writes/TX,GHz,Cycles/TX" << endl;
+            csv << "t,tag,oltp_committed,oltp_aborted,SSTRead(ms)/TX,SSTWrite(ms)/TX,GHz,Cycles/TX" << endl;
          }
          uint64_t sst_read_prev = 0, sst_write_prev = 0;
          while (keep_running) {
