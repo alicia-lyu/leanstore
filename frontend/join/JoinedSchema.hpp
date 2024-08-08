@@ -36,7 +36,6 @@ struct ol_join_sec_t {
     unsigned pos = 0;
     pos += fold(out + pos, key.ol_w_id);
     pos += fold(out + pos, key.ol_i_id);
-    pos += fold(out + pos, Key::id);
     pos += fold(out + pos, key.ol_d_id);
     pos += fold(out + pos, key.ol_o_id);
     pos += fold(out + pos, key.ol_number);
@@ -63,9 +62,6 @@ struct ol_join_sec_t {
     unsigned pos = 0;
     pos += unfold(in + pos, key.ol_w_id);
     pos += unfold(in + pos, key.ol_i_id);
-    int id;
-    pos += unfold(in + pos, id);
-    assert(id == Key::id);
     pos += unfold(in + pos, key.ol_d_id);
     pos += unfold(in + pos, key.ol_o_id);
     pos += unfold(in + pos, key.ol_number);
@@ -73,7 +69,7 @@ struct ol_join_sec_t {
   }
 
   static constexpr unsigned maxFoldLength() {
-    return 0 + sizeof(Key::ol_w_id) + sizeof(Key::ol_i_id) + sizeof(Key::id) +
+    return 0 + sizeof(Key::ol_w_id) + sizeof(Key::ol_i_id) +
            sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) +
            sizeof(Key::ol_number);
   };
