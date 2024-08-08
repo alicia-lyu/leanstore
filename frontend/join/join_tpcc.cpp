@@ -126,7 +126,7 @@ int main(int argc, char** argv)
       cout << "TPC-C core loaded - consumed space in GiB = " << gib0 << endl;
       csv_file << "core," 
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib0 << "," << std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() << std::endl;
+      << gib0 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << std::endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -147,7 +147,7 @@ int main(int argc, char** argv)
       cout << "Orderline secondary loaded - consumed space in GiB = " << gib1 - gib0 << endl;
       csv_file << "orderline_secondary,"
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib1 - gib0 << "," << std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() << std::endl;
+      << gib1 - gib0 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count() << std::endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -168,7 +168,7 @@ int main(int argc, char** argv)
       cout << "Join results loaded - consumed space in GiB = " << gib2 - gib1 << endl;
       csv_file << "join_results,"
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib2 - gib1 << "," << std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count() << std::endl;
+      << gib2 - gib1 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count() << std::endl;
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          goto verify;

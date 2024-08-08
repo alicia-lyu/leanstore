@@ -88,15 +88,23 @@ struct RocksDB {
    }
    void prepareThread() {}
 
-   void getSizes()
+   template <int id_count>
+   void logSizes(std::array<uint64_t, id_count - 10>* times = nullptr)
    {
       std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "join_size.csv";
       bool csv_exists = std::filesystem::exists(csv_path);
       std::ofstream csv_file(csv_path, std::ios::app);
       if (!csv_exists)
-         csv_file << "table(s),config,size" << std::endl;
-      rocksdb::Range ranges[13];
-      for (u32 i = 0; i <= 12; i++) {
+      {
+         csv_file << "table(s),config,size";
+         if (times) {
+            csv_file << ",time";
+         }
+         csv_file << std::endl;
+      }
+         
+      rocksdb::Range ranges[id_count];
+      for (u32 i = 0; i < id_count; i++) {
          u8 start[sizeof(u32)];
          const u32 folded_key_len = fold(start, i);
          rocksdb::Slice start_slice((const char*)start, folded_key_len);
@@ -105,10 +113,25 @@ struct RocksDB {
          rocksdb::Slice limit_slice((const char*)limit, folded_limit_len);
          ranges[i] = rocksdb::Range(start_slice, limit_slice);
       }
-      uint64_t sizes[13];
-      db->GetApproximateSizes(ranges, 13, sizes);
-      for (u32 i = 0; i <= 12; i++) {
-         csv_file << i << "," << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << "," << sizes[i] << std::endl;
+      uint64_t sizes[id_count];
+      db->GetApproximateSizes(ranges, id_count, sizes);
+      uint64_t core_size = 0;
+      for (u32 i = 0; i <= 10; i++) {
+         core_size += sizes[i];
+      }
+      csv_file << "core," << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << "," << core_size;
+      if (times) {
+         csv_file << "," << times->at(0) << std::endl;
+      } else {
+         csv_file << std::endl;
+      }
+      for (u32 i = 11; i < id_count; i++) {
+         csv_file << "table" << i << "," << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << "," << sizes[i];
+         if (times) {
+            csv_file << "," << times->at(i - 10) << std::endl;
+         } else {
+            csv_file << std::endl;
+         }
       }
    }
 
