@@ -1,7 +1,7 @@
 # ----------------- VARIABLES -----------------
-default_read := 2
-default_scan := 0
-default_write := 98
+default_read := 98
+default_scan := 2
+default_write := 0
 default_dram := 1
 default_target := 4
 default_update_size := 5
@@ -55,17 +55,17 @@ executables: $(TARGETS)
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
-CSV_PATH := ./build/log
-lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --csv_path=$(CSV_PATH) --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50 --csv_truncate=true
+lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --tpcc_warehouse_count=2 --read_percentage=$(default_read) --scan_percentage=$(default_scan) --write_percentage=$(default_write) --order_size=10 --semijoin_selectivity=50 --csv_truncate=true
 
 join-lldb: $(BUILD_DIR_DEBUG)$(JOIN_EXEC)
-	lldb -- ./build-debug/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) 
+	lldb -- ./build-debug/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/join-lldb
 
 merged-lldb: $(BUILD_DIR_DEBUG)$(MERGED_EXEC)
 	lldb -- ./build-debug/frontend/merged_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH)
+	--csv_path=$(BUILD_DIR_DEBUG)/merged-lldb
 
 rocksdb-join-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
-	lldb -- ./build-debug/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR)
+	lldb -- ./build-debug/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-join-lldb
 
 .PHONY: join-lldb
 
@@ -119,7 +119,7 @@ table-size:
 	rm -f "~/logs/join_size.csv"
 	rm -f "~/logs/merged_size.csv"
 	@for col in 0 1; do \
-		for sel in 100 50 10; do \
+		for sel in 100 50 20 10; do \
 			$(MAKE) both local_selectivity=$$sel included_columns=$$col extra_args=10; \
 		done \
 	done

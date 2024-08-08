@@ -19,7 +19,7 @@ def get_tx_type(read_percentage, scan_percentage, write_percentage):
         return f"mixed-{read_percentage}-{scan_percentage}-{write_percentage}"
 
 def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, write_percentage, order_size, selectivity, included_columns):
-    log_dir = "/home/alicia.w.lyu/logs/" + f"{method}-{dram_gib}-{target_gib}" + get_tx_type(read_percentage, scan_percentage, write_percentage)
+    log_dir = "/home/alicia.w.lyu/logs/" + f"{method}-{dram_gib}-{target_gib}-" + get_tx_type(read_percentage, scan_percentage, write_percentage)
     
     if order_size != 5:
         log_dir += f"-size{order_size}"
@@ -46,6 +46,7 @@ def get_image(method, target_gib, selectivity, included_columns):
             prefix = add_suffix_before_extension(prefix, f"-sel{selectivity}")
         if included_columns != 1:
             prefix = add_suffix_before_extension(prefix, f"-col{included_columns}")
+        return prefix
             
     if "rocksdb" not in method:
         image_file = f"{get_prefix()}.image"
@@ -85,16 +86,18 @@ def main():
         order_size, selectivity, included_columns)
     
     recovery_file = build_dir / get_recovery_file(method, target_gib, selectivity, included_columns)
+    
+    image = get_image(method, target_gib, selectivity, included_columns)
 
     if write_percentage > 0:
-        persist_file = Path("./leanstore.json")
-        write_image_file = add_suffix_before_extension(image_file, "-write")
-        subprocess.run(["cp", image_file, write_image_file])
-        image_file = write_image_file
+        persist_file = Path(f"{build_dir}/leanstore.json")
+        write_image_file = add_suffix_before_extension(image, "-write")
+        subprocess.run(["cp", image, write_image_file])
+        image = write_image_file
     else:
         persist_file = recovery_file
 
-    print(f"Log Directory: {log_dir}, Recovery File: {recovery_file}, Persist File: {persist_file}, Image: {image_file}")
+    print(f"Log Directory: {log_dir}, Recovery File: {recovery_file}, Persist File: {persist_file}, Image: {image}")
     
     trunc = not recovery_file.exists()
 
@@ -102,7 +105,7 @@ def main():
 
     cmd = [
         executable_path,
-        f"--ssd_path={image_file}", f"--persist_file={persist_file}", f"--recover_file={recovery_file}",
+        f"--ssd_path={image}", f"--persist_file={persist_file}", f"--recover_file={recovery_file}",
         f"--csv_path={log_dir}/log", "--csv_truncate=true", f"--trunc={str(trunc).lower()}",
         "--vi=false", "--mv=false", "--isolation_level=ser", "--optimistic_scan=false",
         f"--run_for_seconds={duration}", "--pp_threads=2",
@@ -118,7 +121,7 @@ def main():
     with open(f"{log_dir}/output.log", 'w') as log_file:
         log_file.write(f"{time}. Running experiment with method: {method}, DRAM: {dram_gib} GiB, target: {target_gib} GiB, read: {read_percentage}%, scan: {scan_percentage}%, write: {write_percentage}%\n")
 
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=None)
     
     with open(f"{log_dir}/output.log", 'a') as log_file:
         log_file.write(result.stdout.decode())

@@ -78,9 +78,9 @@ struct RocksDBMergedAdapter {
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& fn, leanstore::UpdateSameSizeInPlaceDescriptor&)
    {
       Record r;
-      lookup1(key, [&](const Record& rec) { r = rec; });
+      lookup1<Record>(key, [&](const Record& rec) { r = rec; });
       fn(r);
-      insert(key, r);
+      insert<Record>(key, r);
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
@@ -114,21 +114,15 @@ struct RocksDBMergedAdapter {
    }
    //             [&](const neworder_t::Key& key, const neworder_t&) {
    template <class Record, class OtherRec>
-   void scan(const typename Record::Key& key,
+   void scan(const typename Record::Key& key, // It is the caller's reponsibility to choose the smaller key
              const std::function<bool(const typename Record::Key&, const Record&)>& fn,
              const std::function<bool(const typename OtherRec::Key&, const OtherRec&)>& other_fn,
              std::function<void()>)
    {
+      rocksdb::Slice start_key;
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
       const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
-      u8 folded_key2[OtherRec::maxFoldLength() + sizeof(SEP)];
-      const u32 folded_key_len2 = fold(folded_key2, OtherRec::id) + OtherRec::foldKey(folded_key2 + sizeof(SEP), key);
-      rocksdb::Slice start_key;
-      if (folded_key_len < folded_key_len2) {
-         start_key = RSlice(folded_key, folded_key_len);
-      } else {
-         start_key = RSlice(folded_key2, folded_key_len2);
-      }
+      start_key = RSlice(folded_key, folded_key_len);
       // -------------------------------------------------------------------------------------
       rocksdb::Iterator* it = map.db->NewIterator(map.ro);
       for (it->Seek(start_key); it->Valid(); it->Next()) {
