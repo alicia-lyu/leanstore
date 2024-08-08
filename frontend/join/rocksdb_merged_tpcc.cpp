@@ -29,8 +29,6 @@ thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 // -------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;
-   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
    gflags::SetUsageMessage("RocksDB TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    // -------------------------------------------------------------------------------------
@@ -58,12 +56,12 @@ int main(int argc, char** argv)
    RocksDBAdapter<orderline_t> orderline(rocks_db);
    RocksDBAdapter<item_t> item(rocks_db);
    RocksDBAdapter<stock_t> stock(rocks_db);
-   RocksDBMergedAdapter<12> merged_ols(rocks_db);
+   RocksDBMergedAdapter<11> merged_ols(rocks_db);
    // -------------------------------------------------------------------------------------
    TPCCWorkload<RocksDBAdapter> tpcc(warehouse, district, customer, customerwdl, history, neworder, order, order_wdc, orderline, item, stock,
                                      FLAGS_order_wdc_index, FLAGS_tpcc_warehouse_count, FLAGS_tpcc_remove, true, true);
 //    TPCCJoinWorkload<RocksDBAdapter> tpcc_join(&tpcc, orderline_secondary, joined_ols);
-    TPCCMergedWorkload<RocksDBAdapter, RocksDBMergedAdapter<12>> tpcc_merged(&tpcc, merged_ols);
+    TPCCMergedWorkload<RocksDBAdapter, RocksDBMergedAdapter<11>> tpcc_merged(&tpcc, merged_ols);
 
    std::vector<thread> threads;
    std::atomic<u32> g_w_id = 1;

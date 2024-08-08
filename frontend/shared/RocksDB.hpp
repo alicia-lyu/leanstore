@@ -116,6 +116,11 @@ struct RocksDB {
       }
       uint64_t sizes[id_count];
       db->GetApproximateSizes(ranges, id_count, sizes);
+      std::cout << "Sizes:";
+      for (u32 i = 0; i < id_count; i++) {
+         std::cout << " " << sizes[i];
+      }
+      std::cout << std::endl;
       uint64_t core_size = 0;
       for (u32 i = 0; i <= 10; i++) {
          core_size += sizes[i];
@@ -164,7 +169,7 @@ struct RocksDB {
             csv << "t,tag,oltp_committed,oltp_aborted,SSTRead(ms)/TX,SSTWrite(ms)/TX,GHz,Cycles/TX" << endl;
          }
          uint64_t sst_read_prev = 0, sst_write_prev = 0;
-         while (keep_running) {
+         while (running_threads_counter - 1 > 0) {
             cpu_table.next();
             csv << time++ << "," << FLAGS_tag << ",";
             u64 total_committed = 0, total_aborted = 0;
