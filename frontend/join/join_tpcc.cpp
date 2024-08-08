@@ -15,6 +15,7 @@
 // -------------------------------------------------------------------------------------
 #include <unistd.h>
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -91,7 +92,9 @@ int main(int argc, char** argv)
       bool csv_exists = std::filesystem::exists(csv_path);
       std::ofstream csv_file(csv_path, std::ios::app);
       if (!csv_exists)
-         csv_file << "table(s),config,size" << std::endl;
+         csv_file << "table(s),config,size,time" << std::endl;
+
+      std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          tpcc.loadItem();
@@ -118,11 +121,12 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
       double gib0 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
       cout << "TPC-C core loaded - consumed space in GiB = " << gib0 << endl;
       csv_file << "core," 
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib0 << std::endl;
+      << gib0 << "," << std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() << std::endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -138,11 +142,12 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
       double gib1 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
       cout << "Orderline secondary loaded - consumed space in GiB = " << gib1 - gib0 << endl;
       csv_file << "orderline_secondary,"
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib1 - gib0 << std::endl;
+      << gib1 - gib0 << "," << std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() << std::endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -158,11 +163,12 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();
       double gib2 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
       cout << "Join results loaded - consumed space in GiB = " << gib2 - gib1 << endl;
       csv_file << "join_results,"
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib2 - gib1 << std::endl;
+      << gib2 - gib1 << "," << std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count() << std::endl;
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          goto verify;

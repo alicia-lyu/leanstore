@@ -86,7 +86,8 @@ int main(int argc, char** argv)
       bool file_exists = filesystem::exists(csv_path);
       std::ofstream csv_file(csv_path, std::ios::app);
       if (!file_exists)
-         csv_file << "table(s),config,size" << std::endl;
+         csv_file << "table(s),config,size,time" << std::endl;
+      std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          tpcc.loadItem();
@@ -113,11 +114,12 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
       double gib0 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
       cout << "TPC-C core loaded - consumed space in GiB = " << gib0 << endl;
       csv_file << "core," 
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib0 << std::endl;
+      << gib0 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << std::endl;
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -134,11 +136,12 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
+      std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
       double gib1 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
       cout << "Merged index loaded - consumed space in GiB = " << gib1 - gib0 << endl;
       csv_file << "merged_index,"
       << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib1 - gib0 << std::endl;
+      << gib1 - gib0 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << std::endl;
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          cout << "Verifying TPC-C" << endl;

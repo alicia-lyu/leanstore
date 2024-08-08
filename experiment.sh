@@ -21,7 +21,10 @@ SCAN_PERCENTAGE=$5
 WRITE_PERCENTAGE=$6
 ORDER_SIZE=$7
 SELECTIVITY=$8
-INCLUDED_COLUMNS=$9 # In compiler flags
+INCLUDED_COLUMNS=$9
+DURATION=${10:-240}
+
+echo "Seconds: $DURATION"
 
 if [ "$READ_PERCENTAGE" -eq 100 ] && [ "$SCAN_PERCENTAGE" -eq 0 ] && [ "$WRITE_PERCENTAGE" -eq 0 ]; then
   LOG_DIR="/home/alicia.w.lyu/logs/${METHOD}-${DRAM_GIB}-${TARGET_GIB}-read"
@@ -60,6 +63,7 @@ if [ "$INCLUDED_COLUMNS" -ne 1 ]; then
   # RECOVERY_FILE=$(add_suffix_before_extension "$RECOVERY_FILE" "-col${INCLUDED_COLUMNS}") # No need, because build dir is different
   IMAGE_FILE=$(add_suffix_before_extension "$IMAGE_FILE" "-col${INCLUDED_COLUMNS}")
   LOG_DIR="${LOG_DIR}-col${INCLUDED_COLUMNS}"
+  RECOVERY_FILE=$(add_suffix_before_extension "$RECOVERY_FILE" "-col${INCLUDED_COLUMNS}")
 fi
 
 mkdir -p "${LOG_DIR}"
@@ -67,7 +71,7 @@ touch "${IMAGE_FILE}"
 
 if [ "$WRITE_PERCENTAGE" -gt 0 ]; then
     PERSIST_FILE="./leanstore.json" # Do not persist
-    WRITE_IMAGE_FILE="${IMAGE_FILE}-write" # Do not overwrite the original image
+    WRITE_IMAGE_FILE=$(add_suffix_before_extension "$IMAGE_FILE" "-write")
     cp "${IMAGE_FILE}" "${WRITE_IMAGE_FILE}"
     IMAGE_FILE="${WRITE_IMAGE_FILE}"
 else
@@ -75,32 +79,18 @@ else
 fi
 
 if [ -e "${RECOVERY_FILE}" ]; then
-    if [ -z "$10" ]; then
-        SECONDS=$10
-    else
-        SECONDS=360
-    fi
-    TERM_COND="--run_for_seconds=${SECONDS}"
     TRUNC=false
 elif [ ! -e "${RECOVERY_FILE}" ]; then
-    if [ -z "$10" ]; then
-        SECONDS=$10
-    else
-        SECONDS=480
-    fi
-    TERM_COND="--run_for_seconds=${SECONDS}"
     TRUNC=true
 fi
 
 echo "************************************************************ NEW EXPERIMENT ************************************************************"
 
-# make "./$BUILD_DIR/frontend/${METHOD}_tpcc"
-
 CMD="${EXECUTABLE_PATH} \
 --ssd_path=${IMAGE_FILE} --persist_file=${PERSIST_FILE} --recover_file=${RECOVERY_FILE} \
 --csv_path=${LOG_DIR}/log --csv_truncate=true --trunc=${TRUNC} \
 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false \
-${TERM_COND} --pp_threads=2 \
+--run_for_seconds=${DURATION} --pp_threads=2 \
 --dram_gib=${DRAM_GIB} --target_gib=${TARGET_GIB} --tpcc_warehouse_count=${TARGET_GIB} \
 --read_percentage=${READ_PERCENTAGE} --scan_percentage=${SCAN_PERCENTAGE} --write_percentage=${WRITE_PERCENTAGE} \
 --order_size=${ORDER_SIZE} --semijoin_selectivity=${SELECTIVITY} \
@@ -108,7 +98,7 @@ ${TERM_COND} --pp_threads=2 \
 
 echo "Running command ${CMD}"
 
-TIME=$(date -u +"%m-%dT%H:%M:%SZ")
+TIME=$(date +"%m-%dT%H:%M:%SZ")
 
 echo "${TIME}. Running experiment with method: ${METHOD}, DRAM: ${DRAM_GIB} GiB, target: ${TARGET_GIB} GiB, read: ${READ_PERCENTAGE}%, scan: ${SCAN_PERCENTAGE}%, write: ${WRITE_PERCENTAGE}%" > "${LOG_DIR}/output.log"
 

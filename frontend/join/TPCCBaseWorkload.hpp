@@ -20,7 +20,7 @@ DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock
 // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be
 // lower. Empirically 90+% items are present in some orderline, picking out those in stock.
 
-#ifndef INCLUDE_COLUMNS
+#if !defined(INCLUDE_COLUMNS)
 #define INCLUDE_COLUMNS \
    1  // All columns, unless defined. Now included columns in orderline secondary and joined results are the same. Maybe should be different.
 #endif

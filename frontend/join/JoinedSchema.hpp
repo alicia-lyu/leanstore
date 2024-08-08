@@ -98,6 +98,7 @@ struct ol_join_sec_t {
 };
 
 struct ol_sec_key_only_t {
+  static constexpr int id = 11; // Cannot coexist with ol_join_sec_t
   using Key = ol_join_sec_t::Key;
 
   template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
@@ -219,6 +220,7 @@ struct joined_ols_t {
 };
 
 struct joined_ols_key_only_t {
+  static constexpr int id = 12; // Cannot coexist with joined_ols_t
   using Key = joined_ols_t::Key;
 
   template <class T> static unsigned foldKey(uint8_t *out, const T &key) {

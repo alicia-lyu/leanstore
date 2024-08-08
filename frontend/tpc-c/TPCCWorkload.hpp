@@ -936,7 +936,7 @@ class TPCCWorkload
       for (Integer i = 1; i < 11; i++) {
          district.insert({w_id, i}, {randomastring<10>(6, 10), randomastring<20>(10, 20), randomastring<20>(10, 20), randomastring<20>(10, 20),
                                      randomastring<2>(2, 2), randomzip(), randomNumeric(0.0000, 0.2000), 3000000,
-                                     static_cast<Integer>(CUSTOMER_SCALE * scale_factor / 10) + 2});
+                                     static_cast<Integer>(CUSTOMER_SCALE * scale_factor / 10) + 1});
       }
    }
    // -------------------------------------------------------------------------------------
