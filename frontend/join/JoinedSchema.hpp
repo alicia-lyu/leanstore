@@ -117,8 +117,9 @@ struct ol_sec_key_only_t {
     return ol_join_sec_t::primaryKeyLength();
   }
 
-  friend std::ostream& operator<<(std::ostream& os, const ol_sec_key_only_t& record) {
+  friend std::ostream& operator<<(std::ostream& os, const ol_sec_key_only_t&) {
     os << "ol_sec_key_only";
+    return os;
   }
 
   ol_join_sec_t expand() const {
@@ -235,7 +236,7 @@ struct joined_ols_key_only_t {
     return joined_ols_t::joinKeyLength();
   }
 
-  friend std::ostream& operator<<(std::ostream& os, const joined_ols_key_only_t& record) {
+  friend std::ostream& operator<<(std::ostream& os, const joined_ols_key_only_t&) {
     os << "joined_ols_key_only";
     return os;
   }

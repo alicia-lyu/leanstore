@@ -72,7 +72,10 @@ def main():
         read_percentage, scan_percentage, write_percentage, \
         order_size, selectivity, included_columns = map(int, sys.argv[3:10])
     
-    duration = int(sys.argv[10]) if len(sys.argv) > 10 else 240
+    if len(sys.argv) == 10 or sys.argv[10] == '':
+        duration = 240
+    else:
+        duration = int(sys.argv[10])
 
     print(f"Method: {method}, Build Directory: {build_dir}, run for seconds: {duration}")
     

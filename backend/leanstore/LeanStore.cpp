@@ -168,6 +168,7 @@ void LeanStore::startProfilingThread()
       u64 seconds = 0;
       u64 dt_page_reads_acc = 0;
       u64 dt_page_writes_acc = 0;
+      u64 cycles_prev = 0;
       while (bg_threads_keep_running) {
          for (u64 t_i = 0; t_i < tables.size(); t_i++) {
             tables[t_i]->next();
@@ -233,7 +234,14 @@ void LeanStore::startProfilingThread()
          
          if (cpu_table.workers_agg_events.contains("cycle"))
          {
-            const double cycles_per_tx = cpu_table.workers_agg_events["cycle"] / tx;
+            double cycles_per_tx;
+            if (tx == 0) {
+               cycles_prev += cpu_table.workers_agg_events["cycle"];
+               cycles_per_tx = 0;
+            } else {
+               cycles_per_tx = (cpu_table.workers_agg_events["cycle"] + cycles_prev) / tx;
+               cycles_prev = 0;
+            }
             tx_console_header.push_back("Cycles/TX");
             tx_console_data.push_back(std::to_string(cycles_per_tx));
          }
@@ -277,23 +285,21 @@ void LeanStore::startProfilingThread()
          tx_console_header.push_back("GCT GiB/s");
          tx_console_data.push_back(cr_table.get("0", "gct_write_gib"));
          
-         const profiling::Column& dt_page_reads = dt_table["dt_page_reads"];
-         for (u64 r_i = 0; r_i < dt_page_reads.values.size(); r_i++) {
-            dt_page_reads_acc += std::stoi(dt_page_reads.values[r_i]);
-         }
+         u64 dt_page_reads = dt_table.getSum("dt_page_reads");
          tx_console_header.push_back("SSDReads/TX");
-         tx_console_data.push_back(std::to_string(dt_page_reads_acc / (double) tx));
-
-         const profiling::Column& dt_page_writes = dt_table["dt_page_writes"];
-         for (u64 r_i = 0; r_i < dt_page_writes.values.size(); r_i++) {
-            dt_page_writes_acc += std::stoi(dt_page_writes.values[r_i]);
-         }
+         u64 dt_page_writes = dt_table.getSum("dt_page_writes");
          tx_console_header.push_back("SSDWrites/TX");
-         tx_console_data.push_back(std::to_string(dt_page_writes_acc / (double) tx));
          
          if (tx != 0) {
+            tx_console_data.push_back(std::to_string(dt_page_reads / (double) tx));
+            tx_console_data.push_back(std::to_string(dt_page_writes_acc / (double) tx));
             dt_page_reads_acc = 0;
             dt_page_writes_acc = 0;
+         } else {
+            dt_page_reads_acc += dt_page_reads;
+            dt_page_writes_acc += dt_page_writes;
+            tx_console_data.push_back("0");
+            tx_console_data.push_back("0");
          }
 
          auto& csv_sum = csvs.back();

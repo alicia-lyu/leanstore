@@ -1,22 +1,14 @@
-#include "../shared/LeanStoreAdapter.hpp"
-#include "../tpc-c/Schema.hpp"
-#include "../tpc-c/TPCCWorkload.hpp"
-#include "JoinedSchema.hpp"
-#include "TPCCJoinWorkload.hpp"
+#include "leanstore_tpcc_helper.cpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
-#include "leanstore/profiling/counters/WorkerCounters.hpp"
-#include "leanstore/utils/Misc.hpp"
-#include "leanstore/utils/ZipfGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
 // -------------------------------------------------------------------------------------
 #include <unistd.h>
 
 #include <chrono>
-#include <filesystem>
 #include <iostream>
 #include <string>
 // -------------------------------------------------------------------------------------
@@ -26,108 +18,22 @@ using namespace leanstore;
 // -------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;
-   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
    gflags::SetUsageMessage("Leanstore Join TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-   assert(FLAGS_tpcc_warehouse_count > 0);
-   assert(FLAGS_read_percentage + FLAGS_scan_percentage + FLAGS_write_percentage == 100);
-   LeanStore::addS64Flag("TPC_SCALE", &FLAGS_tpcc_warehouse_count);
-   // -------------------------------------------------------------------------------------
-   // -------------------------------------------------------------------------------------
-   LeanStore db;
-   LeanStoreAdapter<warehouse_t> warehouse;
-   LeanStoreAdapter<district_t> district;
-   LeanStoreAdapter<customer_t> customer;
-   LeanStoreAdapter<customer_wdl_t> customerwdl;
-   LeanStoreAdapter<history_t> history;
-   LeanStoreAdapter<neworder_t> neworder;
-   LeanStoreAdapter<order_t> order;
-   LeanStoreAdapter<order_wdc_t> order_wdc;
-   LeanStoreAdapter<orderline_t> orderline;
-   LeanStoreAdapter<item_t> item;
-   LeanStoreAdapter<stock_t> stock;
-   LeanStoreAdapter<orderline_sec_t> orderline_secondary;
-   // LeanStoreAdapter<stock_join_sec_t> stock_secondary;
-   LeanStoreAdapter<joined_t> joined_ols;
-
-   auto& crm = db.getCRManager();
-   // -------------------------------------------------------------------------------------
-   crm.scheduleJobSync(0, [&]() {
-      warehouse = LeanStoreAdapter<warehouse_t>(db, "warehouse");
-      district = LeanStoreAdapter<district_t>(db, "district");
-      customer = LeanStoreAdapter<customer_t>(db, "customer");
-      customerwdl = LeanStoreAdapter<customer_wdl_t>(db, "customerwdl");
-      history = LeanStoreAdapter<history_t>(db, "history");
-      neworder = LeanStoreAdapter<neworder_t>(db, "neworder");
-      order = LeanStoreAdapter<order_t>(db, "order");
-      order_wdc = LeanStoreAdapter<order_wdc_t>(db, "order_wdc");
-      orderline = LeanStoreAdapter<orderline_t>(db, "orderline");
-      item = LeanStoreAdapter<item_t>(db, "item");
-      stock = LeanStoreAdapter<stock_t>(db, "stock");
-      orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary");
-      // stock_secondary = LeanStoreAdapter<stock_join_sec_t>(db, "stock_secondary"); not needed because join key is its primary key
-      joined_ols = LeanStoreAdapter<joined_t>(db, "joined_ols");
-   });
-
-   db.registerConfigEntry("tpcc_warehouse_count", FLAGS_tpcc_warehouse_count);
-   db.registerConfigEntry("tpcc_warehouse_affinity", FLAGS_tpcc_warehouse_affinity);
-   db.registerConfigEntry("tpcc_threads", FLAGS_tpcc_threads);
-   db.registerConfigEntry("run_until_tx", FLAGS_run_until_tx);
-
-   leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::parseIsolationLevel(FLAGS_isolation_level);
-
-   const bool should_tpcc_driver_handle_isolation_anomalies = isolation_level < leanstore::TX_ISOLATION_LEVEL::SNAPSHOT_ISOLATION;
-
-   TPCCWorkload<LeanStoreAdapter> tpcc(warehouse, district, customer, customerwdl, history, neworder, order, order_wdc, orderline, item, stock,
-                                       FLAGS_order_wdc_index, FLAGS_tpcc_warehouse_count, FLAGS_tpcc_remove,
-                                       should_tpcc_driver_handle_isolation_anomalies, FLAGS_tpcc_warehouse_affinity);
-
-   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, orderline_secondary, joined_ols);
+   auto context = prepareExperiment();
+   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&context->tpcc,context->orderline_secondary, context->joined_ols);
+   auto& crm = context->db.getCRManager();
+   auto& db = context->db;
+   auto& tpcc = context->tpcc;
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
-      cout << "Loading TPC-C" << endl;
-      filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "join_size.csv";
-      bool csv_exists = std::filesystem::exists(csv_path);
-      std::ofstream csv_file(csv_path, std::ios::app);
-      if (!csv_exists)
-         csv_file << "table(s),config,size,time" << std::endl;
-
-      std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
-      crm.scheduleJobSync(0, [&]() {
-         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpcc.loadItem();
-         tpcc.loadWarehouse();
-         cr::Worker::my().commitTX();
-      });
-      std::atomic<u32> g_w_id = 1;
-      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-         crm.scheduleJobAsync(t_i, [&]() {
-            while (true) {
-               u32 w_id = g_w_id++;
-               if (w_id > FLAGS_tpcc_warehouse_count) {
-                  return;
-               }
-               cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-               tpcc.loadStock(w_id, FLAGS_semijoin_selectivity);
-               tpcc.loadDistrict(w_id);
-               for (Integer d_id = 1; d_id <= 10; d_id++) {
-                  tpcc.loadCustomer(w_id, d_id);
-                  tpcc.loadOrders(w_id, d_id);
-               }
-               cr::Worker::my().commitTX();
-            }
-         });
+      auto ret = loadCore(crm, tpcc);
+      if (ret != 0) {
+         return ret;
       }
-      crm.joinAll();
-      std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-      double gib0 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-      cout << "TPC-C core loaded - consumed space in GiB = " << gib0 << endl;
-      csv_file << "core," 
-      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib0 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << std::endl;
-      g_w_id = 1;
+      std::chrono::steady_clock::time_point sec_start = std::chrono::steady_clock::now();
+      std::atomic<u32> g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
             while (true) {
@@ -142,12 +48,8 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      std::chrono::steady_clock::time_point t3 = std::chrono::steady_clock::now();
-      double gib1 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-      cout << "Orderline secondary loaded - consumed space in GiB = " << gib1 - gib0 << endl;
-      csv_file << "orderline_secondary,"
-      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib1 - gib0 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count() << std::endl;
+      logSize("orderline_secondary", sec_start);
+      std::chrono::steady_clock::time_point join_start = std::chrono::steady_clock::now();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -163,114 +65,31 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();
-      double gib2 = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-      cout << "Join results loaded - consumed space in GiB = " << gib2 - gib1 << endl;
-      csv_file << "join_results,"
-      << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << ","
-      << gib2 - gib1 << "," << std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count() << std::endl;
+      logSize("joined_ols", join_start);
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
-         goto verify;
+         auto ret = verifyCore(crm, tpcc, &tpcc_join);
+         if (ret != 0) {
+            return ret;
+         }
       }
    } else {  // verify and warm up
-      std::cout << "Recovered TPC-C. Verifying..." << std::endl;
-   verify:
-      cout << "Verifying TPC-C" << endl;
-      crm.scheduleJobSync(0, [&]() {
-         cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
-         tpcc.verifyItems();
-         cr::Worker::my().commitTX();
-      });
-      std::atomic<u32> g_w_id = 1;
-      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-         crm.scheduleJobAsync(t_i, [&]() {
-            while (true) {
-               u32 w_id = g_w_id++;
-               if (w_id > FLAGS_tpcc_warehouse_count) {
-                  return;
-               }
-               cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
-               tpcc_join.verifyWarehouse(w_id);
-               cr::Worker::my().commitTX();
-            }
-         });
-         crm.joinAll();
+      auto ret = verifyCore(crm, tpcc, &tpcc_join);
+      if (ret != 0) {
+         return ret;
       }
    }
 
    // -------------------------------------------------------------------------------------
 
-   double gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-   cout << "TPC-C loaded - consumed space in GiB = " << gib << endl;
-   crm.scheduleJobSync(0, [&]() {
-      cout << "Warehouse pages = " << warehouse.btree->countPages() << endl;
-      cout << "District pages = " << district.btree->countPages() << endl;
-      if (FLAGS_target_gib < 1) {
-         cout << "Customer pages = " << customer.btree->countPages() << endl;
-         cout << "CustomerWDL pages = " << customerwdl.btree->countPages() << endl;
-         cout << "History pages = " << history.btree->countPages() << endl;
-         cout << "NewOrder pages = " << neworder.btree->countPages() << endl;
-         cout << "Order pages = " << order.btree->countPages() << endl;
-         cout << "OrderWDC pages = " << order_wdc.btree->countPages() << endl;
-         cout << "OrderLine pages = " << orderline.btree->countPages() << endl;
-         cout << "Item pages = " << item.btree->countPages() << endl;
-         cout << "Stock pages = " << stock.btree->countPages() << endl;
-      }
-      if (FLAGS_target_gib < 2) {
-         cout << "OrderLineSecondary pages = " << orderline_secondary.btree->countPages() << endl;
-         cout << "JoinedOrderLineStock pages = " << joined_ols.btree->countPages() << endl;
-      }
-   });
-
    // -------------------------------------------------------------------------------------
-   // Step 4: Start write TXs into order_line and stock, and read TXs into joined_orderline_stock
    atomic<u64> keep_running = true;
    atomic<u64> running_threads_counter = 0;
    vector<thread> threads;
-   auto random = std::make_unique<leanstore::utils::ZipfGenerator>(FLAGS_tpcc_warehouse_count, FLAGS_zipf_factor);
    db.startProfilingThread();
    u64 tx_per_thread[FLAGS_worker_threads];
 
-   for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-      crm.scheduleJobAsync(t_i, [&, t_i]() {
-         running_threads_counter++;
-         tpcc.prepare();
-         volatile u64 tx_acc = 0;
-         while (keep_running) {
-            utils::Timer timer(CRCounters::myCounters().cc_ms_oltp_tx);
-            jumpmuTry()
-            {
-               cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
-               u32 w_id;
-               if (FLAGS_tpcc_warehouse_affinity) {
-                  w_id = t_i + 1;
-               } else {
-                  w_id = tpcc.urand(1, FLAGS_tpcc_warehouse_count);
-               }
-               if (w_id > FLAGS_tpcc_warehouse_count) {
-                  return;
-               }
-               tpcc_join.tx(w_id, FLAGS_read_percentage, FLAGS_scan_percentage, FLAGS_write_percentage, FLAGS_order_size);
-               if (FLAGS_tpcc_abort_pct && tpcc.urand(0, 100) <= FLAGS_tpcc_abort_pct) {
-                  cr::Worker::my().abortTX();
-               } else {
-                  cr::Worker::my().commitTX();
-               }
-               // cout << "TXs = " << WorkerCounters::myCounters().tx << " TX aborts = " << WorkerCounters::myCounters().tx_abort << endl;
-               WorkerCounters::myCounters().tx++;
-               tx_acc = tx_acc + 1;
-            }
-            jumpmuCatch()
-            {
-               WorkerCounters::myCounters().tx_abort++;
-            }
-         }
-         cr::Worker::my().shutdown();
-         tx_per_thread[t_i] = tx_acc;
-         running_threads_counter--;
-      });
-   }
+   scheduleTransations(crm, tpcc, &tpcc_join, keep_running, running_threads_counter, tx_per_thread);
 
    {
       if (FLAGS_run_until_tx) {
@@ -302,8 +121,4 @@ int main(int argc, char** argv)
       cout << endl;
       cout << "Total TPC-C TXs = " << total << endl;
    }
-   // -------------------------------------------------------------------------------------
-   gib = (db.getBufferManager().consumedPages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0);
-   cout << endl << "consumed space in GiB = " << gib << endl;
-   return 0;
 }
