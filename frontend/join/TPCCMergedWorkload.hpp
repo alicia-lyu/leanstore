@@ -3,20 +3,22 @@
 #include <cstdint>
 #include <type_traits>
 #include "../tpc-c/TPCCWorkload.hpp"
-#include "TPCCBaseWorkload.hpp"
-#include "JoinedSchema.hpp"
 #include "Join.hpp"
+#include "JoinedSchema.hpp"
+#include "TPCCBaseWorkload.hpp"
 #include "Units.hpp"
 
 template <template <typename> class AdapterType, class MergedAdapterType>
-class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
+class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 {
    using Base = TPCCBaseWorkload<AdapterType>;
    using orderline_sec_t = typename Base::orderline_sec_t;
    using joined_t = typename Base::joined_t;
    MergedAdapterType& merged;
 
-   std::vector<std::pair<typename joined_t::Key, joined_t>> cartesianProducts(std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>>& cached_left, std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
+   std::vector<std::pair<typename joined_t::Key, joined_t>> cartesianProducts(
+       std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>>& cached_left,
+       std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
    {
       std::vector<std::pair<typename joined_t::Key, joined_t>> results;
       results.reserve(cached_left.size() * cached_right.size());  // Reserve memory to avoid reallocations
@@ -54,7 +56,7 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
           [&](const stock_t::Key& key, const stock_t& rec) {
              ++scanCardinality;
              if (key.s_w_id != w_id) {
-               return false;
+                return false;
              }
              if (key.s_w_id != current_key.s_w_id || key.s_i_id != current_key.s_i_id) {
                 // A new join key discovered
@@ -71,25 +73,26 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++scanCardinality;
-             assert(key.ol_w_id == w_id); // change only occur at a stock entry
+             assert(key.ol_w_id == w_id);  // change only occur at a stock entry
              if (key.ol_d_id != d_id) {
-               return true; // next item may still be in the same district
+                return true;  // next item may still be in the same district
              }
              if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
-               ol_join_sec_t expanded_rec = rec.expand();
-               if (expanded_rec.ol_delivery_d < since) {
-                  return true;  // Skip this record
-               }
+                ol_join_sec_t expanded_rec = rec.expand();
+                if (expanded_rec.ol_delivery_d < since) {
+                   return true;  // Skip this record
+                }
              } else {
-               bool since_flag = true;
-               this->tpcc->orderline.lookup1({w_id, d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& ol_rec) {
-                  if (!(ol_rec.ol_delivery_d < since)) {
-                     since_flag = false;
-                  }
-               });
-               if (!since_flag) return true;
+                bool since_flag = true;
+                this->tpcc->orderline.lookup1({w_id, d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& ol_rec) {
+                   if (!(ol_rec.ol_delivery_d < since)) {
+                      since_flag = false;
+                   }
+                });
+                if (!since_flag)
+                   return true;
              }
-             
+
              cached_left.push_back({key, rec});
              return true;  // continue scan
           },
@@ -130,10 +133,8 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++lookupCardinality;
-             assert(key.ol_i_id == i_id && key.ol_w_id == w_id);
-             // Change only occur at a stock entry
-             if (key.ol_d_id != d_id) {
-                return false; // passed
+             if (key.ol_i_id != i_id || key.ol_w_id != w_id || key.ol_d_id != d_id) {
+               return false;
              }
              cached_left.push_back({key, rec});
              return true;  // continue scan
@@ -287,7 +288,7 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
       }
    }
 
-   void loadStockToMerged(Integer w_id, Integer semijoin_selectivity = 100) // TODO
+   void loadStockToMerged(Integer w_id, Integer semijoin_selectivity = 100)  // TODO
    {
       std::cout << "Loading stock of warehouse " << w_id << " to merged" << std::endl;
       for (Integer i = 0; i < this->tpcc->ITEMS_NO * this->tpcc->scale_factor; i++) {
@@ -302,8 +303,9 @@ class TPCCMergedWorkload: public TPCCBaseWorkload<AdapterType>
          merged.template insert<stock_t>(
              typename stock_t::Key{w_id, i + 1},
              {this->tpcc->randomNumeric(10, 100), this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
-              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
-              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
               this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data});
       }
    }

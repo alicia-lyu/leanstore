@@ -1,4 +1,4 @@
-#include "leanstore_tpcc_helper.cpp"
+#include "tpcc_helper.cpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
@@ -21,10 +21,19 @@ int main(int argc, char** argv)
    gflags::SetUsageMessage("Leanstore Join TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    auto context = prepareExperiment();
-   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&context->tpcc,context->orderline_secondary, context->joined_ols);
    auto& crm = context->db.getCRManager();
    auto& db = context->db;
    auto& tpcc = context->tpcc;
+
+   LeanStoreAdapter<orderline_sec_t> orderline_secondary;
+   LeanStoreAdapter<joined_t> joined_ols;
+   
+   crm.scheduleJobSync(0, [&]() {
+      orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary");
+      joined_ols = LeanStoreAdapter<joined_t>(db, "joined_ols");
+   });
+   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc,orderline_secondary, joined_ols);
+      
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
