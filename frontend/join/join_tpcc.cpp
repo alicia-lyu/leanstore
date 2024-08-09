@@ -1,4 +1,5 @@
-#include "tpcc_helper.cpp"
+#include "LeanStoreExperimentHelper.hpp"
+#include "TPCCJoinWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
@@ -20,10 +21,13 @@ int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Leanstore Join TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-   auto context = prepareExperiment();
+   LeanStoreExperimentHelper helper;
+   auto context = helper.prepareExperiment();
    auto& crm = context->db.getCRManager();
    auto& db = context->db;
    auto& tpcc = context->tpcc;
+   using orderline_sec_t = typename ExperimentHelper::orderline_sec_t;
+   using joined_t = typename ExperimentHelper::joined_t;
 
    LeanStoreAdapter<orderline_sec_t> orderline_secondary;
    LeanStoreAdapter<joined_t> joined_ols;
@@ -37,7 +41,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
-      auto ret = loadCore(crm, tpcc);
+      auto ret = helper.loadCore();
       if (ret != 0) {
          return ret;
       }
@@ -57,7 +61,7 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      logSize("orderline_secondary", sec_start);
+      helper.logSize("orderline_secondary", sec_start);
       std::chrono::steady_clock::time_point join_start = std::chrono::steady_clock::now();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
@@ -74,16 +78,16 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      logSize("joined_ols", join_start);
+      helper.logSize("joined_ols", join_start);
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
-         auto ret = verifyCore(crm, tpcc, &tpcc_join);
+         auto ret = helper.verifyCore(&tpcc_join);
          if (ret != 0) {
             return ret;
          }
       }
    } else {  // verify and warm up
-      auto ret = verifyCore(crm, tpcc, &tpcc_join);
+      auto ret = helper.verifyCore(&tpcc_join);
       if (ret != 0) {
          return ret;
       }
@@ -98,7 +102,7 @@ int main(int argc, char** argv)
    db.startProfilingThread();
    u64 tx_per_thread[FLAGS_worker_threads];
 
-   scheduleTransations(crm, tpcc, &tpcc_join, keep_running, running_threads_counter, tx_per_thread);
+   helper.scheduleTransations(&tpcc_join, keep_running, running_threads_counter, tx_per_thread);
 
    {
       if (FLAGS_run_until_tx) {

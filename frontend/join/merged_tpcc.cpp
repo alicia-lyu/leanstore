@@ -1,6 +1,6 @@
 #include "LeanStoreMergedAdapter.hpp"
 #include "TPCCMergedWorkload.hpp"
-#include "tpcc_helper.cpp"
+#include "LeanStoreExperimentHelper.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
@@ -11,7 +11,6 @@
 #include <unistd.h>
 
 #include <cmath>
-#include <filesystem>
 #include <iostream>
 #include <string>
 // -------------------------------------------------------------------------------------
@@ -22,7 +21,8 @@ int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Leanstore Join TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-   auto context = prepareExperiment();
+   LeanStoreExperimentHelper helper;
+   auto context = helper.prepareExperiment();
    auto& crm = context->db.getCRManager();
    auto& db = context->db;
    auto& tpcc = context->tpcc;
@@ -35,7 +35,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
-      auto ret = loadCore(crm, tpcc, false);
+      auto ret = helper.loadCore(false);
       if (ret != 0) {
          return ret;
       }
@@ -56,16 +56,16 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      logSize("merged", sec_start);
+      helper.logSize("merged", sec_start);
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
-         auto ret = verifyCore(crm, tpcc, &tpcc_merge);
+         auto ret = helper.verifyCore(&tpcc_merge);
          if (ret != 0) {
             return ret;
          }
       }
    } else {
-      auto ret = verifyCore(crm, tpcc, &tpcc_merge);
+      auto ret = helper.verifyCore(&tpcc_merge);
       if (ret != 0) {
          return ret;
       }
@@ -79,7 +79,7 @@ int main(int argc, char** argv)
    db.startProfilingThread();
    u64 tx_per_thread[FLAGS_worker_threads];
    
-   scheduleTransations(crm, tpcc, &tpcc_merge, keep_running, running_threads_counter, tx_per_thread);
+   helper.scheduleTransations(&tpcc_merge, keep_running, running_threads_counter, tx_per_thread);
 
    {
       if (FLAGS_run_until_tx) {
