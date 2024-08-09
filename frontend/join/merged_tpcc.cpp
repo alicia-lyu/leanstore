@@ -40,6 +40,7 @@ int main(int argc, char** argv)
          return ret;
       }
       std::chrono::steady_clock::time_point sec_start = std::chrono::steady_clock::now();
+      u64 prev_page_count = context->db.getBufferManager().consumedPages();
       std::atomic<u32> g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -56,7 +57,7 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      helper.logSize("merged", sec_start);
+      helper.logSize("merged", sec_start, prev_page_count);
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          auto ret = helper.verifyCore(&tpcc_merge);
