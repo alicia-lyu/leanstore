@@ -155,9 +155,12 @@ u64 DTTable::getSum(std::string column_name)
 {
    u64 s = 0;
    const auto& column = columns.at(column_name);
+   std::cout << column_name << std::endl;
    for (const auto& column_value : column.values) {
       s += stoi(column_value);
+      std::cout << column_value << " ";
    }
+   std::cout << std::endl;
    return s;
 }
 // -------------------------------------------------------------------------------------

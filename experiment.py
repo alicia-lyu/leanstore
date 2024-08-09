@@ -123,11 +123,9 @@ def main():
 
     with open(f"{log_dir}/output.log", 'w') as log_file:
         log_file.write(f"{time}. Running experiment with method: {method}, DRAM: {dram_gib} GiB, target: {target_gib} GiB, read: {read_percentage}%, scan: {scan_percentage}%, write: {write_percentage}%\n")
-
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=None)
     
     with open(f"{log_dir}/output.log", 'a') as log_file:
-        log_file.write(result.stdout.decode())
+        result = subprocess.run(cmd, stdout=log_file, stderr=None)
 
     if result.returncode != 0:
         print("Experiment failed, you need to remove the persisted json file.")

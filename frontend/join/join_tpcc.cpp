@@ -31,13 +31,13 @@ int main(int argc, char** argv)
 
    LeanStoreAdapter<orderline_sec_t> orderline_secondary;
    LeanStoreAdapter<joined_t> joined_ols;
-   
+
    crm.scheduleJobSync(0, [&]() {
       orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary");
       joined_ols = LeanStoreAdapter<joined_t>(db, "joined_ols");
    });
-   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc,orderline_secondary, joined_ols);
-      
+   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, orderline_secondary, joined_ols);
+
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
@@ -46,6 +46,7 @@ int main(int argc, char** argv)
          return ret;
       }
       std::chrono::steady_clock::time_point sec_start = std::chrono::steady_clock::now();
+      u64 prev_page_count = context->db.getBufferManager().consumedPages();
       std::atomic<u32> g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -61,8 +62,9 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      helper.logSize("orderline_secondary", sec_start);
+      helper.logSize("orderline_secondary", sec_start, prev_page_count);
       std::chrono::steady_clock::time_point join_start = std::chrono::steady_clock::now();
+      u64 join_prev_page_count = context->db.getBufferManager().consumedPages();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -78,7 +80,7 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      helper.logSize("joined_ols", join_start);
+      helper.logSize("joined_ols", join_start, join_prev_page_count);
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          auto ret = helper.verifyCore(&tpcc_join);
@@ -92,6 +94,17 @@ int main(int argc, char** argv)
          return ret;
       }
    }
+
+   // if (FLAGS_target_gib < 1) {
+   //    u64 core_page_count = helper.getCorePageCount();
+   //    cout << "Core: " << (double)core_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << endl;
+   //    crm.scheduleJobSync(0, [&]() {
+   //       u64 sec_page_count = orderline_secondary.btree->countPages();
+   //       u64 join_page_count = joined_ols.btree->countPages();
+   //       cout << "Sec: " << (double)sec_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << endl;
+   //       cout << "Join: " << (double)join_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << endl;
+   //    });
+   // }
 
    // -------------------------------------------------------------------------------------
 

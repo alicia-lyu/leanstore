@@ -123,7 +123,7 @@ table-size:
 	rm -f "~/logs/merged_size.csv"
 	@for col in 0 1; do \
 		for sel in 100 50 20 10; do \
-			$(MAKE) both local_selectivity=$$sel included_columns=$$col extra_args=10; \
+			$(MAKE) both local_dram=12 local_selectivity=$$sel included_columns=$$col extra_args=1; \
 		done \
 	done
 

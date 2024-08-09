@@ -138,6 +138,9 @@ void BufferManager::writeAllBufferFrames()
             DTRegistry::global_dt_registry.checkpoint(bf.page.dt_id, bf, page.dt);
             s64 ret = pwrite(ssd_fd, page, PAGE_SIZE, bf.header.pid * PAGE_SIZE);
             ensure(ret == PAGE_SIZE);
+            if (bf.isDirty()) {
+               COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_page_writes[bf.page.dt_id]++; }
+            }
          }
          bf.header.latch.mutex.unlock();
       }
@@ -152,15 +155,6 @@ u64 BufferManager::consumedPages()
       total_used_pages += getPartition(p_i).allocatedPages();
    }
    return total_used_pages - total_freed_pages;
-}
-
-u64 BufferManager::streamedPages()
-{
-   u64 total_used_pages = 0;
-   for (u64 p_i = 0; p_i < partitions_count; p_i++) {
-      total_used_pages += getPartition(p_i).allocatedPages();
-   }
-   return total_used_pages;
 }
 // -------------------------------------------------------------------------------------
 BufferFrame& BufferManager::getContainingBufferFrame(const u8* ptr)
