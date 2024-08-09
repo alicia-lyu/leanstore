@@ -153,6 +153,15 @@ u64 BufferManager::consumedPages()
    }
    return total_used_pages - total_freed_pages;
 }
+
+u64 BufferManager::streamedPages()
+{
+   u64 total_used_pages = 0;
+   for (u64 p_i = 0; p_i < partitions_count; p_i++) {
+      total_used_pages += getPartition(p_i).allocatedPages();
+   }
+   return total_used_pages;
+}
 // -------------------------------------------------------------------------------------
 BufferFrame& BufferManager::getContainingBufferFrame(const u8* ptr)
 {

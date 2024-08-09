@@ -22,6 +22,8 @@ class DTTable : public ProfilingTable
    virtual std::string getName();
    virtual void open();
    virtual void next();
+   // Sum across data types during a certain time period (after last next() call)
+   u64 getSum(std::string column_name);
 };
 }  // namespace profiling
 }  // namespace leanstore

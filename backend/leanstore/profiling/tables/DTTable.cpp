@@ -150,6 +150,16 @@ void DTTable::next()
       }
    }
 }
+
+u64 DTTable::getSum(std::string column_name)
+{
+   u64 s = 0;
+   const auto& column = columns.at(column_name);
+   for (const auto& column_value : column.values) {
+      s += stoi(column_value);
+   }
+   return s;
+}
 // -------------------------------------------------------------------------------------
 }  // namespace profiling
 }  // namespace leanstore
