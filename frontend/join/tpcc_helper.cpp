@@ -31,8 +31,6 @@ struct ExperimentContext {
    LeanStoreAdapter<orderline_t> orderline;
    LeanStoreAdapter<item_t> item;
    LeanStoreAdapter<stock_t> stock;
-   LeanStoreAdapter<orderline_sec_t> orderline_secondary;
-   LeanStoreAdapter<joined_t> joined_ols;
    TPCCWorkload<LeanStoreAdapter> tpcc;
 
    ExperimentContext(int warehouse_count, int order_wdc_index, bool remove, bool handle_anomalies, int warehouse_affinity)
@@ -70,9 +68,6 @@ std::unique_ptr<ExperimentContext> prepareExperiment()
        std::make_unique<ExperimentContext>(FLAGS_tpcc_warehouse_count, FLAGS_order_wdc_index, FLAGS_tpcc_remove,
                                            should_tpcc_driver_handle_isolation_anomalies, FLAGS_tpcc_warehouse_affinity);
 
-   std::unique_ptr<TPCCJoinWorkload<LeanStoreAdapter>> tpcc_join =
-       std::make_unique<TPCCJoinWorkload<LeanStoreAdapter>>(&context->tpcc, context->orderline_secondary, context->joined_ols);
-
    auto& crm = context->db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
       context->warehouse = LeanStoreAdapter<warehouse_t>(context->db, "warehouse");
@@ -86,8 +81,6 @@ std::unique_ptr<ExperimentContext> prepareExperiment()
       context->orderline = LeanStoreAdapter<orderline_t>(context->db, "orderline");
       context->item = LeanStoreAdapter<item_t>(context->db, "item");
       context->stock = LeanStoreAdapter<stock_t>(context->db, "stock");
-      context->orderline_secondary = LeanStoreAdapter<orderline_sec_t>(context->db, "orderline_secondary");
-      context->joined_ols = LeanStoreAdapter<joined_t>(context->db, "joined_ols");
    });
 
    context->db.registerConfigEntry("tpcc_warehouse_count", FLAGS_tpcc_warehouse_count);
