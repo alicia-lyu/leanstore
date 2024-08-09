@@ -239,7 +239,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
          Numeric i_price = this->tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
          Varchar<24> s_dist = this->tpcc->template randomastring<24>(24, 24);
-         bool ret = merged.template tryLookup<stock_t>({w_id, itemid}, [&](const stock_t& rec) {
+         merged.template tryLookup<stock_t>({w_id, itemid}, [&](const stock_t& rec) {
             switch (d_id) {
                case 1:
                   s_dist = rec.s_dist_01;
