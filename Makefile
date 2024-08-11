@@ -73,61 +73,74 @@ rocksdb-merged-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
 .PHONY: join-lldb
 
 # ----------------- EXPERIMENTS -----------------
-local_dram ?= $(default_dram)
-local_target ?= $(default_target)
-local_read ?= $(default_read)
-local_scan ?= $(default_scan)
-local_write ?= $(default_write)
-local_update_size ?= $(default_update_size)
-local_selectivity ?= $(default_selectivity)
+dram ?= $(default_dram)
+target ?= $(default_target)
+read ?= $(default_read)
+scan ?= $(default_scan)
+write ?= $(default_write)
+update_size ?= $(default_update_size)
+selectivity ?= $(default_selectivity)
 extra_args ?= ""
 
 both: $(BUILD_DIR)$(JOIN_EXEC) $(BUILD_DIR)$(MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
-	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
 
 join: $(BUILD_DIR)$(JOIN_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
 
 merged: $(BUILD_DIR)$(MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(local_dram) $(local_target) $(local_read) $(local_scan) $(local_write) $(local_update_size) $(local_selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+
+%-read:
+	$(MAKE) $* read=100 scan=0 write=0
+
+%-scan:
+	$(MAKE) $* read=0 scan=100 write=0
+
+%-write:
+	$(MAKE) $* read=0 scan=0 write=100
+	
+%-all-tx-types: %-read %-scan %-write
+	@echo "Completed all transaction types for $*"
 
 read: 
-	$(MAKE) both local_read=100 local_scan=0 local_write=0
+	$(MAKE) both read=100 scan=0 write=0
 
 scan:
-	$(MAKE) both local_read=0 local_scan=100 local_write=0
+	$(MAKE) both read=0 scan=100 write=0
 
 write:
-	$(MAKE) both local_read=0 local_scan=0 local_write=100
+	$(MAKE) both read=0 scan=0 write=100
 
 all-tx-types: read scan write
 
 update-size:
-# $(MAKE) write local_update_size=5 # refer to write expriments
-	$(MAKE) write local_update_size=10
-	$(MAKE) write local_update_size=20
+# $(MAKE) write update_size=5 # refer to write expriments
+	$(MAKE) write update_size=10
+	$(MAKE) write update_size=20
 
 selectivity:
 # Affects read, scan, and write
 # for selectivity=100, refer to all-tx-types experiments
-	$(MAKE) all-tx-types local_selectivity=50
-	$(MAKE) all-tx-types local_selectivity=10
+	$(MAKE) all-tx-types selectivity=50
+	$(MAKE) all-tx-types selectivity=20
+	$(MAKE) all-tx-types selectivity=10
 
 no-columns:
 	$(MAKE) all-tx-types included_columns=0
 
 table-size:
-	find . -regextype posix-extended -regex './build/(merged|join)-target$(local_target)g.*\.json' -exec rm {} \;
+	find . -regextype posix-extended -regex './build/(merged|join)-target$(target)g.*\.json' -exec rm {} \;
 	rm -f "~/logs/join_size.csv"
 	rm -f "~/logs/merged_size.csv"
 	@for col in 0 1; do \
 		for sel in 100 50 20 10; do \
-			$(MAKE) both local_dram=12 local_selectivity=$$sel included_columns=$$col extra_args=1; \
+			$(MAKE) both dram=0.3 selectivity=$$sel included_columns=$$col extra_args=1; \
 		done \
 	done
 
-.PHONY: both read scan write all-tx-types update-size selectivity
+.PHONY: both read scan write all-tx-types update-size selectivity no-columns table-size
 
 # ----------------- CLEAN -----------------
 clean:

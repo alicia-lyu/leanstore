@@ -291,8 +291,8 @@ void LeanStore::startProfilingThread()
          tx_console_header.push_back("SSDWrites/TX");
          
          if (tx != 0) {
-            tx_console_data.push_back(std::to_string(dt_page_reads + dt_page_reads_acc / (double) tx));
-            tx_console_data.push_back(std::to_string(dt_page_writes + dt_page_writes_acc / (double) tx));
+            tx_console_data.push_back(std::to_string((dt_page_reads + dt_page_reads_acc) / (double) tx));
+            tx_console_data.push_back(std::to_string((dt_page_writes + dt_page_writes_acc) / (double) tx));
             dt_page_reads_acc = 0;
             dt_page_writes_acc = 0;
          } else {

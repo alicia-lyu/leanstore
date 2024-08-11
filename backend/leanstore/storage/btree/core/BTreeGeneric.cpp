@@ -626,6 +626,30 @@ s64 BTreeGeneric::iterateAllPagesRec(HybridPageGuard<BTreeNode>& node_guard,
    // -------------------------------------------------------------------------------------
    return res;
 }
+
+s64 BTreeGeneric::iterateInnerPagesRec(HybridPageGuard<BTreeNode>& node_guard, std::function<s64(BTreeNode&)> inner, u64 currHeight)
+{
+   if (node_guard->is_leaf) {
+      return 0; // counted in its parent
+   }
+   if (currHeight == getHeight() - 1) { // last-level inner node
+      return inner(node_guard.ref());
+   }
+   s64 res = inner(node_guard.ref());
+   for (u16 i = 0; i < node_guard->count; i++) {
+      Swip<BTreeNode>& c_swip = node_guard->getChild(i);
+      auto c_guard = HybridPageGuard(node_guard, c_swip);
+      c_guard.recheck();
+      res += iterateInnerPagesRec(c_guard, inner, currHeight + 1);
+   }
+   // -------------------------------------------------------------------------------------
+   Swip<BTreeNode>& c_swip = node_guard->upper;
+   auto c_guard = HybridPageGuard(node_guard, c_swip);
+   c_guard.recheck();
+   res += iterateInnerPagesRec(c_guard, inner);
+   // -------------------------------------------------------------------------------------
+   return res;
+}
 // -------------------------------------------------------------------------------------
 s64 BTreeGeneric::iterateAllPages(std::function<s64(BTreeNode&)> inner, std::function<s64(BTreeNode&)> leaf)
 {
@@ -635,6 +659,20 @@ s64 BTreeGeneric::iterateAllPages(std::function<s64(BTreeNode&)> inner, std::fun
          HybridPageGuard<BTreeNode> p_guard(meta_node_bf);
          HybridPageGuard<BTreeNode> c_guard(p_guard, p_guard->upper);
          s64 result = iterateAllPagesRec(c_guard, inner, leaf);
+         jumpmu_return result;
+      }
+      jumpmuCatch() {}
+   }
+}
+
+s64 BTreeGeneric::iterateInnerPages(std::function<s64(BTreeNode&)> inner)
+{
+   while (true) {
+      jumpmuTry()
+      {
+         HybridPageGuard<BTreeNode> p_guard(meta_node_bf);
+         HybridPageGuard<BTreeNode> c_guard(p_guard, p_guard->upper);
+         s64 result = iterateInnerPagesRec(c_guard, inner);
          jumpmu_return result;
       }
       jumpmuCatch() {}
@@ -654,6 +692,11 @@ u64 BTreeGeneric::countEntries()
 u64 BTreeGeneric::countPages()
 {
    return iterateAllPages([](BTreeNode&) { return 1; }, [](BTreeNode&) { return 1; });
+}
+
+u64 BTreeGeneric::estimatePages()
+{
+   return iterateInnerPages([](BTreeNode& node) { return node.count + 1; }) + 1;
 }
 // -------------------------------------------------------------------------------------
 u64 BTreeGeneric::countInner()

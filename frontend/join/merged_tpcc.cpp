@@ -35,12 +35,12 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
+      std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
       auto ret = helper.loadCore(false);
       if (ret != 0) {
          return ret;
       }
-      std::chrono::steady_clock::time_point sec_start = std::chrono::steady_clock::now();
-      u64 prev_page_count = context->db.getBufferManager().consumedPages();
+      std::chrono::steady_clock::time_point merged_start = std::chrono::steady_clock::now();
       std::atomic<u32> g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -57,7 +57,8 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      helper.logSize("merged", sec_start, prev_page_count);
+      std::chrono::steady_clock::time_point merged_end = std::chrono::steady_clock::now();
+      tpcc_merge.logSizes(t0, merged_start, merged_end, crm);
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          auto ret = helper.verifyCore(&tpcc_merge);
@@ -70,6 +71,7 @@ int main(int argc, char** argv)
       if (ret != 0) {
          return ret;
       }
+      tpcc_merge.logSizes(crm);
    }
 
    // -------------------------------------------------------------------------------------

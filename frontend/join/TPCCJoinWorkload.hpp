@@ -1,10 +1,14 @@
 #pragma once
 #include "TPCCBaseWorkload.hpp"
 
+#include <chrono>
 #include <cstdint>
+#include "ExperimentHelper.hpp"
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include "Join.hpp"
+#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/utils/JumpMU.hpp"
 
 template <template <typename> class AdapterType>
@@ -364,5 +368,41 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
             ensure(ret);
          }
       }
+   }
+
+   void logSizes(std::chrono::steady_clock::time_point t0,
+      std::chrono::steady_clock::time_point t1,
+      std::chrono::steady_clock::time_point t2,
+      std::chrono::steady_clock::time_point t3,
+      leanstore::cr::CRManager& crm)
+   {
+      std::ofstream csv_file(this->getCsvFile("join_size.csv"), std::ios::app);
+      auto config = ExperimentHelper::getConfigString();
+      auto core_page_count = this->getCorePageCount(crm);
+      auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+      auto orderline_secondary_page_count = 0;
+      crm.scheduleJobSync(0, [&]() {
+         orderline_secondary_page_count = orderline_secondary.btree->estimatePages();
+      });
+      auto orderline_secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+
+      auto joined_ols_page_count = 0;
+      crm.scheduleJobSync(0, [&]() {
+         joined_ols_page_count = joined_ols.btree->estimatePages();
+      });
+      auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+
+      std::cout << "Core: " << (double) core_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << ", orderline secondary: " << (double) orderline_secondary_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << ", joined ols: " << (double) joined_ols_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << std::endl;
+
+      csv_file << "core," << config << "," << (double) core_page_count * 4098 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
+      csv_file << "orderline_secondary," << config << "," << (double) orderline_secondary_page_count * 4098 / 1024 / 1024 / 1024 << "," << orderline_secondary_time << std::endl;
+      csv_file << "join_results," << config << "," << (double) joined_ols_page_count * 4098 / 1024 / 1024 / 1024 << "," << joined_ols_time << std::endl;
+   }
+
+   void logSizes(leanstore::cr::CRManager& crm)
+   {
+      auto t0 = std::chrono::steady_clock::now();
+      logSizes(t0, t0, t0, t0, crm);
    }
 };

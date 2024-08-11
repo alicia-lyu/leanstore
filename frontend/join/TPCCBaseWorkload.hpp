@@ -1,7 +1,10 @@
 #pragma once
 #include <gflags/gflags_declare.h>
+#include <filesystem>
+#include <fstream>
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "JoinedSchema.hpp"
+#include "leanstore/concurrency-recovery/CRMG.hpp"
 
 DEFINE_int64(tpcc_warehouse_count, 1, "");
 DEFINE_int32(tpcc_abort_pct, 0, "");
@@ -72,4 +75,34 @@ class TPCCBaseWorkload
    }
 
    virtual void verifyWarehouse(Integer w_id) = 0;
+
+   std::string getCsvFile(std::string csv_name)
+   {
+      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "size" / csv_name;
+      std::filesystem::create_directories(csv_path.parent_path());
+      std::cout << "Logging size to " << csv_path << std::endl;
+      std::ofstream csv_file(csv_path, std::ios::app);
+      if (!std::filesystem::exists(csv_path) || std::filesystem::file_size(csv_path) == 0)
+         csv_file << "table(s),config,size,time(ms)" << std::endl;
+      return csv_path;
+   }
+
+   u64 getCorePageCount(leanstore::cr::CRManager& crm)
+   {
+      u64 core_page_count = 0;
+      crm.scheduleJobSync(0, [&]() {
+         core_page_count += this->tpcc->warehouse.btree->estimatePages();
+         core_page_count += this->tpcc->district.btree->estimatePages();
+         core_page_count += this->tpcc->customer.btree->estimatePages();
+         core_page_count += this->tpcc->customerwdl.btree->estimatePages();
+         core_page_count += this->tpcc->history.btree->estimatePages();
+         core_page_count += this->tpcc->neworder.btree->estimatePages();
+         core_page_count += this->tpcc->order.btree->estimatePages();
+         core_page_count += this->tpcc->order_wdc.btree->estimatePages();
+         core_page_count += this->tpcc->orderline.btree->estimatePages();
+         core_page_count += this->tpcc->item.btree->estimatePages();
+         core_page_count += this->tpcc->stock.btree->estimatePages();
+      });
+      return core_page_count;
+   }
 };

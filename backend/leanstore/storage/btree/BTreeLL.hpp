@@ -71,6 +71,7 @@ class BTreeLL : public KVInterface, public BTreeGeneric
    bool isRangeSurelyEmpty(Slice start_key, Slice end_key);
    // -------------------------------------------------------------------------------------
    virtual u64 countPages() override;
+   virtual u64 estimatePages() override;
    virtual u64 countEntries() override;
    virtual u64 getHeight() override;
    // -------------------------------------------------------------------------------------
