@@ -46,8 +46,33 @@ OP_RESULT BTreeLL::lookup(u8* key, u16 key_length, function<void(const u8*, u16)
             jumpmu_return OP_RESULT::OK;
          } else {
             leaf.recheck();
-            // raise(SIGTRAP);
-            // std::cerr << "Warning: BTreeLL::lookup: key not found" << std::endl;
+            raise(SIGTRAP);
+            std::cerr << "Warning: BTreeLL::lookup: key not found" << std::endl;
+            jumpmu_return OP_RESULT::NOT_FOUND;
+         }
+      }
+      jumpmuCatch()
+      {
+         WorkerCounters::myCounters().dt_restarts_read[dt_id]++;
+      }
+   }
+   UNREACHABLE();
+   return OP_RESULT::OTHER;
+}
+OP_RESULT BTreeLL::tryLookup(u8* key, u16 key_length, function<void(const u8*, u16)> payload_callback)
+{
+   while (true) {
+      jumpmuTry()
+      {
+         HybridPageGuard<BTreeNode> leaf;
+         findLeafCanJump(leaf, key, key_length);
+         s16 pos = leaf->lowerBound<true>(key, key_length);
+         if (pos != -1) {
+            payload_callback(leaf->getPayload(pos), leaf->getPayloadLength(pos));
+            leaf.recheck();
+            jumpmu_return OP_RESULT::OK;
+         } else {
+            leaf.recheck();
             jumpmu_return OP_RESULT::NOT_FOUND;
          }
       }
