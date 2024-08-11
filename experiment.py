@@ -30,6 +30,7 @@ def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, 
         log_dir += f"-col{included_columns}"
 
     os.makedirs(log_dir, exist_ok=True)
+    print(f"Log Directory: {log_dir}")
     return log_dir
 
 def get_recovery_file(method, target_gib, selectivity, included_columns):
@@ -38,6 +39,7 @@ def get_recovery_file(method, target_gib, selectivity, included_columns):
         recovery_file = add_suffix_before_extension(recovery_file, f"-sel{selectivity}")
     if included_columns != 1:
         recovery_file = add_suffix_before_extension(recovery_file, f"-col{included_columns}")
+    print(f"Recovery File: {recovery_file}")
     return recovery_file
 
 def get_image(method, target_gib, selectivity, included_columns):
@@ -52,10 +54,12 @@ def get_image(method, target_gib, selectivity, included_columns):
     if "rocksdb" not in method:
         image_file = f"{get_prefix()}.image"
         Path(image_file).touch()
+        print(f"Image File: {image_file}")
         return image_file
     else:
         image_dir = f"{get_prefix()}"
         os.makedirs(image_dir, exist_ok=True)
+        print(f"Image Directory: {image_dir}")
         return image_dir
 
 def main():
@@ -100,8 +104,6 @@ def main():
         image = write_image_file
     else:
         persist_file = recovery_file
-
-    print(f"Log Directory: {log_dir}, Recovery File: {recovery_file}, Persist File: {persist_file}, Image: {image}")
     
     trunc = not recovery_file.exists()
     

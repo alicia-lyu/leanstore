@@ -46,6 +46,7 @@ class BTreeLL : public KVInterface, public BTreeGeneric
    };
    // -------------------------------------------------------------------------------------
    BTreeLL() = default;
+   virtual ~BTreeLL() = default;
    // -------------------------------------------------------------------------------------
    virtual OP_RESULT lookup(u8* key, u16 key_length, function<void(const u8*, u16)> payload_callback) override;
    virtual OP_RESULT tryLookup(u8* key, u16 key_length, function<void(const u8*, u16)> payload_callback) override;

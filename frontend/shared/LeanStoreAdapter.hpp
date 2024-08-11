@@ -4,6 +4,7 @@
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "LeanStoreScanner.hpp"
+#include "leanstore/concurrency-recovery/Worker.hpp"
 // -------------------------------------------------------------------------------------
 #include <cassert>
 #include <cstring>

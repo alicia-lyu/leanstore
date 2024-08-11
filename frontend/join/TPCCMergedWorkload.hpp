@@ -343,6 +343,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       std::cout << "Verifying warehouse " << w_id << std::endl;
       this->tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
+         this->tpcc->district.lookup1({w_id, d_id}, [&](const auto&) {});
          for (Integer c_id = 1; c_id <= this->tpcc->CUSTOMER_SCALE * this->tpcc->scale_factor / 10; c_id++) {
             this->tpcc->customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
          }
