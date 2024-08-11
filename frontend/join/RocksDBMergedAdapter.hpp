@@ -1,5 +1,6 @@
 #pragma once
 #include "../shared/RocksDBAdapter.hpp"
+#include "Exceptions.hpp"
 #include "Units.hpp"
 
 template <u32 merged_id>
@@ -125,14 +126,38 @@ struct RocksDBMergedAdapter {
       start_key = RSlice(folded_key, folded_key_len);
       // -------------------------------------------------------------------------------------
       rocksdb::Iterator* it = map.db->NewIterator(map.ro);
+      u32 rec_len = Record::maxFoldLength() + sizeof(SEP);
+      u32 other_rec_len = OtherRec::maxFoldLength() + sizeof(SEP);
       for (it->Seek(start_key); it->Valid(); it->Next()) {
-         if (it->key().size() == Record::maxFoldLength() + sizeof(SEP)) {
+         bool is_rec = false;
+         bool is_other_rec = false;
+         size_t key_len = it->key().size();
+         if (rec_len < other_rec_len) {
+            if (key_len <= rec_len) {
+               is_rec = true;
+            } else if (key_len <= other_rec_len) {
+               is_other_rec = true;
+            } else {
+               UNREACHABLE();
+            }
+         } else if (rec_len > other_rec_len) {
+            if (key_len <= other_rec_len) {
+               is_other_rec = true;
+            } else if (key_len <= rec_len) {
+               is_rec = true;
+            } else {
+               UNREACHABLE();
+            }
+         } else {
+            UNREACHABLE(); // Do not allow same length
+         }
+         if (is_rec) {
             typename Record::Key s_key;
             Record::unfoldKey(reinterpret_cast<const u8*>(it->key().data() + sizeof(SEP)), s_key);
             const Record& s_value = *reinterpret_cast<const Record*>(it->value().data());
             if (!fn(s_key, s_value))
                break;
-         } else if (it->key().size() == OtherRec::maxFoldLength() + sizeof(SEP)) {
+         } else if (is_other_rec) {
             typename OtherRec::Key s_key;
             OtherRec::unfoldKey(reinterpret_cast<const u8*>(it->key().data() + sizeof(SEP)), s_key);
             const OtherRec& s_value = *reinterpret_cast<const OtherRec*>(it->value().data());

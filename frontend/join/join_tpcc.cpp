@@ -1,6 +1,7 @@
 #include "LeanStoreExperimentHelper.hpp"
 #include "TPCCBaseWorkload.hpp"
 #include "TPCCJoinWorkload.hpp"
+#include "leanstore/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
@@ -96,10 +97,25 @@ int main(int argc, char** argv)
       tpcc_join.logSizes(crm);
    }
 
-   // -------------------------------------------------------------------------------------
 
-   // -------------------------------------------------------------------------------------
    atomic<u64> keep_running = true;
+   if (FLAGS_write_percentage > 0) {
+      // First run read only TXs to warm up the system without increasing the data size
+      std::cout << "Warming up the system with read only TXs" << std::endl;
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         crm.scheduleJobAsync(t_i, [&]() {
+            while (keep_running) {
+               Integer w_id = FLAGS_worker_threads % FLAGS_tpcc_warehouse_count + 1;
+               tpcc_join.tx(w_id, 100, 0, 0);
+            }
+         });
+      }
+      sleep(20);
+      keep_running = false;
+      crm.joinAll();
+   }
+   
+   keep_running = true;
    atomic<u64> running_threads_counter = 0;
    vector<thread> threads;
    db.startProfilingThread();

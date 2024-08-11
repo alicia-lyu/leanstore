@@ -132,12 +132,12 @@ class RocksDBExperimentHelper : public ExperimentHelper
    }
 
    int scheduleTransations(TPCCBaseWorkload<RocksDBAdapter>* tpcc_base,
+                           std::vector<thread>& threads,
                            atomic<u64>& keep_running,
                            atomic<u64>& running_threads_counter,
                            atomic<u64>* thread_committed,
                            atomic<u64>* thread_aborted)
    {
-      std::vector<thread> threads;
       for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          thread_committed[t_i] = 0;
          thread_aborted[t_i] = 0;

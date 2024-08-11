@@ -153,6 +153,7 @@ struct RocksDB {
 
          leanstore::profiling::CPUTable cpu_table;
          cpu_table.open();
+         cpu_table.next(); // Clear previous values
 
          u64 time = 0;
          std::ofstream::openmode open_flags;

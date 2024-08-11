@@ -21,6 +21,7 @@ BUILD_DIRS := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 JOIN_EXEC := /frontend/join_tpcc
 MERGED_EXEC := /frontend/merged_tpcc
 ROCKSDB_JOIN_EXEC := /frontend/rocksdb_join_tpcc
+ROCKSDB_MERGED_EXEC := /frontend/rocksdb_merged_tpcc
 
 EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC)
 
@@ -61,13 +62,12 @@ join-lldb: $(BUILD_DIR_DEBUG)$(JOIN_EXEC)
 	lldb -- ./build-debug/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/join-lldb
 
 merged-lldb: $(BUILD_DIR_DEBUG)$(MERGED_EXEC)
-	lldb -- ./build-debug/frontend/merged_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH)
-	--csv_path=$(BUILD_DIR_DEBUG)/merged-lldb
+	lldb -- ./build-debug/frontend/merged_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/merged-lldb
 
 rocksdb-join-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
 	lldb -- ./build-debug/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-join-lldb
 
-rocksdb-merged-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
+rocksdb-merged-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_MERGED_EXEC)
 	lldb -- ./build-debug/frontend/rocksdb_merged_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-merged-lldb
 
 .PHONY: join-lldb
@@ -86,11 +86,21 @@ both: $(BUILD_DIR)$(JOIN_EXEC) $(BUILD_DIR)$(MERGED_EXEC)
 	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
 	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
 
+rocksdb-both: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+
 join: $(BUILD_DIR)$(JOIN_EXEC)
 	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
 
+rocksdb-join: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+
 merged: $(BUILD_DIR)$(MERGED_EXEC)
 	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+
+rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
 
 %-read:
 	$(MAKE) $* read=100 scan=0 write=0
@@ -105,15 +115,17 @@ merged: $(BUILD_DIR)$(MERGED_EXEC)
 	@echo "Completed all transaction types for $*"
 
 read: 
-	$(MAKE) both read=100 scan=0 write=0
+	$(MAKE) $*both read=100 scan=0 write=0
 
 scan:
-	$(MAKE) both read=0 scan=100 write=0
+	$(MAKE) $*both read=0 scan=100 write=0
 
 write:
-	$(MAKE) both read=0 scan=0 write=100
+	$(MAKE) $*both read=0 scan=0 write=100
 
 all-tx-types: read scan write
+
+rocksdb-all-tx-types: rocksdb-join-all-tx-types rocksdb-merged-all-tx-types
 
 update-size:
 # $(MAKE) write update_size=5 # refer to write expriments

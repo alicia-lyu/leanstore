@@ -32,7 +32,8 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       // vector<joined_t> results;
       typename joined_t::Key start_key = {w_id, 0, d_id, 0, 0};  // Starting from the first item in the warehouse and district
 
-      uint64_t scanCardinality = 0;
+      atomic<uint64_t> scanCardinality = 0;
+      uint64_t resultsCardinality = 0;
 
       joined_ols.scan(
           start_key,
@@ -44,6 +45,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
                 joined_ols_t joined_rec = rec.expand();
                 if (joined_rec.ol_delivery_d >= since) {
                    //  results.push_back(rec);
+                  resultsCardinality++;
                 }
              } else {
                 this->tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number},
@@ -53,6 +55,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
                                                                   [&](const stock_t&) {  // ATTN: BTree operation in call back function
                                                                      // Only emulating BTree operations, not concatenating stock_rec and joined_rec
                                                                      //  results.push_back(rec);
+                                                                     resultsCardinality++;
                                                                   });
                                            }
                                         });
@@ -61,7 +64,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           },
           []() { /* undo */ });
 
-      // std::cout << "Scan cardinality: " << scanCardinality << std::endl;
+      std::cout << "Scan cardinality: " << scanCardinality.load() << ", results cardinality: " << resultsCardinality << std::endl;
       // All default configs, dram_gib = 8, cardinality = 184694
    }
 
