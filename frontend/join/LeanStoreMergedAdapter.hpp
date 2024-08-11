@@ -91,7 +91,7 @@ struct LeanStoreMergedAdapter {
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
-      const OP_RESULT res = btree->lookup(folded_key, folded_key_len, [&](const u8* payload, u16 payload_length) {
+      const OP_RESULT res = btree->tryLookup(folded_key, folded_key_len, [&](const u8* payload, u16 payload_length) {
          static_cast<void>(payload_length);
          assert(payload_length == sizeof(Record));
          const Record& typed_payload = *reinterpret_cast<const Record*>(payload);

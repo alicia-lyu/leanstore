@@ -113,44 +113,35 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
       vector<std::pair<typename joined_t::Key, joined_t>> results;
-      stock_t::Key start_key = {w_id, i_id};
-      // Either type can be start key, as the prefix join key will be extracted in scan
-      // But as soon as you choose a type for start_key, you must put the same type in the first cb
 
       std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
-      // cached_left.reserve(100);
-      // cached_right.reserve(2);
-
-      uint64_t lookupCardinality = 0;
-
       merged.template scan<stock_t, orderline_sec_t>(
-          start_key,
+          stock_t::Key{w_id, i_id},
           [&](const stock_t::Key& key, const stock_t& rec) {
-             ++lookupCardinality;
              if (key.s_w_id != w_id || key.s_i_id != i_id) {
                 return false;
              }
              cached_right.push_back({key, rec});
              return true;
           },
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) { return false; }, []() { /* undo */ });
+
+      if (cached_right.empty()) {
+         return;
+      }
+
+      merged.template scan<orderline_sec_t, stock_t>(
+          typename orderline_sec_t::Key{w_id, i_id, d_id, 0, 0},
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
-             ++lookupCardinality;
-             if (key.ol_i_id != i_id || key.ol_w_id != w_id || key.ol_d_id > d_id) {
+             if (key.ol_w_id != w_id || key.ol_i_id != i_id || key.ol_d_id != d_id) {
                return false;
              }
-             if (key.ol_d_id < d_id) { // may encounter this d_id later
-               return true; 
-             }
-             // Find a matching orderline record
-             if (cached_right.empty()) {  // No chance to find stock record
-                return false;
-             }
              cached_left.push_back({key, rec});
-             return true;  // continue scan
+             return false;
           },
-          []() { /* undo */ });
+          [&](const stock_t::Key&, const stock_t&) { return false; }, []() { /* undo */ });
 
       // Final cartesian product if the scan is complete without hitting the end condition
       auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
@@ -366,23 +357,25 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       }
    }
 
-   void logSizes(std::chrono::steady_clock::time_point t0, std::chrono::steady_clock::time_point t1, std::chrono::steady_clock::time_point t2, leanstore::cr::CRManager& crm)
+   void logSizes(std::chrono::steady_clock::time_point t0,
+                 std::chrono::steady_clock::time_point t1,
+                 std::chrono::steady_clock::time_point t2,
+                 leanstore::cr::CRManager& crm)
    {
       std::ofstream csv_file(this->getCsvFile("merged_size.csv"), std::ios::app);
-      
+
       auto config = ExperimentHelper::getConfigString();
       auto core_page_count = this->getCorePageCount(crm);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
       u64 merged_page_count = 0;
-      crm.scheduleJobSync(0, [&]() {
-         merged_page_count = merged.btree->estimatePages();
-      });
+      crm.scheduleJobSync(0, [&]() { merged_page_count = merged.btree->estimatePages(); });
       auto merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
-      std::cout << "Core: " << (double)core_page_count * 4096 / 1024 / 1024 / 1024 << " GiB" << ", Merged: " << (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << " GiB" << std::endl;
-      
-      csv_file << "core," << config << "," <<  (double)core_page_count * 4096 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
-      csv_file << "merged_index," << config << "," <<  (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << "," << merged_time << std::endl;
+      std::cout << "Core: " << (double)core_page_count * 4096 / 1024 / 1024 / 1024 << " GiB"
+                << ", Merged: " << (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << " GiB" << std::endl;
+
+      csv_file << "core," << config << "," << (double)core_page_count * 4096 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
+      csv_file << "merged_index," << config << "," << (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << "," << merged_time << std::endl;
    }
 
    void logSizes(leanstore::cr::CRManager& crm)
