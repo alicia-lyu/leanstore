@@ -130,7 +130,7 @@ struct PerfEvent {
           return;
         }
       }
-      std::cerr << "PerfEvent::PerfEvent() Warning: Proceed without counter " << name << std::endl;
+      std::cout << "PerfEvent::PerfEvent() Warning: Proceed without counter " << name << std::endl;
       events.pop_back();
       names.pop_back();
       return;

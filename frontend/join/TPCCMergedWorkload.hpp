@@ -42,7 +42,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
    {
       stock_t::Key start_key = {w_id, 0};  // Starting from the first item in the warehouse
 
-      uint64_t scanCardinality = 0;
+      atomic<uint64_t> scanCardinality = 0;
+      uint64_t produced = 0;
 
       stock_t::Key current_key = start_key;
 
@@ -62,12 +63,11 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
              if (key.s_w_id != w_id) {
                 return false;
              }
-             if (key.s_w_id != current_key.s_w_id || key.s_i_id != current_key.s_i_id) {
+             if (key.s_i_id != current_key.s_i_id) {
                 // A new join key discovered
                 // Do a cartesian product of current cached rows
                 auto cartesian_products = cartesianProducts(cached_left, cached_right);
-                //  results.insert(results.end(), cartesian_products.begin(), cartesian_products.end());
-                // Start a new group
+                produced += cartesian_products.size();
                 current_key = key;
                 cached_left.clear();
                 cached_right.clear();
@@ -77,9 +77,14 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++scanCardinality;
-             assert(key.ol_w_id == w_id);  // change only occur at a stock entry
+             if (key.ol_w_id != w_id) {
+               return false;
+             }
              if (key.ol_d_id != d_id) {
                 return true;  // next item may still be in the same district
+             }
+             if (key.ol_i_id != current_key.s_i_id) { // only happens when current i_id does not have any stock records
+               return true;
              }
              if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
                 ol_join_sec_t expanded_rec = rec.expand();
@@ -104,9 +109,10 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
       // Final cartesian product for any remaining cached elements
       auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
+      produced += final_cartesian_products.size();
       // results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
 
-      // std::cout << "Scan cardinality: " << scanCardinality << std::endl;
+      std::cout << "Scan cardinality: " << scanCardinality.load() << ", Produced: " << produced << std::endl;
       // All default configs, dram_gib = 8, cardinality = 385752
    }
 

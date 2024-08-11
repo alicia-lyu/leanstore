@@ -4,6 +4,7 @@ import subprocess
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+import shutil
 
 def add_suffix_before_extension(original_path, suffix):
     path = Path(original_path)
@@ -69,6 +70,7 @@ def main():
 
     executable_path = Path(sys.argv[1])
     method = executable_path.stem.replace('_tpcc', '')
+    print(f"Executable: {executable_path}, Method: {method}")
     build_dir = executable_path.parents[1]
     
     dram_gib = float(sys.argv[2])
@@ -100,7 +102,7 @@ def main():
     if write_percentage > 0:
         persist_file = Path(f"{build_dir}/leanstore.json")
         write_image_file = add_suffix_before_extension(image, "-write")
-        subprocess.run(["cp", image, write_image_file])
+        subprocess.run(["cp", "-f", "-r", image, write_image_file]) # Force overwrite
         image = write_image_file
     else:
         persist_file = recovery_file
@@ -132,6 +134,7 @@ def main():
 
     with open(stdout_log_path, 'w') as log_file:
         log_file.write(f"{timestamp}. Running experiment with method: {method}, DRAM: {dram_gib} GiB, target: {target_gib} GiB, read: {read_percentage}%, scan: {scan_percentage}%, write: {write_percentage}%\n")
+        log_file.write(f"Running command {' '.join(map(str, cmd))}")
     
     with open(stdout_log_path, 'a') as log_file:
         result = subprocess.run(cmd, stdout=log_file, stderr=None)
@@ -141,7 +144,10 @@ def main():
         sys.exit(1)
 
     if write_percentage > 0:
-        os.remove(write_image_file)
+        if os.path.isdir(write_image_file):
+            shutil.rmtree(write_image_file)
+        else:
+            os.remove(write_image_file)
 
 if __name__ == "__main__":
     main()

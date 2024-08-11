@@ -144,6 +144,7 @@ void LeanStore::startProfilingThread()
       for (u64 t_i = 0; t_i < tables.size() + 1; t_i++) {
          if (t_i < tables.size()) {
             tables[t_i]->open();
+            tables[t_i]->next(); // Clear previous values
          }
          // -------------------------------------------------------------------------------------
          csvs.emplace_back();
@@ -566,9 +567,11 @@ LeanStore::~LeanStore()
    while (bg_threads_counter) {
    }
    if (FLAGS_persist) {
-      serializeState();
+      std::cout << "Writing all buffer frames to disk..." << std::endl;
       buffer_manager->writeAllBufferFrames();
+      serializeState();
    }
+   std::cout << "LeanStore::~LeanStore: Finished." << std::endl;
 }
 // -------------------------------------------------------------------------------------
 // Static members
