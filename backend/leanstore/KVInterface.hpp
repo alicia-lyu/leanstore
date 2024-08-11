@@ -60,6 +60,7 @@ class KVInterface
                               std::function<void()>) = 0;
    // -------------------------------------------------------------------------------------
    virtual u64 countPages() = 0;
+   virtual u64 estimatePages() = 0;
    virtual u64 countEntries() = 0;
    virtual u64 getHeight() = 0;
    // -------------------------------------------------------------------------------------

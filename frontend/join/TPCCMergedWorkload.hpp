@@ -1,12 +1,16 @@
 #pragma once
 #include <gflags/gflags.h>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <type_traits>
 #include "../tpc-c/TPCCWorkload.hpp"
+#include "ExperimentHelper.hpp"
 #include "Join.hpp"
 #include "JoinedSchema.hpp"
 #include "TPCCBaseWorkload.hpp"
 #include "Units.hpp"
+#include "leanstore/concurrency-recovery/CRMG.hpp"
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
@@ -133,8 +137,15 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++lookupCardinality;
-             if (key.ol_i_id != i_id || key.ol_w_id != w_id || key.ol_d_id != d_id) {
+             if (key.ol_i_id != i_id || key.ol_w_id != w_id || key.ol_d_id > d_id) {
                return false;
+             }
+             if (key.ol_d_id < d_id) { // may encounter this d_id later
+               return true; 
+             }
+             // Find a matching orderline record
+             if (cached_right.empty()) {  // No chance to find stock record
+                return false;
              }
              cached_left.push_back({key, rec});
              return true;  // continue scan
@@ -353,5 +364,30 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
             ensure(ret);
          }
       }
+   }
+
+   void logSizes(std::chrono::steady_clock::time_point t0, std::chrono::steady_clock::time_point t1, std::chrono::steady_clock::time_point t2, leanstore::cr::CRManager& crm)
+   {
+      std::ofstream csv_file(this->getCsvFile("merged_size.csv"), std::ios::app);
+      
+      auto config = ExperimentHelper::getConfigString();
+      auto core_page_count = this->getCorePageCount(crm);
+      auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+      u64 merged_page_count = 0;
+      crm.scheduleJobSync(0, [&]() {
+         merged_page_count = merged.btree->estimatePages();
+      });
+      auto merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+
+      std::cout << "Core: " << (double)core_page_count * 4096 / 1024 / 1024 / 1024 << " GiB" << ", Merged: " << (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << " GiB" << std::endl;
+      
+      csv_file << "core," << config << "," <<  (double)core_page_count * 4096 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
+      csv_file << "merged_index," << config << "," <<  (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << "," << merged_time << std::endl;
+   }
+
+   void logSizes(leanstore::cr::CRManager& crm)
+   {
+      auto t0 = std::chrono::steady_clock::now();
+      logSizes(t0, t0, t0, crm);
    }
 };

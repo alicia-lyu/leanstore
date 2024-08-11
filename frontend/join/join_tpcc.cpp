@@ -1,4 +1,5 @@
 #include "LeanStoreExperimentHelper.hpp"
+#include "TPCCBaseWorkload.hpp"
 #include "TPCCJoinWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
@@ -41,6 +42,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
+      std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
       auto ret = helper.loadCore();
       if (ret != 0) {
          return ret;
@@ -62,7 +64,6 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      helper.logSize("orderline_secondary", sec_start, prev_page_count);
       std::chrono::steady_clock::time_point join_start = std::chrono::steady_clock::now();
       u64 join_prev_page_count = context->db.getBufferManager().consumedPages();
       g_w_id = 1;
@@ -80,7 +81,8 @@ int main(int argc, char** argv)
          });
       }
       crm.joinAll();
-      helper.logSize("joined_ols", join_start, join_prev_page_count);
+      auto join_end = std::chrono::steady_clock::now();
+      tpcc_join.logSizes(t0, sec_start, join_start, join_end, crm);
       // -------------------------------------------------------------------------------------
       if (FLAGS_tpcc_verify) {
          auto ret = helper.verifyCore(&tpcc_join);
@@ -93,18 +95,8 @@ int main(int argc, char** argv)
       if (ret != 0) {
          return ret;
       }
+      tpcc_join.logSizes(crm);
    }
-
-   // if (FLAGS_target_gib < 1) {
-   //    u64 core_page_count = helper.getCorePageCount();
-   //    cout << "Core: " << (double)core_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << endl;
-   //    crm.scheduleJobSync(0, [&]() {
-   //       u64 sec_page_count = orderline_secondary.btree->countPages();
-   //       u64 join_page_count = joined_ols.btree->countPages();
-   //       cout << "Sec: " << (double)sec_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << endl;
-   //       cout << "Join: " << (double)join_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << endl;
-   //    });
-   // }
 
    // -------------------------------------------------------------------------------------
 

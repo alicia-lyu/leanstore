@@ -1,7 +1,8 @@
 import os
 import sys
 import subprocess
-from datetime import datetime
+import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 def add_suffix_before_extension(original_path, suffix):
@@ -103,13 +104,19 @@ def main():
     print(f"Log Directory: {log_dir}, Recovery File: {recovery_file}, Persist File: {persist_file}, Image: {image}")
     
     trunc = not recovery_file.exists()
+    
+    utc_offset_seconds = -time.timezone if not time.localtime().tm_isdst else -time.altzone
+    utc_offset = timedelta(seconds=utc_offset_seconds)
+
+    local_timezone = timezone(utc_offset)
+    timestamp = datetime.now(tz=local_timezone).strftime("%m-%d-%H-%M")
 
     print("************************************************************ NEW EXPERIMENT ************************************************************")
 
     cmd = [
         executable_path,
         f"--ssd_path={image}", f"--persist_file={persist_file}", f"--recover_file={recovery_file}",
-        f"--csv_path={log_dir}/log", "--csv_truncate=true", f"--trunc={str(trunc).lower()}",
+        f"--csv_path={log_dir}/{timestamp}", "--csv_truncate=true", f"--trunc={str(trunc).lower()}",
         "--vi=false", "--mv=false", "--isolation_level=ser", "--optimistic_scan=false",
         f"--run_for_seconds={duration}", "--pp_threads=2",
         f"--dram_gib={dram_gib}", f"--target_gib={target_gib}", f"--tpcc_warehouse_count={target_gib}",
@@ -118,13 +125,13 @@ def main():
     ]
 
     print(f"Running command {' '.join(map(str, cmd))}")
-
-    time = datetime.now().strftime("%m-%dT%H:%M:%SZ")
-
-    with open(f"{log_dir}/output.log", 'w') as log_file:
-        log_file.write(f"{time}. Running experiment with method: {method}, DRAM: {dram_gib} GiB, target: {target_gib} GiB, read: {read_percentage}%, scan: {scan_percentage}%, write: {write_percentage}%\n")
     
-    with open(f"{log_dir}/output.log", 'a') as log_file:
+    stdout_log_path = f"{log_dir}/{timestamp}.log"
+
+    with open(stdout_log_path, 'w') as log_file:
+        log_file.write(f"{timestamp}. Running experiment with method: {method}, DRAM: {dram_gib} GiB, target: {target_gib} GiB, read: {read_percentage}%, scan: {scan_percentage}%, write: {write_percentage}%\n")
+    
+    with open(stdout_log_path, 'a') as log_file:
         result = subprocess.run(cmd, stdout=log_file, stderr=None)
 
     if result.returncode != 0:

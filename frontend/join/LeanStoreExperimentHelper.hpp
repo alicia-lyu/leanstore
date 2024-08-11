@@ -96,8 +96,6 @@ class LeanStoreExperimentHelper : public ExperimentHelper
    {
       cout << "Loading TPC-C" << endl;
 
-      std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
-
       auto& crm = context_ptr->db.getCRManager();
       auto& tpcc = context_ptr->tpcc;
 
@@ -128,7 +126,6 @@ class LeanStoreExperimentHelper : public ExperimentHelper
          });
       }
       crm.joinAll();
-      logSize("core", t1);
       return 0;
    };
 
@@ -210,59 +207,5 @@ class LeanStoreExperimentHelper : public ExperimentHelper
          });
       }
       return 0;
-   }
-
-   // double getSize()
-   // {
-   //    auto written_page_count_prev = dt_table->getSum("dt_page_writes"); // dt_table seems not cleared by next(). I don't know why.
-
-   //    std::cout << "Writing all dirty pages to disk..." << std::endl;
-   //    context_ptr->db.getBufferManager().writeAllBufferFrames();
-   //    context_ptr->db.getBufferManager().startBackgroundThreads();
-
-   //    dt_table->next();
-
-   //    auto written_page_count = dt_table->getSum("dt_page_writes");
-
-   //    auto size = ((double)written_page_count - written_page_count_prev) * 4096 / 1024 / 1024 / 1024;  // GB
-   //    return size;
-   // }
-
-   void logSize(std::string table, std::chrono::steady_clock::time_point prev, u64 prev_page_count = 0)
-   {
-      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "join_size.csv";
-      std::ofstream csv_file(csv_path, std::ios::app);
-      if (std::filesystem::file_size(csv_path) == 0)
-         csv_file << "table(s),config,size,time(ms)" << std::endl;
-      
-      std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-      auto config = getConfigString();
-
-      u64 page_count = context_ptr->db.getBufferManager().consumedPages();
-      double size = ((double)page_count - prev_page_count) * 4096 / 1024 / 1024 / 1024;  // GB
-
-      auto time = std::chrono::duration_cast<std::chrono::milliseconds>(now - prev).count();
-      
-      csv_file << table << "," << config << "," << size << "," << time << std::endl;
-   }
-
-   u64 getCorePageCount()
-   {
-      u64 core_page_count = 0;
-      auto& crm = context_ptr->db.getCRManager();
-      crm.scheduleJobSync(0, [&]() {
-         core_page_count += context_ptr->warehouse.btree->countPages();
-         core_page_count += context_ptr->district.btree->countPages();
-         core_page_count += context_ptr->customer.btree->countPages();
-         core_page_count += context_ptr->customerwdl.btree->countPages();
-         core_page_count += context_ptr->history.btree->countPages();
-         core_page_count += context_ptr->neworder.btree->countPages();
-         core_page_count += context_ptr->order.btree->countPages();
-         core_page_count += context_ptr->order_wdc.btree->countPages();
-         core_page_count += context_ptr->orderline.btree->countPages();
-         core_page_count += context_ptr->item.btree->countPages();
-         core_page_count += context_ptr->stock.btree->countPages();
-      });
-      return core_page_count;
    }
 };

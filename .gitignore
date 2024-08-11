@@ -20,3 +20,4 @@ paper*
 *.err
 *.out
 *.csv
+/size/
