@@ -56,7 +56,7 @@ executables: $(TARGETS)
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
-lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --order_size=10 --semijoin_selectivity=50 --csv_truncate=true --worker_threads=2
+lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --order_size=10 --semijoin_selectivity=50 --csv_truncate=true --worker_threads=2 --locality_read=true
 
 join-lldb: $(BUILD_DIR_DEBUG)$(JOIN_EXEC)
 	lldb -- ./build-debug/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/join-lldb
@@ -83,13 +83,9 @@ selectivity ?= $(default_selectivity)
 duration ?= 0
 locality_read ?= False
 
-both: $(BUILD_DIR)$(JOIN_EXEC) $(BUILD_DIR)$(MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
-	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+both: join merged
 
-rocksdb-both: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
-	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+rocksdb-both: rocksdb-join rocksdb-merged
 
 join: $(BUILD_DIR)$(JOIN_EXEC)
 	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)

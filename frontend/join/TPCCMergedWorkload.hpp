@@ -124,17 +124,24 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
-      if (!FLAGS_locality_read) { // Search separately when there is an additional key to the join key 
+      uint64_t lookupCardinality = 0;
+
+      if (!FLAGS_locality_read) {  // Search separately when there is an additional key to the join key
          merged.template scan<stock_t, orderline_sec_t>(
              stock_t::Key{w_id, i_id},
              [&](const stock_t::Key& key, const stock_t& rec) {
+                ++lookupCardinality;
                 if (key.s_w_id != w_id || key.s_i_id != i_id) {
                    return false;
                 }
                 cached_right.push_back({key, rec});
                 return true;
              },
-             [&](const orderline_sec_t::Key&, const orderline_sec_t&) { return false; }, []() { /* undo */ });
+             [&](const orderline_sec_t::Key&, const orderline_sec_t&) {
+                ++lookupCardinality;
+                return false;
+             },
+             []() { /* undo */ });
 
          if (cached_right.empty()) {
             return;
@@ -143,6 +150,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
          merged.template scan<orderline_sec_t, stock_t>(
              typename orderline_sec_t::Key{w_id, i_id, d_id, 0, 0},
              [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
+                ++lookupCardinality;
                 if (key.ol_w_id != w_id || key.ol_i_id != i_id || key.ol_d_id != d_id) {
                    return false;
                 }
@@ -150,10 +158,11 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
                 return false;
              },
              [&](const stock_t::Key&, const stock_t&) { return false; }, []() { /* undo */ });
-      } else { // Search continously when there is no additional key to the join key
+      } else {  // Search continously when there is no additional key to the join key
          merged.template scan<stock_t, orderline_sec_t>(
              stock_t::Key{w_id, i_id},
              [&](const stock_t::Key& key, const stock_t& rec) {
+                ++lookupCardinality;
                 if (key.s_w_id != w_id || key.s_i_id != i_id) {
                    return false;
                 }
@@ -161,8 +170,12 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
                 return true;
              },
              [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
+                ++lookupCardinality;
                 if (key.ol_w_id != w_id || key.ol_i_id != i_id) {
                    return false;
+                }
+                if (cached_right.empty()) {
+                   return false; // Matching stock record can only be found before the orderline record
                 }
                 cached_left.push_back({key, rec});
                 return true;
@@ -174,7 +187,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
       results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
 
-      // std::cout << "Lookup cardinality: " << lookupCardinality << std::endl;
+      std::cerr << "Lookup cardinality: " << lookupCardinality << ", stock records: " << cached_right.size() << ", orderline records: " << cached_left.size() << ", Produced: " << results.size() << std::endl;
       // All default configs, dram_gib = 8, cardinality = 2--8
    }
 
