@@ -80,30 +80,34 @@ scan ?= $(default_scan)
 write ?= $(default_write)
 update_size ?= $(default_update_size)
 selectivity ?= $(default_selectivity)
-extra_args ?= ""
+duration ?= 0
+locality_read ?= False
 
 both: $(BUILD_DIR)$(JOIN_EXEC) $(BUILD_DIR)$(MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
-	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
 
 rocksdb-both: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
-	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
 
 join: $(BUILD_DIR)$(JOIN_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
 
 rocksdb-join: $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
 
 merged: $(BUILD_DIR)$(MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
 
 rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(extra_args)
+	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
 
 %-read:
 	$(MAKE) $* read=100 scan=0 write=0
+
+%-locality-read:
+	$(MAKE) $* read=100 scan=0 write=0 locality_read=True
 
 %-scan:
 	$(MAKE) $* read=0 scan=100 write=0
@@ -114,18 +118,19 @@ rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
 %-all-tx-types: %-read %-scan %-write
 	@echo "Completed all transaction types for $*"
 
-read: 
-	$(MAKE) $*both read=100 scan=0 write=0
+read: join-read merged-read
 
-scan:
-	$(MAKE) $*both read=0 scan=100 write=0
+locality-read: join-locality-read merged-locality-read
 
-write:
-	$(MAKE) $*both read=0 scan=0 write=100
+scan: join-scan merged-scan
 
-all-tx-types: read scan write
+write: join-write merged-write
+
+all-tx-types: read scan write locality-read
 
 rocksdb-all-tx-types: rocksdb-join-all-tx-types rocksdb-merged-all-tx-types
+
+all-locality-read: join-locality-read merged-locality-read rocksdb-join-locality-read rocksdb-merged-locality-read
 
 update-size:
 # $(MAKE) write update_size=5 # refer to write expriments
@@ -148,7 +153,7 @@ table-size:
 	rm -f "~/logs/merged_size.csv"
 	@for col in 0 1; do \
 		for sel in 100 50 19; do \
-			$(MAKE) both dram=16 selectivity=$$sel included_columns=$$col extra_args=1; \
+			$(MAKE) both dram=16 selectivity=$$sel included_columns=$$col duration=1; \
 		done \
 	done
 
