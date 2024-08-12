@@ -42,6 +42,8 @@ struct WorkerCounters {
    atomic<u64> xmerge_partial_counter[max_dt_id] = {0};
    atomic<u64> xmerge_full_counter[max_dt_id] = {0};
    // -------------------------------------------------------------------------------------
+   atomic<u64> dt_resolve_swip_hot[max_dt_id] = {0};
+   atomic<u64> dt_resolve_swip_cool[max_dt_id] = {0};
    atomic<u64> dt_page_reads[max_dt_id] = {0};
    atomic<u64> dt_page_writes[max_dt_id] = {0};
    atomic<u64> dt_restarts_update_same_size[max_dt_id] = {0};   // without structural change

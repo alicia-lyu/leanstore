@@ -164,12 +164,13 @@ struct RocksDB {
          }
          std::ofstream csv(FLAGS_csv_path + "_sum.csv", open_flags);
          csv.seekp(0, std::ios::end);
-         csv << std::setprecision(2) << std::fixed;
+         csv << std::setprecision(5) << std::fixed;
 
          if (print_header) {
-            csv << "t,tag,oltp_committed,oltp_aborted,SSTRead(ms)/TX,SSTWrite(ms)/TX,GHz,Cycles/TX" << endl;
+            csv << "t,tag,OLTP TX,oltp_committed,oltp_aborted,SSTRead(ms)/TX,SSTWrite(ms)/TX,GHz,Cycles/TX,CPUTime/TX (ms),Utilized CPUs" << endl;
          }
          uint64_t sst_read_prev = 0, sst_write_prev = 0;
+         uint64_t cycles_acc = 0, task_clock_acc = 0;
          while (running_threads_counter - 1 > 0) {
             cpu_table.next();
             csv << time++ << "," << FLAGS_tag << ",";
@@ -179,6 +180,8 @@ struct RocksDB {
                total_committed += thread_committed[t_i].exchange(0);
                total_aborted += thread_aborted[t_i].exchange(0);
             }
+            u64 tx = total_committed + total_aborted;
+            csv << tx << ",";
             csv << total_committed << "," << total_aborted << ",";
 
             std::shared_ptr<rocksdb::Statistics> stats = db->GetDBOptions().statistics;
@@ -197,11 +200,22 @@ struct RocksDB {
 
             csv << cpu_table.workers_agg_events["GHz"] << ",";
 
-            if (total_aborted + total_committed > 0) {
-               csv << cpu_table.workers_agg_events["cycle"] / (total_aborted + total_committed) << endl;
+            if (tx > 0) {
+               csv << (cpu_table.workers_agg_events["cycle"] + cycles_acc) / tx << ",";
+               cycles_acc = 0;
+
+               csv << ((double) cpu_table.workers_agg_events["task"] + task_clock_acc) / tx * 1e-6 << ",";
+               task_clock_acc = 0;
             } else {
-               csv << "0" << endl;
+               csv << "0,";
+               cycles_acc += cpu_table.workers_agg_events["cycle"];
+
+               csv << "0,";
+               task_clock_acc += cpu_table.workers_agg_events["task"];
             }
+
+            csv << cpu_table.workers_agg_events["utilized_cpus"] << endl;
+
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
          }
          running_threads_counter--;

@@ -63,6 +63,7 @@ class KVInterface
    // -------------------------------------------------------------------------------------
    virtual u64 countPages() = 0;
    virtual u64 estimatePages() = 0;
+   virtual u64 estimateLeafs() = 0;
    virtual u64 countEntries() = 0;
    virtual u64 getHeight() = 0;
    // -------------------------------------------------------------------------------------

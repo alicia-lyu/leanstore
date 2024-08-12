@@ -576,6 +576,11 @@ u64 BTreeLL::estimatePages()
 {
    return BTreeGeneric::estimatePages();
 }
+
+u64 BTreeLL::estimateLeafs()
+{
+   return BTreeGeneric::estimateLeafs();
+}
 // -------------------------------------------------------------------------------------
 u64 BTreeLL::getHeight()
 {

@@ -627,7 +627,7 @@ s64 BTreeGeneric::iterateAllPagesRec(HybridPageGuard<BTreeNode>& node_guard,
    return res;
 }
 
-s64 BTreeGeneric::iterateInnerPagesRec(HybridPageGuard<BTreeNode>& node_guard, std::function<s64(BTreeNode&)> inner, u64 currHeight)
+s64 BTreeGeneric::iterateInnerPagesRec(HybridPageGuard<BTreeNode>& node_guard, std::function<s64(BTreeNode&)> inner, u64 currHeight, bool last_level_only)
 {
    if (node_guard->is_leaf) {
       return 0; // counted in its parent
@@ -635,7 +635,12 @@ s64 BTreeGeneric::iterateInnerPagesRec(HybridPageGuard<BTreeNode>& node_guard, s
    if (currHeight == getHeight() - 1) { // last-level inner node
       return inner(node_guard.ref());
    }
-   s64 res = inner(node_guard.ref());
+   s64 res;
+   if (last_level_only) {
+      res = 0;
+   } else {
+      res = inner(node_guard.ref());
+   }
    for (u16 i = 0; i < node_guard->count; i++) {
       Swip<BTreeNode>& c_swip = node_guard->getChild(i);
       auto c_guard = HybridPageGuard(node_guard, c_swip);
@@ -665,14 +670,14 @@ s64 BTreeGeneric::iterateAllPages(std::function<s64(BTreeNode&)> inner, std::fun
    }
 }
 
-s64 BTreeGeneric::iterateInnerPages(std::function<s64(BTreeNode&)> inner)
+s64 BTreeGeneric::iterateInnerPages(std::function<s64(BTreeNode&)> inner, bool last_level_only)
 {
    while (true) {
       jumpmuTry()
       {
          HybridPageGuard<BTreeNode> p_guard(meta_node_bf);
          HybridPageGuard<BTreeNode> c_guard(p_guard, p_guard->upper);
-         s64 result = iterateInnerPagesRec(c_guard, inner);
+         s64 result = iterateInnerPagesRec(c_guard, inner, last_level_only);
          jumpmu_return result;
       }
       jumpmuCatch() {}
@@ -697,6 +702,11 @@ u64 BTreeGeneric::countPages()
 u64 BTreeGeneric::estimatePages()
 {
    return iterateInnerPages([](BTreeNode& node) { return node.count + 1; }) + 1;
+}
+
+u64 BTreeGeneric::estimateLeafs()
+{
+   return iterateInnerPages([](BTreeNode& node) { return node.count + 1; }, true);
 }
 // -------------------------------------------------------------------------------------
 u64 BTreeGeneric::countInner()
