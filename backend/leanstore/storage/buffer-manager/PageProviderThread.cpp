@@ -101,7 +101,7 @@ void BufferManager::pageProviderThread(u64 p_begin, u64 p_end)  // [p_begin, p_e
                });
                COUNTERS_BLOCK()
                {
-                  iterate_children_begin = std::chrono::high_resolution_clock::now();
+                  iterate_children_end = std::chrono::high_resolution_clock::now();
                   PPCounters::myCounters().iterate_children_ms +=
                       (std::chrono::duration_cast<std::chrono::microseconds>(iterate_children_end - iterate_children_begin).count());
                }

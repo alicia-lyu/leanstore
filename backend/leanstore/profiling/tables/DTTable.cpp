@@ -24,6 +24,8 @@ void DTTable::open()
    columns.emplace("key", [&](Column& col) { col << dt_id; });
    columns.emplace("dt_name", [&](Column& col) { col << dt_name; });
    columns.emplace("dt_page_reads", [&](Column& col) { col << sum(WorkerCounters::worker_counters, &WorkerCounters::dt_page_reads, dt_id); });
+   columns.emplace("dt_resolve_swip_hot", [&](Column& col) { col << sum(WorkerCounters::worker_counters, &WorkerCounters::dt_resolve_swip_hot, dt_id); });
+   columns.emplace("dt_resolve_swip_cool", [&](Column& col) { col << sum(WorkerCounters::worker_counters, &WorkerCounters::dt_resolve_swip_cool, dt_id); });
    columns.emplace("dt_page_writes", [&](Column& col) { col << sum(WorkerCounters::worker_counters, &WorkerCounters::dt_page_writes, dt_id); });
    columns.emplace("dt_restarts_update_same_size",
                    [&](Column& col) { col << sum(WorkerCounters::worker_counters, &WorkerCounters::dt_restarts_update_same_size, dt_id); });

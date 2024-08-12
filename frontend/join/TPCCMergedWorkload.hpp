@@ -175,7 +175,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
                    return false;
                 }
                 if (cached_right.empty()) {
-                   return false; // Matching stock record can only be found before the orderline record
+                   return false;  // Matching stock record can only be found before the orderline record
                 }
                 cached_left.push_back({key, rec});
                 return true;
@@ -187,8 +187,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
       results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
 
-      std::cerr << "Lookup cardinality: " << lookupCardinality << ", stock records: " << cached_right.size() << ", orderline records: " << cached_left.size() << ", Produced: " << results.size() << std::endl;
-      // All default configs, dram_gib = 8, cardinality = 2--8
+      // std::cerr << "Lookup cardinality: " << lookupCardinality << ", stock records: " << cached_right.size() << ", orderline records: " <<
+      // cached_left.size() << ", Produced: " << results.size() << std::endl; All default configs, dram_gib = 8, cardinality = 2--8
    }
 
    void newOrderRnd(Integer w_id, Integer order_size = 5)
@@ -396,6 +396,10 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
             ensure(ret);
          }
       }
+
+      // merged.template scan<stock_t, orderline_sec_t>(
+      //     {w_id, 0}, [&](const stock_t::Key& key, const stock_t&) { return key.s_w_id == w_id; },
+      //     [&](const orderline_sec_t::Key& key, const orderline_sec_t&) { return key.ol_w_id == w_id; }, []() { /* undo */ });
    }
 
    void logSizes(std::chrono::steady_clock::time_point t0,
@@ -406,14 +410,21 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       std::ofstream csv_file(this->getCsvFile("merged_size.csv"), std::ios::app);
 
       auto config = ExperimentHelper::getConfigString();
-      auto core_page_count = this->getCorePageCount(crm);
+      u64 core_page_count = 0;
+      // auto core_page_count = this->getCorePageCount(crm);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
       u64 merged_page_count = 0;
-      crm.scheduleJobSync(0, [&]() { merged_page_count = merged.btree->estimatePages(); });
+      u64 merged_leaf_count = 0;
+      u64 merged_height = 0;
+      crm.scheduleJobSync(0, [&]() {
+         // merged_page_count = merged.btree->estimatePages();
+         // merged_leaf_count = merged.btree->estimateLeafs();
+         // merged_height = merged.btree->getHeight();
+      });
       auto merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
-      std::cout << "Core: " << (double)core_page_count * 4096 / 1024 / 1024 / 1024 << " GiB"
-                << ", Merged: " << (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << " GiB" << std::endl;
+      std::cout << "merged_page_count: " << merged_page_count << ", merged_leaf_count: " << merged_leaf_count << ", merged_height: " << merged_height
+                << std::endl;
 
       csv_file << "core," << config << "," << (double)core_page_count * 4096 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
       csv_file << "merged_index," << config << "," << (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << "," << merged_time << std::endl;

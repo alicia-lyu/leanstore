@@ -171,6 +171,7 @@ void LeanStore::startProfilingThread()
       u64 dt_page_reads_acc = 0;
       u64 dt_page_writes_acc = 0;
       u64 cycles_prev = 0;
+      u64 task_clock_acc = 0;
       while (bg_threads_keep_running) {
          for (u64 t_i = 0; t_i < tables.size(); t_i++) {
             tables[t_i]->next();
@@ -257,8 +258,14 @@ void LeanStore::startProfilingThread()
          if (cpu_table.workers_agg_events.contains("task"))
          {
             tx_console_header.push_back("CPUTime/TX (ms)");
-            tx_console_data.push_back(std::to_string(
-               ((double) cpu_table.workers_agg_events["task"]) / tx * 1e-6));
+            if (tx > 0) {
+               tx_console_data.push_back(std::to_string(
+               ((double) cpu_table.workers_agg_events["task"] + task_clock_acc) / tx * 1e-6));
+               task_clock_acc = 0;
+            } else {
+               task_clock_acc += cpu_table.workers_agg_events["task"];
+               tx_console_data.push_back("0");
+            }
          }
 
          if (cpu_table.workers_agg_events.contains("L1-miss"))

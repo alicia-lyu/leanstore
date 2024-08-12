@@ -250,12 +250,13 @@ class BTreeGeneric
    inline bool isMetaNode(HybridPageGuard<BTreeNode>& guard) { return meta_node_bf == guard.bf; }
    inline bool isMetaNode(ExclusivePageGuard<BTreeNode>& guard) { return meta_node_bf == guard.bf(); }
    s64 iterateAllPages(std::function<s64(BTreeNode&)> inner, std::function<s64(BTreeNode&)> leaf);
-   s64 iterateInnerPages(std::function<s64(BTreeNode&)> inner);
+   s64 iterateInnerPages(std::function<s64(BTreeNode&)> inner, bool last_level_only = false);
    s64 iterateAllPagesRec(HybridPageGuard<BTreeNode>& node_guard, std::function<s64(BTreeNode&)> inner, std::function<s64(BTreeNode&)> leaf);
-   s64 iterateInnerPagesRec(HybridPageGuard<BTreeNode>& node_guard, std::function<s64(BTreeNode&)> inner, u64 currHeight = 1);
+   s64 iterateInnerPagesRec(HybridPageGuard<BTreeNode>& node_guard, std::function<s64(BTreeNode&)> inner, u64 currHeight = 1, bool last_level_only = false);
    u64 countInner();
    u64 countPages();
    u64 estimatePages();
+   u64 estimateLeafs();
    u64 countEntries();
    u64 getHeight();
    double averageSpaceUsage();

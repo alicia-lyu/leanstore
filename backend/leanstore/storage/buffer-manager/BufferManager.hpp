@@ -6,6 +6,7 @@
 #include "Partition.hpp"
 #include "Swip.hpp"
 #include "Units.hpp"
+#include "leanstore/profiling/counters/WorkerCounters.hpp"
 // -------------------------------------------------------------------------------------
 #include "PerfEvent.hpp"
 // -------------------------------------------------------------------------------------
@@ -114,6 +115,7 @@ class BufferManager
       if (swip_value.isHOT()) {
          BufferFrame& bf = swip_value.asBufferFrame();
          swip_guard.recheck();
+         WorkerCounters::myCounters().dt_resolve_swip_hot[bf.page.dt_id]++;
          return bf;
       } else {
          return resolveSwip(swip_guard, swip_value);

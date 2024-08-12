@@ -3,10 +3,10 @@
 
 #include <chrono>
 #include <cstdint>
-#include "ExperimentHelper.hpp"
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include "ExperimentHelper.hpp"
 #include "Join.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/utils/JumpMU.hpp"
@@ -39,26 +39,29 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
              ++scanCardinality;
-             if (key.w_id != w_id) return false; // passed
-             if (key.ol_d_id != d_id) return true; // skip this
+             if (key.w_id != w_id)
+                return false;  // passed
+             if (key.ol_d_id != d_id)
+                return true;  // skip this
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
                 joined_ols_t joined_rec = rec.expand();
                 if (joined_rec.ol_delivery_d >= since) {
                    //  results.push_back(rec);
-                  resultsCardinality++;
+                   resultsCardinality++;
                 }
              } else {
                 this->tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number},
-                                        [&](const orderline_t& orderline_rec) {  // ATTN: BTree operation in call back function
-                                           if (orderline_rec.ol_delivery_d >= since) {
-                                              this->tpcc->stock.lookup1({key.w_id, key.i_id},
-                                                                  [&](const stock_t&) {  // ATTN: BTree operation in call back function
-                                                                     // Only emulating BTree operations, not concatenating stock_rec and joined_rec
-                                                                     //  results.push_back(rec);
-                                                                     resultsCardinality++;
-                                                                  });
-                                           }
-                                        });
+                                              [&](const orderline_t& orderline_rec) {  // ATTN: BTree operation in call back function
+                                                 if (orderline_rec.ol_delivery_d >= since) {
+                                                    this->tpcc->stock.lookup1({key.w_id, key.i_id},
+                                                                              [&](const stock_t&) {  // ATTN: BTree operation in call back function
+                                                                                 // Only emulating BTree operations, not concatenating stock_rec and
+                                                                                 // joined_rec
+                                                                                 //  results.push_back(rec);
+                                                                                 resultsCardinality++;
+                                                                              });
+                                                 }
+                                              });
              }
              return true;
           },
@@ -73,7 +76,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    {
       vector<joined_t> results;
       typename joined_t::Key start_key;  // Starting from the first item in the warehouse and district
-      if (FLAGS_locality_read) { // No additional key than the join key
+      if (FLAGS_locality_read) {         // No additional key than the join key
          start_key = {w_id, i_id, 0, 0, 0};
       } else {
          start_key = {w_id, i_id, d_id, 0, 0};
@@ -85,16 +88,16 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
              ++lookupCardinality;
-             if (key.i_id != i_id || key.w_id != w_id) { // passed
+             if (key.i_id != i_id || key.w_id != w_id) {  // passed
                 return false;
              }
              if (!FLAGS_locality_read && key.ol_d_id != d_id) {
-               return false;
+                return false;
              }
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
                 results.push_back(rec);
              } else {
-                this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t& stock_rec) {  // ATTN: BTree operation in call back function
+                this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) {  // ATTN: BTree operation in call back function
                    // Only emulating BTree operations, not concatenating stock_rec and joined_rec
                    results.push_back(rec);
                 });
@@ -105,7 +108,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
              // This is executed after the scan completes
           });
 
-      std::cerr << "Lookup cardinality: " << lookupCardinality << ", results cardinality: " << results.size() << std::endl;
+      // std::cerr << "Lookup cardinality: " << lookupCardinality << ", results cardinality: " << results.size() << std::endl;
    }
 
    void newOrderRnd(Integer w_id, Integer order_size = 5)
@@ -154,7 +157,8 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           },
           district_update_descriptor);
 
-      // std::cout << "New order: w_id: " << w_id << ", d_id: " << d_id << ", o_id: " << o_id << ", c_id: " << c_id << ", timestamp: " << timestamp << std::endl;
+      // std::cout << "New order: w_id: " << w_id << ", d_id: " << d_id << ", o_id: " << o_id << ", c_id: " << c_id << ", timestamp: " << timestamp <<
+      // std::endl;
 
       Numeric all_local = 1;
       for (Integer sw : supwares)
@@ -379,36 +383,44 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
             ensure(ret);
          }
       }
+      // joined_ols.scan({w_id, 0, 0, 0, 0}, [&](const joined_t::Key& key, const auto&) { return key.w_id == w_id; }, []() {});
    }
 
    void logSizes(std::chrono::steady_clock::time_point t0,
-      std::chrono::steady_clock::time_point t1,
-      std::chrono::steady_clock::time_point t2,
-      std::chrono::steady_clock::time_point t3,
-      leanstore::cr::CRManager& crm)
+                 std::chrono::steady_clock::time_point t1,
+                 std::chrono::steady_clock::time_point t2,
+                 std::chrono::steady_clock::time_point t3,
+                 leanstore::cr::CRManager& crm)
    {
       std::ofstream csv_file(this->getCsvFile("join_size.csv"), std::ios::app);
       auto config = ExperimentHelper::getConfigString();
-      auto core_page_count = this->getCorePageCount(crm);
+      u64 core_page_count = 0;
+      // auto core_page_count = this->getCorePageCount(crm);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
       auto orderline_secondary_page_count = 0;
-      crm.scheduleJobSync(0, [&]() {
-         orderline_secondary_page_count = orderline_secondary.btree->estimatePages();
-      });
+      crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = orderline_secondary.btree->estimatePages(); });
       auto orderline_secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
-      auto joined_ols_page_count = 0;
+      u64 joined_ols_page_count = 0;
+      u64 joined_ols_leaf_count = 0;
+      u64 joined_ols_height = 0;
+
       crm.scheduleJobSync(0, [&]() {
-         joined_ols_page_count = joined_ols.btree->estimatePages();
+         // joined_ols_page_count = joined_ols.btree->estimatePages();
+         // joined_ols_leaf_count = joined_ols.btree->estimateLeafs();
+         // joined_ols_height = joined_ols.btree->getHeight();
       });
       auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 
-      std::cout << "Core: " << (double) core_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << ", orderline secondary: " << (double) orderline_secondary_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << ", joined ols: " << (double) joined_ols_page_count * 4098 / 1024 / 1024 / 1024 << " GiB" << std::endl;
+      std::cout << "joined_ols_page_count: " << joined_ols_page_count << ", joined_ols_leaf_count: " << joined_ols_leaf_count
+                << ", joined_ols_height: " << joined_ols_height << std::endl;
 
-      csv_file << "core," << config << "," << (double) core_page_count * 4098 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
-      csv_file << "orderline_secondary," << config << "," << (double) orderline_secondary_page_count * 4098 / 1024 / 1024 / 1024 << "," << orderline_secondary_time << std::endl;
-      csv_file << "join_results," << config << "," << (double) joined_ols_page_count * 4098 / 1024 / 1024 / 1024 << "," << joined_ols_time << std::endl;
+      csv_file << "core," << config << "," << (double)core_page_count * 4098 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
+      csv_file << "orderline_secondary," << config << "," << (double)orderline_secondary_page_count * 4098 / 1024 / 1024 / 1024 << ","
+               << orderline_secondary_time << std::endl;
+      csv_file << "join_results," << config << "," << (double)joined_ols_page_count * 4098 / 1024 / 1024 / 1024 << "," << joined_ols_time
+               << std::endl;
    }
 
    void logSizes(leanstore::cr::CRManager& crm)
