@@ -5,14 +5,18 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import shutil
+import argparse
 
 def add_suffix_before_extension(original_path, suffix):
     path = Path(original_path)
     return path.with_name(f"{path.stem}{suffix}{path.suffix}")
 
-def get_tx_type(read_percentage, scan_percentage, write_percentage):
+def get_tx_type(read_percentage, scan_percentage, write_percentage, locality_read):
     if read_percentage == 100 and scan_percentage == 0 and write_percentage == 0:
-        return "read"
+        if locality_read:
+            return "read-locality"
+        else:
+            return "read"
     elif read_percentage == 0 and scan_percentage == 100 and write_percentage == 0:
         return "scan"
     elif read_percentage == 0 and scan_percentage == 0 and write_percentage == 100:
@@ -20,8 +24,8 @@ def get_tx_type(read_percentage, scan_percentage, write_percentage):
     else:
         return f"mixed-{read_percentage}-{scan_percentage}-{write_percentage}"
 
-def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, write_percentage, order_size, selectivity, included_columns):
-    log_dir = "/home/alicia.w.lyu/logs/" + f"{method}-{dram_gib}-{target_gib}-" + get_tx_type(read_percentage, scan_percentage, write_percentage)
+def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, write_percentage, order_size, selectivity, included_columns, locality_read):
+    log_dir = "/home/alicia.w.lyu/logs/" + f"{method}-{dram_gib}-{target_gib}-" + get_tx_type(read_percentage, scan_percentage, write_percentage, locality_read)
     
     if order_size != 5:
         log_dir += f"-size{order_size}"
@@ -64,52 +68,57 @@ def get_image(method, target_gib, selectivity, included_columns):
         return image_dir
 
 def main():
-    if len(sys.argv) < 10 or not os.path.exists(sys.argv[1]):
-        print("Usage: <executable> <dram_gib> <target_gib> <read_percentage> <scan_percentage> <write_percentage> <order_size> <selectivity> <included_columns>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Run experiment with specified parameters.")
+    parser.add_argument('executable', type=Path, help="Path to the executable.")
+    parser.add_argument('dram_gib', type=float, help="Amount of DRAM in GiB.")
+    parser.add_argument('target_gib', type=int, help="Target GiB.")
+    parser.add_argument('read_percentage', type=int, help="Percentage of read operations.")
+    parser.add_argument('scan_percentage', type=int, help="Percentage of scan operations.")
+    parser.add_argument('write_percentage', type=int, help="Percentage of write operations.")
+    parser.add_argument('order_size', type=int, help="Order size.")
+    parser.add_argument('selectivity', type=int, help="Selectivity percentage.")
+    parser.add_argument('included_columns', type=int, help="Number of included columns.")
+    parser.add_argument('duration', type=int, nargs='?', default=240, help="Duration to run the experiment (optional, default is 240 seconds).")
+    parser.add_argument('locality_read', type=bool, nargs='?', default=False, help="Locality read (optional, default is False).")
+    
+    args = parser.parse_args()
 
-    executable_path = Path(sys.argv[1])
-    method = executable_path.stem.replace('_tpcc', '')
-    print(f"Executable: {executable_path}, Method: {method}")
-    build_dir = executable_path.parents[1]
+    if not args.executable.exists():
+        parser.error(f"The executable {args.executable} does not exist.")
     
-    dram_gib = float(sys.argv[2])
-    
-    target_gib, \
-        read_percentage, scan_percentage, write_percentage, \
-        order_size, selectivity, included_columns = map(int, sys.argv[3:10])
-    
-    if len(sys.argv) == 10 or sys.argv[10] == '':
+    method = args.executable.stem.replace('_tpcc', '')
+    print(f"Executable: {args.executable}, Method: {method}")
+    build_dir = args.executable.parents[1]
+
+    if args.dram_gib >= args.target_gib * 2:
+        duration = min(args.duration, 180)
+    elif args.duration == 0:
         duration = 240
     else:
-        duration = int(sys.argv[10])
-        
-    if dram_gib >= target_gib * 2:
-        duration = min(duration, 180)
-        # In-memory workload does not need prolonged warm up time
-
+        duration = args.duration
+    
     print(f"Method: {method}, Build Directory: {build_dir}, run for seconds: {duration}")
     
-    print(f"DRAM: {dram_gib} GiB, target: {target_gib} GiB, read: {read_percentage}%, scan: {scan_percentage}%, write: {write_percentage}%")
+    print(f"DRAM: {args.dram_gib} GiB, target: {args.target_gib} GiB, read: {args.read_percentage}%, scan: {args.scan_percentage}%, write: {args.write_percentage}%")
     
-    print(f"Order Size: {order_size}, Selectivity: {selectivity}, Included Columns: {included_columns}")
+    print(f"Order Size: {args.order_size}, Selectivity: {args.selectivity}, Included Columns: {args.included_columns}")
 
     log_dir = get_log_dir(
-        method, dram_gib, target_gib, 
-        read_percentage, scan_percentage, write_percentage, 
-        order_size, selectivity, included_columns)
+        method, args.dram_gib, args.target_gib, 
+        args.read_percentage, args.scan_percentage, args.write_percentage, 
+        args.order_size, args.selectivity, args.included_columns, args.locality_read)
     
-    recovery_file = build_dir / get_recovery_file(method, target_gib, selectivity, included_columns)
+    recovery_file = build_dir / get_recovery_file(method, args.target_gib, args.selectivity, args.included_columns)
     
     trunc = not recovery_file.exists()
     
-    image = get_image(method, target_gib, selectivity, included_columns)
+    image = get_image(method, args.target_gib, args.selectivity, args.included_columns)
 
-    if write_percentage > 0:
+    if args.write_percentage > 0:
         persist_file = f"./leanstore.json"
         write_image_file = add_suffix_before_extension(image, "-write")
         
-        if dram_gib >= target_gib * 2: # Force load instead of recovery
+        if args.dram_gib >= args.target_gib * 2: # Force load instead of recovery
             trunc = True
             recovery_file = "./leanstore.json"
             assert('rocksdb' not in method)
@@ -130,14 +139,14 @@ def main():
     print("************************************************************ NEW EXPERIMENT ************************************************************")
 
     cmd = [
-        executable_path,
+        args.executable,
         f"--ssd_path={image}", f"--persist_file={persist_file}", f"--recover_file={recovery_file}",
         f"--csv_path={log_dir}/{timestamp}", "--csv_truncate=true", f"--trunc={str(trunc).lower()}",
         "--vi=false", "--mv=false", "--isolation_level=ser", "--optimistic_scan=false",
         f"--run_for_seconds={duration}", "--pp_threads=2",
-        f"--dram_gib={dram_gib}", f"--target_gib={target_gib}", f"--tpcc_warehouse_count={target_gib}",
-        f"--read_percentage={read_percentage}", f"--scan_percentage={scan_percentage}", f"--write_percentage={write_percentage}",
-        f"--order_size={order_size}", f"--semijoin_selectivity={selectivity}",
+        f"--dram_gib={args.dram_gib}", f"--target_gib={args.target_gib}", f"--tpcc_warehouse_count={args.target_gib}",
+        f"--read_percentage={args.read_percentage}", f"--scan_percentage={args.scan_percentage}", f"--write_percentage={args.write_percentage}", f"--locality_read={args.locality_read}",
+        f"--order_size={args.order_size}", f"--semijoin_selectivity={args.selectivity}",
     ]
 
     print(f"Running command {' '.join(map(str, cmd))}")
@@ -145,7 +154,7 @@ def main():
     stdout_log_path = f"{log_dir}/{timestamp}.log"
 
     with open(stdout_log_path, 'w') as log_file:
-        log_file.write(f"{timestamp}. Running experiment with method: {method}, DRAM: {dram_gib} GiB, target: {target_gib} GiB, read: {read_percentage}%, scan: {scan_percentage}%, write: {write_percentage}%\n")
+        log_file.write(f"{timestamp}. Running experiment with method: {method}, DRAM: {args.dram_gib} GiB, target: {args.target_gib} GiB, read: {args.read_percentage}%, scan: {args.scan_percentage}%, write: {args.write_percentage}%\n")
         log_file.write(f"Running command {' '.join(map(str, cmd))}")
     
     with open(stdout_log_path, 'a') as log_file:
@@ -155,7 +164,7 @@ def main():
         print("Experiment failed, you need to remove the persisted json file.")
         sys.exit(1)
 
-    if write_percentage > 0:
+    if args.write_percentage > 0:
         if os.path.isdir(write_image_file):
             shutil.rmtree(write_image_file)
         else:
