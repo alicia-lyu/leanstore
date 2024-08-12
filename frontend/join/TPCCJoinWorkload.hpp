@@ -72,7 +72,12 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
       vector<joined_t> results;
-      typename joined_t::Key start_key = {w_id, i_id, d_id, 0, 0};  // Starting from the first item in the warehouse and district
+      typename joined_t::Key start_key;  // Starting from the first item in the warehouse and district
+      if (FLAGS_locality_read) { // No additional key than the join key
+         start_key = {w_id, i_id, 0, 0, 0};
+      } else {
+         start_key = {w_id, i_id, d_id, 0, 0};
+      }
 
       uint64_t lookupCardinality = 0;
 
@@ -80,8 +85,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
              lookupCardinality++;
-             if (key.i_id != i_id || key.w_id != w_id || key.ol_d_id != d_id) { // passed
+             if (key.i_id != i_id || key.w_id != w_id) { // passed
                 return false;
+             }
+             if (!FLAGS_locality_read && key.ol_d_id != d_id) {
+               return false;
              }
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
                 results.push_back(rec);
