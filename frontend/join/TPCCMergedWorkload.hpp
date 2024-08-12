@@ -79,13 +79,13 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              ++scanCardinality;
              if (key.ol_w_id != w_id) {
-               return false;
+                return false;
              }
              if (key.ol_d_id != d_id) {
                 return true;  // next item may still be in the same district
              }
-             if (key.ol_i_id != current_key.s_i_id) { // only happens when current i_id does not have any stock records
-               return true;
+             if (key.ol_i_id != current_key.s_i_id) {  // only happens when current i_id does not have any stock records
+                return true;
              }
              if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
                 ol_join_sec_t expanded_rec = rec.expand();
@@ -124,31 +124,51 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
-      merged.template scan<stock_t, orderline_sec_t>(
-          stock_t::Key{w_id, i_id},
-          [&](const stock_t::Key& key, const stock_t& rec) {
-             if (key.s_w_id != w_id || key.s_i_id != i_id) {
+      if (!FLAGS_locality_read) { // Search separately when there is an additional key to the join key 
+         merged.template scan<stock_t, orderline_sec_t>(
+             stock_t::Key{w_id, i_id},
+             [&](const stock_t::Key& key, const stock_t& rec) {
+                if (key.s_w_id != w_id || key.s_i_id != i_id) {
+                   return false;
+                }
+                cached_right.push_back({key, rec});
+                return true;
+             },
+             [&](const orderline_sec_t::Key&, const orderline_sec_t&) { return false; }, []() { /* undo */ });
+
+         if (cached_right.empty()) {
+            return;
+         }
+
+         merged.template scan<orderline_sec_t, stock_t>(
+             typename orderline_sec_t::Key{w_id, i_id, d_id, 0, 0},
+             [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
+                if (key.ol_w_id != w_id || key.ol_i_id != i_id || key.ol_d_id != d_id) {
+                   return false;
+                }
+                cached_left.push_back({key, rec});
                 return false;
-             }
-             cached_right.push_back({key, rec});
-             return true;
-          },
-          [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) { return false; }, []() { /* undo */ });
-
-      if (cached_right.empty()) {
-         return;
+             },
+             [&](const stock_t::Key&, const stock_t&) { return false; }, []() { /* undo */ });
+      } else { // Search continously when there is no additional key to the join key
+         merged.template scan<stock_t, orderline_sec_t>(
+             stock_t::Key{w_id, i_id},
+             [&](const stock_t::Key& key, const stock_t& rec) {
+                if (key.s_w_id != w_id || key.s_i_id != i_id) {
+                   return false;
+                }
+                cached_right.push_back({key, rec});
+                return true;
+             },
+             [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
+                if (key.ol_w_id != w_id || key.ol_i_id != i_id) {
+                   return false;
+                }
+                cached_left.push_back({key, rec});
+                return true;
+             },
+             []() { /* undo */ });
       }
-
-      merged.template scan<orderline_sec_t, stock_t>(
-          typename orderline_sec_t::Key{w_id, i_id, d_id, 0, 0},
-          [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
-             if (key.ol_w_id != w_id || key.ol_i_id != i_id || key.ol_d_id != d_id) {
-               return false;
-             }
-             cached_left.push_back({key, rec});
-             return false;
-          },
-          [&](const stock_t::Key&, const stock_t&) { return false; }, []() { /* undo */ });
 
       // Final cartesian product if the scan is complete without hitting the end condition
       auto final_cartesian_products = cartesianProducts(cached_left, cached_right);
