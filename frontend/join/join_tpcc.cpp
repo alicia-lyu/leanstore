@@ -89,7 +89,7 @@ int main(int argc, char** argv)
             return ret;
          }
       }
-   } else {  // verify and warm up
+   } else {
       auto ret = helper.verifyCore(&tpcc_join);
       if (ret != 0) {
          return ret;
@@ -99,8 +99,8 @@ int main(int argc, char** argv)
 
 
    atomic<u64> keep_running = true;
-   if (FLAGS_write_percentage > 0) {
-      // First run read only TXs to warm up the system without increasing the data size
+   if (FLAGS_write_percentage > 0 && FLAGS_recover) {
+      // Run read only TXs to warm up the system without increasing the data size
       std::cout << "Warming up the system with read only TXs" << std::endl;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          crm.scheduleJobAsync(t_i, [&]() {
@@ -110,7 +110,7 @@ int main(int argc, char** argv)
             }
          });
       }
-      sleep(20);
+      sleep(60);
       keep_running = false;
       crm.joinAll();
    }

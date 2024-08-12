@@ -22,6 +22,7 @@ DEFINE_uint32(order_size, 5, "Number of lines in a new order");
 DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock");
 // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be
 // lower. Empirically 90+% items are present in some orderline, picking out those in stock.
+DEFINE_bool(locality_read, false, "Lookup key in the read transactions are the same or smaller than the join key.");
 
 #if !defined(INCLUDE_COLUMNS)
 #define INCLUDE_COLUMNS \

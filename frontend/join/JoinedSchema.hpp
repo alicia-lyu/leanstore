@@ -101,6 +101,10 @@ struct ol_sec_key_only_t {
     return ol_join_sec_t::foldKey(out, key);
   }
 
+  template<class T> static unsigned foldJKey(uint8_t *out, const T &key) {
+    return ol_join_sec_t::foldJKey(out, key);
+  }
+
   template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
     return ol_join_sec_t::unfoldKey(in, key);
   }

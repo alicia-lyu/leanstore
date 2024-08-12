@@ -45,6 +45,7 @@ LeanStore::LeanStore()
    }
    if (FLAGS_persist_file != "./leanstore.json") {
       FLAGS_persist = true;
+      std::cout << "Persist is enabled. Writing to: " << FLAGS_persist_file << std::endl;
    }
    if (FLAGS_recover) {
       deserializeFlags();

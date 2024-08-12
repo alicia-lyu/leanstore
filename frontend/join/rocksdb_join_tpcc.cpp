@@ -105,7 +105,7 @@ int main(int argc, char** argv)
 
    atomic<u64> keep_running = true;
 
-   if (FLAGS_write_percentage > 0) {
+   if (FLAGS_write_percentage > 0 && FLAGS_recover) {
       // First run read only TXs to warm up the system without increasing the data size
       std::cout << "Warming up the system with read only TXs" << std::endl;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {

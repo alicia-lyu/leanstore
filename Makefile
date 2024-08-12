@@ -147,8 +147,8 @@ table-size:
 	rm -f "~/logs/join_size.csv"
 	rm -f "~/logs/merged_size.csv"
 	@for col in 0 1; do \
-		for sel in 100 50 20 10; do \
-			$(MAKE) both dram=0.3 selectivity=$$sel included_columns=$$col extra_args=1; \
+		for sel in 100 50 19; do \
+			$(MAKE) both dram=16 selectivity=$$sel included_columns=$$col extra_args=1; \
 		done \
 	done
 
