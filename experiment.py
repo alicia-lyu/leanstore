@@ -92,7 +92,8 @@ def main():
 
     if args.dram_gib >= args.target_gib * 2:
         duration = min(args.duration, 180)
-    elif args.duration == 0:
+    
+    if args.duration == 0:
         duration = 240
     else:
         duration = args.duration
@@ -145,11 +146,11 @@ def main():
         "--vi=false", "--mv=false", "--isolation_level=ser", "--optimistic_scan=false",
         f"--run_for_seconds={duration}", "--pp_threads=2",
         f"--dram_gib={args.dram_gib}", f"--target_gib={args.target_gib}", f"--tpcc_warehouse_count={args.target_gib}",
-        f"--read_percentage={args.read_percentage}", f"--scan_percentage={args.scan_percentage}", f"--write_percentage={args.write_percentage}", f"--locality_read={args.locality_read}",
+        f"--read_percentage={args.read_percentage}", f"--scan_percentage={args.scan_percentage}", f"--write_percentage={args.write_percentage}", f"--locality_read={str(args.locality_read).lower()}",
         f"--order_size={args.order_size}", f"--semijoin_selectivity={args.selectivity}",
     ]
 
-    print(f"Running command {' '.join(map(str, cmd))}")
+    print(f"Running command {' '.join(map(str, cmd))}\n")
     
     stdout_log_path = f"{log_dir}/{timestamp}.log"
 

@@ -47,6 +47,9 @@ class TPCCBaseWorkload
       } else {
          throw std::runtime_error("Invalid INCLUDE_COLUMNS value");
       }
+      if (FLAGS_locality_read) {
+         std::cout << "Locality read: true" << std::endl;
+      }
    }
    virtual ~TPCCBaseWorkload() = default;
 

@@ -38,7 +38,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       joined_ols.scan(
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
-             scanCardinality++;
+             ++scanCardinality;
              if (key.w_id != w_id) return false; // passed
              if (key.ol_d_id != d_id) return true; // skip this
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
@@ -84,7 +84,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       joined_ols.scan(
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
-             lookupCardinality++;
+             ++lookupCardinality;
              if (key.i_id != i_id || key.w_id != w_id) { // passed
                 return false;
              }
@@ -105,8 +105,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
              // This is executed after the scan completes
           });
 
-      // std::cout << "Lookup cardinality: " << lookupCardinality << std::endl;
-      // All default configs, dram_gib = 8, cardinality mostly 1 or 2. Can also be 3, etc.
+      std::cerr << "Lookup cardinality: " << lookupCardinality << ", results cardinality: " << results.size() << std::endl;
    }
 
    void newOrderRnd(Integer w_id, Integer order_size = 5)
