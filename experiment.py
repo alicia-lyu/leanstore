@@ -83,6 +83,10 @@ def main():
         duration = 240
     else:
         duration = int(sys.argv[10])
+        
+    if dram_gib >= target_gib * 2:
+        duration = min(duration, 180)
+        # In-memory workload does not need prolonged warm up time
 
     print(f"Method: {method}, Build Directory: {build_dir}, run for seconds: {duration}")
     
@@ -97,17 +101,25 @@ def main():
     
     recovery_file = build_dir / get_recovery_file(method, target_gib, selectivity, included_columns)
     
+    trunc = not recovery_file.exists()
+    
     image = get_image(method, target_gib, selectivity, included_columns)
 
     if write_percentage > 0:
-        persist_file = Path(f"{build_dir}/leanstore.json")
+        persist_file = f"./leanstore.json"
         write_image_file = add_suffix_before_extension(image, "-write")
-        subprocess.run(["cp", "-f", "-r", image, write_image_file]) # Force overwrite
+        
+        if dram_gib >= target_gib * 2: # Force load instead of recovery
+            trunc = True
+            recovery_file = "./leanstore.json"
+            assert('rocksdb' not in method)
+            Path(write_image_file).touch()
+        else:
+            subprocess.run(["cp", "-f", "-r", image, write_image_file]) # Force overwrite
+            
         image = write_image_file
     else:
         persist_file = recovery_file
-    
-    trunc = not recovery_file.exists()
     
     utc_offset_seconds = -time.timezone if not time.localtime().tm_isdst else -time.altzone
     utc_offset = timedelta(seconds=utc_offset_seconds)
@@ -147,6 +159,8 @@ def main():
         if os.path.isdir(write_image_file):
             shutil.rmtree(write_image_file)
         else:
+            with open(stdout_log_path, 'a') as log_file:
+                log_file.write(f"Size of {write_image_file}: {os.path.getsize(write_image_file) / (1024**3)} GiB.\n")
             os.remove(write_image_file)
 
 if __name__ == "__main__":

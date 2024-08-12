@@ -66,6 +66,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
              if (key.s_i_id != current_key.s_i_id) {
                 // A new join key discovered
                 // Do a cartesian product of current cached rows
+                // Calculating cartesian product could be done parallel to the scan. But I guess now it's fine too because the CPU is not saturated.
                 auto cartesian_products = cartesianProducts(cached_left, cached_right);
                 produced += cartesian_products.size();
                 current_key = key;
