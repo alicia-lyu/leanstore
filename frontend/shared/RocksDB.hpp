@@ -214,7 +214,7 @@ struct RocksDB {
                task_clock_acc += cpu_table.workers_agg_events["task"];
             }
 
-            csv << cpu_table.workers_agg_events["utilized_cpus"] << endl;
+            csv << cpu_table.workers_agg_events["CPU"] << endl;
 
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
          }

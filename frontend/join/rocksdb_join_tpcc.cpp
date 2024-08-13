@@ -104,28 +104,7 @@ int main(int argc, char** argv)
    }
 
    atomic<u64> keep_running = true;
-
-   if (FLAGS_write_percentage > 0 && FLAGS_recover) {
-      // First run read only TXs to warm up the system without increasing the data size
-      std::cout << "Warming up the system with read only TXs" << std::endl;
-      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-         threads.emplace_back([&]() {
-            while (keep_running) {
-               Integer w_id = FLAGS_worker_threads % FLAGS_tpcc_warehouse_count + 1;
-               tpcc_join.tx(w_id, 100, 0, 0);
-            }
-         });
-      }
-      sleep(20);
-      keep_running = false;
-      for (auto& thread : threads) {
-         thread.join();
-      }
-      threads.clear();
-   }
-   // -------------------------------------------------------------------------------------
    atomic<u64> running_threads_counter = 0;
-   keep_running = true;
    std::atomic<u64> thread_committed[FLAGS_worker_threads];
    std::atomic<u64> thread_aborted[FLAGS_worker_threads];
    context->rocks_db.startProfilingThread(running_threads_counter, keep_running, thread_committed, thread_aborted, FLAGS_print_header);
