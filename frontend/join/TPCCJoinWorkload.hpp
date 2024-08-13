@@ -383,7 +383,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
             ensure(ret);
          }
       }
-      // joined_ols.scan({w_id, 0, 0, 0, 0}, [&](const joined_t::Key& key, const auto&) { return key.w_id == w_id; }, []() {});
+      joined_ols.scan({w_id, 0, 0, 0, 0}, [&](const joined_t::Key& key, const auto&) { return key.w_id == w_id; }, []() {});
    }
 
    void logSizes(std::chrono::steady_clock::time_point t0,
@@ -395,7 +395,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       std::ofstream csv_file(this->getCsvFile("join_size.csv"), std::ios::app);
       auto config = ExperimentHelper::getConfigString();
       u64 core_page_count = 0;
-      // auto core_page_count = this->getCorePageCount(crm);
+      core_page_count = this->getCorePageCount(crm);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
       auto orderline_secondary_page_count = 0;
@@ -407,9 +407,9 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       u64 joined_ols_height = 0;
 
       crm.scheduleJobSync(0, [&]() {
-         // joined_ols_page_count = joined_ols.btree->estimatePages();
-         // joined_ols_leaf_count = joined_ols.btree->estimateLeafs();
-         // joined_ols_height = joined_ols.btree->getHeight();
+         joined_ols_page_count = joined_ols.btree->estimatePages();
+         joined_ols_leaf_count = joined_ols.btree->estimateLeafs();
+         joined_ols_height = joined_ols.btree->getHeight();
       });
       auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 

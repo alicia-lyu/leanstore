@@ -635,11 +635,9 @@ s64 BTreeGeneric::iterateInnerPagesRec(HybridPageGuard<BTreeNode>& node_guard, s
    if (currHeight == getHeight() - 1) { // last-level inner node
       return inner(node_guard.ref());
    }
-   s64 res;
-   if (last_level_only) {
-      res = 0;
-   } else {
-      res = inner(node_guard.ref());
+   s64 res = 0;
+   if (!last_level_only) {
+      res += inner(node_guard.ref());
    }
    for (u16 i = 0; i < node_guard->count; i++) {
       Swip<BTreeNode>& c_swip = node_guard->getChild(i);

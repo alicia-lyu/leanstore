@@ -397,9 +397,9 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
          }
       }
 
-      // merged.template scan<stock_t, orderline_sec_t>(
-      //     {w_id, 0}, [&](const stock_t::Key& key, const stock_t&) { return key.s_w_id == w_id; },
-      //     [&](const orderline_sec_t::Key& key, const orderline_sec_t&) { return key.ol_w_id == w_id; }, []() { /* undo */ });
+      merged.template scan<stock_t, orderline_sec_t>(
+          {w_id, 0}, [&](const stock_t::Key& key, const stock_t&) { return key.s_w_id == w_id; },
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t&) { return key.ol_w_id == w_id; }, []() { /* undo */ });
    }
 
    void logSizes(std::chrono::steady_clock::time_point t0,
@@ -416,11 +416,11 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       u64 merged_page_count = 0;
       u64 merged_leaf_count = 0;
       u64 merged_height = 0;
-      crm.scheduleJobSync(0, [&]() {
-         // merged_page_count = merged.btree->estimatePages();
-         // merged_leaf_count = merged.btree->estimateLeafs();
-         // merged_height = merged.btree->getHeight();
-      });
+      // crm.scheduleJobSync(0, [&]() {
+      //    // merged_page_count = merged.btree->estimatePages();
+      //    // merged_leaf_count = merged.btree->estimateLeafs();
+      //    // merged_height = merged.btree->getHeight();
+      // });
       auto merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
       std::cout << "merged_page_count: " << merged_page_count << ", merged_leaf_count: " << merged_leaf_count << ", merged_height: " << merged_height

@@ -111,7 +111,7 @@ rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
 %-write:
 	$(MAKE) $* read=0 scan=0 write=100
 	
-%-all-tx-types: %-read %-scan %-write
+%-all-tx-types: %-read %-scan %-write %-locality-read
 	@echo "Completed all transaction types for $*"
 
 read: join-read merged-read
