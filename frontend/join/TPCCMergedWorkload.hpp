@@ -155,7 +155,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
                    return false;
                 }
                 cached_left.push_back({key, rec});
-                return false;
+                return true;
              },
              [&](const stock_t::Key&, const stock_t&) { return false; }, []() { /* undo */ });
       } else {  // Search continously when there is no additional key to the join key
@@ -255,7 +255,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
          Integer item_id = itemids[i];
-         if (item_id % 100 > FLAGS_semijoin_selectivity) {
+         if (!Base::isSelected(item_id)) {
             continue;
          }
          // We don't need the primary index of stock_t at all, since all its info is in merged
@@ -334,7 +334,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
    {
       std::cout << "Loading stock of warehouse " << w_id << " to merged" << std::endl;
       for (Integer i = 0; i < this->tpcc->ITEMS_NO * this->tpcc->scale_factor; i++) {
-         if ((i + 1) % 100 > semijoin_selectivity) {
+         if (!Base::isSelected(i + 1)) {
             continue;
          }
          Varchar<50> s_data = this->tpcc->template randomastring<50>(25, 50);
@@ -390,7 +390,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       }
       for (Integer s_id = 1; s_id <= this->tpcc->ITEMS_NO * this->tpcc->scale_factor; s_id++) {
          bool ret = merged.template tryLookup<stock_t>({w_id, s_id}, [&](const auto&) {});
-         if (s_id % 100 > FLAGS_semijoin_selectivity) {
+         if (!Base::isSelected(s_id)) {
             ensure(!ret);
          } else {
             ensure(ret);

@@ -2,6 +2,7 @@
 #include "BMPlainGuard.hpp"
 #include "BufferFrame.hpp"
 #include "DTRegistry.hpp"
+#include "Exceptions.hpp"
 #include "FreeList.hpp"
 #include "Partition.hpp"
 #include "Swip.hpp"
@@ -115,7 +116,9 @@ class BufferManager
       if (swip_value.isHOT()) {
          BufferFrame& bf = swip_value.asBufferFrame();
          swip_guard.recheck();
-         WorkerCounters::myCounters().dt_resolve_swip_hot[bf.page.dt_id]++;
+         COUNTERS_BLOCK() {
+            WorkerCounters::myCounters().dt_resolve_swip_hot[bf.page.dt_id]++;
+         }
          return bf;
       } else {
          return resolveSwip(swip_guard, swip_value);

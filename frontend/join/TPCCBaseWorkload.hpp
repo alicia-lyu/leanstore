@@ -53,6 +53,11 @@ class TPCCBaseWorkload
    }
    virtual ~TPCCBaseWorkload() = default;
 
+   static bool isSelected(Integer i_id)
+   {
+      return TPCCWorkload<AdapterType>::isSelected(i_id, FLAGS_semijoin_selectivity);
+   }
+
    virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since) = 0;
 
    virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id) = 0;

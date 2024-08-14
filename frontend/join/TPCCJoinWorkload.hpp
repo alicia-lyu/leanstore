@@ -175,7 +175,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
          Integer item_id = itemids[i];
-         if (item_id % 100 > FLAGS_semijoin_selectivity) {
+         if (!Base::isSelected(item_id)) {
             continue;
          }
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
@@ -377,7 +377,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       }
       for (Integer s_id = 1; s_id <= this->tpcc->ITEMS_NO * this->tpcc->scale_factor; s_id++) {
          bool ret = this->tpcc->stock.tryLookup({w_id, s_id}, [&](const auto&) {});
-         if (s_id % 100 > FLAGS_semijoin_selectivity) {
+         if (!Base::isSelected(s_id)) {
             ensure(!ret);
          } else {
             ensure(ret);

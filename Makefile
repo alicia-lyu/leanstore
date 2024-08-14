@@ -81,7 +81,7 @@ write ?= $(default_write)
 update_size ?= $(default_update_size)
 selectivity ?= $(default_selectivity)
 duration ?= 0
-locality_read ?= False
+locality_read ?= ""
 
 both: join merged
 
@@ -103,7 +103,7 @@ rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
 	$(MAKE) $* read=100 scan=0 write=0
 
 %-locality-read:
-	$(MAKE) $* read=100 scan=0 write=0 locality_read=True
+	$(MAKE) $* read=100 scan=0 write=0 locality_read=1
 
 %-scan:
 	$(MAKE) $* read=0 scan=100 write=0

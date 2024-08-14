@@ -913,11 +913,18 @@ class TPCCWorkload
       leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
    }
    // -------------------------------------------------------------------------------------
+   static bool isSelected(Integer i_id, Integer semijoin_selectivity)
+   {
+      int step = 100 / semijoin_selectivity;
+      int rem = i_id % 100;
+      return rem % step == 0 && rem / step <= semijoin_selectivity;
+   }
+
    void loadStock(Integer w_id, Integer semijoin_selectivity = 100)  // TODO
    {
       std::cout << "Loading " << ITEMS_NO * scale_factor << " stock" << std::endl;
       for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
-         if ((i + 1) % 100 > semijoin_selectivity) {
+         if (!isSelected(i + 1, semijoin_selectivity)) {
             continue;
          }
          Varchar<50> s_data = randomastring<50>(25, 50);

@@ -286,7 +286,9 @@ BufferFrame& BufferManager::resolveSwip(Guard& swip_guard, Swip<BufferFrame>& sw
    if (swip_value.isHOT()) {
       BufferFrame& bf = swip_value.asBufferFrame();
       swip_guard.recheck();
-      WorkerCounters::myCounters().dt_resolve_swip_hot[bf.page.dt_id]++;
+      COUNTERS_BLOCK() {
+         WorkerCounters::myCounters().dt_resolve_swip_hot[bf.page.dt_id]++;
+      }
       return bf;
    } else if (swip_value.isCOOL()) {
       BufferFrame* bf = &swip_value.asBufferFrameMasked();
@@ -296,7 +298,9 @@ BufferFrame& BufferManager::resolveSwip(Guard& swip_guard, Swip<BufferFrame>& sw
       BMExclusiveGuard bf_x_guard(bf_guard);                // child
       bf->header.state = BufferFrame::STATE::HOT;
       swip_value.warm();
-      WorkerCounters::myCounters().dt_resolve_swip_cool[bf->page.dt_id]++;
+      COUNTERS_BLOCK() {
+         WorkerCounters::myCounters().dt_resolve_swip_cool[bf->page.dt_id]++;
+      }
       return *bf;
    }
    // -------------------------------------------------------------------------------------
