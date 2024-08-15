@@ -281,43 +281,6 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
          Numeric i_price = this->tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
          Varchar<24> s_dist = this->tpcc->template randomastring<24>(24, 24);
-         merged.template tryLookup<stock_t>({w_id, itemid}, [&](const stock_t& rec) {
-            switch (d_id) {
-               case 1:
-                  s_dist = rec.s_dist_01;
-                  break;
-               case 2:
-                  s_dist = rec.s_dist_02;
-                  break;
-               case 3:
-                  s_dist = rec.s_dist_03;
-                  break;
-               case 4:
-                  s_dist = rec.s_dist_04;
-                  break;
-               case 5:
-                  s_dist = rec.s_dist_05;
-                  break;
-               case 6:
-                  s_dist = rec.s_dist_06;
-                  break;
-               case 7:
-                  s_dist = rec.s_dist_07;
-                  break;
-               case 8:
-                  s_dist = rec.s_dist_08;
-                  break;
-               case 9:
-                  s_dist = rec.s_dist_09;
-                  break;
-               case 10:
-                  s_dist = rec.s_dist_10;
-                  break;
-               default:
-                  exit(1);
-                  throw;
-            }
-         });
          Numeric ol_amount = qty * i_price * (1.0 + w_tax + d_tax) * (1.0 - c_discount);
          Timestamp ol_delivery_d = 0;  // NULL
          this->tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
