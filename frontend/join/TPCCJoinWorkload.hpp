@@ -67,7 +67,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           },
           []() { /* undo */ });
 
-      std::cout << "Scan cardinality: " << scanCardinality.load() << ", results cardinality: " << resultsCardinality << std::endl;
+      // std::cout << "Scan cardinality: " << scanCardinality.load() << ", results cardinality: " << resultsCardinality << std::endl;
       // All default configs, dram_gib = 8, cardinality = 184694
    }
 
@@ -392,6 +392,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
                  std::chrono::steady_clock::time_point t3,
                  leanstore::cr::CRManager& crm)
    {
+      // return; // LATER
       std::ofstream csv_file(this->getCsvFile("join_size.csv"), std::ios::app);
       auto config = ExperimentHelper::getConfigString();
       u64 core_page_count = 0;

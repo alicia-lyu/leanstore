@@ -38,12 +38,14 @@ def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, 
     print(f"Log Directory: {log_dir}")
     return log_dir
 
-def get_recovery_file(method, target_gib, selectivity, included_columns):
+def get_recovery_file(method, target_gib, selectivity, included_columns, rocksdb):
     recovery_file = f"{method}-target{target_gib}g.json"
     if selectivity != 100:
         recovery_file = add_suffix_before_extension(recovery_file, f"-sel{selectivity}")
     if included_columns != 1:
         recovery_file = add_suffix_before_extension(recovery_file, f"-col{included_columns}")
+    if rocksdb:
+        recovery_file = add_suffix_before_extension(recovery_file, "-rocksdb")
     print(f"Recovery File: {recovery_file}")
     return recovery_file
 
@@ -109,7 +111,7 @@ def main():
         args.read_percentage, args.scan_percentage, args.write_percentage, 
         args.order_size, args.selectivity, args.included_columns, args.locality_read)
     
-    recovery_file = build_dir / get_recovery_file(method, args.target_gib, args.selectivity, args.included_columns)
+    recovery_file = build_dir / get_recovery_file(method, args.target_gib, args.selectivity, args.included_columns, "rocksdb" in method)
     
     trunc = not recovery_file.exists()
     
@@ -165,13 +167,13 @@ def main():
         print("Experiment failed, you need to remove the persisted json file.")
         sys.exit(1)
 
+    if "rocksdb" in method:
+        shutil.rmtree(image)
+    
     if args.write_percentage > 0:
-        if os.path.isdir(write_image_file):
-            shutil.rmtree(write_image_file)
-        else:
-            with open(stdout_log_path, 'a') as log_file:
-                log_file.write(f"Size of {write_image_file}: {os.path.getsize(write_image_file) / (1024**3)} GiB.\n")
-            os.remove(write_image_file)
+        with open(stdout_log_path, 'a') as log_file:
+            log_file.write(f"Size of {write_image_file}: {os.path.getsize(write_image_file) / (1024**3)} GiB.\n")
+        os.remove(write_image_file)
 
 if __name__ == "__main__":
     main()
