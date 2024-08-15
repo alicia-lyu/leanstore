@@ -124,7 +124,7 @@ write: join-write merged-write
 
 all-tx-types: read scan write locality
 
-rocksdb-all-tx-types: rocksdb-join-all-tx-types rocksdb-merged-all-tx-types
+rocksdb-all-tx-types: rocksdb-both-read rocksdb-both-locality rocksdb-both-scan rocksdb-both-write
 
 locality-all: join-locality merged-locality rocksdb-join-locality rocksdb-merged-locality
 

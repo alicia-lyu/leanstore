@@ -119,17 +119,18 @@ def main():
 
     if args.write_percentage > 0:
         persist_file = f"./leanstore.json"
-        write_image_file = add_suffix_before_extension(image, "-write")
-        
-        if args.dram_gib >= args.target_gib * 2: # Force load instead of recovery
-            trunc = True
-            recovery_file = "./leanstore.json"
-            assert('rocksdb' not in method)
-            Path(write_image_file).touch()
-        else:
-            subprocess.run(["cp", "-f", "-r", image, write_image_file]) # Force overwrite
+        if "rocksdb" not in method:
+            write_image_file = add_suffix_before_extension(image, "-write")
             
-        image = write_image_file
+            if args.dram_gib >= args.target_gib * 2: # Force load instead of recovery
+                trunc = True
+                recovery_file = "./leanstore.json"
+                assert('rocksdb' not in method)
+                Path(write_image_file).touch()
+            else:
+                subprocess.run(["cp", "-f", "-r", image, write_image_file]) # Force overwrite
+                
+            image = write_image_file
     else:
         persist_file = recovery_file
     
@@ -171,9 +172,10 @@ def main():
         shutil.rmtree(image)
     
     if args.write_percentage > 0:
-        with open(stdout_log_path, 'a') as log_file:
-            log_file.write(f"Size of {write_image_file}: {os.path.getsize(write_image_file) / (1024**3)} GiB.\n")
-        os.remove(write_image_file)
+        if "rocksdb" not in method:
+            with open(stdout_log_path, 'a') as log_file:
+                log_file.write(f"Size of {image}: {os.path.getsize(image) / (1024**3)} GiB.\n")
+                os.remove(write_image_file)
 
 if __name__ == "__main__":
     main()

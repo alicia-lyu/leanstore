@@ -1,6 +1,9 @@
 #pragma once
 
+#include <rocksdb/table.h>
 #include <rocksdb/slice.h>
+#include <rocksdb/filter_policy.h>
+#include <rocksdb/slice_transform.h>
 #include <rocksdb/statistics.h>
 #include <rocksdb/wide_columns.h>
 #include "Types.hpp"
@@ -48,8 +51,13 @@ struct RocksDB {
       db_options.create_if_missing = true;
       db_options.manual_wal_flush = true;
       db_options.compression = rocksdb::CompressionType::kNoCompression;
-      // db_options.OptimizeLevelStyleCompaction(FLAGS_dram_gib * 1024 * 1024 * 1024);
+      db_options.compaction_style = rocksdb::CompactionStyle::kCompactionStyleLevel;
       db_options.row_cache = rocksdb::NewLRUCache(FLAGS_dram_gib * 1024 * 1024 * 1024);
+      rocksdb::BlockBasedTableOptions table_options;
+      table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false)); // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
+      db_options.table_factory.reset(
+         rocksdb::NewBlockBasedTableFactory(table_options));
+      db_options.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(sizeof(u32))); // ID
       db_options.statistics = rocksdb::CreateDBStatistics();
       db_options.stats_dump_period_sec = 1;
       rocksdb::Status s;
