@@ -136,9 +136,9 @@ void BufferManager::writeAllBufferFrames()
             page.dt_id = bf.page.dt_id;
             page.magic_debugging_number = bf.header.pid;
             DTRegistry::global_dt_registry.checkpoint(bf.page.dt_id, bf, page.dt);
-            s64 ret = pwrite(ssd_fd, page, PAGE_SIZE, bf.header.pid * PAGE_SIZE);
-            ensure(ret == PAGE_SIZE);
             if (bf.isDirty()) {
+               s64 ret = pwrite(ssd_fd, page, PAGE_SIZE, bf.header.pid * PAGE_SIZE);
+               ensure(ret == PAGE_SIZE);
                COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_page_writes[bf.page.dt_id]++; }
             }
          }

@@ -113,7 +113,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       produced += final_cartesian_products.size();
       // results.insert(results.end(), final_cartesian_products.begin(), final_cartesian_products.end());
 
-      std::cout << "Scan cardinality: " << scanCardinality.load() << ", Produced: " << produced << std::endl;
+      // std::cout << "Scan cardinality: " << scanCardinality.load() << ", Produced: " << produced << std::endl;
       // All default configs, dram_gib = 8, cardinality = 385752
    }
 
@@ -411,16 +411,16 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
       auto config = ExperimentHelper::getConfigString();
       u64 core_page_count = 0;
-      // auto core_page_count = this->getCorePageCount(crm);
+      core_page_count = this->getCorePageCount(crm);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
       u64 merged_page_count = 0;
       u64 merged_leaf_count = 0;
       u64 merged_height = 0;
-      // crm.scheduleJobSync(0, [&]() {
-      //    // merged_page_count = merged.btree->estimatePages();
-      //    // merged_leaf_count = merged.btree->estimateLeafs();
-      //    // merged_height = merged.btree->getHeight();
-      // });
+      crm.scheduleJobSync(0, [&]() {
+         merged_page_count = merged.btree->estimatePages();
+         merged_leaf_count = merged.btree->estimateLeafs();
+         merged_height = merged.btree->getHeight();
+      });
       auto merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
       std::cout << "merged_page_count: " << merged_page_count << ", merged_leaf_count: " << merged_leaf_count << ", merged_height: " << merged_height

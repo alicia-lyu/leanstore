@@ -2,10 +2,10 @@
 default_read := 98
 default_scan := 2
 default_write := 0
-default_dram := 1
+default_dram := 0.3
 default_target := 4
 default_update_size := 5
-default_selectivity := 100
+default_selectivity := 19
 included_columns ?= 1
 
 CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
@@ -102,7 +102,7 @@ rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
 %-read:
 	$(MAKE) $* read=100 scan=0 write=0
 
-%-locality-read:
+%-locality:
 	$(MAKE) $* read=100 scan=0 write=0 locality_read=1
 
 %-scan:
@@ -111,22 +111,22 @@ rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
 %-write:
 	$(MAKE) $* read=0 scan=0 write=100
 	
-%-all-tx-types: %-read %-scan %-write %-locality-read
+%-all-tx-types: %-read %-locality %-scan %-write 
 	@echo "Completed all transaction types for $*"
 
 read: join-read merged-read
 
-locality-read: join-locality-read merged-locality-read
+locality: join-locality merged-locality
 
 scan: join-scan merged-scan
 
 write: join-write merged-write
 
-all-tx-types: read scan write locality-read
+all-tx-types: read scan write locality
 
 rocksdb-all-tx-types: rocksdb-join-all-tx-types rocksdb-merged-all-tx-types
 
-all-locality-read: join-locality-read merged-locality-read rocksdb-join-locality-read rocksdb-merged-locality-read
+locality-all: join-locality merged-locality rocksdb-join-locality rocksdb-merged-locality
 
 update-size:
 # $(MAKE) write update_size=5 # refer to write expriments
@@ -137,18 +137,15 @@ selectivity:
 # Affects read, scan, and write
 # for selectivity=100, refer to all-tx-types experiments
 	$(MAKE) all-tx-types selectivity=50
-	$(MAKE) all-tx-types selectivity=20
+	$(MAKE) all-tx-types selectivity=19
 	$(MAKE) all-tx-types selectivity=10
 
 no-columns:
 	$(MAKE) all-tx-types included_columns=0
 
 table-size:
-	find . -regextype posix-extended -regex './build/(merged|join)-target$(target)g.*\.json' -exec rm {} \;
-	rm -f "~/logs/join_size.csv"
-	rm -f "~/logs/merged_size.csv"
-	@for col in 0 1; do \
-		for sel in 100 50 19; do \
+	@for col in 1 0; do \
+		for sel in 19 50 100; do \
 			$(MAKE) both dram=16 selectivity=$$sel included_columns=$$col duration=1; \
 		done \
 	done
