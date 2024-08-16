@@ -1,8 +1,9 @@
 #include "../shared/RocksDBAdapter.hpp"
 #include "../tpc-c/Schema.hpp"
-#include "RocksDBExperimentHelper.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
+#include "Exceptions.hpp"
 #include "JoinedSchema.hpp"
+#include "RocksDBExperimentHelper.hpp"
 #include "TPCCJoinWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
@@ -37,19 +38,13 @@ int main(int argc, char** argv)
    TPCCJoinWorkload<RocksDBAdapter> tpcc_join(&context->tpcc, orderline_secondary, joined_ols);
 
    std::vector<thread> threads;
-   std::atomic<u32> g_w_id = 1;
    if (!FLAGS_recover) {
       std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
       helper.loadCore();
       std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
-      g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
-            while (true) {
-               const u32 w_id = g_w_id++;
-               if (w_id > FLAGS_tpcc_warehouse_count) {
-                  return;
-               }
+            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
                jumpmuTry()
                {
                   context->rocks_db.startTX();
@@ -68,18 +63,34 @@ int main(int argc, char** argv)
       }
       threads.clear();
       std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-      g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
-            while (true) {
-               const u32 w_id = g_w_id++;
-               if (w_id > FLAGS_tpcc_warehouse_count) {
-                  return;
-               }
+            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
                jumpmuTry()
                {
                   context->rocks_db.startTX();
                   tpcc_join.joinOrderlineAndStock(w_id);
+                  context->rocks_db.commitTX();
+               }
+               jumpmuCatch()
+               {
+                  UNREACHABLE();
+               }
+            }
+         });
+      }
+      for (auto& thread : threads) {
+         thread.join();
+      }
+      threads.clear();
+      // Scan to force compaction / warm up
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         threads.emplace_back([&]() {
+            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
+               jumpmuTry()
+               {
+                  context->rocks_db.startTX();
+                  tpcc_join.tx(w_id, 0, 100, 0);
                   context->rocks_db.commitTX();
                }
                jumpmuCatch()
@@ -100,6 +111,7 @@ int main(int argc, char** argv)
       std::array<uint64_t, 3> times = {core_time, secondary_time, join_time};
       context->rocks_db.logSizes<13>(&times);
    } else {
+      UNREACHABLE();
       context->rocks_db.logSizes<13>();
    }
 
@@ -108,7 +120,7 @@ int main(int argc, char** argv)
    std::atomic<u64> thread_committed[FLAGS_worker_threads];
    std::atomic<u64> thread_aborted[FLAGS_worker_threads];
    context->rocks_db.startProfilingThread(running_threads_counter, keep_running, thread_committed, thread_aborted, FLAGS_print_header);
-   
+
    helper.scheduleTransations(&tpcc_join, threads, keep_running, running_threads_counter, thread_committed, thread_aborted);
 
    sleep(FLAGS_run_for_seconds);

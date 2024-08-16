@@ -138,7 +138,7 @@ selectivity:
 # for selectivity=100, refer to all-tx-types experiments
 	$(MAKE) all-tx-types selectivity=50
 	$(MAKE) all-tx-types selectivity=19
-	$(MAKE) all-tx-types selectivity=10
+	$(MAKE) all-tx-types selectivity=5
 
 no-columns:
 	$(MAKE) all-tx-types included_columns=0
@@ -147,6 +147,13 @@ table-size:
 	@for col in 1 0; do \
 		for sel in 19 50 100; do \
 			$(MAKE) both dram=16 selectivity=$$sel included_columns=$$col duration=1; \
+		done \
+	done
+
+rocksdb-size:
+	@for col in 1 0; do \
+		for sel in 5 19 50 100; do \
+			$(MAKE) rocksdb-both dram=16 selectivity=$$sel included_columns=$$col duration=1; \
 		done \
 	done
 

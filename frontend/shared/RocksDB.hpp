@@ -1,13 +1,15 @@
 #pragma once
 
-#include <rocksdb/table.h>
-#include <rocksdb/slice.h>
 #include <rocksdb/filter_policy.h>
+#include <rocksdb/options.h>
+#include <rocksdb/slice.h>
 #include <rocksdb/slice_transform.h>
 #include <rocksdb/statistics.h>
+#include <rocksdb/table.h>
 #include <rocksdb/wide_columns.h>
-#include "Types.hpp"
+#include "../join/ExperimentHelper.hpp"
 #include "../join/TPCCBaseWorkload.hpp"
+#include "Types.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
@@ -22,8 +24,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <string>
 #include <ios>
+#include <string>
 #include <unordered_map>
 
 struct RocksDB {
@@ -49,15 +51,15 @@ struct RocksDB {
       db_options.db_write_buffer_size = 0;  // disabled
       // db_options.write_buffer_size = 64 * 1024 * 1024; keep the default
       db_options.create_if_missing = true;
-      db_options.manual_wal_flush = true;
+      // db_options.manual_wal_flush = true;
       db_options.compression = rocksdb::CompressionType::kNoCompression;
       db_options.compaction_style = rocksdb::CompactionStyle::kCompactionStyleLevel;
       db_options.row_cache = rocksdb::NewLRUCache(FLAGS_dram_gib * 1024 * 1024 * 1024);
       rocksdb::BlockBasedTableOptions table_options;
-      table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false)); // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
-      db_options.table_factory.reset(
-         rocksdb::NewBlockBasedTableFactory(table_options));
-      db_options.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(sizeof(u32))); // ID
+      table_options.filter_policy.reset(
+          rocksdb::NewBloomFilterPolicy(10, false));  // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
+      db_options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
+      db_options.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(sizeof(u32)));  // ID
       db_options.statistics = rocksdb::CreateDBStatistics();
       db_options.stats_dump_period_sec = 1;
       rocksdb::Status s;
@@ -100,52 +102,75 @@ struct RocksDB {
    void logSizes(std::array<uint64_t, id_count - 10>* times = nullptr)
    {
       std::string file_name = id_count == 13 ? "join_size.csv" : "merged_size.csv";
-      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / file_name;
+      std::filesystem::path size_dir = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "size_rocksdb";
+      std::filesystem::create_directories(size_dir);
+      std::filesystem::path csv_path = size_dir / file_name;
       bool csv_exists = std::filesystem::exists(csv_path);
       std::ofstream csv_file(csv_path, std::ios::app);
-      if (!csv_exists)
-      {
+      if (!csv_exists) {
          csv_file << "table(s),config,size";
          if (times) {
             csv_file << ",time";
          }
          csv_file << std::endl;
       }
-         
+
       rocksdb::Range ranges[id_count];
-      for (u32 i = 0; i < id_count; i++) {
-         u8 start[sizeof(u32)];
+      for (int i = 0; i < id_count; i++) {
+         u8* start = new u8[sizeof(u32)];
          const u32 folded_key_len = fold(start, i);
          rocksdb::Slice start_slice((const char*)start, folded_key_len);
-         u8 limit[sizeof(u32)];
+
+         u8* limit = new u8[sizeof(u32)];
          const u32 folded_limit_len = fold(limit, i + 1);
          rocksdb::Slice limit_slice((const char*)limit, folded_limit_len);
+
          ranges[i] = rocksdb::Range(start_slice, limit_slice);
       }
+
+      auto configString = ExperimentHelper::getConfigString();
+
+      rocksdb::SizeApproximationOptions options;
+      options.include_memtables = true;
+      options.include_files = true;
+      options.files_size_error_margin = 0.1;
+
       uint64_t sizes[id_count];
-      db->GetApproximateSizes(ranges, id_count, sizes);
+      db->GetApproximateSizes(options, db->DefaultColumnFamily(), ranges, id_count, sizes);
       std::cout << "Sizes:";
       for (u32 i = 0; i < id_count; i++) {
          std::cout << " " << sizes[i];
       }
       std::cout << std::endl;
+
+      uint64_t total_size = 0;
+      db->GetIntProperty(rocksdb::DB::Properties::kEstimateLiveDataSize, &total_size);
+      std::cout << "Total size: " << total_size << std::endl;
+      csv_file << "total," << configString << "," << total_size << std::endl;
+      
       uint64_t core_size = 0;
       for (u32 i = 0; i <= 10; i++) {
          core_size += sizes[i];
       }
-      csv_file << "core," << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << "," << core_size;
+      csv_file << "core," << configString << "," << core_size;
       if (times) {
          csv_file << "," << times->at(0) << std::endl;
       } else {
          csv_file << std::endl;
       }
+
       for (u32 i = 11; i < id_count; i++) {
-         csv_file << "table" << i << "," << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << "," << sizes[i];
+         csv_file << "table" << i << "," << configString << "," << sizes[i];
          if (times) {
             csv_file << "," << times->at(i - 10) << std::endl;
          } else {
             csv_file << std::endl;
          }
+      }
+
+      for (int i = 0; i < id_count; i++) {
+         delete[] ranges[i].start.data();
+         delete[] ranges[i].limit.data();
       }
    }
 
@@ -161,7 +186,7 @@ struct RocksDB {
 
          leanstore::profiling::CPUTable cpu_table;
          cpu_table.open();
-         cpu_table.next(); // Clear previous values
+         cpu_table.next();  // Clear previous values
 
          u64 time = 0;
          std::ofstream::openmode open_flags;
@@ -199,7 +224,7 @@ struct RocksDB {
             stats->histogramData(rocksdb::Histograms::SST_WRITE_MICROS, &sst_write_hist);
             if (total_aborted + total_committed > 0) {
                csv << (sst_read_hist.sum - sst_read_prev) / (total_aborted + total_committed) << ","
-                 << (sst_write_hist.sum - sst_write_prev) / (total_aborted + total_committed) << ",";
+                   << (sst_write_hist.sum - sst_write_prev) / (total_aborted + total_committed) << ",";
                sst_read_prev = sst_read_hist.sum;
                sst_write_prev = sst_write_hist.sum;
             } else {
@@ -212,7 +237,7 @@ struct RocksDB {
                csv << (cpu_table.workers_agg_events["cycle"] + cycles_acc) / tx << ",";
                cycles_acc = 0;
 
-               csv << ((double) cpu_table.workers_agg_events["task"] + task_clock_acc) / tx * 1e-6 << ",";
+               csv << ((double)cpu_table.workers_agg_events["task"] + task_clock_acc) / tx * 1e-6 << ",";
                task_clock_acc = 0;
             } else {
                csv << "0,";
