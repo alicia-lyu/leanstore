@@ -293,7 +293,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       }
    }
 
-   void loadStockToMerged(Integer w_id, Integer semijoin_selectivity = 100)  // TODO
+   void loadStockToMerged(Integer w_id)
    {
       std::cout << "Loading stock of warehouse " << w_id << " to merged" << std::endl;
       for (Integer i = 0; i < this->tpcc->ITEMS_NO * this->tpcc->scale_factor; i++) {

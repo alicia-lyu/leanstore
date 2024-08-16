@@ -97,9 +97,11 @@ class RocksDBExperimentHelper : public ExperimentHelper
       context_ptr->tpcc.loadItem();
       context_ptr->tpcc.loadWarehouse();
       context_ptr->rocks_db.commitTX();
+      std::atomic<u32> g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
-            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
+            while (true) {
+               u32 w_id = g_w_id++;
                if (w_id > FLAGS_tpcc_warehouse_count) {
                   return;
                }
@@ -107,7 +109,7 @@ class RocksDBExperimentHelper : public ExperimentHelper
                {
                   context_ptr->rocks_db.startTX();
                   if (load_stock) {
-                     context_ptr->tpcc.loadStock(w_id);
+                     context_ptr->tpcc.loadStock(w_id, FLAGS_semijoin_selectivity);
                   }
                   context_ptr->tpcc.loadDistrict(w_id);
                   for (Integer d_id = 1; d_id <= 10; d_id++) {

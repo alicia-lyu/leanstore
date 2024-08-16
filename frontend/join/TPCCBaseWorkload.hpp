@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include "../tpc-c/TPCCWorkload.hpp"
+#include "Join.hpp"
 #include "JoinedSchema.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 
@@ -38,7 +39,13 @@ class TPCCBaseWorkload
   public:
    using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;
    using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
-   TPCCBaseWorkload(TPCCWorkload<AdapterType>* tpcc) : tpcc(tpcc)
+
+  protected:
+   AdapterType<orderline_sec_t>* orderline_secondary;
+
+  public:
+   TPCCBaseWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary = nullptr)
+       : tpcc(tpcc), orderline_secondary(orderline_secondary)
    {
       if constexpr (INCLUDE_COLUMNS == 0) {
          std::cout << "Columns included: Key only" << std::endl;
@@ -53,16 +60,62 @@ class TPCCBaseWorkload
    }
    virtual ~TPCCBaseWorkload() = default;
 
-   static bool isSelected(Integer i_id)
+   static bool isSelected(Integer i_id) { return TPCCWorkload<AdapterType>::isSelected(i_id, FLAGS_semijoin_selectivity); }
+
+   void loadOrderlineSecondary(Integer w_id = std::numeric_limits<Integer>::max())
    {
-      return TPCCWorkload<AdapterType>::isSelected(i_id, FLAGS_semijoin_selectivity);
+      std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
+      auto orderline_scanner = this->tpcc->orderline.getScanner();
+      if (w_id != std::numeric_limits<Integer>::max()) {
+         orderline_scanner->seek({w_id, 0, 0, 0});
+      }
+      while (true) {
+         auto ret = orderline_scanner->next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         if (key.ol_w_id != w_id)
+            break;
+         typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+         if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
+            this->orderline_secondary->insert(sec_key, {});
+         } else {
+            orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
+                                           payload.ol_dist_info};
+            this->orderline_secondary->insert(sec_key, sec_payload);
+         }
+      }
    }
 
-   virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since) = 0;
+   void joinOrderlineAndStockOnTheFly(std::function<void(joined_t::Key&, joined_t&)> cb, Integer w_id = std::numeric_limits<Integer>::max())
+   {
+      std::cout << "Joining orderline and stock for warehouse " << w_id << std::endl;
+      auto orderline_scanner = this->orderline_secondary->getScanner();
+      auto stock_scanner = this->tpcc->stock.getScanner();
 
-   virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id) = 0;
+      if (w_id != std::numeric_limits<Integer>::max()) {
+         orderline_scanner->seek({w_id, 0, 0, 0, 0});
+         stock_scanner->seek({w_id, 0});
+      }
 
-   virtual void newOrderRnd(Integer w_id, Integer order_size = 5) = 0;
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+
+      while (true) {
+         auto ret = merge_join.next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         if (key.w_id != w_id)
+            break;
+         cb(key, payload);
+      }
+   }
+
+   virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since) {}
+
+   virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id) {}
+
+   virtual void newOrderRnd(Integer w_id, Integer order_size = 5) {}
 
    int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage, Integer order_size = 5)
    {
@@ -83,7 +136,7 @@ class TPCCBaseWorkload
       }
    }
 
-   virtual void verifyWarehouse(Integer w_id) = 0;
+   virtual void verifyWarehouse(Integer w_id) {}
 
    std::string getCsvFile(std::string csv_name)
    {

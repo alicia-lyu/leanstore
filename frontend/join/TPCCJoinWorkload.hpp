@@ -7,7 +7,6 @@
 #include <iostream>
 #include <stdexcept>
 #include "ExperimentHelper.hpp"
-#include "Join.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/utils/JumpMU.hpp"
 
@@ -17,12 +16,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    using Base = TPCCBaseWorkload<AdapterType>;
    using orderline_sec_t = typename Base::orderline_sec_t;
    using joined_t = typename Base::joined_t;
-   AdapterType<orderline_sec_t>& orderline_secondary;
    AdapterType<joined_t>& joined_ols;
 
   public:
-   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>& orderline_secondary, AdapterType<joined_t>& joined_ols)
-       : TPCCBaseWorkload<AdapterType>(tpcc), orderline_secondary(orderline_secondary), joined_ols(joined_ols)
+   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary, AdapterType<joined_t>& joined_ols)
+       : TPCCBaseWorkload<AdapterType>(tpcc, orderline_secondary), joined_ols(joined_ols)
    {
    }
 
@@ -279,10 +277,10 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
          // ********** Update Secondary Index **********
          // std::cout << "Line number #" << i << ": Updating secondary index" << std::endl;
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
-            orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, {});
+            this->orderline_secondary->insert({w_id, itemid, d_id, o_id, lineNumber}, {});
          } else {
             ol_join_sec_t payload = {supware, ol_delivery_d, qty, ol_amount, s_dist};
-            orderline_secondary.insert({w_id, itemid, d_id, o_id, lineNumber}, payload);
+            this->orderline_secondary->insert({w_id, itemid, d_id, o_id, lineNumber}, payload);
          }
          // ********** Update Join Results **********
          // std::cout << "Line number #" << i << ": Updating join results" << std::endl;
@@ -315,53 +313,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       }
    }
 
-   void loadOrderlineSecondary(Integer w_id = std::numeric_limits<Integer>::max())
-   {
-      std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
-      auto orderline_scanner = this->tpcc->orderline.getScanner();
-      if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner->seek({w_id, 0, 0, 0});
-      }
-      while (true) {
-         auto ret = orderline_scanner->next();
-         if (!ret.has_value())
-            break;
-         auto [key, payload] = ret.value();
-         if (key.ol_w_id != w_id)
-            break;
-         typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-         if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
-            orderline_secondary.insert(sec_key, {});
-         } else {
-            orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
-                                           payload.ol_dist_info};
-            orderline_secondary.insert(sec_key, sec_payload);
-         }
-      }
-   }
-
    void joinOrderlineAndStock(Integer w_id = std::numeric_limits<Integer>::max())
    {
-      std::cout << "Joining orderline and stock for warehouse " << w_id << std::endl;
-      auto orderline_scanner = orderline_secondary.getScanner();
-      auto stock_scanner = this->tpcc->stock.getScanner();
-
-      if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner->seek({w_id, 0, 0, 0, 0});
-         stock_scanner->seek({w_id, 0});
-      }
-
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
-
-      while (true) {
-         auto ret = merge_join.next();
-         if (!ret.has_value())
-            break;
-         auto [key, payload] = ret.value();
-         if (key.w_id != w_id)
-            break;
-         joined_ols.insert(key, payload);
-      }
+      Base::joinOrderlineAndStockOnTheFly([&](joined_t::Key& key, joined_t& rec) {
+         joined_ols.insert(key, rec);
+      }, w_id);
    }
 
    void verifyWarehouse(Integer w_id)
@@ -400,7 +356,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
       auto orderline_secondary_page_count = 0;
-      crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = orderline_secondary.btree->estimatePages(); });
+      crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->btree->estimatePages(); });
       auto orderline_secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
       u64 joined_ols_page_count = 0;

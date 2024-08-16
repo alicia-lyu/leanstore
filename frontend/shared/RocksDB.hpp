@@ -9,6 +9,7 @@
 #include <rocksdb/wide_columns.h>
 #include "../join/ExperimentHelper.hpp"
 #include "../join/TPCCBaseWorkload.hpp"
+#include "Exceptions.hpp"
 #include "Types.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
@@ -110,7 +111,7 @@ struct RocksDB {
       if (!csv_exists) {
          csv_file << "table(s),config,size";
          if (times) {
-            csv_file << ",time";
+            csv_file << ",time(ms)";
          }
          csv_file << std::endl;
       }
@@ -125,6 +126,11 @@ struct RocksDB {
          const u32 folded_limit_len = fold(limit, i + 1);
          rocksdb::Slice limit_slice((const char*)limit, folded_limit_len);
 
+         auto options = rocksdb::CompactRangeOptions();
+         options.change_level = true;
+         std::cout << "Compacting " << i << std::endl;
+         auto ret = db->CompactRange(options, &start_slice, &limit_slice);
+         assert(ret.ok());
          ranges[i] = rocksdb::Range(start_slice, limit_slice);
       }
 
@@ -160,14 +166,38 @@ struct RocksDB {
       }
 
       for (u32 i = 11; i < id_count; i++) {
-         csv_file << "table" << i << "," << configString << "," << sizes[i];
+         std::string table_name = "table" + std::to_string(i);
+         if (id_count == 13) {
+            if (i == 11) {
+               table_name = "orderline_secondary";
+            } else if (i == 12) {
+               table_name = "join_results";
+            } else {
+               UNREACHABLE();
+            }
+         } else if (id_count == 12) {
+            if (i == 11) {
+               table_name = "merged_index";
+            } else {
+               UNREACHABLE();
+            }
+         } else {
+            UNREACHABLE();
+         }
+         uint64_t size = sizes[i];
+         if (size == 0) {
+            size = total_size - core_size;
+            for (u32 j = 11; j < i; j++) {
+               size -= sizes[j];
+            }
+         }
+         csv_file << table_name << "," << configString << "," << size;
          if (times) {
             csv_file << "," << times->at(i - 10) << std::endl;
          } else {
             csv_file << std::endl;
          }
       }
-
       for (int i = 0; i < id_count; i++) {
          delete[] ranges[i].start.data();
          delete[] ranges[i].limit.data();
