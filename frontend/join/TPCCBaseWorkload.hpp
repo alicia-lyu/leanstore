@@ -111,11 +111,169 @@ class TPCCBaseWorkload
       }
    }
 
-   virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since) {}
+   virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
+   {
+      this->joinOrderlineAndStockOnTheFly(
+          [&](joined_t::Key& key, joined_t& payload) {
+             if (key.w_id != w_id || key.ol_d_id != d_id || payload.ol_delivery_d < since)
+                return;
+             // results.push_back({key, payload});
+          },
+          w_id);
+   }
 
-   virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id) {}
+   virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
+   {
+      // Let's pretend the key is not ordered on w_id, d_id, i_id
+      // Otherwise, this is a special case favoring base tables
+      vector<joined_t> results;
+      auto orderline_scanner = this->orderline_secondary->getScanner();
+      auto stock_scanner = this->tpcc->stock.getScanner();
 
-   virtual void newOrderRnd(Integer w_id, Integer order_size = 5) {}
+      if (w_id != std::numeric_limits<Integer>::max()) {
+         orderline_scanner->seek({w_id, i_id, 0, 0, 0});
+         stock_scanner->seek({w_id, i_id});
+      }
+
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+
+      while (true) {
+         auto ret = merge_join.next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         if (key.w_id != w_id || key.i_id != i_id)
+            break;
+         else if (!FLAGS_locality_read && key.ol_d_id != d_id)
+            continue;
+         if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
+            results.push_back(payload);
+         } else {
+            this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) {  // ATTN: BTree operation in call back function
+               // Only emulating BTree operations, not concatenating stock_rec and joined_rec
+               results.push_back(payload);
+            });
+         }
+      }
+   }
+
+   virtual void newOrderRndCallback(
+       Integer w_id,
+       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&)>
+           stock_update_cb,
+       std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
+       Integer order_size = 5)
+   {
+      // this->tpcc->newOrderRnd(w_id);
+      Integer d_id = this->tpcc->urand(1, 10);
+      Integer c_id = this->tpcc->getCustomerID();
+      Integer ol_cnt = this->tpcc->urand(order_size, order_size * 3);
+
+      vector<Integer> lineNumbers;
+      vector<Integer> supwares;
+      vector<Integer> itemids;
+      vector<Integer> qtys;
+
+      lineNumbers.reserve(15);
+      supwares.reserve(15);
+      itemids.reserve(15);
+      qtys.reserve(15);
+
+      for (Integer i = 1; i <= ol_cnt; i++) {
+         Integer supware = w_id;
+         if (!this->tpcc->warehouse_affinity && this->tpcc->urand(1, 100) == 1)  // ATTN:remote transaction
+            supware = this->tpcc->urandexcept(1, this->tpcc->warehouseCount, w_id);
+         Integer itemid = this->tpcc->getItemID();
+         if (false && (i == ol_cnt) && (this->tpcc->urand(1, 100) == 1))  // invalid item => random
+            itemid = 0;
+         lineNumbers.push_back(i);
+         supwares.push_back(supware);
+         itemids.push_back(itemid);
+         qtys.push_back(this->tpcc->urand(1, 10));
+      }
+
+      Timestamp timestamp = this->tpcc->currentTimestamp();
+
+      // this->tpcc->newOrder
+      Numeric w_tax = this->tpcc->warehouse.lookupField({w_id}, &warehouse_t::w_tax);
+      Numeric c_discount = this->tpcc->customer.lookupField({w_id, d_id, c_id}, &customer_t::c_discount);
+      Numeric d_tax;
+      Integer o_id;
+
+      UpdateDescriptorGenerator1(district_update_descriptor, district_t, d_next_o_id);
+      // UpdateDescriptorGenerator2(district_update_descriptor, district_t, d_next_o_id, d_ytd);
+      this->tpcc->district.update1(
+          {w_id, d_id},
+          [&](district_t& rec) {
+             d_tax = rec.d_tax;
+             o_id = rec.d_next_o_id++;
+          },
+          district_update_descriptor);
+
+      Numeric all_local = 1;
+      for (Integer sw : supwares)
+         if (sw != w_id)
+            all_local = 0;
+      Numeric cnt = lineNumbers.size();
+      Integer carrier_id = 0; /*null*/
+      this->tpcc->order.insert({w_id, d_id, o_id}, {c_id, timestamp, carrier_id, cnt, all_local});
+      if (this->tpcc->order_wdc_index) {
+         this->tpcc->order_wdc.insert({w_id, d_id, c_id, o_id}, {});
+      }
+      this->tpcc->neworder.insert({w_id, d_id, o_id}, {});
+
+      // Batch update stock records
+      for (unsigned i = 0; i < lineNumbers.size(); i++) {
+         Integer qty = qtys[i];
+         Integer item_id = itemids[i];
+         if (!isSelected(item_id)) {
+            continue;
+         }
+         // We don't need the primary index of stock_t at all, since all its info is in merged
+         UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
+         stock_update_cb(
+             {supwares[i], itemids[i]},
+             [&](stock_t& rec) {
+                auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
+                s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
+                rec.s_remote_cnt += (supwares[i] != w_id);
+                rec.s_order_cnt++;
+                rec.s_ytd += qty;
+             },
+             stock_update_descriptor);
+      }
+
+      // Batch insert orderline records
+      for (unsigned i = 0; i < lineNumbers.size(); i++) {
+         Integer lineNumber = lineNumbers[i];
+         Integer supware = supwares[i];
+         Integer itemid = itemids[i];
+         Numeric qty = qtys[i];
+
+         Numeric i_price = this->tpcc->item.lookupField({itemid}, &item_t::i_price);  // TODO: rollback on miss
+         Varchar<24> s_dist = this->tpcc->template randomastring<24>(24, 24);
+         Numeric ol_amount = qty * i_price * (1.0 + w_tax + d_tax) * (1.0 - c_discount);
+         Timestamp ol_delivery_d = 0;  // NULL
+         this->tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
+         // ********** Update Merged Index **********
+         if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
+            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber},
+                                orderline_sec_t{supware, ol_delivery_d, qty, ol_amount, s_dist});
+         } else {
+            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, {});
+         }
+      }
+   }
+
+   virtual void newOrderRnd(Integer w_id, Integer order_size = 5)
+   {
+      this->newOrderRndCallback(
+          w_id,
+          [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+             this->tpcc->stock.update1(key, cb, update_descriptor);
+          },
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, order_size);
+   }
 
    int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage, Integer order_size = 5)
    {
