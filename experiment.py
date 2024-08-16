@@ -121,11 +121,11 @@ def main():
         persist_file = f"./leanstore.json"
         if "rocksdb" not in method:
             write_image_file = add_suffix_before_extension(image, "-write")
+            print(f"Write Image File: {write_image_file}")
             
             if args.dram_gib >= args.target_gib * 2: # Force load instead of recovery
                 trunc = True
                 recovery_file = "./leanstore.json"
-                assert('rocksdb' not in method)
                 Path(write_image_file).touch()
             else:
                 subprocess.run(["cp", "-f", "-r", image, write_image_file]) # Force overwrite

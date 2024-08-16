@@ -1,6 +1,7 @@
 #include "../shared/RocksDBAdapter.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
+#include "Exceptions.hpp"
 #include "JoinedSchema.hpp"
 #include "RocksDBExperimentHelper.hpp"
 #include "RocksDBMergedAdapter.hpp"
@@ -43,16 +44,33 @@ int main(int argc, char** argv)
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
-            while (true) {
-               const u32 w_id = g_w_id++;
-               if (w_id > FLAGS_tpcc_warehouse_count) {
-                  return;
-               }
+            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
                jumpmuTry()
                {
                   context->rocks_db.startTX();
                   tpcc_merged.loadStockToMerged(w_id);
                   tpcc_merged.loadOrderlineSecondaryToMerged(w_id);
+                  context->rocks_db.commitTX();
+               }
+               jumpmuCatch()
+               {
+                  UNREACHABLE();
+               }
+            }
+         });
+      }
+      for (auto& thread : threads) {
+         thread.join();
+      }
+      threads.clear();
+      // Scan to force compaction / warm up
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         threads.emplace_back([&]() {
+            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
+               jumpmuTry()
+               {
+                  context->rocks_db.startTX();
+                  tpcc_merged.tx(w_id, 0, 100, 0);
                   context->rocks_db.commitTX();
                }
                jumpmuCatch()
@@ -72,6 +90,7 @@ int main(int argc, char** argv)
       std::array<uint64_t, 2> times = {core_time, merged_time};
       context->rocks_db.logSizes<12>(&times);
    } else {
+      UNREACHABLE();
       context->rocks_db.logSizes<12>();
    }
 
@@ -80,7 +99,7 @@ int main(int argc, char** argv)
    std::atomic<u64> thread_committed[FLAGS_worker_threads];
    std::atomic<u64> thread_aborted[FLAGS_worker_threads];
    context->rocks_db.startProfilingThread(running_threads_counter, keep_running, thread_committed, thread_aborted, FLAGS_print_header);
-   
+
    helper.scheduleTransations(&tpcc_merged, threads, keep_running, running_threads_counter, thread_committed, thread_aborted);
    // -------------------------------------------------------------------------------------
    sleep(FLAGS_run_for_seconds);

@@ -92,7 +92,6 @@ class RocksDBExperimentHelper : public ExperimentHelper
 
    int loadCore(bool load_stock = true)
    {
-      std::atomic<u32> g_w_id = 1;
       std::vector<thread> threads;
       context_ptr->rocks_db.startTX();
       context_ptr->tpcc.loadItem();
@@ -100,8 +99,7 @@ class RocksDBExperimentHelper : public ExperimentHelper
       context_ptr->rocks_db.commitTX();
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
-            while (true) {
-               const u32 w_id = g_w_id++;
+            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
                if (w_id > FLAGS_tpcc_warehouse_count) {
                   return;
                }
