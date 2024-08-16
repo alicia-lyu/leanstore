@@ -50,7 +50,7 @@ int main(int argc, char** argv)
                   return;
                }
                cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-               tpcc_merge.loadStockToMerged(w_id, FLAGS_semijoin_selectivity);
+               tpcc_merge.loadStockToMerged(w_id);
                tpcc_merge.loadOrderlineSecondaryToMerged(w_id);
                cr::Worker::my().commitTX();
             }

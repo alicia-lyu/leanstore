@@ -23,7 +23,7 @@ MERGED_EXEC := /frontend/merged_tpcc
 ROCKSDB_JOIN_EXEC := /frontend/rocksdb_join_tpcc
 ROCKSDB_MERGED_EXEC := /frontend/rocksdb_merged_tpcc
 
-EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC)
+EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC) $(ROCKSDB_MERGED_EXEC)
 
 # Create Cartesian product for targets
 TARGETS := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)$(exec)))
@@ -124,7 +124,7 @@ write: join-write merged-write
 
 all-tx-types: read scan write locality
 
-rocksdb-all-tx-types: rocksdb-both-read rocksdb-both-locality rocksdb-both-scan rocksdb-both-write
+all-tx-types-rocksdb: rocksdb-both-read rocksdb-both-locality rocksdb-both-scan rocksdb-both-write
 
 locality-all: join-locality merged-locality rocksdb-join-locality rocksdb-merged-locality
 
@@ -134,11 +134,15 @@ update-size:
 	$(MAKE) write update_size=20
 
 selectivity:
-# Affects read, scan, and write
-# for selectivity=100, refer to all-tx-types experiments
+	$(MAKE) all-tx-types # default selectivity=19
+	$(MAKE) all-tx-types selectivity=100
 	$(MAKE) all-tx-types selectivity=50
-	$(MAKE) all-tx-types selectivity=19
 	$(MAKE) all-tx-types selectivity=5
+
+rocksdb-selectivity:
+	$(MAKE) all-tx-types-rocksdb selectivity=100
+	$(MAKE) all-tx-types-rocksdb selectivity=50
+	$(MAKE) all-tx-types-rocksdb selectivity=5
 
 no-columns:
 	$(MAKE) all-tx-types included_columns=0
@@ -153,7 +157,7 @@ table-size:
 rocksdb-size:
 	@for col in 1 0; do \
 		for sel in 5 19 50 100; do \
-			$(MAKE) rocksdb-both dram=16 selectivity=$$sel included_columns=$$col duration=1; \
+			$(MAKE) rocksdb-merged dram=16 selectivity=$$sel included_columns=$$col duration=1; \
 		done \
 	done
 

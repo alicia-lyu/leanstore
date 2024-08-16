@@ -39,12 +39,16 @@ int main(int argc, char** argv)
    std::atomic<u32> g_w_id = 1;
    if (!FLAGS_recover) {
       std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-      helper.loadCore();
+      helper.loadCore(false);
       std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
-            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
+            while (true) {
+               u32 w_id = g_w_id++;
+               if (w_id > FLAGS_tpcc_warehouse_count) {
+                  return;
+               }
                jumpmuTry()
                {
                   context->rocks_db.startTX();
@@ -63,32 +67,11 @@ int main(int argc, char** argv)
          thread.join();
       }
       threads.clear();
-      // Scan to force compaction / warm up
-      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-         threads.emplace_back([&]() {
-            for (u32 w_id = t_i + 1; w_id <= FLAGS_tpcc_warehouse_count; w_id += FLAGS_worker_threads) {
-               jumpmuTry()
-               {
-                  context->rocks_db.startTX();
-                  tpcc_merged.tx(w_id, 0, 100, 0);
-                  context->rocks_db.commitTX();
-               }
-               jumpmuCatch()
-               {
-                  UNREACHABLE();
-               }
-            }
-         });
-      }
-      for (auto& thread : threads) {
-         thread.join();
-      }
-      threads.clear();
       std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
       uint64_t core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
       uint64_t merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
       std::array<uint64_t, 2> times = {core_time, merged_time};
-      context->rocks_db.logSizes<12>(&times);
+      context->rocks_db.logSizes<12>(&times); // Will force compaction
    } else {
       UNREACHABLE();
       context->rocks_db.logSizes<12>();

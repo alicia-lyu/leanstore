@@ -38,7 +38,7 @@ int main(int argc, char** argv)
       orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary");
       joined_ols = LeanStoreAdapter<joined_t>(db, "joined_ols");
    });
-   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, orderline_secondary, joined_ols);
+   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, &orderline_secondary, joined_ols);
 
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor

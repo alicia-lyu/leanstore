@@ -3,7 +3,7 @@
 #include "Exceptions.hpp"
 #include "Units.hpp"
 
-template <u32 merged_id>
+template <int merged_id>
 struct RocksDBMergedAdapter {
    using SEP = u32;  // use 32-bits integer as separator instead of column family
    RocksDB& map;
@@ -13,6 +13,12 @@ struct RocksDBMergedAdapter {
    rocksdb::Slice RSlice(T* ptr, u64 len)
    {
       return rocksdb::Slice(reinterpret_cast<const char*>(ptr), len);
+   }
+
+   template <class T>
+   uint32_t getId(const T& str)
+   {
+      return __builtin_bswap32(*reinterpret_cast<const uint32_t*>(str.data())) ^ (1ul << 31);
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
@@ -107,12 +113,6 @@ struct RocksDBMergedAdapter {
          return true;
       }
    }
-   // -------------------------------------------------------------------------------------
-   template <class T>
-   uint32_t getId(const T& str)
-   {
-      return __builtin_bswap32(*reinterpret_cast<const uint32_t*>(str.data())) ^ (1ul << 31);
-   }
    //             [&](const neworder_t::Key& key, const neworder_t&) {
    template <class Record, class OtherRec>
    void scan(const typename Record::Key& key, // It is the caller's reponsibility to choose the smaller key
@@ -128,7 +128,7 @@ struct RocksDBMergedAdapter {
       rocksdb::Iterator* it = map.db->NewIterator(map.ro);
       u32 rec_len = Record::maxFoldLength() + sizeof(SEP);
       u32 other_rec_len = OtherRec::maxFoldLength() + sizeof(SEP);
-      for (it->Seek(start_key); it->Valid(); it->Next()) {
+      for (it->Seek(start_key); it->Valid() && getId(it->key()) == merged_id; it->Next()) {
          bool is_rec = false;
          bool is_other_rec = false;
          size_t key_len = it->key().size();
