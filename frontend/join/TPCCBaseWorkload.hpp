@@ -113,6 +113,7 @@ class TPCCBaseWorkload
 
    virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
+      // If leaf count is similar to merged index, performance should be similar
       this->joinOrderlineAndStockOnTheFly(
           [&](joined_t::Key& key, joined_t& payload) {
              if (key.w_id != w_id || key.ol_d_id != d_id || payload.ol_delivery_d < since)
@@ -124,11 +125,10 @@ class TPCCBaseWorkload
 
    virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
-      // Let's pretend the key is not ordered on w_id, d_id, i_id
-      // Otherwise, this is a special case favoring base tables
-      vector<joined_t> results;
+      vector<joined_ols_t> results;
       auto orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
+      // double lookup compared to MergedWorkload
 
       if (w_id != std::numeric_limits<Integer>::max()) {
          orderline_scanner->seek({w_id, i_id, 0, 0, 0});
@@ -146,13 +146,17 @@ class TPCCBaseWorkload
             break;
          else if (!FLAGS_locality_read && key.ol_d_id != d_id)
             continue;
-         if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-            results.push_back(payload);
+         if constexpr (std::is_same_v<joined_t, joined_ols_key_only_t>) {
+            // stock_t stock_rec = merge_join.getPayload2();
+            tpcc->orderline.lookup1({
+                  key.w_id,
+                  key.ol_d_id,
+                  key.ol_o_id,
+                  key.ol_number,
+            }, [&](orderline_t&) {});
+            results.push_back(joined_ols_t());
          } else {
-            this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) {  // ATTN: BTree operation in call back function
-               // Only emulating BTree operations, not concatenating stock_rec and joined_rec
-               results.push_back(payload);
-            });
+            results.push_back(payload);
          }
       }
    }
@@ -325,7 +329,8 @@ class TPCCBaseWorkload
 
       std::cout << "Stock: " << stock_page_count << " pages, Orderline secondary: " << orderline_secondary_page_count << " pages" << std::endl;
 
-      csv_file << "stock+orderline_secondary," << stock_page_count + orderline_secondary_page_count << "," << std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count() << std::endl;
+      csv_file << "stock+orderline_secondary," << stock_page_count + orderline_secondary_page_count << ","
+               << std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count() << std::endl;
    }
 
    virtual void logSizes(leanstore::cr::CRManager& crm)

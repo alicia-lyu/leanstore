@@ -95,10 +95,9 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
              if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
                 results.push_back(rec);
              } else {
-                this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) {  // ATTN: BTree operation in call back function
-                   // Only emulating BTree operations, not concatenating stock_rec and joined_rec
-                   results.push_back(rec);
-                });
+                this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) {});
+                this->tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t&) {});
+                results.push_back(rec);
              }
              return true;
           },
