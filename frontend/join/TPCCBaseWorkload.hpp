@@ -159,8 +159,7 @@ class TPCCBaseWorkload
 
    virtual void newOrderRndCallback(
        Integer w_id,
-       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&)>
-           stock_update_cb,
+       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&)> stock_update_cb,
        std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
        Integer order_size = 5)
    {
@@ -294,7 +293,9 @@ class TPCCBaseWorkload
       }
    }
 
-   virtual void verifyWarehouse(Integer w_id) {}
+   virtual void verifyWarehouse(Integer w_id) { tpcc->verifyWarehouse(w_id); }
+
+   virtual void loadStock(Integer w_id) { tpcc->loadStock(w_id, FLAGS_semijoin_selectivity); }
 
    std::string getCsvFile(std::string csv_name)
    {
@@ -307,21 +308,48 @@ class TPCCBaseWorkload
       return csv_path;
    }
 
-   u64 getCorePageCount(leanstore::cr::CRManager& crm)
+   virtual void logSizes(std::chrono::steady_clock::time_point t0,
+                         std::chrono::steady_clock::time_point sec_start,
+                         std::chrono::steady_clock::time_point sec_end,
+                         leanstore::cr::CRManager& crm)
+   {
+      std::string csv_path = getCsvFile("tpcc_base.csv");
+      std::ofstream csv_file(csv_path, std::ios::app);
+      auto core_page_count = getCorePageCount(crm, false);
+      csv_file << "core" << core_page_count << "," << std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count() << std::endl;
+
+      uint64_t stock_page_count = 0;
+      crm.scheduleJobSync(0, [&]() { stock_page_count = this->tpcc->stock.estimatePages(); });
+      uint64_t orderline_secondary_page_count = 0;
+      crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->estimatePages(); });
+
+      std::cout << "Stock: " << stock_page_count << " pages, Orderline secondary: " << orderline_secondary_page_count << " pages" << std::endl;
+
+      csv_file << "stock+orderline_secondary," << stock_page_count + orderline_secondary_page_count << "," << std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count() << std::endl;
+   }
+
+   virtual void logSizes(leanstore::cr::CRManager& crm)
+   {
+      auto t0 = std::chrono::steady_clock::now();
+      logSizes(t0, t0, t0, crm);
+   }
+
+   u64 getCorePageCount(leanstore::cr::CRManager& crm, bool count_stock = true)
    {
       u64 core_page_count = 0;
       crm.scheduleJobSync(0, [&]() {
-         core_page_count += this->tpcc->warehouse.btree->estimatePages();
-         core_page_count += this->tpcc->district.btree->estimatePages();
-         core_page_count += this->tpcc->customer.btree->estimatePages();
-         core_page_count += this->tpcc->customerwdl.btree->estimatePages();
-         core_page_count += this->tpcc->history.btree->estimatePages();
-         core_page_count += this->tpcc->neworder.btree->estimatePages();
-         core_page_count += this->tpcc->order.btree->estimatePages();
-         core_page_count += this->tpcc->order_wdc.btree->estimatePages();
-         core_page_count += this->tpcc->orderline.btree->estimatePages();
-         core_page_count += this->tpcc->item.btree->estimatePages();
-         core_page_count += this->tpcc->stock.btree->estimatePages();
+         core_page_count += this->tpcc->warehouse.estimatePages();
+         core_page_count += this->tpcc->district.estimatePages();
+         core_page_count += this->tpcc->customer.estimatePages();
+         core_page_count += this->tpcc->customerwdl.estimatePages();
+         core_page_count += this->tpcc->history.estimatePages();
+         core_page_count += this->tpcc->neworder.estimatePages();
+         core_page_count += this->tpcc->order.estimatePages();
+         core_page_count += this->tpcc->order_wdc.estimatePages();
+         core_page_count += this->tpcc->orderline.estimatePages();
+         core_page_count += this->tpcc->item.estimatePages();
+         if (count_stock)
+            core_page_count += this->tpcc->stock.estimatePages();
       });
       return core_page_count;
    }

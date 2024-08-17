@@ -214,4 +214,7 @@ struct LeanStoreAdapter : Adapter<Record> {
          *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(sec_btree)));
       }
    }
+
+   u64 estimatePages() final { return btree->estimatePages(); }
+   u64 estimateLeafs() final { return btree->estimateLeafs(); }
 };

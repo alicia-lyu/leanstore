@@ -205,4 +205,8 @@ struct LeanStoreMergedAdapter {
    }
    // -------------------------------------------------------------------------------------
    u64 count() { return btree->countEntries(); }
+
+   u64 estimatePages() { return btree->estimatePages(); }
+   u64 estimateLeafs() { return btree->estimateLeafs(); }
+
 };

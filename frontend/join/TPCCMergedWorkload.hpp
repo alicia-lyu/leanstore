@@ -288,9 +288,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       u64 merged_leaf_count = 0;
       u64 merged_height = 0;
       crm.scheduleJobSync(0, [&]() {
-         merged_page_count = merged.btree->estimatePages();
-         merged_leaf_count = merged.btree->estimateLeafs();
-         merged_height = merged.btree->getHeight();
+         merged_page_count = merged.estimatePages();
+         merged_leaf_count = merged.estimateLeafs();
       });
       auto merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 

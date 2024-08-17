@@ -183,4 +183,7 @@ struct RocksDBMergedAdapter {
       assert(found);
       return local_f;
    }
+
+   u64 estimatePages() { UNREACHABLE(); }
+   u64 estimateLeafs() { UNREACHABLE(); }
 };
