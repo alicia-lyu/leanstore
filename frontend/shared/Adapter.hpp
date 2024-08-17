@@ -73,4 +73,7 @@ class Adapter
    }
 
    virtual std::unique_ptr<Scanner<Record>> getScanner() { UNREACHABLE(); };
+
+   virtual u64 estimatePages() { UNREACHABLE(); }
+   virtual u64 estimateLeafs() { UNREACHABLE(); }
 };

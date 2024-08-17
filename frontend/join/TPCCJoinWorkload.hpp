@@ -356,7 +356,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
       auto orderline_secondary_page_count = 0;
-      crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->btree->estimatePages(); });
+      crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->estimatePages(); });
       auto orderline_secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
       u64 joined_ols_page_count = 0;
@@ -364,9 +364,8 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       u64 joined_ols_height = 0;
 
       crm.scheduleJobSync(0, [&]() {
-         joined_ols_page_count = joined_ols.btree->estimatePages();
-         joined_ols_leaf_count = joined_ols.btree->estimateLeafs();
-         joined_ols_height = joined_ols.btree->getHeight();
+         joined_ols_page_count = joined_ols.estimatePages();
+         joined_ols_leaf_count = joined_ols.estimateLeafs();
       });
       auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 
