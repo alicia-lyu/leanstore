@@ -86,3 +86,8 @@ add_executable(merged_tpcc join/merged_tpcc.cpp)
 target_link_libraries(merged_tpcc leanstore Threads::Threads)
 target_include_directories(merged_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 target_compile_definitions(merged_tpcc PUBLIC INCLUDE_COLUMNS=${INCLUDED_COLUMNS})
+
+add_executable(base_tpcc join/base_tpcc.cpp)
+target_link_libraries(base_tpcc leanstore Threads::Threads)
+target_include_directories(base_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+target_compile_definitions(base_tpcc PUBLIC INCLUDE_COLUMNS=${INCLUDED_COLUMNS})

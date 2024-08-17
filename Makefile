@@ -20,10 +20,11 @@ BUILD_DIRS := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 
 JOIN_EXEC := /frontend/join_tpcc
 MERGED_EXEC := /frontend/merged_tpcc
+BASE_EXEC := /frontend/base_tpcc
 ROCKSDB_JOIN_EXEC := /frontend/rocksdb_join_tpcc
 ROCKSDB_MERGED_EXEC := /frontend/rocksdb_merged_tpcc
 
-EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC) $(ROCKSDB_MERGED_EXEC)
+EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC) $(ROCKSDB_MERGED_EXEC) $(BASE_EXEC)
 
 # Create Cartesian product for targets
 TARGETS := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)$(exec)))
@@ -64,13 +65,16 @@ join-lldb: $(BUILD_DIR_DEBUG)$(JOIN_EXEC)
 merged-lldb: $(BUILD_DIR_DEBUG)$(MERGED_EXEC)
 	lldb -- ./build-debug/frontend/merged_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/merged-lldb
 
+base-lldb: $(BUILD_DIR_DEBUG)$(BASE_EXEC)
+	lldb -- ./build-debug/frontend/base_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/base-lldb
+
 rocksdb-join-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
 	lldb -- ./build-debug/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-join-lldb
 
 rocksdb-merged-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_MERGED_EXEC)
 	lldb -- ./build-debug/frontend/rocksdb_merged_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-merged-lldb
 
-.PHONY: join-lldb
+.PHONY: join-lldb merged-lldb base-lldb rocksdb-join-lldb rocksdb-merged-lldb
 
 # ----------------- EXPERIMENTS -----------------
 dram ?= $(default_dram)
@@ -99,6 +103,9 @@ merged: $(BUILD_DIR)$(MERGED_EXEC)
 rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
 	python3 experiment.py $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
 
+base: $(BUILD_DIR)$(BASE_EXEC)
+	python3 experiment.py $(BUILD_DIR)$(BASE_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+
 %-read:
 	$(MAKE) $* read=100 scan=0 write=0
 
@@ -114,50 +121,31 @@ rocksdb-merged: $(BUILD_DIR)$(ROCKSDB_MERGED_EXEC)
 %-all-tx-types: %-read %-locality %-scan %-write 
 	@echo "Completed all transaction types for $*"
 
-read: join-read merged-read
+rall := rocksdb-both-all-tx-types
 
-locality: join-locality merged-locality
-
-scan: join-scan merged-scan
-
-write: join-write merged-write
-
-all-tx-types: read scan write locality
-
-all-tx-types-rocksdb: rocksdb-both-read rocksdb-both-locality rocksdb-both-scan rocksdb-both-write
-
-locality-all: join-locality merged-locality rocksdb-join-locality rocksdb-merged-locality
+all := both-all-tx-types
 
 update-size:
 # $(MAKE) write update_size=5 # refer to write expriments
 	$(MAKE) write update_size=10
 	$(MAKE) write update_size=20
 
-selectivity:
-	$(MAKE) all-tx-types # default selectivity=19
-	$(MAKE) all-tx-types selectivity=100
-	$(MAKE) all-tx-types selectivity=50
-	$(MAKE) all-tx-types selectivity=5
+%-selectivity:
+	$(MAKE) $*-all-tx-types # default selectivity=19
+	$(MAKE) $*-all-tx-types selectivity=100
+	$(MAKE) $*-all-tx-types selectivity=50
+	$(MAKE) $*-all-tx-types selectivity=5
 
-rocksdb-selectivity:
-	$(MAKE) all-tx-types-rocksdb selectivity=100
-	$(MAKE) all-tx-types-rocksdb selectivity=50
-	$(MAKE) all-tx-types-rocksdb selectivity=5
+rsel := rocksdb-both-selectivity
+sel := both-selectivity
 
 no-columns:
 	$(MAKE) all-tx-types included_columns=0
 
-table-size:
+%-size:
 	@for col in 1 0; do \
 		for sel in 19 50 100; do \
-			$(MAKE) both dram=16 selectivity=$$sel included_columns=$$col duration=1; \
-		done \
-	done
-
-rocksdb-size:
-	@for col in 1 0; do \
-		for sel in 5 19 50 100; do \
-			$(MAKE) rocksdb-merged dram=16 selectivity=$$sel included_columns=$$col duration=1; \
+			$(MAKE) $* dram=16 selectivity=$$sel included_columns=$$col duration=1; \
 		done \
 	done
 
