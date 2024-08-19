@@ -104,38 +104,43 @@ class MergeJoin
    }
 
    template <typename Left, typename Right, typename Joined>
-   static std::pair<typename Joined::Key, Joined> merge_records(const typename Left::Key& left_key,
-                                                                const Left& left_rec,
-                                                                const typename Right::Key& right_key,
-                                                                const Right& right_rec);
+   static std::pair<typename Joined::Key, Joined> merge(const typename Left::Key& left_key,
+                                                        const Left& left_rec,
+                                                        const typename Right::Key& right_key,
+                                                        const Right& right_rec)
+   {
+      return {merge_keys<Joined>(left_key, right_key), merge_records<Joined>(left_rec, right_rec)};
+   }
+
+   template <typename Left, typename Right, typename Joined>
+   static typename Joined::Key merge_keys(const typename Left::Key& left_key, const typename Right::Key& right_key);
+
+   template <typename Left, typename Right, typename Joined>
+   static Joined merge_records(const Left& left_rec, const Right& right_rec);
 
    template <typename Joined = joined_ols_t>
-   static std::pair<typename Joined::Key, Joined> merge_records(const ol_join_sec_t::Key& left_key,
-                                                                const ol_join_sec_t& left_rec,
-                                                                const stock_t::Key&,
-                                                                const stock_t& right_rec)
+   static typename Joined::Key merge_keys(const ol_join_sec_t::Key& left_key, const stock_t::Key& right_key)
    {
       joined_ols_t::Key key{left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
+      return key;
+   }
 
+   template <typename Joined = joined_ols_t>
+   static Joined merge_records(const ol_join_sec_t& left_rec, const stock_t& right_rec)
+   {
       joined_ols_t record{left_rec.ol_supply_w_id, left_rec.ol_delivery_d, left_rec.ol_quantity,   left_rec.ol_amount,  right_rec.s_quantity,
                           right_rec.s_dist_01,     right_rec.s_dist_02,    right_rec.s_dist_03,    right_rec.s_dist_04, right_rec.s_dist_05,
                           right_rec.s_dist_06,     right_rec.s_dist_07,    right_rec.s_dist_08,    right_rec.s_dist_09, right_rec.s_dist_10,
                           right_rec.s_ytd,         right_rec.s_order_cnt,  right_rec.s_remote_cnt, right_rec.s_data};
 
-      return {key, record};
+      return record;
    }
 
    template <typename Joined = joined_ols_key_only_t>
-   static std::pair<typename Joined::Key, Joined> merge_records(const ol_sec_key_only_t::Key& left_key,
-                                                                const ol_sec_key_only_t&,
-                                                                const stock_t::Key&,
-                                                                const stock_t&)
+   static Joined merge_records(const ol_sec_key_only_t&, const stock_t&)
    {
-      joined_ols_key_only_t::Key key{left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
-
       joined_ols_key_only_t record{};
-
-      return {key, record};
+      return record;
    }
 
   private:
@@ -234,8 +239,8 @@ class MergeJoin
 
       const Record2& right = use_cached ? *cached_right_records_iter : right_record;
 
-      const auto [key, record] = merge_records(const_cast<const typename Record1::Key&>(left_key), const_cast<const Record1&>(left_record),
-                                               const_cast<const typename Record2::Key&>(right_key), right);
+      const auto key = merge_keys(const_cast<const typename Record1::Key&>(left_key), const_cast<const typename Record2::Key&>(right_key));
+      const auto record = merge_records(const_cast<const Record1&>(left_record), right);
 
       current_left_matched = true;
       if (use_cached) {

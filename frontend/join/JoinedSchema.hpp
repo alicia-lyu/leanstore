@@ -2,6 +2,7 @@
 #include <ostream>
 #include "../shared/Types.hpp"
 #include "Exceptions.hpp"
+#include "../tpc-c/Schema.hpp"
 
 // TODO: Generate multiple schema with different included columns
 
@@ -347,5 +348,56 @@ struct joined_ols_key_only_t {
   joined_selected_t toSelected() const {
     UNREACHABLE(); // Only to suppress warning
     // If one really needs joined_selected_t, lookups into base tables are needed
+  }
+
+  joined_selected_t expand(joined_ols_key_only_t::Key& key, stock_t& stock, orderline_t& orderline) {
+    Varchar<24> s_dist;
+    switch (key.ol_d_id) {
+      case 1:
+        s_dist = stock.s_dist_01;
+        break;
+      case 2:
+        s_dist = stock.s_dist_02;
+        break;
+      case 3:
+        s_dist = stock.s_dist_03;
+        break;
+      case 4:
+        s_dist = stock.s_dist_04;
+        break;
+      case 5:
+        s_dist = stock.s_dist_05;
+        break;
+      case 6:
+        s_dist = stock.s_dist_06;
+        break;
+      case 7:
+        s_dist = stock.s_dist_07;
+        break;
+      case 8:
+        s_dist = stock.s_dist_08;
+        break;
+      case 9:
+        s_dist = stock.s_dist_09;
+        break;
+      case 10:
+        s_dist = stock.s_dist_10;
+        break;
+      default:
+        throw std::runtime_error("Invalid ol_d_id");
+    };
+    joined_selected_t selected {
+      .ol_supply_w_id = orderline.ol_supply_w_id,
+      .ol_delivery_d = orderline.ol_delivery_d,
+      .ol_quantity = orderline.ol_quantity,
+      .ol_amount = orderline.ol_amount,
+      .s_quantity = stock.s_quantity,
+      .s_dist = s_dist,
+      .s_ytd = stock.s_ytd,
+      .s_order_cnt = stock.s_order_cnt,
+      .s_remote_cnt = stock.s_remote_cnt,
+      .s_data = stock.s_data
+    };
+    return selected;
   }
 };
