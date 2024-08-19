@@ -4,10 +4,8 @@
 #include "Exceptions.hpp"
 #include "../tpc-c/Schema.hpp"
 
-// TODO: Generate multiple schema with different included columns
-
-// Joining order line and stock in the same warehouse
-struct ol_join_sec_t {
+// Key is shared across different choices of included columns
+struct orderline_secondary_base_t {
   static constexpr int id = 11;
   struct Key {
     static constexpr int id = 11; // comes from table 8, i.e., orderline
@@ -27,12 +25,7 @@ struct ol_join_sec_t {
       return os;
     }
   };
-  // orderline_t::Value
-  Integer ol_supply_w_id;
-  Timestamp ol_delivery_d;
-  Numeric ol_quantity;
-  Numeric ol_amount;
-  Varchar<24> ol_dist_info;
+  orderline_secondary_base_t() = default;
 
   template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
     unsigned pos = 0;
@@ -83,69 +76,49 @@ struct ol_join_sec_t {
   static constexpr unsigned primaryKeyLength() {
     return 0 + sizeof(Key::ol_d_id) + sizeof(Key::ol_o_id) + sizeof(Key::ol_number);
   }
+};
+
+struct ol_sec_key_only_t;
+
+struct ol_join_sec_t: public orderline_secondary_base_t {
+  using orderline_secondary_base_t::id;
+  using orderline_secondary_base_t::Key;
+
+  ol_join_sec_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Varchar<24> ol_dist_info)
+      : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), ol_dist_info(ol_dist_info) {}
+
+  ol_join_sec_t() = default;
+
+  explicit ol_join_sec_t(const ol_sec_key_only_t&) {}
+
+  Integer ol_supply_w_id;
+  Timestamp ol_delivery_d;
+  Numeric ol_quantity;
+  Numeric ol_amount;
+  Varchar<24> ol_dist_info;
 
   friend std::ostream& operator<<(std::ostream& os, const ol_join_sec_t& record) {
     os << ", supply_w_id: " << record.ol_supply_w_id
        << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", dist_info: " << record.ol_dist_info.toString();
     return os;
   }
-
-  ol_join_sec_t expand() const {
-    return *this;
-  }
 };
 
-struct ol_sec_key_only_t {
-  static constexpr int id = 11; // Cannot coexist with ol_join_sec_t
-  using Key = ol_join_sec_t::Key;
+struct ol_sec_key_only_t: public orderline_secondary_base_t {
+  using orderline_secondary_base_t::id;
+  using orderline_secondary_base_t::Key;
 
   ol_sec_key_only_t() = default;
 
-  explicit ol_sec_key_only_t(ol_join_sec_t&) {}
-
-  template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
-    return ol_join_sec_t::foldKey(out, key);
-  }
-
-  template<class T> static unsigned foldJKey(uint8_t *out, const T &key) {
-    return ol_join_sec_t::foldJKey(out, key);
-  }
-
-  template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
-    return ol_join_sec_t::unfoldKey(in, key);
-  }
-
-  static constexpr unsigned maxFoldLength() {
-    return ol_join_sec_t::maxFoldLength();
-  };
-
-  static constexpr unsigned joinKeyLength() {
-    return ol_join_sec_t::joinKeyLength();
-  }
-
-  static constexpr unsigned primaryKeyLength() {
-    return ol_join_sec_t::primaryKeyLength();
-  }
+  explicit ol_sec_key_only_t(const ol_join_sec_t&) {}
 
   friend std::ostream& operator<<(std::ostream& os, const ol_sec_key_only_t&) {
     os << "ol_sec_key_only";
     return os;
   }
-
-  ol_join_sec_t expand() const {
-    return ol_join_sec_t {
-      .ol_supply_w_id = 0,
-      .ol_delivery_d = Timestamp(),
-      .ol_quantity = Numeric(),
-      .ol_amount = Numeric(),
-      .ol_dist_info = Varchar<24>()
-    };
-  }
 };
 
-struct joined_selected_t;
-
-struct joined_ols_t {
+struct joined_base_t {
   static constexpr int id = 12;
   struct Key {
     static constexpr int id = 12;
@@ -160,7 +133,9 @@ struct joined_ols_t {
 
     Key(Integer w_id, Integer i_id, Integer ol_d_id, Integer ol_o_id, Integer ol_number) : w_id(w_id), i_id(i_id), ol_d_id(ol_d_id), ol_o_id(ol_o_id), ol_number(ol_number) {}
 
-    explicit Key(const ol_join_sec_t::Key& ol_key) : w_id(ol_key.ol_w_id), i_id(ol_key.ol_i_id), ol_d_id(ol_key.ol_d_id), ol_o_id(ol_key.ol_o_id), ol_number(ol_key.ol_number) {}
+    explicit Key(const ol_join_sec_t::Key& ol_key) : w_id(ol_key.ol_w_id), i_id(ol_key.ol_i_id), ol_d_id(ol_key.ol_d_id), ol_o_id(ol_key.ol_o_id), ol_number(ol_key.ol_number) {
+      UNREACHABLE(); // To suppress compiler warning
+    }
 
     friend std::ostream& operator<<(std::ostream& os, const Key& key) {
       os << "w_id: " << key.w_id << ", i_id: " << key.i_id
@@ -169,28 +144,6 @@ struct joined_ols_t {
       return os;
     }
   };
-  // from order line
-  Integer ol_supply_w_id; // In inner join results, it must be the same as w_id, but not so in outer join results, where s info are NULL for unmatched records, as information from the actual supplying warehouse is not joined.
-  Timestamp ol_delivery_d;
-  Numeric ol_quantity;
-  Numeric ol_amount;
-  // Varchar<24> ol_dist_info; // Can be looked up by ol_d_id and s_dist_0x
-  // From stock
-  Numeric s_quantity;
-  Varchar<24> s_dist_01;
-  Varchar<24> s_dist_02;
-  Varchar<24> s_dist_03;
-  Varchar<24> s_dist_04;
-  Varchar<24> s_dist_05;
-  Varchar<24> s_dist_06;
-  Varchar<24> s_dist_07;
-  Varchar<24> s_dist_08;
-  Varchar<24> s_dist_09;
-  Varchar<24> s_dist_10;
-  Numeric s_ytd;
-  Numeric s_order_cnt;
-  Numeric s_remote_cnt;
-  Varchar<50> s_data;
 
   template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
     unsigned pos = 0;
@@ -220,6 +173,38 @@ struct joined_ols_t {
   static constexpr unsigned joinKeyLength() {
     return 0 + sizeof(Key::w_id) + sizeof(Key::i_id);
   }
+};
+
+struct joined_selected_t;
+
+struct joined_ols_t: public joined_base_t {
+  using joined_base_t::id;
+  using joined_base_t::Key;
+
+  joined_ols_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Numeric s_quantity, Varchar<24> s_dist_01, Varchar<24> s_dist_02, Varchar<24> s_dist_03, Varchar<24> s_dist_04, Varchar<24> s_dist_05, Varchar<24> s_dist_06, Varchar<24> s_dist_07, Varchar<24> s_dist_08, Varchar<24> s_dist_09, Varchar<24> s_dist_10, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
+      : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), s_quantity(s_quantity), s_dist_01(s_dist_01), s_dist_02(s_dist_02), s_dist_03(s_dist_03), s_dist_04(s_dist_04), s_dist_05(s_dist_05), s_dist_06(s_dist_06), s_dist_07(s_dist_07), s_dist_08(s_dist_08), s_dist_09(s_dist_09), s_dist_10(s_dist_10), s_ytd(s_ytd), s_order_cnt(s_order_cnt), s_remote_cnt(s_remote_cnt), s_data(s_data) {}
+
+  // from order line
+  Integer ol_supply_w_id;
+  Timestamp ol_delivery_d;
+  Numeric ol_quantity;
+  Numeric ol_amount;
+  // From stock
+  Numeric s_quantity;
+  Varchar<24> s_dist_01;
+  Varchar<24> s_dist_02;
+  Varchar<24> s_dist_03;
+  Varchar<24> s_dist_04;
+  Varchar<24> s_dist_05;
+  Varchar<24> s_dist_06;
+  Varchar<24> s_dist_07;
+  Varchar<24> s_dist_08;
+  Varchar<24> s_dist_09;
+  Varchar<24> s_dist_10;
+  Numeric s_ytd;
+  Numeric s_order_cnt;
+  Numeric s_remote_cnt;
+  Varchar<50> s_data;
 
   friend std::ostream& operator<<(std::ostream& os, const joined_ols_t& record) {
     os << "joined_ols_t: supply_w_id: " << record.ol_supply_w_id
@@ -227,12 +212,13 @@ struct joined_ols_t {
     return os;
   }
 
-  joined_selected_t toSelected(Key& key) const;
+  joined_selected_t toSelected(const Key& key) const;
 };
 
-struct joined_selected_t {
-  static constexpr int id = 12;
-  using Key = joined_ols_t::Key;
+struct joined_selected_t: public joined_base_t {
+  using joined_base_t::id;
+  using joined_base_t::Key;
+
   Integer ol_supply_w_id;
   Timestamp ol_delivery_d;
   Numeric ol_quantity;
@@ -244,22 +230,6 @@ struct joined_selected_t {
   Numeric s_remote_cnt;
   Varchar<50> s_data;
 
-  template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
-    return joined_ols_t::foldKey(out, key);
-  }
-
-  template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
-    return joined_ols_t::unfoldKey(in, key);
-  }
-
-  static constexpr unsigned maxFoldLength() {
-    return joined_ols_t::maxFoldLength();
-  };
-
-  static constexpr unsigned joinKeyLength() {
-    return joined_ols_t::joinKeyLength();
-  }
-
   friend std::ostream& operator<<(std::ostream& os, const joined_selected_t& rec) {
     os << "joined_selected: supply_w_id: " << rec.ol_supply_w_id << ", delivery_d: " << rec.ol_delivery_d << ", quantity: " << rec.ol_quantity << ", amount: " << rec.ol_amount << ", s_quantity: " << rec.s_quantity << ", s_dist: " << rec.s_dist.toString() << ", s_ytd: " << rec.s_ytd << ", s_order_cnt: " << rec.s_order_cnt << ", s_remote_cnt: " << rec.s_remote_cnt << ", s_data: " << rec.s_data.toString();
     return os;
@@ -270,7 +240,7 @@ struct joined_selected_t {
   }
 };
 
-joined_selected_t joined_ols_t::toSelected(joined_ols_t::Key& key) const {
+joined_selected_t joined_ols_t::toSelected(const Key& key) const {
   Varchar<24> s_dist;
   switch (key.ol_d_id) {
     case 1:
@@ -320,32 +290,16 @@ joined_selected_t joined_ols_t::toSelected(joined_ols_t::Key& key) const {
   };
 };
 
-struct joined_ols_key_only_t {
-  static constexpr int id = 12; // Cannot coexist with joined_ols_t
-  using Key = joined_ols_t::Key;
-
-  template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
-    return joined_ols_t::foldKey(out, key);
-  }
-
-  template <class T> static unsigned unfoldKey(const uint8_t *in, T &key) {
-    return joined_ols_t::unfoldKey(in, key);
-  }
-
-  static constexpr unsigned maxFoldLength() {
-    return joined_ols_t::maxFoldLength();
-  };
-
-  static constexpr unsigned joinKeyLength() {
-    return joined_ols_t::joinKeyLength();
-  }
+struct joined_ols_key_only_t: public joined_base_t {
+  using joined_base_t::id;
+  using joined_base_t::Key;
 
   friend std::ostream& operator<<(std::ostream& os, const joined_ols_key_only_t&) {
     os << "joined_ols_key_only";
     return os;
   }
 
-  joined_selected_t toSelected() const {
+  joined_selected_t toSelected(const joined_ols_key_only_t::Key&) const {
     UNREACHABLE(); // Only to suppress warning
     // If one really needs joined_selected_t, lookups into base tables are needed
   }
