@@ -112,7 +112,7 @@ class TPCCBaseWorkload
    }
 
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires std::is_same_v<joined_t, joined_ols_key_only_t>
+      requires std::same_as<joined_t, joined_ols_key_only_t>
    {
       std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
@@ -148,7 +148,7 @@ class TPCCBaseWorkload
    }
 
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires std::is_same_v<joined_t, joined_ols_t>
+      requires (std::same_as<joined_t, joined_ols_t> || std::same_as<joined_t, joined_selected_t>)
    {
       std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
@@ -163,7 +163,7 @@ class TPCCBaseWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         auto selected_payload = payload.toSelected();
+         auto selected_payload = payload.toSelected(key);
          auto res = cb(key, selected_payload);
          if (!res)
             break;

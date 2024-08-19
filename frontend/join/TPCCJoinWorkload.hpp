@@ -27,7 +27,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    }
 
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires std::same_as<joined_t, joined_ols_t>
+      requires (std::same_as<joined_t, joined_ols_t> || std::same_as<joined_t, joined_selected_t>)
    {
       joined_ols.scan(
           start_key,
@@ -61,12 +61,6 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
              cb(key, selected_payload);
           },
           []() {});
-   }
-
-   void scanJoin(typename joined_t::Key start_key, std::function<void(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires std::same_as<joined_t, joined_selected_t>
-   {
-      joined_ols.scan(start_key, [&](const joined_t::Key& key, const joined_t& rec) { cb(key, rec); }, []() {});
    }
 
       // When this query can be realistic: Keep track of stock information for recent orders
@@ -152,7 +146,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
              bool ret = this->tpcc->stock.tryLookup({key.ol_w_id, key.ol_i_id}, [&](const stock_t& rec) { stock_rec = rec; });
              if (ret) {
                 if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-                   ol_join_sec_t expanded_payload = payload.expand();
+                   ol_join_sec_t expanded_payload = payload;
                    joined_ols_t joined_rec = {expanded_payload.ol_supply_w_id,
                                               expanded_payload.ol_delivery_d,
                                               expanded_payload.ol_quantity,

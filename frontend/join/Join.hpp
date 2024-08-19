@@ -107,11 +107,7 @@ class MergeJoin
    static std::pair<typename Joined::Key, Joined> merge(const typename Left::Key& left_key,
                                                         const Left& left_rec,
                                                         const typename Right::Key& right_key,
-                                                        const Right& right_rec)
-   {
-      return {merge_keys<Joined>(left_key, right_key), merge_records<Joined>(left_rec, right_rec)};
-   }
-
+                                                        const Right& right_rec);
    template <typename Left, typename Right, typename Joined>
    static typename Joined::Key merge_keys(const typename Left::Key& left_key, const typename Right::Key& right_key);
 
@@ -119,7 +115,16 @@ class MergeJoin
    static Joined merge_records(const Left& left_rec, const Right& right_rec);
 
    template <typename Joined = joined_ols_t>
-   static typename Joined::Key merge_keys(const ol_join_sec_t::Key& left_key, const stock_t::Key& right_key)
+   static std::pair<typename Joined::Key, Joined> merge(const ol_join_sec_t::Key& left_key,
+                                                        const ol_join_sec_t& left_rec,
+                                                        const stock_t::Key& right_key,
+                                                        const stock_t& right_rec)
+   {
+      return {merge_keys<Joined>(left_key, right_key), merge_records<Joined>(left_rec, right_rec)};
+   }
+
+   template <typename Joined = joined_ols_t>
+   static typename Joined::Key merge_keys(const ol_join_sec_t::Key& left_key, const stock_t::Key&)
    {
       joined_ols_t::Key key{left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
       return key;
