@@ -97,6 +97,10 @@ struct ol_sec_key_only_t {
   static constexpr int id = 11; // Cannot coexist with ol_join_sec_t
   using Key = ol_join_sec_t::Key;
 
+  ol_sec_key_only_t() = default;
+
+  explicit ol_sec_key_only_t(ol_join_sec_t&) {}
+
   template <class T> static unsigned foldKey(uint8_t *out, const T &key) {
     return ol_join_sec_t::foldKey(out, key);
   }

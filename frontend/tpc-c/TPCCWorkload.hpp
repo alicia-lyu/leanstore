@@ -12,6 +12,10 @@
 #include <vector>
 using std::vector;
 
+DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock");
+// Accomplished by only loading a subset of items. Semi-join selectivity of stock may be
+// lower. Empirically 90+% items are present in some orderline, picking out those in stock.
+
 template <template <typename> class AdapterType>
 class TPCCBaseWorkload;
 template <template <typename> class AdapterType>
@@ -913,18 +917,18 @@ class TPCCWorkload
       leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
    }
    // -------------------------------------------------------------------------------------
-   static bool isSelected(Integer i_id, Integer semijoin_selectivity)
+   static bool isSelected(Integer i_id)
    {
-      int step = 100 / semijoin_selectivity;
+      int step = 100 / FLAGS_semijoin_selectivity;
       int rem = i_id % 100;
-      return rem % step == 0 && rem / step <= semijoin_selectivity;
+      return rem % step == 0 && rem / step <= FLAGS_semijoin_selectivity;
    }
 
-   void loadStock(Integer w_id, Integer semijoin_selectivity = 100)  // TODO
+   void loadStock(Integer w_id)  // TODO
    {
       std::cout << "Loading " << ITEMS_NO * scale_factor << " stock" << std::endl;
       for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
-         if (!isSelected(i + 1, semijoin_selectivity)) {
+         if (!isSelected(i + 1)) {
             continue;
          }
          Varchar<50> s_data = randomastring<50>(25, 50);
@@ -1039,7 +1043,12 @@ class TPCCWorkload
          }
       }
       for (Integer s_id = 1; s_id <= ITEMS_NO * scale_factor; s_id++) {
-         stock.lookup1({w_id, s_id}, [&](const auto&) {});
+         bool ret = stock.tryLookup({w_id, s_id}, [&](const auto&) {});
+         if (!isSelected(s_id)) {
+            ensure(!ret);
+         } else {
+            ensure(ret);
+         }
       }
    }
    // -------------------------------------------------------------------------------------

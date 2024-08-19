@@ -109,7 +109,7 @@ class RocksDBExperimentHelper : public ExperimentHelper
                {
                   context_ptr->rocks_db.startTX();
                   if (load_stock) {
-                     context_ptr->tpcc.loadStock(w_id, FLAGS_semijoin_selectivity);
+                     context_ptr->tpcc.loadStock(w_id);
                   }
                   context_ptr->tpcc.loadDistrict(w_id);
                   for (Integer d_id = 1; d_id <= 10; d_id++) {
