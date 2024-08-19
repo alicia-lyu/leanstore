@@ -35,8 +35,8 @@ class TPCCBaseWorkload
    TPCCWorkload<AdapterType>* tpcc;
 
   public:
-   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;
-   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, joined_ols_t>::type;
+   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type; // INCLUDE_COLUMNS == 2 will still select all columns from orderline
+   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, std::conditional<INCLUDE_COLUMNS == 1, joined_ols_t, joined_selected_t>>::type;
 
   protected:
    AdapterType<orderline_sec_t>* orderline_secondary;
@@ -49,6 +49,8 @@ class TPCCBaseWorkload
          std::cout << "Columns included: Key only" << std::endl;
       } else if constexpr (INCLUDE_COLUMNS == 1) {
          std::cout << "Columns included: All" << std::endl;
+      } else if constexpr (INCLUDE_COLUMNS == 2) {
+         std::cout << "Columns included: Selected" << std::endl;
       } else {
          throw std::runtime_error("Invalid INCLUDE_COLUMNS value");
       }
