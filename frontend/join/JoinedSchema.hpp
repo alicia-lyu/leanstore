@@ -154,6 +154,8 @@ struct joined_ols_t {
     Integer ol_number;
     // stock_t::Key, none other than join key
 
+    explicit Key(const ol_join_sec_t::Key& ol_key) : w_id(ol_key.ol_w_id), i_id(ol_key.ol_i_id), ol_d_id(ol_key.ol_d_id), ol_o_id(ol_key.ol_o_id), ol_number(ol_key.ol_number) {}
+
     friend std::ostream& operator<<(std::ostream& os, const Key& key) {
       os << "w_id: " << key.w_id << ", i_id: " << key.i_id
          << ", d_id: " << key.ol_d_id << ", o_id: " << key.ol_o_id

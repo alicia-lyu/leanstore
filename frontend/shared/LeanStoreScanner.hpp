@@ -55,6 +55,7 @@ class LeanStoreScanner: public Scanner<Record>
    }
 };
 
+// TODO: Make this work
 template <class Record1, class Record2>
 class LeanStoreScannerSec : public ScannerSec<Record1, Record2>
 {

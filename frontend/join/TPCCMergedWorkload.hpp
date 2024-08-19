@@ -50,9 +50,6 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       std::vector<std::pair<typename orderline_sec_t::Key, orderline_sec_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
-      // cached_left.reserve(100);  // Multiple order lines can be associated with a single stock item
-      // cached_right.reserve(2);
-
       // std::vector<std::pair<joined_t::Key, joined_t>> results; // Assuming we don't want the final results per se, but only scan it with
       // some predicate / task, similar to btree->scan
 
@@ -195,7 +192,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
    {
       Base::newOrderRndCallback(
           w_id,
-          [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& desc) {
+          [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& desc, Integer) {
              merged.template update1<stock_t>(key, cb, desc);
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) { merged.template insert<orderline_sec_t>(key, rec); }, order_size);
