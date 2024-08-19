@@ -26,7 +26,7 @@ class RocksDBScanner: public Scanner<Record>
 
   public:
    using SEP = u32;
-   using next_ret_t = typename Scanner<Record>::next_ret_t;
+   using pair_t = typename Scanner<Record>::pair_t;
 
    RocksDBScanner(RocksDB& map) : it(map.db->NewIterator(map.ro)) {}
 
@@ -44,7 +44,7 @@ class RocksDBScanner: public Scanner<Record>
       return it->Valid();
    }
 
-   virtual std::optional<next_ret_t> next()
+   virtual std::optional<pair_t> next()
    {
       if (!afterSeek) {
          it->Next();
@@ -61,6 +61,6 @@ class RocksDBScanner: public Scanner<Record>
       const Record* s_value = reinterpret_cast<const Record*>(it->value().data());
       Record s_value_copy = *s_value;
 
-      return std::optional<next_ret_t>({s_key, s_value_copy});
+      return std::optional<pair_t>({s_key, s_value_copy});
    }
 };

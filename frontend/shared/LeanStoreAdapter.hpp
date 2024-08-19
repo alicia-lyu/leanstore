@@ -203,15 +203,15 @@ struct LeanStoreAdapter : Adapter<Record> {
       }
    }
 
-   template <class Record2>
-   std::unique_ptr<ScannerSec<Record, Record2>> getScanner(Adapter<Record2>* sec_adapter) {
-      leanstore::KVInterface* sec_btree = dynamic_cast<LeanStoreAdapter<Record2>*>(sec_adapter)->btree; // OPTIMIZATION: Not requiring adapter to be the same type
+   template <class PayloadProvider>
+   std::unique_ptr<Scanner<Record, PayloadProvider>> getScanner(Adapter<PayloadProvider>* payloadProvider) {
+      leanstore::KVInterface* payloadBtree = dynamic_cast<LeanStoreAdapter<PayloadProvider>*>(payloadProvider)->btree;
       if (FLAGS_vi) {
-         return std::make_unique<LeanStoreScannerSec<Record, Record2>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
-         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(sec_btree)));
+         return std::make_unique<LeanStoreScanner<Record, PayloadProvider>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
+         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(payloadBtree)));
       } else {
-         return std::make_unique<LeanStoreScannerSec<Record, Record2>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
-         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(sec_btree)));
+         return std::make_unique<LeanStoreScanner<Record, PayloadProvider>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
+         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(payloadBtree)));
       }
    }
 

@@ -87,11 +87,16 @@ class TPCCBaseWorkload
       }
    }
 
+   template <class OL_SEC = orderline_sec_t, class JOINED = joined_t>
    void joinOrderlineAndStockOnTheFly(std::function<void(joined_t::Key&, joined_t&)> cb, Integer w_id = std::numeric_limits<Integer>::max())
    {
       std::cout << "Joining orderline and stock for warehouse " << w_id << std::endl;
-      auto orderline_scanner = this->orderline_secondary->getScanner(); // TODO: Allow the orderline's scanner guided by orderline_secondary. joined_t should be joined_selected_t
-      // Use call back for scanner initialization, seek, and end condition
+      std::unique_ptr<Scanner<OL_SEC>> orderline_scanner;
+      if constexpr (std::is_same_v<orderline_sec_t, OL_SEC>) {
+         orderline_scanner = this->orderline_secondary->getScanner();
+      } else {
+         orderline_scanner = this->tpcc->orderline.getScanner(this->orderline_secondary);
+      }
       auto stock_scanner = this->tpcc->stock.getScanner();
 
       if (w_id != std::numeric_limits<Integer>::max()) {
@@ -99,7 +104,7 @@ class TPCCBaseWorkload
          stock_scanner->seek({w_id, 0});
       }
 
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+      MergeJoin<OL_SEC, stock_t, JOINED> merge_join(orderline_scanner.get(), stock_scanner.get());
 
       while (true) {
          auto ret = merge_join.next();
