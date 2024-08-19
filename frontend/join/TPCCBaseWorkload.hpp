@@ -3,9 +3,11 @@
 #include <filesystem>
 #include <fstream>
 #include "../tpc-c/TPCCWorkload.hpp"
+#include "Exceptions.hpp"
 #include "Join.hpp"
 #include "JoinedSchema.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
+#include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 
 DEFINE_int64(tpcc_warehouse_count, 1, "");
 DEFINE_int32(tpcc_abort_pct, 0, "");
@@ -19,10 +21,6 @@ DEFINE_uint32(read_percentage, 0, "");
 DEFINE_uint32(scan_percentage, 0, "");
 DEFINE_uint32(write_percentage, 100, "");
 DEFINE_uint32(order_size, 5, "Number of lines in a new order");
-// TODO: included columns
-DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock");
-// Accomplished by only loading a subset of items. Semi-join selectivity of stock may be
-// lower. Empirically 90+% items are present in some orderline, picking out those in stock.
 DEFINE_bool(locality_read, false, "Lookup key in the read transactions are the same or smaller than the join key.");
 
 #if !defined(INCLUDE_COLUMNS)
@@ -60,7 +58,7 @@ class TPCCBaseWorkload
    }
    virtual ~TPCCBaseWorkload() = default;
 
-   static bool isSelected(Integer i_id) { return TPCCWorkload<AdapterType>::isSelected(i_id, FLAGS_semijoin_selectivity); }
+   static bool isSelected(Integer i_id) { return TPCCWorkload<AdapterType>::isSelected(i_id); }
 
    void loadOrderlineSecondary(Integer w_id = std::numeric_limits<Integer>::max())
    {
@@ -116,8 +114,27 @@ class TPCCBaseWorkload
       // If leaf count is similar to merged index, performance should be similar
       this->joinOrderlineAndStockOnTheFly(
           [&](joined_t::Key& key, joined_t& payload) {
-             if (key.w_id != w_id || key.ol_d_id != d_id || payload.ol_delivery_d < since)
+             if (key.w_id != w_id || key.ol_d_id != d_id)
                 return;
+             if constexpr (std::is_same_v<joined_t, joined_ols_key_only_t>) {
+                // stock_t stock_rec = merge_join.getPayload2();
+                tpcc->orderline.lookup1({
+                      key.w_id,
+                      key.ol_d_id,
+                      key.ol_o_id,
+                      key.ol_number,
+                }, [&](const orderline_t& rec) {
+                  if (rec.ol_delivery_d < since)
+                     return;
+                });
+                // TODO: Lookup stock_t too, pretending the query needs columns therefrom
+             } else if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
+                 joined_ols_t joined_rec = payload.expand();
+                 if (joined_rec.ol_delivery_d < since)
+                     return;
+             } else {
+               UNREACHABLE();
+             }
              // results.push_back({key, payload});
           },
           w_id);
@@ -153,10 +170,12 @@ class TPCCBaseWorkload
                   key.ol_d_id,
                   key.ol_o_id,
                   key.ol_number,
-            }, [&](orderline_t&) {});
+            }, [&](const orderline_t&) {});
+            // TODO: Lookup stock_t too, pretending the query needs columns therefrom
             results.push_back(joined_ols_t());
-         } else {
-            results.push_back(payload);
+         } else if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
+            joined_ols_t joined_rec = payload.expand();
+            results.push_back(joined_rec);
          }
       }
    }
@@ -260,10 +279,12 @@ class TPCCBaseWorkload
          this->tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
          // ********** Update Merged Index **********
          if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
-            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber},
-                                orderline_sec_t{supware, ol_delivery_d, qty, ol_amount, s_dist});
+            ol_join_sec_t rec = {supware, ol_delivery_d, qty, ol_amount, s_dist};
+            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t(rec));
+         } else if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
+            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t());
          } else {
-            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, {});
+            UNREACHABLE();
          }
       }
    }
@@ -299,7 +320,7 @@ class TPCCBaseWorkload
 
    virtual void verifyWarehouse(Integer w_id) { tpcc->verifyWarehouse(w_id); }
 
-   virtual void loadStock(Integer w_id) { tpcc->loadStock(w_id, FLAGS_semijoin_selectivity); }
+   virtual void loadStock(Integer w_id) { tpcc->loadStock(w_id); }
 
    std::string getCsvFile(std::string csv_name)
    {
@@ -312,15 +333,25 @@ class TPCCBaseWorkload
       return csv_path;
    }
 
+   static double pageCountToGB(uint64_t page_count) { return (double) page_count * leanstore::storage::EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0; }
+
+   static std::string getConfigString()
+   {
+      std::stringstream config;
+      config << FLAGS_dram_gib << "|" << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS;
+      return config.str();
+   }
+
    virtual void logSizes(std::chrono::steady_clock::time_point t0,
                          std::chrono::steady_clock::time_point sec_start,
                          std::chrono::steady_clock::time_point sec_end,
                          leanstore::cr::CRManager& crm)
    {
-      std::string csv_path = getCsvFile("tpcc_base.csv");
+      std::string config = getConfigString();
+      std::string csv_path = getCsvFile("base_size.csv");
       std::ofstream csv_file(csv_path, std::ios::app);
       auto core_page_count = getCorePageCount(crm, false);
-      csv_file << "core" << core_page_count << "," << std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count() << std::endl;
+      csv_file << "core," << config << "," << pageCountToGB(core_page_count) << "," << std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count() << std::endl;
 
       uint64_t stock_page_count = 0;
       crm.scheduleJobSync(0, [&]() { stock_page_count = this->tpcc->stock.estimatePages(); });
@@ -329,7 +360,7 @@ class TPCCBaseWorkload
 
       std::cout << "Stock: " << stock_page_count << " pages, Orderline secondary: " << orderline_secondary_page_count << " pages" << std::endl;
 
-      csv_file << "stock+orderline_secondary," << stock_page_count + orderline_secondary_page_count << ","
+      csv_file << "stock+orderline_secondary," << config << "," << pageCountToGB(stock_page_count + orderline_secondary_page_count) << ","
                << std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count() << std::endl;
    }
 

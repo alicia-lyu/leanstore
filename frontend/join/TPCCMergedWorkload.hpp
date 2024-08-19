@@ -250,7 +250,6 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
    void verifyWarehouse(Integer w_id)
    {
-      // for (Integer w_id = 1; w_id <= warehouseCount; w_id++) {
       std::cout << "Verifying warehouse " << w_id << std::endl;
       this->tpcc->warehouse.lookup1({w_id}, [&](const auto&) {});
       for (Integer d_id = 1; d_id <= 10; d_id++) {
@@ -296,8 +295,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       std::cout << "merged_page_count: " << merged_page_count << ", merged_leaf_count: " << merged_leaf_count << ", merged_height: " << merged_height
                 << std::endl;
 
-      csv_file << "core," << config << "," << (double)core_page_count * 4096 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
-      csv_file << "merged_index," << config << "," << (double)merged_page_count * 4096 / 1024 / 1024 / 1024 << "," << merged_time << std::endl;
+      csv_file << "core," << config << "," << Base::pageCountToGB(core_page_count) << "," << core_time << std::endl;
+      csv_file << "merged_index," << config << "," << Base::pageCountToGB(merged_page_count) << "," << merged_time << std::endl;
    }
 
    void logSizes(leanstore::cr::CRManager& crm)

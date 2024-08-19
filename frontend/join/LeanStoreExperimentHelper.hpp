@@ -115,7 +115,7 @@ class LeanStoreExperimentHelper : public ExperimentHelper
                }
                cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
                if (load_stock)
-                  tpcc.loadStock(w_id, FLAGS_semijoin_selectivity);
+                  tpcc.loadStock(w_id);
                tpcc.loadDistrict(w_id);
                for (Integer d_id = 1; d_id <= 10; d_id++) {
                   tpcc.loadCustomer(w_id, d_id);

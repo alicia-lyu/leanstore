@@ -371,10 +371,10 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       std::cout << "joined_ols_page_count: " << joined_ols_page_count << ", joined_ols_leaf_count: " << joined_ols_leaf_count
                 << ", joined_ols_height: " << joined_ols_height << std::endl;
 
-      csv_file << "core," << config << "," << (double)core_page_count * 4098 / 1024 / 1024 / 1024 << "," << core_time << std::endl;
-      csv_file << "orderline_secondary," << config << "," << (double)orderline_secondary_page_count * 4098 / 1024 / 1024 / 1024 << ","
+      csv_file << "core," << config << "," << Base::pageCountToGB(core_page_count) << "," << core_time << std::endl;
+      csv_file << "orderline_secondary," << config << "," << Base::pageCountToGB(orderline_secondary_page_count) << ","
                << orderline_secondary_time << std::endl;
-      csv_file << "join_results," << config << "," << (double)joined_ols_page_count * 4098 / 1024 / 1024 / 1024 << "," << joined_ols_time
+      csv_file << "join_results," << config << "," << Base::pageCountToGB(joined_ols_page_count) << "," << joined_ols_time
                << std::endl;
    }
 

@@ -131,7 +131,6 @@ update-size:
 	$(MAKE) write update_size=20
 
 %-selectivity:
-	$(MAKE) $*-all-tx-types # default selectivity=19
 	$(MAKE) $*-all-tx-types selectivity=100
 	$(MAKE) $*-all-tx-types selectivity=50
 	$(MAKE) $*-all-tx-types selectivity=5
@@ -144,7 +143,7 @@ no-columns:
 
 %-size:
 	@for col in 1 0; do \
-		for sel in 19 50 100; do \
+		for sel in 5 19 50 100; do \
 			$(MAKE) $* dram=16 selectivity=$$sel included_columns=$$col duration=1; \
 		done \
 	done
