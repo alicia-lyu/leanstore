@@ -78,18 +78,18 @@ struct orderline_secondary_base_t {
   }
 };
 
-struct ol_sec_key_only_t;
+struct ol_sec0_t;
 
-struct ol_join_sec_t: public orderline_secondary_base_t {
+struct ol_sec1_t: public orderline_secondary_base_t {
   using orderline_secondary_base_t::id;
   using orderline_secondary_base_t::Key;
 
-  ol_join_sec_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Varchar<24> ol_dist_info)
+  ol_sec1_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Varchar<24> ol_dist_info)
       : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), ol_dist_info(ol_dist_info) {}
 
-  ol_join_sec_t() = default;
+  ol_sec1_t() = default;
 
-  explicit ol_join_sec_t(const ol_sec_key_only_t&) {}
+  explicit ol_sec1_t(const ol_sec0_t&) {}
 
   Integer ol_supply_w_id;
   Timestamp ol_delivery_d;
@@ -97,22 +97,22 @@ struct ol_join_sec_t: public orderline_secondary_base_t {
   Numeric ol_amount;
   Varchar<24> ol_dist_info;
 
-  friend std::ostream& operator<<(std::ostream& os, const ol_join_sec_t& record) {
+  friend std::ostream& operator<<(std::ostream& os, const ol_sec1_t& record) {
     os << ", supply_w_id: " << record.ol_supply_w_id
        << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", dist_info: " << record.ol_dist_info.toString();
     return os;
   }
 };
 
-struct ol_sec_key_only_t: public orderline_secondary_base_t {
+struct ol_sec0_t: public orderline_secondary_base_t {
   using orderline_secondary_base_t::id;
   using orderline_secondary_base_t::Key;
 
-  ol_sec_key_only_t() = default;
+  ol_sec0_t() = default;
 
-  explicit ol_sec_key_only_t(const ol_join_sec_t&) {}
+  explicit ol_sec0_t(const ol_sec1_t&) {}
 
-  friend std::ostream& operator<<(std::ostream& os, const ol_sec_key_only_t&) {
+  friend std::ostream& operator<<(std::ostream& os, const ol_sec0_t&) {
     os << "ol_sec_key_only";
     return os;
   }
@@ -133,7 +133,7 @@ struct joined_base_t {
 
     Key(Integer w_id, Integer i_id, Integer ol_d_id, Integer ol_o_id, Integer ol_number) : w_id(w_id), i_id(i_id), ol_d_id(ol_d_id), ol_o_id(ol_o_id), ol_number(ol_number) {}
 
-    explicit Key(const ol_join_sec_t::Key& ol_key) : w_id(ol_key.ol_w_id), i_id(ol_key.ol_i_id), ol_d_id(ol_key.ol_d_id), ol_o_id(ol_key.ol_o_id), ol_number(ol_key.ol_number) {
+    explicit Key(const ol_sec1_t::Key& ol_key) : w_id(ol_key.ol_w_id), i_id(ol_key.ol_i_id), ol_d_id(ol_key.ol_d_id), ol_o_id(ol_key.ol_o_id), ol_number(ol_key.ol_number) {
       UNREACHABLE(); // To suppress compiler warning
     }
 
@@ -177,11 +177,11 @@ struct joined_base_t {
 
 struct joined_selected_t;
 
-struct joined_ols_t: public joined_base_t {
+struct joined1_t: public joined_base_t {
   using joined_base_t::id;
   using joined_base_t::Key;
 
-  joined_ols_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Numeric s_quantity, Varchar<24> s_dist_01, Varchar<24> s_dist_02, Varchar<24> s_dist_03, Varchar<24> s_dist_04, Varchar<24> s_dist_05, Varchar<24> s_dist_06, Varchar<24> s_dist_07, Varchar<24> s_dist_08, Varchar<24> s_dist_09, Varchar<24> s_dist_10, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
+  joined1_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Numeric s_quantity, Varchar<24> s_dist_01, Varchar<24> s_dist_02, Varchar<24> s_dist_03, Varchar<24> s_dist_04, Varchar<24> s_dist_05, Varchar<24> s_dist_06, Varchar<24> s_dist_07, Varchar<24> s_dist_08, Varchar<24> s_dist_09, Varchar<24> s_dist_10, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
       : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), s_quantity(s_quantity), s_dist_01(s_dist_01), s_dist_02(s_dist_02), s_dist_03(s_dist_03), s_dist_04(s_dist_04), s_dist_05(s_dist_05), s_dist_06(s_dist_06), s_dist_07(s_dist_07), s_dist_08(s_dist_08), s_dist_09(s_dist_09), s_dist_10(s_dist_10), s_ytd(s_ytd), s_order_cnt(s_order_cnt), s_remote_cnt(s_remote_cnt), s_data(s_data) {}
 
   // from order line
@@ -206,8 +206,8 @@ struct joined_ols_t: public joined_base_t {
   Numeric s_remote_cnt;
   Varchar<50> s_data;
 
-  friend std::ostream& operator<<(std::ostream& os, const joined_ols_t& record) {
-    os << "joined_ols_t: supply_w_id: " << record.ol_supply_w_id
+  friend std::ostream& operator<<(std::ostream& os, const joined1_t& record) {
+    os << "joined1_t: supply_w_id: " << record.ol_supply_w_id
        << ", delivery_d: " << record.ol_delivery_d << ", quantity: " << record.ol_quantity << ", amount: " << record.ol_amount << ", s_quantity: " << record.s_quantity << ", s_dist_01: " << record.s_dist_01.toString() << ", s_dist_02: " << record.s_dist_02.toString() << ", s_dist_03: " << record.s_dist_03.toString() << ", s_dist_04: " << record.s_dist_04.toString() << ", s_dist_05: " << record.s_dist_05.toString() << ", s_dist_06: " << record.s_dist_06.toString() << ", s_dist_07: " << record.s_dist_07.toString() << ", s_dist_08: " << record.s_dist_08.toString() << ", s_dist_09: " << record.s_dist_09.toString() << ", s_dist_10: " << record.s_dist_10.toString() << ", s_ytd: " << record.s_ytd << ", s_order_cnt: " << record.s_order_cnt << ", s_remote_cnt: " << record.s_remote_cnt << ", s_data: " << record.s_data.toString();
     return os;
   }
@@ -240,7 +240,7 @@ struct joined_selected_t: public joined_base_t {
   }
 };
 
-joined_selected_t joined_ols_t::toSelected(const Key& key) const {
+joined_selected_t joined1_t::toSelected(const Key& key) const {
   Varchar<24> s_dist;
   switch (key.ol_d_id) {
     case 1:
@@ -290,21 +290,21 @@ joined_selected_t joined_ols_t::toSelected(const Key& key) const {
   };
 };
 
-struct joined_ols_key_only_t: public joined_base_t {
+struct joined0_t: public joined_base_t {
   using joined_base_t::id;
   using joined_base_t::Key;
 
-  friend std::ostream& operator<<(std::ostream& os, const joined_ols_key_only_t&) {
+  friend std::ostream& operator<<(std::ostream& os, const joined0_t&) {
     os << "joined_ols_key_only";
     return os;
   }
 
-  joined_selected_t toSelected(const joined_ols_key_only_t::Key&) const {
+  joined_selected_t toSelected(const joined0_t::Key&) const {
     UNREACHABLE(); // Only to suppress warning
     // If one really needs joined_selected_t, lookups into base tables are needed
   }
 
-  joined_selected_t expand(joined_ols_key_only_t::Key& key, stock_t& stock, orderline_t& orderline) {
+  joined_selected_t expand(joined0_t::Key& key, stock_t& stock, orderline_t& orderline) {
     Varchar<24> s_dist;
     switch (key.ol_d_id) {
       case 1:

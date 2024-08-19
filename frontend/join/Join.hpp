@@ -114,26 +114,26 @@ class MergeJoin
    template <typename Left, typename Right, typename Joined>
    static Joined merge_records(const Left& left_rec, const Right& right_rec);
 
-   template <typename Joined = joined_ols_t>
-   static std::pair<typename Joined::Key, Joined> merge(const ol_join_sec_t::Key& left_key,
-                                                        const ol_join_sec_t& left_rec,
+   template <typename Joined = joined1_t>
+   static std::pair<typename Joined::Key, Joined> merge(const ol_sec1_t::Key& left_key,
+                                                        const ol_sec1_t& left_rec,
                                                         const stock_t::Key& right_key,
                                                         const stock_t& right_rec)
    {
       return {merge_keys<Joined>(left_key, right_key), merge_records<Joined>(left_rec, right_rec)};
    }
 
-   template <typename Joined = joined_ols_t>
-   static typename Joined::Key merge_keys(const ol_join_sec_t::Key& left_key, const stock_t::Key&)
+   template <typename Joined = joined1_t>
+   static typename Joined::Key merge_keys(const ol_sec1_t::Key& left_key, const stock_t::Key&)
    {
-      joined_ols_t::Key key{left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
+      joined1_t::Key key{left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
       return key;
    }
 
-   template <typename Joined = joined_ols_t>
-   static Joined merge_records(const ol_join_sec_t& left_rec, const stock_t& right_rec)
+   template <typename Joined = joined1_t>
+   static Joined merge_records(const ol_sec1_t& left_rec, const stock_t& right_rec)
    {
-      joined_ols_t record{left_rec.ol_supply_w_id, left_rec.ol_delivery_d, left_rec.ol_quantity,   left_rec.ol_amount,  right_rec.s_quantity,
+      joined1_t record{left_rec.ol_supply_w_id, left_rec.ol_delivery_d, left_rec.ol_quantity,   left_rec.ol_amount,  right_rec.s_quantity,
                           right_rec.s_dist_01,     right_rec.s_dist_02,    right_rec.s_dist_03,    right_rec.s_dist_04, right_rec.s_dist_05,
                           right_rec.s_dist_06,     right_rec.s_dist_07,    right_rec.s_dist_08,    right_rec.s_dist_09, right_rec.s_dist_10,
                           right_rec.s_ytd,         right_rec.s_order_cnt,  right_rec.s_remote_cnt, right_rec.s_data};
@@ -141,10 +141,10 @@ class MergeJoin
       return record;
    }
 
-   template <typename Joined = joined_ols_key_only_t>
-   static Joined merge_records(const ol_sec_key_only_t&, const stock_t&)
+   template <typename Joined = joined0_t>
+   static Joined merge_records(const ol_sec0_t&, const stock_t&)
    {
-      joined_ols_key_only_t record{};
+      joined0_t record{};
       return record;
    }
 
