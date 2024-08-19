@@ -27,7 +27,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    }
 
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires (std::same_as<joined_t, joined_ols_t> || std::same_as<joined_t, joined_selected_t>)
+      requires (std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
    {
       joined_ols.scan(
           start_key,
@@ -39,7 +39,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    }
 
    void scanJoin(typename joined_t::Key start_key, std::function<void(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires std::same_as<joined_t, joined_ols_key_only_t>
+      requires std::same_as<joined_t, joined0_t>
    {
       stock_t::Key stock_key;
       stock_t stock_payload;
@@ -112,11 +112,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer qty) {
              this->tpcc->stock.update1(key, cb, update_descriptor);
              // Updating stock causes join results to be updated
-             if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-                std::vector<joined_ols_t::Key> keys;
+             if constexpr (std::is_same_v<joined_t, joined1_t>) {
+                std::vector<joined1_t::Key> keys;
                 joined_ols.scan(
                     {key.s_w_id, key.s_i_id, 0, 0, 0},
-                    [&](const joined_ols_t::Key& joined_key, const joined_ols_t&) {
+                    [&](const joined1_t::Key& joined_key, const joined1_t&) {
                        if (joined_key.w_id != key.s_w_id || joined_key.i_id != key.s_i_id) {
                           return false;
                        }
@@ -124,11 +124,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
                        return true;
                     },
                     [&]() { /* undo */ });
-                UpdateDescriptorGenerator4(joined_ols_descriptor, joined_ols_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
+                UpdateDescriptorGenerator4(joined_ols_descriptor, joined1_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
                 for (auto key : keys) {
                    joined_ols.update1(
                        key,
-                       [&](joined_ols_t& rec) {
+                       [&](joined1_t& rec) {
                           auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
                           s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
                           rec.s_remote_cnt += (key.w_id != w_id);
@@ -145,9 +145,9 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
              stock_t stock_rec;
              bool ret = this->tpcc->stock.tryLookup({key.ol_w_id, key.ol_i_id}, [&](const stock_t& rec) { stock_rec = rec; });
              if (ret) {
-                if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-                   ol_join_sec_t expanded_payload = payload;
-                   joined_ols_t joined_rec = {expanded_payload.ol_supply_w_id,
+                if constexpr (std::is_same_v<joined_t, joined1_t>) {
+                   ol_sec1_t expanded_payload = payload;
+                   joined1_t joined_rec = {expanded_payload.ol_supply_w_id,
                                               expanded_payload.ol_delivery_d,
                                               expanded_payload.ol_quantity,
                                               expanded_payload.ol_amount,

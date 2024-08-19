@@ -20,7 +20,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
    MergedAdapterType& merged;
 
    std::vector<std::pair<joined_selected_t::Key, joined_selected_t>> cartesianProducts(
-       std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>>& cached_left,
+       std::vector<std::pair<ol_sec1_t::Key, ol_sec1_t>>& cached_left,
        std::vector<std::pair<stock_t::Key, stock_t>>& cached_right)
    {
       std::vector<std::pair<joined_selected_t::Key, joined_selected_t>> results;
@@ -28,7 +28,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
       for (auto& left : cached_left) {
          for (auto& right : cached_right) {
-            const auto [key, rec] = MergeJoin<ol_join_sec_t, stock_t, joined_ols_t>::merge(left.first, left.second, right.first, right.second);
+            const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left.first, left.second, right.first, right.second);
             results.push_back({key, rec.toSelected(key)});
          }
       }
@@ -47,7 +47,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
       stock_t::Key current_key = start_key;
 
-      std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
+      std::vector<std::pair<ol_sec1_t::Key, ol_sec1_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
       merged.template scan<stock_t, orderline_sec_t>(
@@ -78,11 +78,11 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
              if (key.ol_i_id != current_key.s_i_id) {  // only happens when current i_id does not have any stock records
                 return true;
              }
-             ol_join_sec_t expanded_rec;
-             if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
+             ol_sec1_t expanded_rec;
+             if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
                 expanded_rec = rec;
              } else {
-                ol_join_sec_t expanded_rec;
+                ol_sec1_t expanded_rec;
                 this->tpcc->orderline.lookup1({w_id, d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& ol_rec) {
                    expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, rec.ol_quantity, rec.ol_amount, rec.ol_dist_info};
                 });
@@ -103,7 +103,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
    {
       vector<std::pair<typename joined_t::Key, joined_t>> results;
 
-      std::vector<std::pair<ol_join_sec_t::Key, ol_join_sec_t>> cached_left;
+      std::vector<std::pair<ol_sec1_t::Key, ol_sec1_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
 
       uint64_t lookupCardinality = 0;
@@ -129,8 +129,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
              if (!FLAGS_locality_read && key.ol_d_id != d_id) {
                 return true;  // next item may still be in the same district
              }
-             ol_join_sec_t expanded_rec;
-             if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
+             ol_sec1_t expanded_rec;
+             if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
                 expanded_rec = rec.expand();
              } else {
                 this->tpcc->orderline.lookup1({w_id, d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& ol_rec) {
@@ -193,7 +193,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
          if (key.ol_w_id != w_id)
             break;
          typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-         if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
+         if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
             merged.template insert<orderline_sec_t>(sec_key, {});
          } else {
             orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,

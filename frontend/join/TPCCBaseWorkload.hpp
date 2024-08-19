@@ -36,10 +36,10 @@ class TPCCBaseWorkload
 
   public:
    using orderline_sec_t =
-       typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;  // INCLUDE_COLUMNS == 2 will still select all columns
+       typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec0_t, ol_sec1_t>::type;  // INCLUDE_COLUMNS == 2 will still select all columns
                                                                                                  // from orderline
    using joined_t = typename std::
-       conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, std::conditional<INCLUDE_COLUMNS == 1, joined_ols_t, joined_selected_t>>::type;
+       conditional<INCLUDE_COLUMNS == 0, joined0_t, std::conditional<INCLUDE_COLUMNS == 1, joined1_t, joined_selected_t>>::type;
 
   protected:
    AdapterType<orderline_sec_t>* orderline_secondary;
@@ -80,7 +80,7 @@ class TPCCBaseWorkload
          if (key.ol_w_id != w_id)
             break;
          typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-         if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
+         if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
             this->orderline_secondary->insert(sec_key, {});
          } else {
             orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
@@ -112,7 +112,7 @@ class TPCCBaseWorkload
    }
 
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires std::same_as<joined_t, joined_ols_key_only_t>
+      requires std::same_as<joined_t, joined0_t>
    {
       std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
@@ -148,7 +148,7 @@ class TPCCBaseWorkload
    }
 
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires (std::same_as<joined_t, joined_ols_t> || std::same_as<joined_t, joined_selected_t>)
+      requires (std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
    {
       std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
@@ -303,10 +303,10 @@ class TPCCBaseWorkload
          Timestamp ol_delivery_d = 0;  // NULL
          this->tpcc->orderline.insert({w_id, d_id, o_id, lineNumber}, {itemid, supware, ol_delivery_d, qty, ol_amount, s_dist});
          // ********** Update Merged Index **********
-         if constexpr (std::is_same_v<orderline_sec_t, ol_join_sec_t>) {
-            ol_join_sec_t rec = {supware, ol_delivery_d, qty, ol_amount, s_dist};
+         if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
+            ol_sec1_t rec = {supware, ol_delivery_d, qty, ol_amount, s_dist};
             orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t(rec));
-         } else if constexpr (std::is_same_v<orderline_sec_t, ol_sec_key_only_t>) {
+         } else if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
             orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t());
          } else {
             UNREACHABLE();
