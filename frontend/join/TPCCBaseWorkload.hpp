@@ -35,8 +35,11 @@ class TPCCBaseWorkload
    TPCCWorkload<AdapterType>* tpcc;
 
   public:
-   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type; // INCLUDE_COLUMNS == 2 will still select all columns from orderline
-   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, std::conditional<INCLUDE_COLUMNS == 1, joined_ols_t, joined_selected_t>>::type;
+   using orderline_sec_t =
+       typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec_key_only_t, ol_join_sec_t>::type;  // INCLUDE_COLUMNS == 2 will still select all columns
+                                                                                                 // from orderline
+   using joined_t = typename std::
+       conditional<INCLUDE_COLUMNS == 0, joined_ols_key_only_t, std::conditional<INCLUDE_COLUMNS == 1, joined_ols_t, joined_selected_t>>::type;
 
   protected:
    AdapterType<orderline_sec_t>* orderline_secondary;
@@ -87,80 +90,13 @@ class TPCCBaseWorkload
       }
    }
 
-   template <class OL_SEC = orderline_sec_t, class JOINED = joined_t>
-   void joinOrderlineAndStockOnTheFly(std::function<void(joined_t::Key&, joined_t&)> cb, Integer w_id = std::numeric_limits<Integer>::max())
+   void joinOrderlineAndStockOnTheFly(std::function<bool(joined_t::Key&, joined_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
    {
-      std::cout << "Joining orderline and stock for warehouse " << w_id << std::endl;
-      std::unique_ptr<Scanner<OL_SEC>> orderline_scanner;
-      if constexpr (std::is_same_v<orderline_sec_t, OL_SEC>) {
-         orderline_scanner = this->orderline_secondary->getScanner();
-      } else {
-         orderline_scanner = this->tpcc->orderline.getScanner(this->orderline_secondary);
-      }
+      std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
 
-      if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner->seek({w_id, 0, 0, 0, 0});
-         stock_scanner->seek({w_id, 0});
-      }
-
-      MergeJoin<OL_SEC, stock_t, JOINED> merge_join(orderline_scanner.get(), stock_scanner.get());
-
-      while (true) {
-         auto ret = merge_join.next();
-         if (!ret.has_value())
-            break;
-         auto [key, payload] = ret.value();
-         if (key.w_id != w_id)
-            break;
-         cb(key, payload);
-      }
-   }
-
-   virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
-   {
-      // If leaf count is similar to merged index, performance should be similar
-      // TODO: directly join to get joined_selected_t
-      this->joinOrderlineAndStockOnTheFly(
-          [&](joined_t::Key& key, joined_t& payload) {
-             if (key.w_id != w_id || key.ol_d_id != d_id)
-                return;
-             if constexpr (std::is_same_v<joined_t, joined_ols_key_only_t>) {
-                // stock_t stock_rec = merge_join.getPayload2();
-                tpcc->orderline.lookup1({
-                      key.w_id,
-                      key.ol_d_id,
-                      key.ol_o_id,
-                      key.ol_number,
-                }, [&](const orderline_t& rec) {
-                  if (rec.ol_delivery_d < since)
-                     return;
-                });
-             } else if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-                 joined_ols_t joined_rec = payload.expand();
-                 if (joined_rec.ol_delivery_d < since)
-                     return;
-             } else {
-               UNREACHABLE();
-             }
-             // results.push_back({key, payload});
-          },
-          w_id);
-   }
-
-   virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
-   {
-      // TODO: Use call backs in joinOrderlineAndStockOnTheFly
-      // And get joined_selected_t directly
-      vector<joined_ols_t> results;
-      auto orderline_scanner = this->orderline_secondary->getScanner();
-      auto stock_scanner = this->tpcc->stock.getScanner();
-      // double lookup compared to MergedWorkload
-
-      if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner->seek({w_id, i_id, 0, 0, 0});
-         stock_scanner->seek({w_id, i_id});
-      }
+      orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
+      stock_scanner->seek({seek_key.w_id, seek_key.i_id});
 
       MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
 
@@ -169,30 +105,109 @@ class TPCCBaseWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         if (key.w_id != w_id || key.i_id != i_id)
+         auto res = cb(key, payload);
+         if (!res)
             break;
-         else if (!FLAGS_locality_read && key.ol_d_id != d_id)
-            break;
-         if constexpr (std::is_same_v<joined_t, joined_ols_key_only_t>) {
-            // stock_t stock_rec = merge_join.getPayload2();
-            tpcc->orderline.lookup1({
-                  key.w_id,
-                  key.ol_d_id,
-                  key.ol_o_id,
-                  key.ol_number,
-            }, [&](const orderline_t&) {});
-            // TODO: Lookup stock_t too, pretending the query needs columns therefrom
-            results.push_back(joined_ols_t());
-         } else if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-            joined_ols_t joined_rec = payload.expand();
-            results.push_back(joined_rec);
-         }
       }
+   }
+
+   void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
+      requires std::is_same_v<joined_t, joined_ols_key_only_t>
+   {
+      std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
+      auto stock_scanner = this->tpcc->stock.getScanner();
+
+      orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
+      stock_scanner->seek({seek_key.w_id, seek_key.i_id});
+
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+
+      stock_t::Key stock_key;
+      stock_t stock_payload;
+      orderline_t::Key orderline_key;
+      orderline_t orderline_payload;
+      while (true) {
+         auto ret = merge_join.next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) {
+            stock_key = {key.w_id, key.i_id};
+            this->tpcc->stock.lookup1(stock_key, [&](const stock_t& rec) { stock_payload = rec; });
+         }
+         if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id ||
+             orderline_key.ol_number != key.ol_number) {
+            orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+            this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });
+         }
+         auto selected_payload = payload.expand(key, stock_payload, orderline_payload);
+         auto res = cb(key, selected_payload);
+         if (!res)
+            break;
+      }
+   }
+
+   void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
+      requires std::is_same_v<joined_t, joined_ols_t>
+   {
+      std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
+      auto stock_scanner = this->tpcc->stock.getScanner();
+
+      orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
+      stock_scanner->seek({seek_key.w_id, seek_key.i_id});
+
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+
+      while (true) {
+         auto ret = merge_join.next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         auto selected_payload = payload.toSelected();
+         auto res = cb(key, selected_payload);
+         if (!res)
+            break;
+      }
+   }
+
+   virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
+   {
+      std::vector<joined_selected_t> results;
+      this->joinOrderlineAndStockOnTheFly(
+          [&](joined_selected_t::Key& key, joined_selected_t& payload) {
+             if (key.w_id != w_id)
+                return false;
+             if (key.ol_d_id != d_id)
+                return true;
+             if (payload.ol_delivery_d > since) {
+                results.push_back(payload);
+             }
+             return true;
+          },
+          {w_id, 0, d_id, 0, 0});
+   }
+
+   virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
+   {
+      std::vector<joined_selected_t> results;
+      this->joinOrderlineAndStockOnTheFly(
+          [&](joined_selected_t::Key& key, joined_selected_t& payload) {
+             if (key.w_id != w_id)
+                return false;
+             if (!FLAGS_locality_read && key.ol_d_id != d_id)
+                return false;
+             if (key.i_id != i_id)
+                return false;
+             results.push_back(payload);
+             return true;
+          },
+          {w_id, i_id, FLAGS_locality_read ? 0: d_id, 0, 0});
    }
 
    virtual void newOrderRndCallback(
        Integer w_id,
-       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&, Integer qty)> stock_update_cb,
+       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&, Integer qty)>
+           stock_update_cb,
        std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
        Integer order_size = 5)
    {
@@ -343,7 +358,10 @@ class TPCCBaseWorkload
       return csv_path;
    }
 
-   static double pageCountToGB(uint64_t page_count) { return (double) page_count * leanstore::storage::EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0; }
+   static double pageCountToGB(uint64_t page_count)
+   {
+      return (double)page_count * leanstore::storage::EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0;
+   }
 
    static std::string getConfigString()
    {
@@ -361,7 +379,8 @@ class TPCCBaseWorkload
       std::string csv_path = getCsvFile("base_size.csv");
       std::ofstream csv_file(csv_path, std::ios::app);
       auto core_page_count = getCorePageCount(crm, false);
-      csv_file << "core," << config << "," << pageCountToGB(core_page_count) << "," << std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count() << std::endl;
+      csv_file << "core," << config << "," << pageCountToGB(core_page_count) << ","
+               << std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count() << std::endl;
 
       uint64_t stock_page_count = 0;
       crm.scheduleJobSync(0, [&]() { stock_page_count = this->tpcc->stock.estimatePages(); });

@@ -26,7 +26,50 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    {
    }
 
-   // When this query can be realistic: Keep track of stock information for recent orders
+   void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
+      requires std::same_as<joined_t, joined_ols_t>
+   {
+      joined_ols.scan(
+          start_key,
+          [&](const joined_t::Key& key, const joined_t& rec) {
+             auto selected_rec = rec.toSelected();
+             cb(key, selected_rec);
+          },
+          []() {});
+   }
+
+   void scanJoin(typename joined_t::Key start_key, std::function<void(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
+      requires std::same_as<joined_t, joined_ols_key_only_t>
+   {
+      stock_t::Key stock_key;
+      stock_t stock_payload;
+      orderline_t::Key orderline_key;
+      orderline_t orderline_payload;
+      joined_ols.scan(
+          start_key,
+          [&](const joined_t::Key& key, const joined_t& rec) {
+             if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) {
+                stock_key = {key.w_id, key.i_id};
+                this->tpcc->stock.lookup1(stock_key, [&](const stock_t& rec) { stock_payload = rec; });
+             }
+             if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id ||
+                 orderline_key.ol_number != key.ol_number) {
+                orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+                this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });
+             }
+             auto selected_payload = rec.expand(key, stock_payload, orderline_payload);
+             cb(key, selected_payload);
+          },
+          []() {});
+   }
+
+   void scanJoin(typename joined_t::Key start_key, std::function<void(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
+      requires std::same_as<joined_t, joined_selected_t>
+   {
+      joined_ols.scan(start_key, [&](const joined_t::Key& key, const joined_t& rec) { cb(key, rec); }, []() {});
+   }
+
+      // When this query can be realistic: Keep track of stock information for recent orders
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
       // vector<joined_t> results;
@@ -35,81 +78,37 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       atomic<uint64_t> scanCardinality = 0;
       uint64_t resultsCardinality = 0;
 
-      joined_ols.scan(
-          start_key,
-          [&](const joined_t::Key& key, const joined_t& rec) {
-             ++scanCardinality;
-             if (key.w_id != w_id)
-                return false;  // passed
-             if (key.ol_d_id != d_id)
-                return true;  // skip this
-             if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-                joined_ols_t joined_rec = rec.expand();
-                if (joined_rec.ol_delivery_d >= since) {
-                   //  results.push_back(rec);
-                   resultsCardinality++;
-                }
-             } else if constexpr (std::is_same_v<joined_t, joined_ols_key_only_t>) {
-                bool since_flag = false;
-                this->tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& orderline_rec) {
-                   if (orderline_rec.ol_delivery_d >= since) {
-                      since_flag = true;
-                   }
-                });
-                if (since_flag) {
-                   this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) {
-                      //  results.push_back(rec);
-                      resultsCardinality++;
-                   });
-                }
-             } else {
-                UNREACHABLE();
-             }
-             return true;
-          },
-          []() { /* undo */ });
-
-      // std::cout << "Scan cardinality: " << scanCardinality.load() << ", results cardinality: " << resultsCardinality << std::endl;
-      // All default configs, dram_gib = 8, cardinality = 184694
+      scanJoin(start_key, [&](const typename joined_t::Key& key, const joined_t& rec) {
+         if (key.w_id != w_id) {
+            return false;
+         }
+         scanCardinality++;
+         if (rec.ol_delivery_d > since || key.ol_d_id == d_id) {
+            resultsCardinality++;
+         }
+         return true;
+      });
    }
 
    // When this query can be realistic: Find all orderlines and stock level for a specific item. Act on those orders according to the information.
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
-      vector<joined_t> results;          // TODO: change to joined_selected_t
-      typename joined_t::Key start_key;  // Starting from the first item in the warehouse and district
-      if (FLAGS_locality_read) {         // No additional key than the join key
-         start_key = {w_id, i_id, 0, 0, 0};
-      } else {
-         start_key = {w_id, i_id, d_id, 0, 0};
-      }
+      std::vector<joined_selected_t> results;
+      typename joined_t::Key start_key = {w_id, i_id, FLAGS_locality_read ? 0 : d_id, 0, 0};
 
       uint64_t lookupCardinality = 0;
 
-      joined_ols.scan(
-          start_key,
-          [&](const joined_t::Key& key, const joined_t& rec) {
-             ++lookupCardinality;
-             if (key.i_id != i_id || key.w_id != w_id) {  // passed
-                return false;
-             }
-             if (!FLAGS_locality_read && key.ol_d_id != d_id) {
-                return false;
-             }
-             if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
-                results.push_back(rec);
-             } else {
-                this->tpcc->stock.lookup1({key.w_id, key.i_id}, [&](const stock_t&) {});
-                this->tpcc->orderline.lookup1({key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t&) {});
-                results.push_back(rec);
-             }
-             return true;
-          },
-          []() {
-             // This is executed after the scan completes
-          });
-
-      // std::cerr << "Lookup cardinality: " << lookupCardinality << ", results cardinality: " << results.size() << std::endl;
+      scanJoin(start_key, [&](const joined_selected_t::Key& key, const joined_selected_t& rec) {
+         if (key.w_id != w_id || key.i_id != i_id) {
+            return false;
+         }
+         if (!FLAGS_locality_read && key.ol_d_id != d_id) {
+            return false;
+         }
+         results.push_back(rec);
+         lookupCardinality++;
+         return true;
+      });
    }
 
    void newOrderRnd(Integer w_id, Integer order_size = 5)
@@ -184,7 +183,15 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
 
    void joinOrderlineAndStock(Integer w_id = std::numeric_limits<Integer>::max())
    {
-      Base::joinOrderlineAndStockOnTheFly([&](joined_t::Key& key, joined_t& rec) { joined_ols.insert(key, rec); }, w_id);
+      Base::joinOrderlineAndStockOnTheFly(
+          [&](joined_t::Key& key, joined_t& rec) {
+             if (key.w_id != w_id) {
+                return false;
+             }
+             joined_ols.insert(key, rec);
+             return true;
+          },
+          {w_id, 0, 0, 0, 0});
    }
 
    void verifyWarehouse(Integer w_id)
