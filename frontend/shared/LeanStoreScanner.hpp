@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+#include <concepts>
 #include "Scanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
@@ -16,13 +18,12 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
    using pair_t = typename Base::pair_t;
 
    BTreeIt it;
-   std::conditional<std::is_same<Record, PayloadType>::value, bool, BTreeIt> payloadProvider = false;
+   std::optional<BTreeIt> payloadIt;
    bool afterSeek = false;
 
   public:
-   // Template argument PayloadType = Record
-   LeanStoreScanner(BTree& btree)
-       : Base([&]() -> std::optional<pair_t> {
+   LeanStoreScanner(BTree& btree) requires std::same_as<PayloadType, Record>
+       : Base([this]() -> std::optional<pair_t> {
             it.assembleKey();
             leanstore::Slice key = it.key();
             leanstore::Slice payload = it.value();
@@ -35,11 +36,11 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
             Record::unfoldKey(key.data(), typed_key);
             return std::optional<pair_t>({typed_key, typed_payload});
          }),
-         it(btree)
+         it(btree), payloadIt(std::nullopt)
    {}
 
-   LeanStoreScanner(BTree& btree, BTreeIt& payloadProvider)
-   : Base([&]() -> std::optional<pair_t> {
+   LeanStoreScanner(BTree& btree, BTree& payloadProvider) requires (!std::same_as<PayloadType, Record>)
+   : Base([this]() -> std::optional<pair_t> {
          it.assembleKey();
          leanstore::Slice key = it.key();
          // Parse secondary key and get the primary key
@@ -49,21 +50,17 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
          Record::foldPKey(primaryKeyBuffer, typed_key);
          leanstore::Slice primaryKey(primaryKeyBuffer, PayloadType::maxFoldLength());
          // Search in primary index
-         auto res1 = payloadProvider.seekExact(primaryKey);
+         auto res1 = payloadIt->seekExact(primaryKey);
          if (res1 != leanstore::OP_RESULT::OK)
             return std::nullopt;
-         payloadProvider.assembleKey();
-         leanstore::Slice payload = payloadProvider.value();
-         assert(payload.length() == sizeof(PayloadType));
-         const PayloadType* record_ptr = reinterpret_cast<const PayloadType*>(payload.data());
-         PayloadType typed_payload = *record_ptr;
+         payloadIt->assembleKey();
+         leanstore::Slice payload = payloadIt->value();
+         PayloadType typed_payload = *reinterpret_cast<const PayloadType*>(payload.data());
 
          return std::optional<pair_t>({typed_key, typed_payload});
      }),
-     it(btree), payloadProvider(payloadProvider)
+     it(btree), payloadIt(std::make_optional<BTreeIt>(payloadProvider))
    {}
-
-   virtual ~LeanStoreScanner() {}
 
    virtual bool seek(typename Record::Key key)
    {
