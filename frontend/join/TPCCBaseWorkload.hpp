@@ -88,7 +88,8 @@ class TPCCBaseWorkload
    void joinOrderlineAndStockOnTheFly(std::function<void(joined_t::Key&, joined_t&)> cb, Integer w_id = std::numeric_limits<Integer>::max())
    {
       std::cout << "Joining orderline and stock for warehouse " << w_id << std::endl;
-      auto orderline_scanner = this->orderline_secondary->getScanner();
+      auto orderline_scanner = this->orderline_secondary->getScanner(); // TODO: Allow the orderline's scanner guided by orderline_secondary. joined_t should be joined_selected_t
+      // Use call back for scanner initialization, seek, and end condition
       auto stock_scanner = this->tpcc->stock.getScanner();
 
       if (w_id != std::numeric_limits<Integer>::max()) {
@@ -112,6 +113,7 @@ class TPCCBaseWorkload
    virtual void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
       // If leaf count is similar to merged index, performance should be similar
+      // TODO: directly join to get joined_selected_t
       this->joinOrderlineAndStockOnTheFly(
           [&](joined_t::Key& key, joined_t& payload) {
              if (key.w_id != w_id || key.ol_d_id != d_id)
@@ -127,7 +129,6 @@ class TPCCBaseWorkload
                   if (rec.ol_delivery_d < since)
                      return;
                 });
-                // TODO: Lookup stock_t too, pretending the query needs columns therefrom
              } else if constexpr (std::is_same_v<joined_t, joined_ols_t>) {
                  joined_ols_t joined_rec = payload.expand();
                  if (joined_rec.ol_delivery_d < since)
@@ -142,6 +143,8 @@ class TPCCBaseWorkload
 
    virtual void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
+      // TODO: Use call backs in joinOrderlineAndStockOnTheFly
+      // And get joined_selected_t directly
       vector<joined_ols_t> results;
       auto orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
@@ -162,7 +165,7 @@ class TPCCBaseWorkload
          if (key.w_id != w_id || key.i_id != i_id)
             break;
          else if (!FLAGS_locality_read && key.ol_d_id != d_id)
-            continue;
+            break;
          if constexpr (std::is_same_v<joined_t, joined_ols_key_only_t>) {
             // stock_t stock_rec = merge_join.getPayload2();
             tpcc->orderline.lookup1({
@@ -182,7 +185,7 @@ class TPCCBaseWorkload
 
    virtual void newOrderRndCallback(
        Integer w_id,
-       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&)> stock_update_cb,
+       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&, Integer qty)> stock_update_cb,
        std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
        Integer order_size = 5)
    {
@@ -262,7 +265,7 @@ class TPCCBaseWorkload
                 rec.s_order_cnt++;
                 rec.s_ytd += qty;
              },
-             stock_update_descriptor);
+             stock_update_descriptor, qty);
       }
 
       // Batch insert orderline records
@@ -293,7 +296,7 @@ class TPCCBaseWorkload
    {
       this->newOrderRndCallback(
           w_id,
-          [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+          [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer) {
              this->tpcc->stock.update1(key, cb, update_descriptor);
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, order_size);
