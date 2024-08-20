@@ -116,6 +116,9 @@ struct RocksDBAdapter : public Adapter<Record> {
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
       const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);
+      if (folded_key_len > Record::maxFoldLength() + sizeof(SEP)) {
+         std::cout << "folded_key_len: " << folded_key_len << " Record::maxFoldLength() + sizeof(SEP): " << Record::maxFoldLength() + sizeof(SEP) << std::endl;
+      }
       // -------------------------------------------------------------------------------------
       rocksdb::Iterator* it = map.db->NewIterator(map.iterator_ro);
       for (it->Seek(RSlice(folded_key, folded_key_len)); it->Valid() && getId(it->key()) == Record::id; it->Next()) {

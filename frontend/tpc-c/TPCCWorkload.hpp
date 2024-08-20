@@ -1000,7 +1000,10 @@ class TPCCWorkload
                ol_delivery_d = now;
             Numeric ol_amount = (o_id < 2101) ? 0 : randomNumeric(0.01, 9999.99);
             const Integer ol_i_id = rnd(ITEMS_NO * scale_factor) + 1;  // May not cover all items in stock
-            // std::cout << "ol_i_id: " << ol_i_id << " for o_id: " << o_id << std::endl;
+            // if (d_id > 10 || ol_number > 15) {
+            //    std::cout << "TPCCWorkload::loadOrders: Invalid orderline key." << std::endl;
+            //    exit(1);
+            // }
             orderline.insert({w_id, d_id, o_id, ol_number},
                              {ol_i_id, w_id, ol_delivery_d, 5, ol_amount, randomastring<24>(24, 24)});  // All supplied by the same warehouse
          }

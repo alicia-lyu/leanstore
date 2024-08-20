@@ -176,13 +176,11 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
       }
    }
 
-   void loadOrderlineSecondaryToMerged(Integer w_id = std::numeric_limits<Integer>::max())
+   void loadOrderlineSecondaryToMerged(Integer w_id = 0)
    {
       std::cout << "Loading orderline secondary index to merged for warehouse " << w_id << std::endl;
       auto orderline_scanner = this->tpcc->orderline.getScanner();
-      if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner->seek({w_id, 0, 0, 0});
-      }
+      orderline_scanner->seek({w_id, 0, 0, 0});
       while (true) {
          auto ret = orderline_scanner->next();
          if (!ret.has_value())
@@ -190,13 +188,18 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
          auto [key, payload] = ret.value();
          if (key.ol_w_id != w_id)
             break;
+
+         if (key.ol_d_id > 10 || key.ol_number > 15) {
+            std::cout << "TPCCMergedWorkload::loadOrders: Invalid orderline key: " << key << std::endl;
+            exit(1);
+         }
          typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
-            merged.template insert<orderline_sec_t>(sec_key, {});
+            // merged.template insert<ol_sec0_t>(sec_key, {});
          } else {
             orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
                                            payload.ol_dist_info};
-            merged.template insert<orderline_sec_t>(sec_key, sec_payload);
+            // merged.template insert<ol_sec1_t>(sec_key, sec_payload);
          }
       }
    }
