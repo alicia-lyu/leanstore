@@ -14,8 +14,6 @@ DEFINE_bool(print_header, true, "");
 class RocksDBExperimentHelper : public ExperimentHelper
 {
   public:
-   using orderline_sec_t = typename ExperimentHelper::orderline_sec_t;
-   using joined_t = typename ExperimentHelper::joined_t;
    struct RocksDBExperimentContext {
       RocksDB::DB_TYPE type;
       RocksDB rocks_db;

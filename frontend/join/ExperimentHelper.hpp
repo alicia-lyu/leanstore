@@ -10,8 +10,6 @@
 class ExperimentHelper
 {
   public:
-   using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec0_t, ol_sec1_t>::type;
-   using joined_t = typename std::conditional<INCLUDE_COLUMNS == 0, joined0_t, joined1_t>::type;
    
    static std::string getConfigString()
    {

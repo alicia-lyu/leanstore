@@ -31,7 +31,7 @@ class RocksDBScanner : public Scanner<Record, PayloadType>
    using pair_t = typename Base::pair_t;
 
    RocksDBScanner(RocksDB& map) requires std::same_as<PayloadType, Record>
-       : Base([this]() {
+       : Base([this]() -> std::optional<pair_t> {
             if (!it->Valid() || getId(it->key()) != Record::id) {
                return std::nullopt;
             }
@@ -41,13 +41,13 @@ class RocksDBScanner : public Scanner<Record, PayloadType>
             const Record* s_value = reinterpret_cast<const Record*>(it->value().data());
             Record s_value_copy = *s_value;
 
-            return std::optional<pair_t>({s_key, s_value_copy});
+            return std::make_optional<pair_t>(s_key, s_value_copy);
          }),
          it(map.db->NewIterator(map.ro)), payloadIt(nullptr)
    {}
 
    RocksDBScanner(RocksDB& map) requires (!std::same_as<PayloadType, Record>)
-   : Base([this]() {
+   : Base([this]() -> std::optional<pair_t> {
          if (!it->Valid() || getId(it->key()) != Record::id) {
             return std::nullopt;
          }
@@ -71,7 +71,7 @@ class RocksDBScanner : public Scanner<Record, PayloadType>
 
          PayloadType s_value_copy = *reinterpret_cast<const PayloadType*>(payloadIt->value().data());
 
-         return std::optional<pair_t>({s_key, s_value_copy});
+         return std::make_optional<pair_t>(s_key, s_value_copy);
       }),
       it(map.db->NewIterator(map.ro)), payloadIt(map.db->NewIterator(map.ro))
    {}

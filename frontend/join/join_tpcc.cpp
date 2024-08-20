@@ -28,8 +28,6 @@ int main(int argc, char** argv)
    auto& crm = context->db.getCRManager();
    auto& db = context->db;
    auto& tpcc = context->tpcc;
-   using orderline_sec_t = typename ExperimentHelper::orderline_sec_t;
-   using joined_t = typename ExperimentHelper::joined_t;
 
    LeanStoreAdapter<orderline_sec_t> orderline_secondary;
    LeanStoreAdapter<joined_t> joined_ols;

@@ -28,6 +28,11 @@ DEFINE_bool(locality_read, false, "Lookup key in the read transactions are the s
    1  // All columns, unless defined. Now included columns in orderline secondary and joined results are the same. Maybe should be different.
 #endif
 
+using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec0_t, ol_sec1_t>::type;  // INCLUDE_COLUMNS == 2 will still select all
+                                                                                                      // columns from orderline
+using joined_t = typename std::
+    conditional<INCLUDE_COLUMNS == 0, joined0_t, typename std::conditional<INCLUDE_COLUMNS == 1, joined1_t, joined_selected_t>::type>::type;
+
 template <template <typename> class AdapterType>
 class TPCCBaseWorkload
 {
@@ -35,12 +40,6 @@ class TPCCBaseWorkload
    TPCCWorkload<AdapterType>* tpcc;
 
   public:
-   using orderline_sec_t =
-       typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec0_t, ol_sec1_t>::type;  // INCLUDE_COLUMNS == 2 will still select all columns
-                                                                                                 // from orderline
-   using joined_t = typename std::
-       conditional<INCLUDE_COLUMNS == 0, joined0_t, std::conditional<INCLUDE_COLUMNS == 1, joined1_t, joined_selected_t>>::type;
-
   protected:
    AdapterType<orderline_sec_t>* orderline_secondary;
 
@@ -112,7 +111,7 @@ class TPCCBaseWorkload
    }
 
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires std::same_as<joined_t, joined0_t>
+      requires(std::same_as<joined_t, joined0_t>)
    {
       std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
@@ -148,7 +147,7 @@ class TPCCBaseWorkload
    }
 
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires (std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
+      requires(std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
    {
       std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
       auto stock_scanner = this->tpcc->stock.getScanner();
@@ -201,7 +200,7 @@ class TPCCBaseWorkload
              results.push_back(payload);
              return true;
           },
-          {w_id, i_id, FLAGS_locality_read ? 0: d_id, 0, 0});
+          {w_id, i_id, FLAGS_locality_read ? 0 : d_id, 0, 0});
    }
 
    virtual void newOrderRndCallback(
