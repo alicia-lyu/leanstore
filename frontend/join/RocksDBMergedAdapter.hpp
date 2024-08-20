@@ -125,7 +125,7 @@ struct RocksDBMergedAdapter {
       const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
       start_key = RSlice(folded_key, folded_key_len);
       // -------------------------------------------------------------------------------------
-      rocksdb::Iterator* it = map.db->NewIterator(map.ro);
+      rocksdb::Iterator* it = map.db->NewIterator(map.iterator_ro);
       u32 rec_len = Record::maxFoldLength() + sizeof(SEP);
       u32 other_rec_len = OtherRec::maxFoldLength() + sizeof(SEP);
       for (it->Seek(start_key); it->Valid() && getId(it->key()) == merged_id; it->Next()) {
@@ -138,6 +138,7 @@ struct RocksDBMergedAdapter {
             } else if (key_len <= other_rec_len) {
                is_other_rec = true;
             } else {
+               std::cout << "key_len: " << key_len << " rec_len: " << rec_len << " other_rec_len: " << other_rec_len << std::endl;
                UNREACHABLE();
             }
          } else if (rec_len > other_rec_len) {
@@ -146,9 +147,11 @@ struct RocksDBMergedAdapter {
             } else if (key_len <= rec_len) {
                is_rec = true;
             } else {
+               std::cout << "key_len: " << key_len << " rec_len: " << rec_len << " other_rec_len: " << other_rec_len << std::endl;
                UNREACHABLE();
             }
          } else {
+            std::cout << "key_len: " << key_len << " rec_len: " << rec_len << " other_rec_len: " << other_rec_len << std::endl;
             UNREACHABLE(); // Do not allow same length
          }
          if (is_rec) {

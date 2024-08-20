@@ -30,11 +30,6 @@ class RocksDBScanner : public Scanner<Record, PayloadType>
    using Base = Scanner<Record, PayloadType>;
    using pair_t = typename Base::pair_t;
 
-   // Scanner keeps producing more records than desired
-   // Hypothesis: Unexpected behavior when we insert and iterate at the same time
-   // Test: Use scanner to scan all records in the table and not insert anything
-   // OR try keep refreshing
-   // OR create the iterator with a snapshot
    RocksDBScanner(RocksDB& map) requires(std::same_as<PayloadType, Record>)
        : Base([this]() -> std::optional<pair_t> {
             if (!it->Valid()) {
@@ -50,9 +45,9 @@ class RocksDBScanner : public Scanner<Record, PayloadType>
             const Record* s_value = reinterpret_cast<const Record*>(it->value().data());
             Record s_value_copy = *s_value;
 
-            return std::make_optional<pair_t>(s_key, s_value_copy);
+            return std::make_optional<pair_t>({s_key, s_value_copy});
          }),
-         it(map.db->NewIterator(map.ro)), payloadIt(nullptr)
+         it(map.db->NewIterator(map.iterator_ro)), payloadIt(nullptr)
    {}
 
    RocksDBScanner(RocksDB& map) requires(!std::same_as<PayloadType, Record>)
@@ -82,8 +77,8 @@ class RocksDBScanner : public Scanner<Record, PayloadType>
 
          return std::make_optional<pair_t>(s_key, s_value_copy);
       }),
-      it(map.db->NewIterator(map.ro)), 
-      payloadIt(map.db->NewIterator(map.ro))
+      it(map.db->NewIterator(map.iterator_ro)), 
+      payloadIt(map.db->NewIterator(map.iterator_ro))
    {}
 
    virtual bool seek(typename Record::Key key)

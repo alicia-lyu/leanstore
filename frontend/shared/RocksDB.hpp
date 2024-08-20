@@ -38,6 +38,7 @@ struct RocksDB {
    static thread_local rocksdb::Transaction* txn;
    rocksdb::WriteOptions wo;
    rocksdb::ReadOptions ro;
+   rocksdb::ReadOptions iterator_ro;
    enum class DB_TYPE : u8 { DB, TransactionDB, OptimisticDB };
    const DB_TYPE type;
    // -------------------------------------------------------------------------------------
@@ -45,6 +46,7 @@ struct RocksDB {
    {
       wo.disableWAL = true;
       wo.sync = false;
+      iterator_ro.snapshot = nullptr; // Snapshot from pinning resources
       // -------------------------------------------------------------------------------------
       rocksdb::Options db_options;
       db_options.use_direct_reads = true;
@@ -206,8 +208,8 @@ struct RocksDB {
 
    void startProfilingThread(std::atomic<u64>& running_threads_counter,
                              std::atomic<u64>&,
-                             std::atomic<u64>* thread_committed,
-                             std::atomic<u64>* thread_aborted,
+                             std::vector<std::atomic<u64>>& thread_committed,
+                             std::vector<std::atomic<u64>>& thread_aborted,
                              bool& print_header)
    {
       std::thread profiling_thread([&]() {

@@ -16,7 +16,7 @@
 
 #define UpdateDescriptorFillSlot(Name, Index, Type, Attribute) \
    Name.slots[Index].offset = offsetof(Type, Attribute);       \
-   Name.slots[Index].length = sizeof(Type::Attribute);
+   Name.slots[Index].length = sizeof(decltype(((Type*)nullptr)->Attribute));
 
 #define UpdateDescriptorGenerator1(Name, Type, A0) \
    UpdateDescriptorInit(Name, 1);                  \

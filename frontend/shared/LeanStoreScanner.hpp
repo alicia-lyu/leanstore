@@ -32,7 +32,7 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
 
             typename Record::Key typed_key;
             Record::unfoldKey(key.data(), typed_key);
-            return std::make_optional<pair_t>(typed_key, typed_payload);
+            return std::make_optional<pair_t>({typed_key, typed_payload});
          }),
          it(btree), payloadIt(std::nullopt)
    {}
