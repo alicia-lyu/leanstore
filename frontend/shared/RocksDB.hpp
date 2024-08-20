@@ -205,7 +205,7 @@ struct RocksDB {
    }
 
    void startProfilingThread(std::atomic<u64>& running_threads_counter,
-                             std::atomic<u64>& keep_running,
+                             std::atomic<u64>&,
                              std::atomic<u64>* thread_committed,
                              std::atomic<u64>* thread_aborted,
                              bool& print_header)

@@ -16,8 +16,6 @@ template <template <typename> class AdapterType>
 class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
 {
    using Base = TPCCBaseWorkload<AdapterType>;
-   using orderline_sec_t = typename Base::orderline_sec_t;
-   using joined_t = typename Base::joined_t;
    AdapterType<joined_t>& joined_ols;
 
   public:
@@ -31,15 +29,15 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    {
       joined_ols.scan(
           start_key,
-          [&](const joined_t::Key& key, const joined_t& rec) {
-             auto selected_rec = rec.toSelected();
-             cb(key, selected_rec);
+          [&](const joined_t::Key& key, const joined_t& rec) -> bool {
+             auto selected_rec = rec.toSelected(key);
+             return cb(key, selected_rec);
           },
           []() {});
    }
 
-   void scanJoin(typename joined_t::Key start_key, std::function<void(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires std::same_as<joined_t, joined0_t>
+   void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
+      requires(std::same_as<joined_t, joined0_t>)
    {
       stock_t::Key stock_key;
       stock_t stock_payload;
@@ -57,8 +55,9 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
                 orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};
                 this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });
              }
-             auto selected_payload = rec.expand(key, stock_payload, orderline_payload);
-             cb(key, selected_payload);
+             joined_t copied_rec = rec;
+             auto selected_payload = copied_rec.expand(key, stock_payload, orderline_payload);
+             return cb(key, selected_payload);
           },
           []() {});
    }
@@ -72,7 +71,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       atomic<uint64_t> scanCardinality = 0;
       uint64_t resultsCardinality = 0;
 
-      scanJoin(start_key, [&](const typename joined_t::Key& key, const joined_t& rec) {
+      scanJoin(start_key, [&](const typename joined_selected_t::Key& key, const joined_selected_t& rec) {
          if (key.w_id != w_id) {
             return false;
          }

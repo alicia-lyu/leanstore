@@ -26,8 +26,6 @@ thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 // -------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-   using orderline_sec_t = typename RocksDBExperimentHelper::orderline_sec_t;
-   using joined_t = typename RocksDBExperimentHelper::joined_t;
    gflags::SetUsageMessage("RocksDB TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    // -------------------------------------------------------------------------------------

@@ -15,8 +15,6 @@ template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 {
    using Base = TPCCBaseWorkload<AdapterType>;
-   using orderline_sec_t = typename Base::orderline_sec_t;
-   using joined_t = typename Base::joined_t;
    MergedAdapterType& merged;
 
    std::vector<std::pair<joined_selected_t::Key, joined_selected_t>> cartesianProducts(
@@ -84,7 +82,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
              } else {
                 ol_sec1_t expanded_rec;
                 this->tpcc->orderline.lookup1({w_id, d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& ol_rec) {
-                   expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, rec.ol_quantity, rec.ol_amount, rec.ol_dist_info};
+                   expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, ol_rec.ol_quantity, ol_rec.ol_amount, ol_rec.ol_dist_info};
                 });
              }
              if (expanded_rec.ol_delivery_d < since) {
@@ -101,7 +99,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
    void ordersByItemId(Integer w_id, Integer d_id, Integer i_id)
    {
-      vector<std::pair<typename joined_t::Key, joined_t>> results;
+      vector<std::pair<joined_selected_t::Key, joined_selected_t>> results;
 
       std::vector<std::pair<ol_sec1_t::Key, ol_sec1_t>> cached_left;
       std::vector<std::pair<stock_t::Key, stock_t>> cached_right;
@@ -131,10 +129,10 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
              }
              ol_sec1_t expanded_rec;
              if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
-                expanded_rec = rec.expand();
+                expanded_rec = rec;
              } else {
                 this->tpcc->orderline.lookup1({w_id, d_id, key.ol_o_id, key.ol_number}, [&](const orderline_t& ol_rec) {
-                   expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, rec.ol_quantity, rec.ol_amount, rec.ol_dist_info};
+                   expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, ol_rec.ol_quantity, ol_rec.ol_amount, ol_rec.ol_dist_info};
                 });
              }
              cached_left.push_back({key, expanded_rec});

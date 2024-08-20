@@ -5,6 +5,7 @@
 #include "../tpc-c/Schema.hpp"
 
 // Key is shared across different choices of included columns
+
 struct orderline_secondary_base_t {
   static constexpr int id = 11;
   struct Key {
@@ -82,14 +83,16 @@ struct ol_sec0_t;
 
 struct ol_sec1_t: public orderline_secondary_base_t {
   using orderline_secondary_base_t::id;
-  using orderline_secondary_base_t::Key;
+  using Key = orderline_secondary_base_t::Key;
 
   ol_sec1_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Varchar<24> ol_dist_info)
       : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), ol_dist_info(ol_dist_info) {}
 
   ol_sec1_t() = default;
 
-  explicit ol_sec1_t(const ol_sec0_t&) {}
+  ol_sec1_t(const ol_sec0_t&) {
+    UNREACHABLE(); // To suppress compiler warning
+  }
 
   Integer ol_supply_w_id;
   Timestamp ol_delivery_d;
@@ -106,11 +109,11 @@ struct ol_sec1_t: public orderline_secondary_base_t {
 
 struct ol_sec0_t: public orderline_secondary_base_t {
   using orderline_secondary_base_t::id;
-  using orderline_secondary_base_t::Key;
+  using Key = orderline_secondary_base_t::Key;
 
   ol_sec0_t() = default;
 
-  explicit ol_sec0_t(const ol_sec1_t&) {}
+  ol_sec0_t(const ol_sec1_t&) {}
 
   friend std::ostream& operator<<(std::ostream& os, const ol_sec0_t&) {
     os << "ol_sec_key_only";
@@ -133,9 +136,9 @@ struct joined_base_t {
 
     Key(Integer w_id, Integer i_id, Integer ol_d_id, Integer ol_o_id, Integer ol_number) : w_id(w_id), i_id(i_id), ol_d_id(ol_d_id), ol_o_id(ol_o_id), ol_number(ol_number) {}
 
-    explicit Key(const ol_sec1_t::Key& ol_key) : w_id(ol_key.ol_w_id), i_id(ol_key.ol_i_id), ol_d_id(ol_key.ol_d_id), ol_o_id(ol_key.ol_o_id), ol_number(ol_key.ol_number) {
-      UNREACHABLE(); // To suppress compiler warning
-    }
+    Key() = default;
+
+    Key(const orderline_secondary_base_t::Key& ol_key) : w_id(ol_key.ol_w_id), i_id(ol_key.ol_i_id), ol_d_id(ol_key.ol_d_id), ol_o_id(ol_key.ol_o_id), ol_number(ol_key.ol_number) {}
 
     friend std::ostream& operator<<(std::ostream& os, const Key& key) {
       os << "w_id: " << key.w_id << ", i_id: " << key.i_id
@@ -179,10 +182,12 @@ struct joined_selected_t;
 
 struct joined1_t: public joined_base_t {
   using joined_base_t::id;
-  using joined_base_t::Key;
+  using Key = joined_base_t::Key;
 
   joined1_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Numeric s_quantity, Varchar<24> s_dist_01, Varchar<24> s_dist_02, Varchar<24> s_dist_03, Varchar<24> s_dist_04, Varchar<24> s_dist_05, Varchar<24> s_dist_06, Varchar<24> s_dist_07, Varchar<24> s_dist_08, Varchar<24> s_dist_09, Varchar<24> s_dist_10, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
       : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), s_quantity(s_quantity), s_dist_01(s_dist_01), s_dist_02(s_dist_02), s_dist_03(s_dist_03), s_dist_04(s_dist_04), s_dist_05(s_dist_05), s_dist_06(s_dist_06), s_dist_07(s_dist_07), s_dist_08(s_dist_08), s_dist_09(s_dist_09), s_dist_10(s_dist_10), s_ytd(s_ytd), s_order_cnt(s_order_cnt), s_remote_cnt(s_remote_cnt), s_data(s_data) {}
+
+  joined1_t() = default;
 
   // from order line
   Integer ol_supply_w_id;
@@ -213,11 +218,18 @@ struct joined1_t: public joined_base_t {
   }
 
   joined_selected_t toSelected(const Key& key) const;
+
+  joined_selected_t expand(const Key&, const stock_t&, const orderline_t&);
 };
 
 struct joined_selected_t: public joined_base_t {
   using joined_base_t::id;
-  using joined_base_t::Key;
+  using Key = joined_base_t::Key;
+
+  joined_selected_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Numeric s_quantity, Varchar<24> s_dist, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
+      : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), s_quantity(s_quantity), s_dist(s_dist), s_ytd(s_ytd), s_order_cnt(s_order_cnt), s_remote_cnt(s_remote_cnt), s_data(s_data) {}
+
+  joined_selected_t() = default;
 
   Integer ol_supply_w_id;
   Timestamp ol_delivery_d;
@@ -237,6 +249,10 @@ struct joined_selected_t: public joined_base_t {
 
   joined_selected_t toSelected() const {
     return *this;
+  }
+
+  joined_selected_t expand(const Key&, const stock_t&, const orderline_t&) {
+    UNREACHABLE(); // Only to suppress warning
   }
 };
 
@@ -276,23 +292,31 @@ joined_selected_t joined1_t::toSelected(const Key& key) const {
     default:
       throw std::runtime_error("Invalid ol_d_id");
   }
-  return joined_selected_t {
-    .ol_supply_w_id = ol_supply_w_id,
-    .ol_delivery_d = ol_delivery_d,
-    .ol_quantity = ol_quantity,
-    .ol_amount = ol_amount,
-    .s_quantity = s_quantity,
-    .s_dist = s_dist,
-    .s_ytd = s_ytd,
-    .s_order_cnt = s_order_cnt,
-    .s_remote_cnt = s_remote_cnt,
-    .s_data = s_data
-  };
+  return joined_selected_t(
+    ol_supply_w_id,
+    ol_delivery_d,
+    ol_quantity,
+    ol_amount,
+    s_quantity,
+    s_dist,
+    s_ytd,
+    s_order_cnt,
+    s_remote_cnt,
+    s_data
+  );
 };
+
+joined_selected_t joined1_t::expand(const Key&, const stock_t&, const orderline_t&) {
+  UNREACHABLE(); // Only to suppress warning
+}
 
 struct joined0_t: public joined_base_t {
   using joined_base_t::id;
-  using joined_base_t::Key;
+  using Key = joined_base_t::Key;
+
+  joined0_t() = default;
+
+  joined0_t(const joined1_t&) {}
 
   friend std::ostream& operator<<(std::ostream& os, const joined0_t&) {
     os << "joined_ols_key_only";
@@ -304,7 +328,7 @@ struct joined0_t: public joined_base_t {
     // If one really needs joined_selected_t, lookups into base tables are needed
   }
 
-  joined_selected_t expand(joined0_t::Key& key, stock_t& stock, orderline_t& orderline) {
+  joined_selected_t expand(const Key& key, const stock_t& stock, const orderline_t& orderline) {
     Varchar<24> s_dist;
     switch (key.ol_d_id) {
       case 1:
@@ -340,18 +364,17 @@ struct joined0_t: public joined_base_t {
       default:
         throw std::runtime_error("Invalid ol_d_id");
     };
-    joined_selected_t selected {
-      .ol_supply_w_id = orderline.ol_supply_w_id,
-      .ol_delivery_d = orderline.ol_delivery_d,
-      .ol_quantity = orderline.ol_quantity,
-      .ol_amount = orderline.ol_amount,
-      .s_quantity = stock.s_quantity,
-      .s_dist = s_dist,
-      .s_ytd = stock.s_ytd,
-      .s_order_cnt = stock.s_order_cnt,
-      .s_remote_cnt = stock.s_remote_cnt,
-      .s_data = stock.s_data
-    };
-    return selected;
+    return joined_selected_t(
+      orderline.ol_supply_w_id,
+      orderline.ol_delivery_d,
+      orderline.ol_quantity,
+      orderline.ol_amount,
+      stock.s_quantity,
+      s_dist,
+      stock.s_ytd,
+      stock.s_order_cnt,
+      stock.s_remote_cnt,
+      stock.s_data
+    );
   }
 };
