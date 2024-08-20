@@ -64,13 +64,11 @@ class TPCCBaseWorkload
 
    static bool isSelected(Integer i_id) { return TPCCWorkload<AdapterType>::isSelected(i_id); }
 
-   void loadOrderlineSecondary(Integer w_id = std::numeric_limits<Integer>::max())
+   void loadOrderlineSecondary(Integer w_id = 0)
    {
       std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
       auto orderline_scanner = this->tpcc->orderline.getScanner();
-      if (w_id != std::numeric_limits<Integer>::max()) {
-         orderline_scanner->seek({w_id, 0, 0, 0});
-      }
+      orderline_scanner->seek({w_id, 0, 0, 0});
       while (true) {
          auto ret = orderline_scanner->next();
          if (!ret.has_value())
@@ -78,6 +76,11 @@ class TPCCBaseWorkload
          auto [key, payload] = ret.value();
          if (key.ol_w_id != w_id)
             break;
+
+         if (key.ol_d_id > 10 || key.ol_number > 15) {
+            // std::cout << "Invalid orderline key: " << key << std::endl;
+         }
+
          typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
             this->orderline_secondary->insert(sec_key, {});

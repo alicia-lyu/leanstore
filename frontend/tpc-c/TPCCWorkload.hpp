@@ -924,9 +924,9 @@ class TPCCWorkload
       return rem % step == 0 && rem / step <= FLAGS_semijoin_selectivity;
    }
 
-   void loadStock(Integer w_id)  // TODO
+   void loadStock(Integer w_id)
    {
-      std::cout << "Loading " << ITEMS_NO * scale_factor << " stock" << std::endl;
+      std::cout << "Loading " << ITEMS_NO * scale_factor << " stock to warehouse " << w_id << ", with semi-join selectivity " << FLAGS_semijoin_selectivity << std::endl;
       for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
          if (!isSelected(i + 1)) {
             continue;
