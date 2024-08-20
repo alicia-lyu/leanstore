@@ -290,7 +290,7 @@ joined_selected_t joined1_t::toSelected(const Key& key) const {
       s_dist = s_dist_10;
       break;
     default:
-      throw std::runtime_error("Invalid ol_d_id");
+      throw std::runtime_error("Invalid ol_d_id " + std::to_string(key.ol_d_id));
   }
   return joined_selected_t(
     ol_supply_w_id,
@@ -362,7 +362,7 @@ struct joined0_t: public joined_base_t {
         s_dist = stock.s_dist_10;
         break;
       default:
-        throw std::runtime_error("Invalid ol_d_id");
+        throw std::runtime_error("Invalid ol_d_id " + std::to_string(key.ol_d_id));
     };
     return joined_selected_t(
       orderline.ol_supply_w_id,

@@ -28,13 +28,11 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
             leanstore::Slice key = it.key();
             leanstore::Slice payload = it.value();
 
-            assert(payload.length() == sizeof(Record));
-            const Record* record_ptr = reinterpret_cast<const Record*>(payload.data());
-            Record typed_payload = *record_ptr;
+            Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
 
             typename Record::Key typed_key;
             Record::unfoldKey(key.data(), typed_key);
-            return std::optional<pair_t>({typed_key, typed_payload});
+            return std::make_optional<pair_t>(typed_key, typed_payload);
          }),
          it(btree), payloadIt(std::nullopt)
    {}
@@ -82,6 +80,7 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
       } else {
          afterSeek = false;
       }
+      this->produced++;
       return Base::assemble();
    }
 };

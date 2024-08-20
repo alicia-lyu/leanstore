@@ -28,9 +28,11 @@ class MergeJoin
 
    ~MergeJoin()
    {
-      if (produced > 1000000) {
+      if (produced > 10000) {
          std::cout << "~MergeJoin(): Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)"
                    << std::endl;
+         std::cout << "Left is exhausted: " << left_exhausted << std::endl;
+         std::cout << "Right is exhausted: " << right_exhausted << std::endl;
          std::cout << "Left semi-join selectivity: " << (double)left_matched / left_consumed << std::endl;
          std::cout << "Right semi-join selectivity: " << (double)right_matched / right_consumed << std::endl;
       }
