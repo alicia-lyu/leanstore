@@ -11,7 +11,7 @@ included_columns ?= 1
 CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
 CMAKE_RELWITHDEBINFO := cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 
-CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS} -DINCLUDED_COLUMNS=${included_columns}
+CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS} -DINCLUDED_COLUMNS=${included_columns} -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++
 
 # ----------------- TARGETS -----------------
 BUILD_DIR := ./build
@@ -49,7 +49,7 @@ check_perf_event_paranoid:
 .PHONY: check_perf_event_paranoid
 
 $(TARGETS): check_perf_event_paranoid
-	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) -j
+	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) -j2
 
 executables: $(TARGETS)
 .PHONY: executables
@@ -87,9 +87,9 @@ selectivity ?= $(default_selectivity)
 duration ?= 0
 locality_read ?= ""
 
-both: join merged
+leanstore: join merged base
 
-rocksdb-both: rocksdb-join rocksdb-merged
+rocksdb: rocksdb-join rocksdb-merged
 
 join: $(BUILD_DIR)$(JOIN_EXEC)
 	python3 experiment.py $(BUILD_DIR)$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
@@ -120,10 +120,6 @@ base: $(BUILD_DIR)$(BASE_EXEC)
 	
 %-all-tx-types: %-read %-locality %-scan %-write 
 	@echo "Completed all transaction types for $*"
-
-rall := rocksdb-both-all-tx-types
-
-all := both-all-tx-types
 
 update-size:
 # $(MAKE) write update_size=5 # refer to write expriments

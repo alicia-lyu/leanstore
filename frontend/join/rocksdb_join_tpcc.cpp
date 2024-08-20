@@ -96,7 +96,7 @@ int main(int argc, char** argv)
       uint64_t secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
       uint64_t join_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
       std::array<uint64_t, 3> times = {core_time, secondary_time, join_time};
-      context->rocks_db.logSizes<13>(&times); // Will force compaction
+      context->rocks_db.logSizes<13>(&times);  // Will force compaction
    } else {
       UNREACHABLE();
       context->rocks_db.logSizes<13>();
@@ -104,8 +104,14 @@ int main(int argc, char** argv)
 
    atomic<u64> keep_running = true;
    atomic<u64> running_threads_counter = 0;
-   std::atomic<u64> thread_committed[FLAGS_worker_threads];
-   std::atomic<u64> thread_aborted[FLAGS_worker_threads];
+   std::vector<std::atomic<u64>> thread_committed(FLAGS_worker_threads);
+   std::vector<std::atomic<u64>> thread_aborted(FLAGS_worker_threads);
+
+   // Initialize all elements to 0
+   for (u32 i = 0; i < FLAGS_worker_threads; i++) {
+      thread_committed[i].store(0);
+      thread_aborted[i].store(0);
+   }
    context->rocks_db.startProfilingThread(running_threads_counter, keep_running, thread_committed, thread_aborted, FLAGS_print_header);
 
    helper.scheduleTransations(&tpcc_join, threads, keep_running, running_threads_counter, thread_committed, thread_aborted);

@@ -47,6 +47,7 @@ class TPCCBaseWorkload
    TPCCBaseWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary = nullptr)
        : tpcc(tpcc), orderline_secondary(orderline_secondary)
    {
+      std::cout << "tpcc is null pointer: " << (tpcc == nullptr) << std::endl;
       if constexpr (INCLUDE_COLUMNS == 0) {
          std::cout << "Columns included: Key only" << std::endl;
       } else if constexpr (INCLUDE_COLUMNS == 1) {
@@ -60,7 +61,9 @@ class TPCCBaseWorkload
          std::cout << "Locality read: true" << std::endl;
       }
    }
-   virtual ~TPCCBaseWorkload() = default;
+   virtual ~TPCCBaseWorkload() {
+      std::cout << "TPCCBaseWorkload::~TPCCBaseWorkload" << std::endl;
+   }
 
    static bool isSelected(Integer i_id) { return TPCCWorkload<AdapterType>::isSelected(i_id); }
 
@@ -331,16 +334,16 @@ class TPCCBaseWorkload
       int rnd = (int)leanstore::utils::RandomGenerator::getRand(0, read_percentage + scan_percentage + write_percentage);
       if (rnd < read_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
-         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, (int)(tpcc->ITEMS_NO * tpcc->scale_factor) + 1);
-         ordersByItemId(w_id, d_id, i_id);
+         Integer i_id = leanstore::utils::RandomGenerator::getRand(1, (int)(this->tpcc->ITEMS_NO * this->tpcc->scale_factor) + 1);
+         this->ordersByItemId(w_id, d_id, i_id);
          return 0;
       } else if (rnd < read_percentage + scan_percentage) {
          Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 11);
          Timestamp since = 1;
-         recentOrdersStockInfo(w_id, d_id, since);
+         this->recentOrdersStockInfo(w_id, d_id, since);
          return 0;
       } else {
-         newOrderRnd(w_id, order_size);
+         this->newOrderRnd(w_id, order_size);
          return 0;
       }
    }
@@ -372,7 +375,7 @@ class TPCCBaseWorkload
       return config.str();
    }
 
-   virtual void logSizes(std::chrono::steady_clock::time_point t0,
+   void logSizes(std::chrono::steady_clock::time_point t0,
                          std::chrono::steady_clock::time_point sec_start,
                          std::chrono::steady_clock::time_point sec_end,
                          leanstore::cr::CRManager& crm)

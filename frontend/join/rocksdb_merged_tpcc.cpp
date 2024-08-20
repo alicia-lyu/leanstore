@@ -79,8 +79,14 @@ int main(int argc, char** argv)
 
    atomic<u64> keep_running = true;
    atomic<u64> running_threads_counter = 0;
-   std::atomic<u64> thread_committed[FLAGS_worker_threads];
-   std::atomic<u64> thread_aborted[FLAGS_worker_threads];
+   std::vector<std::atomic<u64>> thread_committed(FLAGS_worker_threads);
+   std::vector<std::atomic<u64>> thread_aborted(FLAGS_worker_threads);
+
+   // Initialize all elements to 0
+   for (u32 i = 0; i < FLAGS_worker_threads; i++) {
+      thread_committed[i].store(0);
+      thread_aborted[i].store(0);
+   }
    context->rocks_db.startProfilingThread(running_threads_counter, keep_running, thread_committed, thread_aborted, FLAGS_print_header);
 
    helper.scheduleTransations(&tpcc_merged, threads, keep_running, running_threads_counter, thread_committed, thread_aborted);
