@@ -7,7 +7,9 @@ template <int merged_id>
 struct RocksDBMergedAdapter {
    using SEP = u32;  // use 32-bits integer as separator instead of column family
    RocksDB& map;
-   RocksDBMergedAdapter(RocksDB& map) : map(map) {}
+   RocksDBMergedAdapter(RocksDB& map) : map(map) {
+      std::cout << "RocksDBMergedAdapter::RocksDBMergedAdapter(): merged_id: " << merged_id << std::endl;
+   }
    // -------------------------------------------------------------------------------------
    template <typename T>
    rocksdb::Slice RSlice(T* ptr, u64 len)
@@ -26,6 +28,9 @@ struct RocksDBMergedAdapter {
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
       const u32 folded_key_len = fold(folded_key, merged_id) + Record::foldKey(folded_key + sizeof(SEP), key);
+      if (folded_key_len > Record::maxFoldLength() + sizeof(SEP)) {
+         throw std::runtime_error("folded_key_len > Record::maxFoldLength() + sizeof(SEP): " + std::to_string(folded_key_len) + " > " + std::to_string(Record::maxFoldLength() + sizeof(SEP)));
+      }
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
       if (map.type == RocksDB::DB_TYPE::DB) {
@@ -138,6 +143,9 @@ struct RocksDBMergedAdapter {
             } else if (key_len <= other_rec_len) {
                is_other_rec = true;
             } else {
+               // typename OtherRec::Key s_key;
+               // OtherRec::unfoldKey(reinterpret_cast<const u8*>(it->key().data() + sizeof(SEP)), s_key);
+               // const OtherRec& s_value = *reinterpret_cast<const OtherRec*>(it->value().data());
                std::cout << "key_len: " << key_len << " rec_len: " << rec_len << " other_rec_len: " << other_rec_len << std::endl;
                UNREACHABLE();
             }

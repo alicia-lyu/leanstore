@@ -57,7 +57,7 @@ executables: $(TARGETS)
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
-lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=1 --write_percentage=1 --order_size=10 --semijoin_selectivity=50 --csv_truncate=true --worker_threads=2 --locality_read=true
+lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=1 --write_percentage=1 --order_size=10 --semijoin_selectivity=50 --csv_truncate=true --worker_threads=2 --locality_read=true --trunc=true
 
 join-lldb: $(BUILD_DIR_DEBUG)$(JOIN_EXEC)
 	lldb -- ./build-debug/frontend/join_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/join-lldb
@@ -69,9 +69,11 @@ base-lldb: $(BUILD_DIR_DEBUG)$(BASE_EXEC)
 	lldb -- ./build-debug/frontend/base_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/base-lldb
 
 rocksdb-join-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
+	rm -rf $(SSD_DIR)/*
 	lldb -- ./build-debug/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-join-lldb
 
 rocksdb-merged-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_MERGED_EXEC)
+	rm -rf $(SSD_DIR)/*
 	lldb -- ./build-debug/frontend/rocksdb_merged_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-merged-lldb
 
 .PHONY: join-lldb merged-lldb base-lldb rocksdb-join-lldb rocksdb-merged-lldb

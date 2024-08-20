@@ -80,9 +80,10 @@ class TPCCBaseWorkload
          if (key.ol_w_id != w_id)
             break;
 
-         if (key.ol_d_id > 10 || key.ol_number > 15) {
-            // std::cout << "Invalid orderline key: " << key << std::endl;
-         }
+         // if (key.ol_d_id > 10 || key.ol_number > 15) {
+         //    std::cout << "TPCCJoinWorkload::loadOrders: Invalid orderline key: " << key << std::endl;
+         //    exit(1);
+         // }
 
          typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
