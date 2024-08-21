@@ -162,14 +162,14 @@ class LeanStoreExperimentHelper : public ExperimentHelper
    int scheduleTransations(TPCCBaseWorkload<LeanStoreAdapter>* tpcc_base,
                            atomic<u64>& keep_running,
                            atomic<u64>& running_threads_counter,
-                           u64* tx_per_thread)
+                           std::vector<u64>& tx_per_thread)
    {
       leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::parseIsolationLevel(FLAGS_isolation_level);
       auto& crm = context_ptr->db.getCRManager();
       auto& tpcc = context_ptr->tpcc;
 
       for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-         crm.scheduleJobAsync(t_i, [&, t_i]() {
+         crm.scheduleJobAsync(t_i, [&, tpcc_base, t_i]() {
             running_threads_counter++;
             tpcc.prepare();
             volatile u64 tx_acc = 0;

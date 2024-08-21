@@ -78,7 +78,7 @@ int main(int argc, char** argv)
    atomic<u64> running_threads_counter = 0;
    vector<thread> threads;
    db.startProfilingThread();
-   u64 tx_per_thread[FLAGS_worker_threads];
+   std::vector<u64> tx_per_thread(FLAGS_worker_threads, 0);
    
    helper.scheduleTransations(&tpcc_merge, keep_running, running_threads_counter, tx_per_thread);
 

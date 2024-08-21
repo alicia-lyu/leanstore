@@ -1,5 +1,6 @@
 #pragma once
 #include <memory.h>
+#include <filesystem>
 #include "../shared/LeanStoreAdapter.hpp"
 #include "../shared/RocksDB.hpp"
 #include "../shared/RocksDBAdapter.hpp"
@@ -128,6 +129,36 @@ class RocksDBExperimentHelper : public ExperimentHelper
       }
       return 0;
    }
+
+   int verifyCore(TPCCBaseWorkload<RocksDBAdapter>* tpcc_base)
+   {
+      auto& tpcc = context_ptr->tpcc;
+
+      std::cout << "Recovered TPC-C. Verifying..." << std::endl;
+      cout << "Verifying TPC-C" << endl;
+      context_ptr->rocks_db.startTX();
+      tpcc.verifyItems();
+      context_ptr->rocks_db.commitTX();
+      std::vector<thread> threads;
+      std::atomic<u32> g_w_id = 1;
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         threads.emplace_back([&]() {
+            while (true) {
+               u32 w_id = g_w_id++;
+               if (w_id > FLAGS_tpcc_warehouse_count) {
+                  return;
+               }
+               cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
+               tpcc_base->verifyWarehouse(w_id);
+               cr::Worker::my().commitTX();
+            }
+         });
+      }
+      for (auto& thread : threads) {
+         thread.join();
+      }
+      return 0;
+   };
 
    int scheduleTransations(TPCCBaseWorkload<RocksDBAdapter>* tpcc_base,
                            std::vector<thread>& threads,

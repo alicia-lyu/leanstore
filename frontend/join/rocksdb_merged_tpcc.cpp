@@ -73,7 +73,7 @@ int main(int argc, char** argv)
       std::array<uint64_t, 2> times = {core_time, merged_time};
       context->rocks_db.logSizes<12>(&times); // Will force compaction
    } else {
-      UNREACHABLE();
+      helper.verifyCore(&tpcc_merged);
       context->rocks_db.logSizes<12>();
    }
 
