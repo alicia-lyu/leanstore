@@ -53,6 +53,11 @@ target_link_libraries(rocksdb_merged_tpcc leanstore rocksdb Threads::Threads dl 
 target_include_directories(rocksdb_merged_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 target_compile_definitions(rocksdb_merged_tpcc PUBLIC ROCKSDB_ADAPTER INCLUDE_COLUMNS=${INCLUDED_COLUMNS})
 
+add_executable(rocksdb_base_tpcc join/rocksdb_base_tpcc.cpp shared/rocksdb.cpp)
+target_link_libraries(rocksdb_base_tpcc leanstore rocksdb Threads::Threads dl z libbz2.a lz4 snappy zstd uring)
+target_include_directories(rocksdb_base_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+target_compile_definitions(rocksdb_base_tpcc PUBLIC ROCKSDB_ADAPTER INCLUDE_COLUMNS=${INCLUDED_COLUMNS})
+
 # add_executable(rocksdb_ycsb ycsb/rocksdb_ycsb.cpp shared/rocksdb.cpp)
 # target_link_libraries(rocksdb_ycsb leanstore rocksdb Threads::Threads dl z libbz2.a lz4 snappy zstd uring)
 # target_include_directories(rocksdb_ycsb PRIVATE ${SHARED_INCLUDE_DIRECTORY})

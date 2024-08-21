@@ -27,6 +27,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
       requires (std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
    {
+      // Must be able to compile with joined0_t too, requires toSelected (implemented as UNREACHABLE)
       joined_ols.scan(
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) -> bool {
@@ -39,6 +40,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
       requires(std::same_as<joined_t, joined0_t>)
    {
+      // Must be able to compile with joined1_t and joined_selected_t, requires expand (implemented as UNREACHABLE)
       stock_t::Key stock_key;
       stock_t stock_payload;
       orderline_t::Key orderline_key;
