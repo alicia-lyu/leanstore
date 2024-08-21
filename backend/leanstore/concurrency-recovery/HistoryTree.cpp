@@ -225,11 +225,15 @@ void HistoryTree::purgeVersions(WORKERID worker_id,
             // -------------------------------------------------------------------------------------
             if (leaf->lower_fence.length == 0) {
                std::vector<u8> last_key(leaf->getFullKeyLen(leaf->count - 1), 0);
-               leaf->copyFullKey(leaf->count - 1, last_key.data());
-               TXID last_key_tx_id;
-               utils::unfold(last_key.data(), last_key_tx_id);
-               if (last_key_tx_id > to_tx_id) {
-                  should_try = false;
+               if (last_key.size() >= sizeof(TXID)) {
+                  leaf->copyFullKey(leaf->count - 1, last_key.data());
+                  TXID last_key_tx_id;
+                  utils::unfold(last_key.data(), last_key_tx_id);
+                  if (last_key_tx_id > to_tx_id) {
+                     should_try = false;
+                  }
+               } else {
+                  std::cerr << "HistoryTree::purgeVersions: last_key.size() < sizeof(TXID), last_key: " << std::string(last_key.begin(), last_key.end()) << std::endl;
                }
             }
          }
