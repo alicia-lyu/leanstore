@@ -153,7 +153,16 @@ class MergeJoin
                                                                     const ol_sec0_t& left_rec,
                                                                     const stock_t::Key& right_key,
                                                                     const stock_t& right_rec)
-      requires(std::same_as<JoinedRecord, joined0_t> || std::same_as<JoinedRecord, joined1_t>)
+      requires(std::same_as<JoinedRecord, joined0_t>)
+   {
+      return {merge_keys<typename JoinedRecord::Key>(left_key, right_key), merge_records<JoinedRecord>(left_rec, right_rec)};
+   }
+
+      static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec1_t::Key& left_key,
+                                                                    const ol_sec1_t& left_rec,
+                                                                    const stock_t::Key& right_key,
+                                                                    const stock_t& right_rec)
+      requires(std::same_as<JoinedRecord, joined1_t>)
    {
       return {merge_keys<typename JoinedRecord::Key>(left_key, right_key), merge_records<JoinedRecord>(left_rec, right_rec)};
    }
