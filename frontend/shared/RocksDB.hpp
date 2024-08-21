@@ -53,7 +53,7 @@ struct RocksDB {
       }
       wo.disableWAL = true;
       wo.sync = false;
-      iterator_ro.snapshot = nullptr; // Snapshot from pinning resources
+      iterator_ro.snapshot = nullptr;  // Snapshot from pinning resources
       // -------------------------------------------------------------------------------------
       rocksdb::Options db_options;
       db_options.use_direct_reads = true;
@@ -164,8 +164,8 @@ struct RocksDB {
       uint64_t total_size = 0;
       db->GetIntProperty(rocksdb::DB::Properties::kEstimateLiveDataSize, &total_size);
       std::cout << "Total size: " << total_size << std::endl;
-      csv_file << "total," << configString << "," << total_size << std::endl;
-      
+      csv_file << "total," << configString << "," << (double)total_size / 1024 / 1024 / 1024 << std::endl;
+
       uint64_t core_size = 0;
       for (u32 i = 0; i <= 10; i++) {
          core_size += sizes[i];
@@ -203,7 +203,7 @@ struct RocksDB {
                size -= sizes[j];
             }
          }
-         csv_file << table_name << "," << configString << "," << size;
+         csv_file << table_name << "," << configString << "," << (double)size / 1024 / 1024 / 1024;
          if (times) {
             csv_file << "," << times->at(i - 10) << std::endl;
          } else {

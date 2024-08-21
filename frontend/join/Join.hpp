@@ -3,7 +3,7 @@
 #include <iostream>
 #include <optional>
 #include <vector>
-#include "../shared/Adapter.hpp"
+#include "../shared/Scanner.hpp"
 #include "../shared/Types.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "Exceptions.hpp"
@@ -105,49 +105,57 @@ class MergeJoin
       return joined_record;
    }
 
-   template <typename Left, typename Right, typename Joined>
-   static std::pair<typename Joined::Key, Joined> merge(const typename Left::Key& left_key,
-                                                        const Left& left_rec,
-                                                        const typename Right::Key& right_key,
-                                                        const Right& right_rec);
-   template <typename Left, typename Right, typename Joined>
-   static typename Joined::Key merge_keys(const typename Left::Key& left_key, const typename Right::Key& right_key);
+   template <typename LeftKey, typename RightKey, typename JoinedKey>
+   static JoinedKey merge_keys(const LeftKey& left_key, const RightKey& right_key);
 
    template <typename Left, typename Right, typename Joined>
    static Joined merge_records(const Left& left_rec, const Right& right_rec);
 
-   template <typename Joined = joined1_t>
-   static std::pair<typename Joined::Key, Joined> merge(const ol_sec1_t::Key& left_key,
-                                                        const ol_sec1_t& left_rec,
-                                                        const stock_t::Key& right_key,
-                                                        const stock_t& right_rec)
-   {
-      return {merge_keys<Joined>(left_key, right_key), merge_records<Joined>(left_rec, right_rec)};
-   }
-
-   template <typename Joined = joined1_t>
-   static typename Joined::Key merge_keys(const ol_sec1_t::Key& left_key, const stock_t::Key&)
+   // Only one merge_keys for all variants of joined_t
+   template <typename JoinedKey = joined1_t::Key>
+   static JoinedKey merge_keys(const ol_sec1_t::Key& left_key, const stock_t::Key&)
    {
       joined1_t::Key key{left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
       return key;
    }
 
    template <typename Joined = joined1_t>
-   static Joined merge_records(const ol_sec1_t& left_rec, const stock_t& right_rec)
+   static Joined merge_records(const ol_sec1_t& left_rec, const stock_t& right_rec) requires(std::same_as<Joined, joined1_t>)
    {
       joined1_t record{left_rec.ol_supply_w_id, left_rec.ol_delivery_d, left_rec.ol_quantity,   left_rec.ol_amount,  right_rec.s_quantity,
-                          right_rec.s_dist_01,     right_rec.s_dist_02,    right_rec.s_dist_03,    right_rec.s_dist_04, right_rec.s_dist_05,
-                          right_rec.s_dist_06,     right_rec.s_dist_07,    right_rec.s_dist_08,    right_rec.s_dist_09, right_rec.s_dist_10,
-                          right_rec.s_ytd,         right_rec.s_order_cnt,  right_rec.s_remote_cnt, right_rec.s_data};
+                       right_rec.s_dist_01,     right_rec.s_dist_02,    right_rec.s_dist_03,    right_rec.s_dist_04, right_rec.s_dist_05,
+                       right_rec.s_dist_06,     right_rec.s_dist_07,    right_rec.s_dist_08,    right_rec.s_dist_09, right_rec.s_dist_10,
+                       right_rec.s_ytd,         right_rec.s_order_cnt,  right_rec.s_remote_cnt, right_rec.s_data};
 
       return record;
    }
 
    template <typename Joined = joined0_t>
-   static Joined merge_records(const ol_sec0_t&, const stock_t&)
+   static Joined merge_records(const ol_sec0_t&, const stock_t&) requires(std::same_as<Joined, joined0_t>)
    {
       joined0_t record{};
       return record;
+   }
+
+   static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec1_t::Key& left_key,
+                                                                    const ol_sec1_t& left_rec,
+                                                                    const stock_t::Key& right_key,
+                                                                    const stock_t& right_rec)
+      requires(std::same_as<JoinedRecord, joined_selected_t>)
+   {
+      joined1_t record = merge_records<joined1_t>(left_rec, right_rec);
+      joined1_t::Key key = merge_keys<joined1_t::Key>(left_key, right_key);
+      joined_selected_t selected = record.toSelected(key);
+      return {key, selected};
+   }
+
+   static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec0_t::Key& left_key,
+                                                                    const ol_sec0_t& left_rec,
+                                                                    const stock_t::Key& right_key,
+                                                                    const stock_t& right_rec)
+      requires(std::same_as<JoinedRecord, joined0_t> || std::same_as<JoinedRecord, joined1_t>)
+   {
+      return {merge_keys<typename JoinedRecord::Key>(left_key, right_key), merge_records<JoinedRecord>(left_rec, right_rec)};
    }
 
   private:
@@ -179,15 +187,6 @@ class MergeJoin
       if (current_left_matched) {
          left_matched++;
       }
-      // else {
-      //   // Shouldn't happen in the current setting
-      //   std::cout << "Left Key: " << left_key << std::endl;
-      //   std::cout << "Right Key: " << right_key << std::endl;
-      //   if (cached_right_key.has_value())
-      //     std::cout << "Cached Right Key: " << cached_right_key.value() << " (size: " << cached_right_records.size() << ")" << std::endl;
-      //   else
-      //     std::cout << "Cached Right Key: None (size: " << cached_right_records.size() << ")" << std::endl;
-      // }
       auto ret = left_scanner->next();
       if (!ret.has_value()) {
          left_exhausted = true;
@@ -242,19 +241,16 @@ class MergeJoin
 
    std::pair<typename JoinedRecord::Key, JoinedRecord> join_records(bool use_cached = false)
    {
-      // HARDCODED
+      const Record2& rightR = use_cached ? *cached_right_records_iter : right_record;
+      const typename Record2::Key& rightK = use_cached ? cached_right_key.value() : this->right_key;
 
-      const Record2& right = use_cached ? *cached_right_records_iter : right_record;
-
-      const auto key = merge_keys(const_cast<const typename Record1::Key&>(left_key), const_cast<const typename Record2::Key&>(right_key));
-      const auto record = merge_records(const_cast<const Record1&>(left_record), right);
+      const auto [key, record] =
+          merge(const_cast<const typename Record1::Key&>(left_key), const_cast<const Record1&>(left_record), rightK, rightR);
 
       current_left_matched = true;
       if (use_cached) {
-         // std::cout << "Joined left key " << left_key << " with cached right key " << cached_right_key.value() << std::endl;
          ++cached_right_records_iter;
       } else {
-         // std::cout << "Joined left key " << left_key << " with right key " << right_key << std::endl;
          current_right_matched = true;
          bool ret = advance_right();
          if ((ret && compare_keys() != 0) || !ret)

@@ -253,7 +253,7 @@ struct joined_selected_t: public joined_base_t {
     return os;
   }
 
-  joined_selected_t toSelected() const {
+  joined_selected_t toSelected(const Key&) const {
     return *this;
   }
 
