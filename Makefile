@@ -91,24 +91,29 @@ selectivity ?= $(default_selectivity)
 duration ?= 0
 locality_read ?= ""
 
+PY_FLAGS := $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+
 leanstore: join merged base
 
-rocksdb: rocksdb-join rocksdb-merged
+rocksdb: rocksdb-join rocksdb-merged rocksdb-base
 
 join: $(BUILD_DIR)/frontend/$(JOIN_EXEC)
-	python3 experiment.py $(BUILD_DIR)/frontend/$(JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+	python3 experiment.py $(BUILD_DIR)/frontend/$(JOIN_EXEC) $(PY_FLAGS)
 
 rocksdb-join: $(BUILD_DIR)/frontend/$(ROCKSDB_JOIN_EXEC)
-	python3 experiment.py $(BUILD_DIR)/frontend/$(ROCKSDB_JOIN_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+	python3 experiment.py $(BUILD_DIR)/frontend/$(ROCKSDB_JOIN_EXEC) $(PY_FLAGS)
 
 merged: $(BUILD_DIR)/frontend/$(MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)/frontend/$(MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+	python3 experiment.py $(BUILD_DIR)/frontend/$(MERGED_EXEC) $(PY_FLAGS)
 
 rocksdb-merged: $(BUILD_DIR)/frontend/$(ROCKSDB_MERGED_EXEC)
-	python3 experiment.py $(BUILD_DIR)/frontend/$(ROCKSDB_MERGED_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+	python3 experiment.py $(BUILD_DIR)/frontend/$(ROCKSDB_MERGED_EXEC) $(PY_FLAGS)
 
 base: $(BUILD_DIR)/frontend/$(BASE_EXEC)
-	python3 experiment.py $(BUILD_DIR)/frontend/$(BASE_EXEC) $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+	python3 experiment.py $(BUILD_DIR)/frontend/$(BASE_EXEC) $(PY_FLAGS)
+
+rocksdb-base: $(BUILD_DIR)/frontend/$(ROCKSDB_BASE_EXEC)
+	python3 experiment.py $(BUILD_DIR)/frontend/$(ROCKSDB_BASE_EXEC) $(PY_FLAGS)
 
 %-read:
 	- $(MAKE) $* read=100 scan=0 write=0
@@ -133,6 +138,7 @@ update-size:
 %-selectivity:
 	- $(MAKE) $*-all-tx-types selectivity=100
 	- $(MAKE) $*-all-tx-types selectivity=50
+	- $(MAKE) $*-all-tx-types selectivity=19
 	- $(MAKE) $*-all-tx-types selectivity=5
 
 rsel := rocksdb-both-selectivity

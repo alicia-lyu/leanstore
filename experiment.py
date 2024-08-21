@@ -131,6 +131,8 @@ def main():
                 subprocess.run(["cp", "-f", "-r", image, write_image_file]) # Force overwrite
                 
             image = write_image_file
+    elif args.dram_gib >= args.target_gib * 2:
+        persist_file = './leanstore.json' # Do not persist for in-memory workload
     else:
         persist_file = recovery_file
     

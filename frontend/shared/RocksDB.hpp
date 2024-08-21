@@ -51,6 +51,9 @@ struct RocksDB {
       } else if (!std::filesystem::exists(FLAGS_ssd_path)) {
          std::filesystem::create_directory(FLAGS_ssd_path);
       }
+      if (FLAGS_persist_file == "./leanstore.json") {
+         FLAGS_persist = false;
+      }
       wo.disableWAL = true;
       wo.sync = false;
       iterator_ro.snapshot = nullptr;  // Snapshot from pinning resources
@@ -85,7 +88,18 @@ struct RocksDB {
       assert(s.ok());
    }
 
-   ~RocksDB() { delete db; }
+   ~RocksDB() { 
+      std::cout << "RocksDB::~RocksDB() ";
+      if (FLAGS_persist) {
+         std::cout << "Waiting for compaction to finish" << std::endl;
+         rocksdb::WaitForCompactOptions wfc_options;
+         wfc_options.close_db=true;
+         rocksdb::Status s = db->WaitForCompact(wfc_options);
+      }
+      std::cout << std::endl;
+      delete db;
+   }
+
    void startTX()
    {
       assert(txn == nullptr);
@@ -170,7 +184,7 @@ struct RocksDB {
       for (u32 i = 0; i <= 10; i++) {
          core_size += sizes[i];
       }
-      csv_file << "core," << configString << "," << core_size;
+      csv_file << "core," << configString << "," << (double)core_size / 1024 / 1024 / 1024;
       if (times) {
          csv_file << "," << times->at(0) << std::endl;
       } else {
@@ -202,6 +216,7 @@ struct RocksDB {
             for (u32 j = 11; j < i; j++) {
                size -= sizes[j];
             }
+            std::cerr << table_name << " is empty, subtracting from total size to get " << size << std::endl;
          }
          csv_file << table_name << "," << configString << "," << (double)size / 1024 / 1024 / 1024;
          if (times) {
