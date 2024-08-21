@@ -19,7 +19,10 @@ class Scanner
 
    Scanner(std::function<std::optional<pair_t>()> assemble) : assemble(assemble) {}
 
-   virtual ~Scanner() { std::cout << "Scanner produced " << produced << " records" << std::endl; }
+   virtual ~Scanner() { 
+      if (produced > 99999)
+         std::cout << "Scanner::~Scanner: produced " << produced << " records" << std::endl;
+   }
 
    virtual bool seek(typename Record::Key key) = 0;
 

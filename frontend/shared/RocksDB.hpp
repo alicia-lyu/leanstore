@@ -8,7 +8,6 @@
 #include <rocksdb/table.h>
 #include <rocksdb/wide_columns.h>
 #include "../join/ExperimentHelper.hpp"
-#include "../join/TPCCBaseWorkload.hpp"
 #include "Exceptions.hpp"
 #include "Types.hpp"
 // -------------------------------------------------------------------------------------
@@ -44,6 +43,12 @@ struct RocksDB {
    // -------------------------------------------------------------------------------------
    RocksDB(DB_TYPE type = DB_TYPE::DB) : type(type)
    {
+      if (FLAGS_trunc == false) {
+         std::filesystem::remove_all(FLAGS_ssd_path);
+         std::filesystem::create_directory(FLAGS_ssd_path);
+      } else {
+         FLAGS_recover = true;
+      }
       wo.disableWAL = true;
       wo.sync = false;
       iterator_ro.snapshot = nullptr; // Snapshot from pinning resources

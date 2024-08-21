@@ -98,7 +98,7 @@ int main(int argc, char** argv)
       std::array<uint64_t, 3> times = {core_time, secondary_time, join_time};
       context->rocks_db.logSizes<13>(&times);  // Will force compaction
    } else {
-      UNREACHABLE();
+      helper.verifyCore(&tpcc_join);
       context->rocks_db.logSizes<13>();
    }
 
