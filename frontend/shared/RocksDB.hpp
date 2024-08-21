@@ -43,11 +43,13 @@ struct RocksDB {
    // -------------------------------------------------------------------------------------
    RocksDB(DB_TYPE type = DB_TYPE::DB) : type(type)
    {
-      if (FLAGS_trunc == false) {
+      if (FLAGS_trunc == false && std::filesystem::exists(FLAGS_ssd_path)) {
+         FLAGS_recover = true;
+      } else if (FLAGS_trunc == true && std::filesystem::exists(FLAGS_ssd_path)) {
          std::filesystem::remove_all(FLAGS_ssd_path);
          std::filesystem::create_directory(FLAGS_ssd_path);
-      } else {
-         FLAGS_recover = true;
+      } else if (!std::filesystem::exists(FLAGS_ssd_path)) {
+         std::filesystem::create_directory(FLAGS_ssd_path);
       }
       wo.disableWAL = true;
       wo.sync = false;
@@ -123,6 +125,7 @@ struct RocksDB {
          csv_file << std::endl;
       }
 
+      std::cout << "Compacting ";
       rocksdb::Range ranges[id_count];
       for (int i = 0; i < id_count; i++) {
          u8* start = new u8[sizeof(u32)];
@@ -135,11 +138,13 @@ struct RocksDB {
 
          auto options = rocksdb::CompactRangeOptions();
          options.change_level = true;
-         std::cout << "Compacting " << i << std::endl;
+         std::cout << i << ", ";
          auto ret = db->CompactRange(options, &start_slice, &limit_slice);
          assert(ret.ok());
          ranges[i] = rocksdb::Range(start_slice, limit_slice);
       }
+
+      std::cout << std::endl;
 
       auto configString = ExperimentHelper::getConfigString();
 
@@ -217,6 +222,7 @@ struct RocksDB {
                              std::vector<std::atomic<u64>>& thread_aborted,
                              bool& print_header)
    {
+      std::cout << "Started profiling in " << FLAGS_csv_path + "_sum.csv" << std::endl;
       std::thread profiling_thread([&]() {
          leanstore::utils::pinThisThread(((FLAGS_pin_threads) ? FLAGS_worker_threads : 0) + FLAGS_wal + FLAGS_pp_threads);
          running_threads_counter++;

@@ -47,7 +47,6 @@ class TPCCBaseWorkload
    TPCCBaseWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary = nullptr)
        : tpcc(tpcc), orderline_secondary(orderline_secondary)
    {
-      std::cout << "tpcc is null pointer: " << (tpcc == nullptr) << std::endl;
       if constexpr (INCLUDE_COLUMNS == 0) {
          std::cout << "Columns included: Key only" << std::endl;
       } else if constexpr (INCLUDE_COLUMNS == 1) {
@@ -67,7 +66,9 @@ class TPCCBaseWorkload
 
    static bool isSelected(Integer i_id) { return TPCCWorkload<AdapterType>::isSelected(i_id); }
 
-   void loadOrderlineSecondary(Integer w_id = 0)
+   void loadOrderlineSecondaryCallback(
+      std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
+      Integer w_id = 0)
    {
       std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
       auto orderline_scanner = this->tpcc->orderline.getScanner();
@@ -82,15 +83,23 @@ class TPCCBaseWorkload
 
          typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
-            this->orderline_secondary->insert(sec_key, {});
+            orderline_insert_cb(sec_key, {});
          } else {
             orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
                                            payload.ol_dist_info};
-            this->orderline_secondary->insert(sec_key, sec_payload);
+            orderline_insert_cb(sec_key, sec_payload);
          }
       }
    }
 
+   void loadOrderlineSecondary(Integer w_id = 0)
+   {
+      this->loadOrderlineSecondaryCallback(
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, w_id);
+   }
+
+
+   // Join with no extra column selection
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_t::Key&, joined_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
    {
       std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
@@ -106,12 +115,12 @@ class TPCCBaseWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         auto res = cb(key, payload);
-         if (!res)
+         if (!cb(key, payload))
             break;
       }
    }
 
+   // Join and get joined_selected_t, for joined0_t
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
       requires(std::same_as<joined_t, joined0_t>)
    {
@@ -141,13 +150,13 @@ class TPCCBaseWorkload
             orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};
             this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });
          }
-         auto selected_payload = payload.expand(key, stock_payload, orderline_payload);
-         auto res = cb(key, selected_payload);
-         if (!res)
+         auto selected_payload = payload.expand(key, stock_payload, orderline_payload); // Unique to joined0_t
+         if (!cb(key, selected_payload))
             break;
       }
    }
 
+   // Join and get joined_selected_t, for joined1_t and joined_selected_t
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
       requires(std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
    {
@@ -164,9 +173,8 @@ class TPCCBaseWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         auto selected_payload = payload.toSelected(key);
-         auto res = cb(key, selected_payload);
-         if (!res)
+         auto selected_payload = payload.toSelected(key); // Unique to joined1_t and joined_selected_t
+         if (!cb(key, selected_payload))
             break;
       }
    }
@@ -205,7 +213,7 @@ class TPCCBaseWorkload
           {w_id, i_id, FLAGS_locality_read ? 0 : d_id, 0, 0});
    }
 
-   virtual void newOrderRndCallback(
+   void newOrderRndCallback(
        Integer w_id,
        std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&, Integer qty)>
            stock_update_cb,
@@ -347,6 +355,9 @@ class TPCCBaseWorkload
    virtual void verifyWarehouse(Integer w_id) { tpcc->verifyWarehouse(w_id); }
 
    virtual void loadStock(Integer w_id) { tpcc->loadStock(w_id); }
+
+   // -----------------------------------------------------------------
+   // -------------------------- Logging ------------------------------
 
    std::string getCsvFile(std::string csv_name)
    {

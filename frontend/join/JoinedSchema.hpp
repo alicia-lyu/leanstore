@@ -25,6 +25,12 @@ struct orderline_secondary_base_t {
          << ", number: " << key.ol_number;
       return os;
     }
+
+    friend bool operator==(const Key& lhs, const Key& rhs) {
+      return lhs.ol_w_id == rhs.ol_w_id && lhs.ol_i_id == rhs.ol_i_id &&
+             lhs.ol_d_id == rhs.ol_d_id && lhs.ol_o_id == rhs.ol_o_id &&
+             lhs.ol_number == rhs.ol_number;
+    }
   };
   orderline_secondary_base_t() = default;
 

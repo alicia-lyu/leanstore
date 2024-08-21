@@ -23,8 +23,9 @@ MERGED_EXEC := /frontend/merged_tpcc
 BASE_EXEC := /frontend/base_tpcc
 ROCKSDB_JOIN_EXEC := /frontend/rocksdb_join_tpcc
 ROCKSDB_MERGED_EXEC := /frontend/rocksdb_merged_tpcc
+ROCKSDB_BASE_EXEC := /frontend/rocksdb_base_tpcc
 
-EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC) $(ROCKSDB_MERGED_EXEC) $(BASE_EXEC)
+EXECS := $(JOIN_EXEC) $(MERGED_EXEC) $(ROCKSDB_JOIN_EXEC) $(ROCKSDB_MERGED_EXEC) $(BASE_EXEC) $(ROCKSDB_BASE_EXEC)
 
 # Create Cartesian product for targets
 TARGETS := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)$(exec)))
@@ -69,14 +70,15 @@ base-lldb: $(BUILD_DIR_DEBUG)$(BASE_EXEC)
 	lldb -- ./build-debug/frontend/base_tpcc $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/base-lldb
 
 rocksdb-join-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_JOIN_EXEC)
-	rm -rf $(SSD_DIR)/*
 	lldb -- ./build-debug/frontend/rocksdb_join_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-join-lldb
 
 rocksdb-merged-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_MERGED_EXEC)
-	rm -rf $(SSD_DIR)/*
 	lldb -- ./build-debug/frontend/rocksdb_merged_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-merged-lldb
 
-.PHONY: join-lldb merged-lldb base-lldb rocksdb-join-lldb rocksdb-merged-lldb
+rocksdb-base-lldb: $(BUILD_DIR_DEBUG)$(ROCKSDB_BASE_EXEC)
+	lldb -- ./build-debug/frontend/rocksdb_base_tpcc $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-base-lldb
+
+.PHONY: join-lldb merged-lldb base-lldb rocksdb-join-lldb rocksdb-merged-lldb rocksdb-base-lldb
 
 # ----------------- EXPERIMENTS -----------------
 dram ?= $(default_dram)
