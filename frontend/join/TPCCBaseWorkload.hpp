@@ -2,7 +2,9 @@
 #include <gflags/gflags_declare.h>
 #include <filesystem>
 #include <fstream>
+#include <type_traits>
 #include "../shared/RocksDB.hpp"
+#include "../shared/RocksDBAdapter.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Exceptions.hpp"
 #include "Join.hpp"
@@ -40,8 +42,8 @@ class TPCCBaseWorkload
   protected:
    TPCCWorkload<AdapterType>* tpcc;
 
-  public:
-  protected:
+   static constexpr bool ROCKSDB = std::is_same_v<AdapterType<int>, RocksDBAdapter<int>>;
+
    AdapterType<orderline_sec_t>* orderline_secondary;
 
   public:
@@ -357,10 +359,10 @@ class TPCCBaseWorkload
    // -----------------------------------------------------------------
    // Methods not marked virtual: All relevant calls must be made without the need of dynamic casting / pointer casting
 
-   std::string getCsvFile(std::string csv_name, bool rocksdb = false)
+   std::string getCsvFile(std::string csv_name)
    {
-      std::string size_dir = rocksdb ? "size_rocksdb" : "size";
-      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "size" / csv_name;
+      std::string size_dir = ROCKSDB ? "size_rocksdb" : "size";
+      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / size_dir / csv_name;
       std::filesystem::create_directories(csv_path.parent_path());
       std::cout << "Logging size to " << csv_path << std::endl;
       std::ofstream csv_file(csv_path, std::ios::app);
@@ -478,9 +480,6 @@ class TPCCBaseWorkload
                          std::chrono::steady_clock::time_point sec_end,
                          leanstore::cr::CRManager& crm)
    {
-      std::string config = getConfigString();
-      std::string csv_path = getCsvFile("base_size.csv");
-      std::ofstream csv_file(csv_path, std::ios::app);
       auto core_page_count = getCorePageCount(crm, false);
 
       uint64_t stock_page_count = 0;
