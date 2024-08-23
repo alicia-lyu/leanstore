@@ -7,9 +7,7 @@
 #include <rocksdb/statistics.h>
 #include <rocksdb/table.h>
 #include <rocksdb/wide_columns.h>
-#include "../join/ExperimentHelper.hpp"
-#include "Exceptions.hpp"
-#include "Types.hpp"
+
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
@@ -25,7 +23,6 @@
 #include <fstream>
 #include <iomanip>
 #include <ios>
-#include <string>
 #include <unordered_map>
 
 struct RocksDB {
@@ -121,115 +118,6 @@ struct RocksDB {
       }
    }
    void prepareThread() {}
-
-   template <int id_count>
-   void logSizes(std::array<uint64_t, id_count - 10>* times = nullptr)
-   {
-      std::string file_name = id_count == 13 ? "join_size.csv" : "merged_size.csv";
-      std::filesystem::path size_dir = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "size_rocksdb";
-      std::filesystem::create_directories(size_dir);
-      std::filesystem::path csv_path = size_dir / file_name;
-      bool csv_exists = std::filesystem::exists(csv_path);
-      std::ofstream csv_file(csv_path, std::ios::app);
-      if (!csv_exists) {
-         csv_file << "table(s),config,size";
-         if (times) {
-            csv_file << ",time(ms)";
-         }
-         csv_file << std::endl;
-      }
-
-      std::cout << "Compacting ";
-      rocksdb::Range ranges[id_count];
-      for (int i = 0; i < id_count; i++) {
-         u8* start = new u8[sizeof(u32)];
-         const u32 folded_key_len = fold(start, i);
-         rocksdb::Slice start_slice((const char*)start, folded_key_len);
-
-         u8* limit = new u8[sizeof(u32)];
-         const u32 folded_limit_len = fold(limit, i + 1);
-         rocksdb::Slice limit_slice((const char*)limit, folded_limit_len);
-
-         auto options = rocksdb::CompactRangeOptions();
-         options.change_level = true;
-         std::cout << i << ", ";
-         auto ret = db->CompactRange(options, &start_slice, &limit_slice);
-         assert(ret.ok());
-         ranges[i] = rocksdb::Range(start_slice, limit_slice);
-      }
-
-      std::cout << std::endl;
-
-      auto configString = ExperimentHelper::getConfigString();
-
-      rocksdb::SizeApproximationOptions options;
-      options.include_memtables = true;
-      options.include_files = true;
-      options.files_size_error_margin = 0.1;
-
-      uint64_t sizes[id_count];
-      db->GetApproximateSizes(options, db->DefaultColumnFamily(), ranges, id_count, sizes);
-      std::cout << "Sizes:";
-      for (u32 i = 0; i < id_count; i++) {
-         std::cout << " " << sizes[i];
-      }
-      std::cout << std::endl;
-
-      uint64_t total_size = 0;
-      db->GetIntProperty(rocksdb::DB::Properties::kEstimateLiveDataSize, &total_size);
-      std::cout << "Total size: " << total_size << std::endl;
-      csv_file << "total," << configString << "," << (double)total_size / 1024 / 1024 / 1024 << std::endl;
-
-      uint64_t core_size = 0;
-      for (u32 i = 0; i <= 10; i++) {
-         core_size += sizes[i];
-      }
-      csv_file << "core," << configString << "," << (double)core_size / 1024 / 1024 / 1024;
-      if (times) {
-         csv_file << "," << times->at(0) << std::endl;
-      } else {
-         csv_file << std::endl;
-      }
-
-      for (u32 i = 11; i < id_count; i++) {
-         std::string table_name = "table" + std::to_string(i);
-         if (id_count == 13) {
-            if (i == 11) {
-               table_name = "orderline_secondary";
-            } else if (i == 12) {
-               table_name = "join_results";
-            } else {
-               UNREACHABLE();
-            }
-         } else if (id_count == 12) {
-            if (i == 11) {
-               table_name = "merged_index";
-            } else {
-               UNREACHABLE();
-            }
-         } else {
-            UNREACHABLE();
-         }
-         uint64_t size = sizes[i];
-         if (size == 0) {
-            size = total_size - core_size;
-            for (u32 j = 11; j < i; j++) {
-               size -= sizes[j];
-            }
-            std::cerr << table_name << " is empty, subtracting from total size to get " << size << std::endl;
-         }
-         csv_file << table_name << "," << configString << "," << (double)size / 1024 / 1024 / 1024;
-         if (times) {
-            csv_file << "," << times->at(i - 10) << std::endl;
-         } else {
-            csv_file << std::endl;
-         }
-      }
-      for (int i = 0; i < id_count; i++) {
-         delete[] ranges[i].start.data();
-         delete[] ranges[i].limit.data();
-      }
-   }
 
    void startProfilingThread(std::atomic<u64>& running_threads_counter,
                              std::atomic<u64>&,

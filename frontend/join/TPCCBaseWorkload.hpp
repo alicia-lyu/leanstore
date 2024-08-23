@@ -2,6 +2,7 @@
 #include <gflags/gflags_declare.h>
 #include <filesystem>
 #include <fstream>
+#include "../shared/RocksDB.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Exceptions.hpp"
 #include "Join.hpp"
@@ -33,7 +34,7 @@ using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec0_
 using joined_t = typename std::
     conditional<INCLUDE_COLUMNS == 0, joined0_t, typename std::conditional<INCLUDE_COLUMNS == 1, joined1_t, joined_selected_t>::type>::type;
 
-template <template <typename> class AdapterType>
+template <template <typename> class AdapterType, int id_count>  // Default to 11, defined in ../shared/TPCCWorkload.hpp
 class TPCCBaseWorkload
 {
   protected:
@@ -60,15 +61,11 @@ class TPCCBaseWorkload
          std::cout << "Locality read: true" << std::endl;
       }
    }
-   virtual ~TPCCBaseWorkload() {
-      std::cout << "TPCCBaseWorkload::~TPCCBaseWorkload" << std::endl;
-   }
+   virtual ~TPCCBaseWorkload() { std::cout << "TPCCBaseWorkload::~TPCCBaseWorkload" << std::endl; }
 
    static bool isSelected(Integer i_id) { return TPCCWorkload<AdapterType>::isSelected(i_id); }
 
-   void loadOrderlineSecondaryCallback(
-      std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
-      Integer w_id = 0)
+   void loadOrderlineSecondaryCallback(std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb, Integer w_id = 0)
    {
       std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
       auto orderline_scanner = this->tpcc->orderline.getScanner();
@@ -97,7 +94,6 @@ class TPCCBaseWorkload
       this->loadOrderlineSecondaryCallback(
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, w_id);
    }
-
 
    // Join with no extra column selection
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_t::Key&, joined_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
@@ -150,7 +146,7 @@ class TPCCBaseWorkload
             orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};
             this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });
          }
-         auto selected_payload = payload.expand(key, stock_payload, orderline_payload); // Unique to joined0_t
+         auto selected_payload = payload.expand(key, stock_payload, orderline_payload);  // Unique to joined0_t
          if (!cb(key, selected_payload))
             break;
       }
@@ -173,7 +169,7 @@ class TPCCBaseWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         auto selected_payload = payload.toSelected(key); // Unique to joined1_t and joined_selected_t
+         auto selected_payload = payload.toSelected(key);  // Unique to joined1_t and joined_selected_t
          if (!cb(key, selected_payload))
             break;
       }
@@ -358,9 +354,12 @@ class TPCCBaseWorkload
 
    // -----------------------------------------------------------------
    // -------------------------- Logging ------------------------------
+   // -----------------------------------------------------------------
+   // Methods not marked virtual: All relevant calls must be made without the need of dynamic casting / pointer casting
 
-   std::string getCsvFile(std::string csv_name)
+   std::string getCsvFile(std::string csv_name, bool rocksdb = false)
    {
+      std::string size_dir = rocksdb ? "size_rocksdb" : "size";
       std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / "size" / csv_name;
       std::filesystem::create_directories(csv_path.parent_path());
       std::cout << "Logging size to " << csv_path << std::endl;
@@ -375,11 +374,103 @@ class TPCCBaseWorkload
       return (double)page_count * leanstore::storage::EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0;
    }
 
+   static double byteToGB(uint64_t byte_count) { return (double)byte_count / 1024.0 / 1024.0 / 1024.0; }
+
    static std::string getConfigString()
    {
       std::stringstream config;
       config << FLAGS_dram_gib << "|" << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS;
       return config.str();
+   }
+
+   std::array<uint64_t, id_count> compactAndGetSizes(RocksDB& map)
+   {
+      std::cout << "Compacting ";
+      rocksdb::Range ranges[id_count];
+      for (int i = 0; i < id_count; i++) {
+         u8* start = new u8[sizeof(u32)];
+         const u32 folded_key_len = fold(start, i);
+         rocksdb::Slice start_slice((const char*)start, folded_key_len);
+
+         u8* limit = new u8[sizeof(u32)];
+         const u32 folded_limit_len = fold(limit, i + 1);
+         rocksdb::Slice limit_slice((const char*)limit, folded_limit_len);
+
+         auto options = rocksdb::CompactRangeOptions();
+         options.change_level = true;
+         std::cout << i << ", ";
+         auto ret = map.db->CompactRange(options, &start_slice, &limit_slice);
+         assert(ret.ok());
+         ranges[i] = rocksdb::Range(start_slice, limit_slice);
+      }
+
+      std::cout << std::endl;
+
+      auto configString = getConfigString();
+
+      rocksdb::SizeApproximationOptions options;
+      options.include_memtables = true;
+      options.include_files = true;
+      options.files_size_error_margin = 0.1;
+
+      uint64_t sizes[id_count];
+      map.db->GetApproximateSizes(options, map.db->DefaultColumnFamily(), ranges, id_count, sizes);
+      std::cout << "Sizes:";
+      for (u32 i = 0; i < id_count; i++) {
+         std::cout << " " << sizes[i];
+      }
+      std::cout << std::endl;
+
+      std::array<uint64_t, id_count> sizes_arr;
+      std::copy(std::begin(sizes), std::end(sizes), std::begin(sizes_arr));
+
+      for (int i = 0; i < id_count; i++) {
+         delete[] ranges[i].start.data();
+         delete[] ranges[i].limit.data();
+      }
+
+      return sizes_arr;
+   }
+
+   uint64_t getTotalSize(RocksDB& map)
+   {
+      uint64_t total_size = 0;
+      map.db->GetIntProperty(rocksdb::DB::Properties::kEstimateLiveDataSize, &total_size);
+      return total_size;
+   }
+
+   void logSizes(RocksDB& map)
+   {
+      auto t0 = std::chrono::steady_clock::now();
+      this->logSizes(t0, t0, t0, map);
+   }
+
+   void logSizes(std::chrono::steady_clock::time_point t0,
+                         std::chrono::steady_clock::time_point sec_start,
+                         std::chrono::steady_clock::time_point sec_end,
+                         RocksDB& map)
+   {
+      std::array<uint64_t, id_count> sizes = compactAndGetSizes(map);
+
+      uint64_t core_size = 0;
+      for (u32 i = 0; i <= 10; i++) {
+         if (i == 8 || i == 10)
+            continue;
+         core_size += sizes[i];
+      }
+
+      uint64_t merged_size = sizes[8] + sizes[10];
+
+      addSizesToCsv(byteToGB(core_size), std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count(), byteToGB(merged_size),
+                    std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count());
+   }
+
+   void addSizesToCsv(double core_size, uint64_t core_ms, double merged_size, uint64_t merged_ms)
+   {
+      std::string config = getConfigString();
+      std::ofstream csv_file(getCsvFile("base_size.csv"), std::ios::app);
+      csv_file << "core," << config << "," << core_size << "," << core_ms << std::endl;
+      csv_file << "stock+orderline_secondary," << config << "," << merged_size << "," << merged_ms << std::endl;
    }
 
    void logSizes(std::chrono::steady_clock::time_point t0,
@@ -391,24 +482,21 @@ class TPCCBaseWorkload
       std::string csv_path = getCsvFile("base_size.csv");
       std::ofstream csv_file(csv_path, std::ios::app);
       auto core_page_count = getCorePageCount(crm, false);
-      csv_file << "core," << config << "," << pageCountToGB(core_page_count) << ","
-               << std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count() << std::endl;
 
       uint64_t stock_page_count = 0;
       crm.scheduleJobSync(0, [&]() { stock_page_count = this->tpcc->stock.estimatePages(); });
       uint64_t orderline_secondary_page_count = 0;
       crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->estimatePages(); });
 
-      std::cout << "Stock: " << stock_page_count << " pages, Orderline secondary: " << orderline_secondary_page_count << " pages" << std::endl;
-
-      csv_file << "stock+orderline_secondary," << config << "," << pageCountToGB(stock_page_count + orderline_secondary_page_count) << ","
-               << std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count() << std::endl;
+      addSizesToCsv(pageCountToGB(core_page_count), std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count(),
+                    pageCountToGB(stock_page_count + orderline_secondary_page_count),
+                    std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count());
    }
 
-   virtual void logSizes(leanstore::cr::CRManager& crm)
+   void logSizes(leanstore::cr::CRManager& crm)
    {
       auto t0 = std::chrono::steady_clock::now();
-      logSizes(t0, t0, t0, crm);
+      this->logSizes(t0, t0, t0, crm);
    }
 
    u64 getCorePageCount(leanstore::cr::CRManager& crm, bool count_stock = true)

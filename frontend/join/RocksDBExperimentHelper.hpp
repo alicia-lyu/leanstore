@@ -1,13 +1,11 @@
 #pragma once
 #include <memory.h>
-#include <filesystem>
-#include "../shared/LeanStoreAdapter.hpp"
+#include <thread>
 #include "../shared/RocksDB.hpp"
 #include "../shared/RocksDBAdapter.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "ExperimentHelper.hpp"
-#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 
 DEFINE_string(rocks_db, "pessimistic", "none/pessimistic/optimistic");
@@ -91,7 +89,7 @@ class RocksDBExperimentHelper : public ExperimentHelper
 
    int loadCore(bool load_stock = true)
    {
-      std::vector<thread> threads;
+      std::vector<std::thread> threads;
       context_ptr->rocks_db.startTX();
       context_ptr->tpcc.loadItem();
       context_ptr->tpcc.loadWarehouse();
@@ -130,7 +128,8 @@ class RocksDBExperimentHelper : public ExperimentHelper
       return 0;
    }
 
-   int verifyCore(TPCCBaseWorkload<RocksDBAdapter>* tpcc_base)
+   template <int id_count>
+   int verifyCore(TPCCBaseWorkload<RocksDBAdapter, id_count>* tpcc_base)
    {
       auto& tpcc = context_ptr->tpcc;
 
@@ -139,7 +138,7 @@ class RocksDBExperimentHelper : public ExperimentHelper
       context_ptr->rocks_db.startTX();
       tpcc.verifyItems();
       context_ptr->rocks_db.commitTX();
-      std::vector<thread> threads;
+      std::vector<std::thread> threads;
       std::atomic<u32> g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
          threads.emplace_back([&]() {
@@ -148,9 +147,9 @@ class RocksDBExperimentHelper : public ExperimentHelper
                if (w_id > FLAGS_tpcc_warehouse_count) {
                   return;
                }
-               cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
+               leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLTP);
                tpcc_base->verifyWarehouse(w_id);
-               cr::Worker::my().commitTX();
+               leanstore::cr::Worker::my().commitTX();
             }
          });
       }
@@ -160,8 +159,9 @@ class RocksDBExperimentHelper : public ExperimentHelper
       return 0;
    };
 
-   int scheduleTransations(TPCCBaseWorkload<RocksDBAdapter>* tpcc_base,
-                           std::vector<thread>& threads,
+   template <int id_count>
+   int scheduleTransations(TPCCBaseWorkload<RocksDBAdapter, id_count>* tpcc_base,
+                           std::vector<std::thread>& threads,
                            atomic<u64>& keep_running,
                            atomic<u64>& running_threads_counter,
                            std::vector<std::atomic<u64>>& thread_committed,

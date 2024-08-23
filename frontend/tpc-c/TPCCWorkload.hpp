@@ -16,20 +16,23 @@ DEFINE_int32(semijoin_selectivity, 100, "\% of orderline to be joined with stock
 // Accomplished by only loading a subset of items. Semi-join selectivity of stock may be
 // lower. Empirically 90+% items are present in some orderline, picking out those in stock.
 
-template <template <typename> class AdapterType>
+template <template <typename> class AdapterType, int id_count = 11>
 class TPCCBaseWorkload;
-template <template <typename> class AdapterType>
+template <template <typename> class AdapterType, int id_count = 13>
 class TPCCJoinWorkload;
-template <template <typename> class AdapterType, class MergedAdapterType>
+template <template <typename> class AdapterType, class MergedAdapterType, int id_count = 12>
 class TPCCMergedWorkload;
 // -------------------------------------------------------------------------------------
 template <template <typename> class AdapterType>
 class TPCCWorkload
-{
-   friend class TPCCBaseWorkload<AdapterType>;
-   friend class TPCCJoinWorkload<AdapterType>;
+{  
+   template <template <typename> class, int>
+   friend class TPCCBaseWorkload;
 
-   template <template <typename> class, class>
+   template <template <typename> class, int>
+   friend class TPCCJoinWorkload;
+
+   template <template <typename> class, class, int>
    friend class TPCCMergedWorkload;
 
   private:

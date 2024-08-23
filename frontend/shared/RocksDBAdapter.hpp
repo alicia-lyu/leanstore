@@ -1,6 +1,7 @@
 #pragma once
 #include "RocksDB.hpp"
 #include "Adapter.hpp"
+#include "Types.hpp"
 #include <functional>
 #include "RocksDBScanner.hpp"
 #include "leanstore/utils/JumpMU.hpp"
