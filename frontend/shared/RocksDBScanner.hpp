@@ -5,6 +5,7 @@
 #include "RocksDB.hpp"
 #include "Scanner.hpp"
 #include "Units.hpp"
+#include "Types.hpp"
 
 template <class Record, class PayloadType = Record>
 class RocksDBScanner : public Scanner<Record, PayloadType>

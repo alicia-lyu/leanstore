@@ -129,7 +129,8 @@ class LeanStoreExperimentHelper : public ExperimentHelper
       return 0;
    };
 
-   int verifyCore(TPCCBaseWorkload<LeanStoreAdapter>* tpcc_base)
+   template <int id_count>
+   int verifyCore(TPCCBaseWorkload<LeanStoreAdapter, id_count>* tpcc_base)
    {
       auto& crm = context_ptr->db.getCRManager();
       auto& tpcc = context_ptr->tpcc;
@@ -159,7 +160,8 @@ class LeanStoreExperimentHelper : public ExperimentHelper
       return 0;
    };
 
-   int scheduleTransations(TPCCBaseWorkload<LeanStoreAdapter>* tpcc_base,
+   template <int id_count>
+   int scheduleTransations(TPCCBaseWorkload<LeanStoreAdapter, id_count>* tpcc_base,
                            atomic<u64>& keep_running,
                            atomic<u64>& running_threads_counter,
                            std::vector<u64>& tx_per_thread)

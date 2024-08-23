@@ -1,8 +1,6 @@
 #include "../shared/RocksDBAdapter.hpp"
-#include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Exceptions.hpp"
-#include "JoinedSchema.hpp"
 #include "RocksDBExperimentHelper.hpp"
 #include "RocksDBMergedAdapter.hpp"
 #include "TPCCMergedWorkload.hpp"
@@ -12,11 +10,9 @@
 
 #include "leanstore/Config.hpp"
 #include "leanstore/utils/JumpMU.hpp"
-#include "leanstore/utils/Misc.hpp"
 // -------------------------------------------------------------------------------------
 
 #include <chrono>
-#include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -68,13 +64,10 @@ int main(int argc, char** argv)
       }
       threads.clear();
       std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-      uint64_t core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-      uint64_t merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
-      std::array<uint64_t, 2> times = {core_time, merged_time};
-      context->rocks_db.logSizes<12>(&times); // Will force compaction
+      tpcc_merged.logSizes(t0, t1, t2, context->rocks_db);
    } else {
       helper.verifyCore(&tpcc_merged);
-      context->rocks_db.logSizes<12>();
+      tpcc_merged.logSizes(context->rocks_db);
    }
 
    atomic<u64> keep_running = true;

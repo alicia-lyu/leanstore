@@ -95,7 +95,7 @@ PY_FLAGS := $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectiv
 
 leanstore: join merged base
 
-rocksdb: rocksdb-join rocksdb-merged rocksdb-base
+rocksdb: rocksdb-merged rocksdb-base # rocksdb-join 
 
 join: $(BUILD_DIR)/frontend/$(JOIN_EXEC)
 	python3 experiment.py $(BUILD_DIR)/frontend/$(JOIN_EXEC) $(PY_FLAGS)
@@ -141,8 +141,8 @@ update-size:
 	- $(MAKE) $*-all-tx-types selectivity=19
 	- $(MAKE) $*-all-tx-types selectivity=5
 
-rsel := rocksdb-both-selectivity
-sel := both-selectivity
+rsel := rocksdb-selectivity
+lsel := leanstore-selectivity
 
 no-columns:
 	- $(MAKE) all-tx-types included_columns=0

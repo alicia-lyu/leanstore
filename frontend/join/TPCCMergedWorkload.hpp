@@ -2,19 +2,17 @@
 #include <gflags/gflags.h>
 #include <cstdint>
 #include <fstream>
-#include <type_traits>
 #include "../tpc-c/TPCCWorkload.hpp"
-#include "ExperimentHelper.hpp"
 #include "Join.hpp"
 #include "JoinedSchema.hpp"
 #include "TPCCBaseWorkload.hpp"
 #include "Units.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 
-template <template <typename> class AdapterType, class MergedAdapterType>
-class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
+template <template <typename> class AdapterType, class MergedAdapterType, int id_count>  // Default to 12
+class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 {
-   using Base = TPCCBaseWorkload<AdapterType>;
+   using Base = TPCCBaseWorkload<AdapterType, id_count>;
    MergedAdapterType& merged;
 
    // ol_sec1_t
@@ -28,7 +26,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
       for (auto& left : cached_left) {
          for (auto& right : cached_right) {
-            if (!filter(left.second)) continue;
+            if (!filter(left.second))
+               continue;
             const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left.first, left.second, right.first, right.second);
             results.push_back({key, rec.toSelected(key)});
          }
@@ -56,7 +55,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
                       expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, ol_rec.ol_quantity, ol_rec.ol_amount, ol_rec.ol_dist_info};
                    });
             }
-            if (!expand_filter(expanded_rec)) continue;
+            if (!expand_filter(expanded_rec))
+               continue;
             const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left_key, expanded_rec, right.first, right.second);
             results.push_back({key, rec.toSelected(key)});
          }
@@ -65,7 +65,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
    }
 
   public:
-   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType& merged) : TPCCBaseWorkload<AdapterType>(tpcc), merged(merged) {}
+   TPCCMergedWorkload(TPCCWorkload<AdapterType>* tpcc, MergedAdapterType& merged) : Base(tpcc), merged(merged) {}
 
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
@@ -131,11 +131,14 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) {
              // Passes lookup point
-             if (key.ol_w_id != w_id || key.ol_i_id != i_id) return false;
+             if (key.ol_w_id != w_id || key.ol_i_id != i_id)
+                return false;
              // No matching stock records
-             if (cached_right.empty()) return false;
+             if (cached_right.empty())
+                return false;
              // Key filter
-             if (!FLAGS_locality_read && key.ol_d_id != d_id) return true;
+             if (!FLAGS_locality_read && key.ol_d_id != d_id)
+                return true;
              cached_left.push_back({key, rec});
              return true;
           },
@@ -178,7 +181,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
 
    void loadOrderlineSecondaryToMerged(Integer w_id = 0)
    {
-      this->loadOrderlineSecondaryCallback([&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { merged. template insert<orderline_sec_t>(key, payload); }, w_id);
+      this->loadOrderlineSecondaryCallback(
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { merged.template insert<orderline_sec_t>(key, payload); }, w_id);
    }
 
    void verifyWarehouse(Integer w_id)
@@ -205,36 +209,57 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType>
           [&](const orderline_sec_t::Key& key, const orderline_sec_t&) { return key.ol_w_id == w_id; }, []() { /* undo */ });
    }
 
+   void addSizesToCsv(double core_size, uint64_t core_ms, double merged_size, uint64_t merged_ms)
+   {
+      std::string config = Base::getConfigString();
+      std::ofstream csv_file(Base::getCsvFile("merged_size.csv"), std::ios::app);
+      csv_file << "core," << config << "," << core_size << "," << core_ms << std::endl;
+      csv_file << "merged_index," << config << "," << merged_size << "," << merged_ms << std::endl;
+   }
+
    void logSizes(std::chrono::steady_clock::time_point t0,
                  std::chrono::steady_clock::time_point t1,
                  std::chrono::steady_clock::time_point t2,
                  leanstore::cr::CRManager& crm)
    {
-      std::ofstream csv_file(this->getCsvFile("merged_size.csv"), std::ios::app);
-
-      auto config = ExperimentHelper::getConfigString();
       u64 core_page_count = 0;
       core_page_count = this->getCorePageCount(crm);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
       u64 merged_page_count = 0;
-      u64 merged_leaf_count = 0;
-      u64 merged_height = 0;
-      crm.scheduleJobSync(0, [&]() {
-         merged_page_count = merged.estimatePages();
-         merged_leaf_count = merged.estimateLeafs();
-      });
+      crm.scheduleJobSync(0, [&]() { merged_page_count = merged.estimatePages(); });
       auto merged_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
-      std::cout << "merged_page_count: " << merged_page_count << ", merged_leaf_count: " << merged_leaf_count << ", merged_height: " << merged_height
-                << std::endl;
-
-      csv_file << "core," << config << "," << Base::pageCountToGB(core_page_count) << "," << core_time << std::endl;
-      csv_file << "merged_index," << config << "," << Base::pageCountToGB(merged_page_count) << "," << merged_time << std::endl;
+      addSizesToCsv(Base::pageCountToGB(core_page_count), core_time, Base::pageCountToGB(merged_page_count), merged_time);
    }
 
    void logSizes(leanstore::cr::CRManager& crm)
    {
       auto t0 = std::chrono::steady_clock::now();
-      logSizes(t0, t0, t0, crm);
+      auto t1 = std::chrono::steady_clock::now();
+      auto t2 = std::chrono::steady_clock::now();
+      logSizes(t0, t1, t2, crm);
+   }
+
+   void logSizes(std::chrono::steady_clock::time_point t0,
+                 std::chrono::steady_clock::time_point sec_start,
+                 std::chrono::steady_clock::time_point sec_end,
+                 RocksDB& map)
+   {
+      std::array<uint64_t, id_count> sizes = this->compactAndGetSizes(map);
+
+      uint64_t core_size = std::accumulate(sizes.begin(), sizes.begin() + 11, 0);
+
+      uint64_t merged_size = sizes.at(11);
+
+      addSizesToCsv(Base::byteToGB(core_size), std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count(),
+                    Base::byteToGB(merged_size), std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count());
+   }
+
+   void logSizes(RocksDB& map)
+   {
+      auto t0 = std::chrono::steady_clock::now();
+      auto t1 = std::chrono::steady_clock::now();
+      auto t2 = std::chrono::steady_clock::now();
+      logSizes(t0, t1, t2, map);
    }
 };

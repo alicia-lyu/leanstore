@@ -7,25 +7,23 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
-#include <stdexcept>
-#include "ExperimentHelper.hpp"
+#include <numeric>
 #include "leanstore/concurrency-recovery/CRMG.hpp"
-#include "leanstore/utils/JumpMU.hpp"
 
-template <template <typename> class AdapterType>
-class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
+template <template <typename> class AdapterType, int id_count>
+class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 {
-   using Base = TPCCBaseWorkload<AdapterType>;
+   using Base = TPCCBaseWorkload<AdapterType, id_count>;
    AdapterType<joined_t>& joined_ols;
 
   public:
    TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary, AdapterType<joined_t>& joined_ols)
-       : TPCCBaseWorkload<AdapterType>(tpcc, orderline_secondary), joined_ols(joined_ols)
+       : Base(tpcc, orderline_secondary), joined_ols(joined_ols)
    {
    }
 
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires (std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
+      requires(std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
    {
       // Must be able to compile with joined0_t too, requires toSelected (implemented as UNREACHABLE)
       joined_ols.scan(
@@ -64,7 +62,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
           []() {});
    }
 
-      // When this query can be realistic: Keep track of stock information for recent orders
+   // When this query can be realistic: Keep track of stock information for recent orders
    void recentOrdersStockInfo(Integer w_id, Integer d_id, Timestamp since)
    {
       // vector<joined_t> results;
@@ -149,24 +147,24 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
                 if constexpr (std::is_same_v<joined_t, joined1_t>) {
                    ol_sec1_t expanded_payload = payload;
                    joined1_t joined_rec = {expanded_payload.ol_supply_w_id,
-                                              expanded_payload.ol_delivery_d,
-                                              expanded_payload.ol_quantity,
-                                              expanded_payload.ol_amount,
-                                              stock_rec.s_quantity,
-                                              stock_rec.s_dist_01,
-                                              stock_rec.s_dist_02,
-                                              stock_rec.s_dist_03,
-                                              stock_rec.s_dist_04,
-                                              stock_rec.s_dist_05,
-                                              stock_rec.s_dist_06,
-                                              stock_rec.s_dist_07,
-                                              stock_rec.s_dist_08,
-                                              stock_rec.s_dist_09,
-                                              stock_rec.s_dist_10,
-                                              stock_rec.s_ytd,
-                                              stock_rec.s_order_cnt,
-                                              stock_rec.s_remote_cnt,
-                                              stock_rec.s_data};
+                                           expanded_payload.ol_delivery_d,
+                                           expanded_payload.ol_quantity,
+                                           expanded_payload.ol_amount,
+                                           stock_rec.s_quantity,
+                                           stock_rec.s_dist_01,
+                                           stock_rec.s_dist_02,
+                                           stock_rec.s_dist_03,
+                                           stock_rec.s_dist_04,
+                                           stock_rec.s_dist_05,
+                                           stock_rec.s_dist_06,
+                                           stock_rec.s_dist_07,
+                                           stock_rec.s_dist_08,
+                                           stock_rec.s_dist_09,
+                                           stock_rec.s_dist_10,
+                                           stock_rec.s_ytd,
+                                           stock_rec.s_order_cnt,
+                                           stock_rec.s_remote_cnt,
+                                           stock_rec.s_data};
                    joined_ols.insert(key, joined_rec);
                 } else {
                    joined_ols.insert(key, {});
@@ -211,15 +209,21 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       joined_ols.scan({w_id, 0, 0, 0, 0}, [&](const joined_t::Key& key, const auto&) { return key.w_id == w_id; }, []() {});
    }
 
+   void addSizesToCsv(double core_size, uint64_t core_time, double ol_size, uint64_t ol_time, double join_size, uint64_t join_time)
+   {
+      std::ofstream csv_file(this->getCsvFile("join_size.csv"), std::ios::app);
+      auto config = this->getConfigString();
+      csv_file << "core," << config << "," << core_size << "," << core_time << std::endl;
+      csv_file << "orderline_secondary," << config << "," << ol_size << "," << ol_time << std::endl;
+      csv_file << "join_results," << config << "," << join_size << "," << join_time << std::endl;
+   }
+
    void logSizes(std::chrono::steady_clock::time_point t0,
                  std::chrono::steady_clock::time_point t1,
                  std::chrono::steady_clock::time_point t2,
                  std::chrono::steady_clock::time_point t3,
                  leanstore::cr::CRManager& crm)
    {
-      // return; // LATER
-      std::ofstream csv_file(this->getCsvFile("join_size.csv"), std::ios::app);
-      auto config = ExperimentHelper::getConfigString();
       u64 core_page_count = 0;
       core_page_count = this->getCorePageCount(crm);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
@@ -229,27 +233,49 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType>
       auto orderline_secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
       u64 joined_ols_page_count = 0;
-      u64 joined_ols_leaf_count = 0;
-      u64 joined_ols_height = 0;
 
-      crm.scheduleJobSync(0, [&]() {
-         joined_ols_page_count = joined_ols.estimatePages();
-         joined_ols_leaf_count = joined_ols.estimateLeafs();
-      });
+      crm.scheduleJobSync(0, [&]() { joined_ols_page_count = joined_ols.estimatePages(); });
       auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 
-      std::cout << "joined_ols_page_count: " << joined_ols_page_count << ", joined_ols_leaf_count: " << joined_ols_leaf_count
-                << ", joined_ols_height: " << joined_ols_height << std::endl;
+      addSizesToCsv(Base::pageCountToGB(core_page_count), core_time, Base::pageCountToGB(orderline_secondary_page_count), orderline_secondary_time,
+                    Base::pageCountToGB(joined_ols_page_count), joined_ols_time);
+   }
 
-      csv_file << "core," << config << "," << Base::pageCountToGB(core_page_count) << "," << core_time << std::endl;
-      csv_file << "orderline_secondary," << config << "," << Base::pageCountToGB(orderline_secondary_page_count) << "," << orderline_secondary_time
-               << std::endl;
-      csv_file << "join_results," << config << "," << Base::pageCountToGB(joined_ols_page_count) << "," << joined_ols_time << std::endl;
+   void logSizes(std::chrono::steady_clock::time_point t0,
+                 std::chrono::steady_clock::time_point t1,
+                 std::chrono::steady_clock::time_point t2,
+                 std::chrono::steady_clock::time_point t3,
+                 RocksDB& map)
+   {
+      std::array<uint64_t, id_count> sizes = this->compactAndGetSizes(map);
+
+      uint64_t core_size = std::accumulate(sizes.begin(), sizes.begin() + 11, 0);
+
+      uint64_t ol_size = sizes.at(11);
+      uint64_t join_size = sizes.at(12);
+
+      auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+      auto ol_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+      auto join_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
+
+      addSizesToCsv(Base::byteToGB(core_size), core_time, Base::byteToGB(ol_size), ol_time, Base::byteToGB(join_size), join_time);
    }
 
    void logSizes(leanstore::cr::CRManager& crm)
    {
       auto t0 = std::chrono::steady_clock::now();
-      logSizes(t0, t0, t0, t0, crm);
+      auto t1 = std::chrono::steady_clock::now();
+      auto t2 = std::chrono::steady_clock::now();
+      auto t3 = std::chrono::steady_clock::now();
+      logSizes(t0, t1, t2, t3, crm);
+   }
+
+   void logSizes(RocksDB& map)
+   {
+      auto t0 = std::chrono::steady_clock::now();
+      auto t1 = std::chrono::steady_clock::now();
+      auto t2 = std::chrono::steady_clock::now();
+      auto t3 = std::chrono::steady_clock::now();
+      logSizes(t0, t1, t2, t3, map);
    }
 };
