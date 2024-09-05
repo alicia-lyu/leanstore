@@ -82,6 +82,7 @@ def main():
     parser.add_argument('included_columns', type=int, help="Number of included columns.")
     parser.add_argument('duration', type=int, nargs='?', default=240, help="Duration to run the experiment (optional, default is 240 seconds).")
     parser.add_argument('locality_read', type=bool, nargs='?', default=False, help="Locality read (optional, default is False).")
+    parser.add_argument('outer_join', type=bool, nargs='?', default=False, help="Outer join (optional, default is False).")
     
     args = parser.parse_args()
 
@@ -153,6 +154,7 @@ def main():
         f"--dram_gib={args.dram_gib}", f"--target_gib={args.target_gib}", f"--tpcc_warehouse_count={args.target_gib}",
         f"--read_percentage={args.read_percentage}", f"--scan_percentage={args.scan_percentage}", f"--write_percentage={args.write_percentage}", f"--locality_read={str(args.locality_read).lower()}",
         f"--order_size={args.order_size}", f"--semijoin_selectivity={args.selectivity}",
+        f"--outer_join={str(args.outer_join).lower()}"
     ]
 
     print(f"Running command {' '.join(map(str, cmd))}\n")

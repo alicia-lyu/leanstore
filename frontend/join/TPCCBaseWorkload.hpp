@@ -25,6 +25,7 @@ DEFINE_uint32(scan_percentage, 0, "");
 DEFINE_uint32(write_percentage, 100, "");
 DEFINE_uint32(order_size, 5, "Number of lines in a new order");
 DEFINE_bool(locality_read, false, "Lookup key in the read transactions are the same or smaller than the join key.");
+DEFINE_bool(outer_join, false, "Outer join in the join transactions.");
 
 #if !defined(INCLUDE_COLUMNS)
 #define INCLUDE_COLUMNS \
@@ -106,7 +107,7 @@ class TPCCBaseWorkload
       orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
       stock_scanner->seek({seek_key.w_id, seek_key.i_id});
 
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
 
       while (true) {
          auto ret = merge_join.next();
@@ -128,7 +129,7 @@ class TPCCBaseWorkload
       orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
       stock_scanner->seek({seek_key.w_id, seek_key.i_id});
 
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
 
       stock_t::Key stock_key;
       stock_t stock_payload;
@@ -164,7 +165,7 @@ class TPCCBaseWorkload
       orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
       stock_scanner->seek({seek_key.w_id, seek_key.i_id});
 
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get());
+      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
 
       while (true) {
          auto ret = merge_join.next();
@@ -279,11 +280,6 @@ class TPCCBaseWorkload
       // Batch update stock records
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
-         Integer item_id = itemids[i];
-         if (!isSelected(item_id)) {
-            continue;
-         }
-         // We don't need the primary index of stock_t at all, since all its info is in merged
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
          stock_update_cb(
              {supwares[i], itemids[i]},
@@ -326,7 +322,7 @@ class TPCCBaseWorkload
       this->newOrderRndCallback(
           w_id,
           [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer) {
-             this->tpcc->stock.update1(key, cb, update_descriptor);
+             if (isSelected(key.s_i_id)) this->tpcc->stock.update1(key, cb, update_descriptor);
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, order_size);
    }
