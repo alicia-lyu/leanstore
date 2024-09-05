@@ -152,7 +152,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       Base::newOrderRndCallback(
           w_id,
           [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& desc, Integer) {
-             merged.template update1<stock_t>(key, cb, desc);
+             if (Base::isSelected(key.s_i_id)) merged.template update1<stock_t>(key, cb, desc);
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) { merged.template insert<orderline_sec_t>(key, rec); }, order_size);
    }

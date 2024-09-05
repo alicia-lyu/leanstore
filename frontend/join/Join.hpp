@@ -13,13 +13,15 @@ template <typename Record1, typename Record2, typename JoinedRecord>
 class MergeJoin
 {
    constexpr static unsigned join_key_length = JoinedRecord::joinKeyLength();
+   bool outer;
 
   public:
-   MergeJoin(Scanner<Record1>* left_scanner, Scanner<Record2>* right_scanner)
+   MergeJoin(Scanner<Record1>* left_scanner, Scanner<Record2>* right_scanner, bool outer = false)
        : left_scanner(left_scanner),
          right_scanner(right_scanner),
          cached_right_key(std::nullopt),
-         cached_right_records_iter(cached_right_records.begin())
+         cached_right_records_iter(cached_right_records.begin()),
+         outer(outer)
    {
       cached_right_records.reserve(100);
       advance_left();
@@ -56,36 +58,46 @@ class MergeJoin
 
             joined_record = std::make_optional(join_records());
             break;
-         } else if ((cmp < 0 || right_exhausted)) {
+         } else if (cmp < 0 || right_exhausted) {
             // Join current left with cached right
+            if (!cached_right_records.empty() && cached_right_records_iter != cached_right_records.end() && compare_keys(true) <= 0) {
+               assert(compare_keys(true) == 0);  // Those cached records were joined with a left record smaller than or equal to the current one
+               joined_record = std::make_optional(join_records(true));
+               break;
+            }
 
             if (cached_right_records.empty()) {
                // std::cout << "Advance left because no cached right records" << std::endl;
-               advance_left();
-               continue;
-            }
-
-            if (cached_right_records_iter == cached_right_records.end()) {
+            } else if (cached_right_records_iter == cached_right_records.end()) {
                // Next left record may join with the cached right records
                cached_right_records_iter = cached_right_records.begin();
                // std::cout << "Advance left because cached right records exhausted" << std::endl;
-               advance_left();
-               continue;
             } else if (compare_keys(true) > 0) {
                // The cached right records are too small, will never be joined with left records beyond this point
                if (right_exhausted)
                   return std::nullopt;  // The following left records has no cached rows or current row to join
                // std::cout << "Advance left because cached right records too small" << std::endl;
+            }
+
+            if (outer && !current_left_matched) {
+               auto ret = extendByNulls(left_key, left_record);
+               advance_left();
+               return ret;
+            } else {
                advance_left();
                continue;
             }
-            assert(compare_keys(true) == 0);  // Those cached records were joined with a left record smaller than or equal to the current one
-            joined_record = std::make_optional(join_records(true));
-            break;
          } else if (cmp > 0) {
             if (!right_exhausted) {
                // Current right record is too small. Cached right records are even smaller
-               advance_right();
+               if (outer && !current_right_matched) {
+                  auto ret = extendByNulls(right_key, right_record);
+                  advance_right();
+                  return ret;
+               } else {
+                  advance_right();
+                  continue;
+               }
             } else {
                return std::nullopt;
             }
@@ -105,6 +117,16 @@ class MergeJoin
       return joined_record;
    }
 
+   static std::pair<typename JoinedRecord::Key, JoinedRecord> extendByNulls(const typename Record1::Key& left_key, const Record1& left_rec)
+   {
+      return {merge_keys<typename JoinedRecord::Key>(left_key, {}), merge_records<JoinedRecord>(left_rec, {})};
+   }
+
+   static std::pair<typename JoinedRecord::Key, JoinedRecord> extendByNulls(const typename Record2::Key& right_key, const Record2& right_rec)
+   {
+      return {merge_keys<typename JoinedRecord::Key>({}, right_key), merge_records<JoinedRecord>({}, right_rec)};
+   }
+
    template <typename LeftKey, typename RightKey, typename JoinedKey>
    static JoinedKey merge_keys(const LeftKey& left_key, const RightKey& right_key);
 
@@ -120,7 +142,8 @@ class MergeJoin
    }
 
    template <typename Joined = joined1_t>
-   static Joined merge_records(const ol_sec1_t& left_rec, const stock_t& right_rec) requires(std::same_as<Joined, joined1_t>)
+   static Joined merge_records(const ol_sec1_t& left_rec, const stock_t& right_rec)
+      requires(std::same_as<Joined, joined1_t>)
    {
       joined1_t record{left_rec.ol_supply_w_id, left_rec.ol_delivery_d, left_rec.ol_quantity,   left_rec.ol_amount,  right_rec.s_quantity,
                        right_rec.s_dist_01,     right_rec.s_dist_02,    right_rec.s_dist_03,    right_rec.s_dist_04, right_rec.s_dist_05,
@@ -131,7 +154,8 @@ class MergeJoin
    }
 
    template <typename Joined = joined0_t>
-   static Joined merge_records(const ol_sec0_t&, const stock_t&) requires(std::same_as<Joined, joined0_t>)
+   static Joined merge_records(const ol_sec0_t&, const stock_t&)
+      requires(std::same_as<Joined, joined0_t>)
    {
       joined0_t record{};
       return record;
@@ -158,7 +182,7 @@ class MergeJoin
       return {merge_keys<typename JoinedRecord::Key>(left_key, right_key), merge_records<JoinedRecord>(left_rec, right_rec)};
    }
 
-      static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec1_t::Key& left_key,
+   static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec1_t::Key& left_key,
                                                                     const ol_sec1_t& left_rec,
                                                                     const stock_t::Key& right_key,
                                                                     const stock_t& right_rec)
@@ -253,8 +277,7 @@ class MergeJoin
       const Record2& rightR = use_cached ? *cached_right_records_iter : right_record;
       const typename Record2::Key& rightK = use_cached ? cached_right_key.value() : this->right_key;
 
-      const auto [key, record] =
-          merge(const_cast<const typename Record1::Key&>(left_key), const_cast<const Record1&>(left_record), rightK, rightR);
+      const auto [key, record] = merge(const_cast<const typename Record1::Key&>(left_key), const_cast<const Record1&>(left_record), rightK, rightR);
 
       current_left_matched = true;
       if (use_cached) {

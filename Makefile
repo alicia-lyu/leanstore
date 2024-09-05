@@ -58,7 +58,7 @@ executables: $(TARGETS)
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
-lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --order_size=10 --semijoin_selectivity=50 --csv_truncate=true --worker_threads=2 --locality_read=true --trunc=true
+lldb_flags := --dram_gib=$(default_dram) --vi=false --mv=false --isolation_level=ser --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --order_size=10 --semijoin_selectivity=50 --csv_truncate=true --worker_threads=2 --locality_read=true --trunc=true --outer_join=true
 
 join-lldb: $(BUILD_DIR_DEBUG)/frontend/$(JOIN_EXEC)
 	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(JOIN_EXEC) $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/join-lldb
@@ -90,12 +90,13 @@ update_size ?= $(default_update_size)
 selectivity ?= $(default_selectivity)
 duration ?= 0
 locality_read ?= ""
+outer_join ?= ""
 
-PY_FLAGS := $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read)
+PY_FLAGS := $(dram) $(target) $(read) $(scan) $(write) $(update_size) $(selectivity) $(included_columns) $(duration) $(locality_read) $(outer_join)
 
 leanstore: join merged base
 
-rocksdb: rocksdb-merged rocksdb-base # rocksdb-join 
+rocksdb: rocksdb-merged rocksdb-base rocksdb-join 
 
 join: $(BUILD_DIR)/frontend/$(JOIN_EXEC)
 	python3 experiment.py $(BUILD_DIR)/frontend/$(JOIN_EXEC) $(PY_FLAGS)
@@ -140,9 +141,6 @@ update-size:
 	- $(MAKE) $*-all-tx-types selectivity=50
 	- $(MAKE) $*-all-tx-types selectivity=19
 	- $(MAKE) $*-all-tx-types selectivity=5
-
-rsel := rocksdb-selectivity
-lsel := leanstore-selectivity
 
 no-columns:
 	- $(MAKE) all-tx-types included_columns=0

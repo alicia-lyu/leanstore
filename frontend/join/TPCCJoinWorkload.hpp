@@ -109,7 +109,12 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       Base::newOrderRndCallback(
           w_id,
           [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer qty) {
-             this->tpcc->stock.update1(key, cb, update_descriptor);
+             if (Base::isSelected(key.s_i_id)) {
+                this->tpcc->stock.update1(key, cb, update_descriptor);
+             }
+             if (!FLAGS_outer_join && !Base::isSelected(key.s_i_id)) {
+                return;
+             }
              // Updating stock causes join results to be updated
              if constexpr (std::is_same_v<joined_t, joined1_t>) {
                 std::vector<joined1_t::Key> keys;
