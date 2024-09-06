@@ -24,9 +24,11 @@ def get_tx_type(read_percentage, scan_percentage, write_percentage, locality_rea
     else:
         return f"mixed-{read_percentage}-{scan_percentage}-{write_percentage}"
 
-def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, write_percentage, order_size, selectivity, included_columns, locality_read):
+def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, write_percentage, order_size, selectivity, included_columns, locality_read, outer_join):
     log_dir = "/home/alicia.w.lyu/logs/" + f"{method}-{dram_gib}-{target_gib}-" + get_tx_type(read_percentage, scan_percentage, write_percentage, locality_read)
     
+    if outer_join:
+        log_dir += "-outer"
     if order_size != 5:
         log_dir += f"-size{order_size}"
     if selectivity != 100:
@@ -38,8 +40,10 @@ def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, 
     print(f"Log Directory: {log_dir}")
     return log_dir
 
-def get_recovery_file(method, target_gib, selectivity, included_columns, rocksdb):
+def get_recovery_file(method, target_gib, selectivity, included_columns, rocksdb, outer_join):
     recovery_file = f"{method}-target{target_gib}g.json"
+    if outer_join:
+        recovery_file = add_suffix_before_extension(recovery_file, "-outer")
     if selectivity != 100:
         recovery_file = add_suffix_before_extension(recovery_file, f"-sel{selectivity}")
     if included_columns != 1:
@@ -49,9 +53,11 @@ def get_recovery_file(method, target_gib, selectivity, included_columns, rocksdb
     print(f"Recovery File: {recovery_file}")
     return recovery_file
 
-def get_image(method, target_gib, selectivity, included_columns):
+def get_image(method, target_gib, selectivity, included_columns, outer_join):
     def get_prefix():
         prefix = f"/home/alicia.w.lyu/tmp/{method}-target{target_gib}g"
+        if outer_join:
+            prefix = add_suffix_before_extension(prefix, "-outer")
         if selectivity != 100:
             prefix = add_suffix_before_extension(prefix, f"-sel{selectivity}")
         if included_columns != 1:
@@ -110,13 +116,13 @@ def main():
     log_dir = get_log_dir(
         method, args.dram_gib, args.target_gib, 
         args.read_percentage, args.scan_percentage, args.write_percentage, 
-        args.order_size, args.selectivity, args.included_columns, args.locality_read)
+        args.order_size, args.selectivity, args.included_columns, args.locality_read, args.outer_join)
     
-    recovery_file = build_dir / get_recovery_file(method, args.target_gib, args.selectivity, args.included_columns, "rocksdb" in method)
+    recovery_file = build_dir / get_recovery_file(method, args.target_gib, args.selectivity, args.included_columns, "rocksdb" in method, args.outer_join)
     
     trunc = not recovery_file.exists()
     
-    image = get_image(method, args.target_gib, args.selectivity, args.included_columns)
+    image = get_image(method, args.target_gib, args.selectivity, args.included_columns, args.outer_join)
 
     if args.write_percentage > 0:
         persist_file = f"./leanstore.json"

@@ -358,6 +358,7 @@ class TPCCBaseWorkload
    std::string getCsvFile(std::string csv_name)
    {
       std::string size_dir = ROCKSDB ? "size_rocksdb" : "size";
+      if (FLAGS_outer_join) size_dir += "_outer";
       std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / size_dir / csv_name;
       std::filesystem::create_directories(csv_path.parent_path());
       std::cout << "Logging size to " << csv_path << std::endl;

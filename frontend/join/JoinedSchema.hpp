@@ -265,6 +265,9 @@ struct joined_selected_t: public joined_base_t {
 joined_selected_t joined1_t::toSelected(const Key& key) const {
   Varchar<24> s_dist;
   switch (key.ol_d_id) {
+    case 0: // Only possible in outer join (0 for null)
+      s_dist = Varchar<24>();
+      break;
     case 1:
       s_dist = s_dist_01;
       break;
@@ -337,6 +340,9 @@ struct joined0_t: public joined_base_t {
   joined_selected_t expand(const Key& key, const stock_t& stock, const orderline_t& orderline) {
     Varchar<24> s_dist;
     switch (key.ol_d_id) {
+      case 0: // Only possible in outer join (0 for null)
+        s_dist = Varchar<24>();
+        break;
       case 1:
         s_dist = stock.s_dist_01;
         break;

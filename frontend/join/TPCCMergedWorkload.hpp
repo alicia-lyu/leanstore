@@ -24,12 +24,27 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       std::vector<std::pair<joined_selected_t::Key, joined_selected_t>> results;
       results.reserve(cached_left.size() * cached_right.size());  // Reserve memory to avoid reallocations
 
-      for (auto& left : cached_left) {
+      if (cached_left.empty() && FLAGS_outer_join) {
          for (auto& right : cached_right) {
+            // no filter for stock
+            const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(right.first, right.second);
+            results.push_back({key, rec.toSelected(key)});
+         }
+      } else if (cached_right.empty() && FLAGS_outer_join) {
+         for (auto& left : cached_left) {
             if (!filter(left.second))
                continue;
-            const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left.first, left.second, right.first, right.second);
+            const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(left.first, left.second);
             results.push_back({key, rec.toSelected(key)});
+         }
+      } else {
+         for (auto& left : cached_left) {
+            for (auto& right : cached_right) {
+               if (!filter(left.second))
+                  continue;
+               const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left.first, left.second, right.first, right.second);
+               results.push_back({key, rec.toSelected(key)});
+            }
          }
       }
       return results;
@@ -45,8 +60,15 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       results.reserve(cached_left.size() * cached_right.size());  // Reserve memory to avoid reallocations
       ol_sec1_t::Key curr_key;
       ol_sec1_t expanded_rec;
-      for (auto& left : cached_left) {
+
+      if (cached_left.empty() && FLAGS_outer_join) {
          for (auto& right : cached_right) {
+            // no filter for stock
+            const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(right.first, right.second);
+            results.push_back({key, rec.toSelected(key)});
+         }
+      } else if (cached_right.empty() && FLAGS_outer_join) {
+         for (auto& left : cached_left) {
             auto& [left_key, left_rec] = left;
             if (left_key != curr_key) {
                ol_sec1_t expanded_rec;
@@ -54,11 +76,30 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                    {left_key.ol_w_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number}, [&](const orderline_t& ol_rec) {
                       expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, ol_rec.ol_quantity, ol_rec.ol_amount, ol_rec.ol_dist_info};
                    });
+               curr_key = left_key;
             }
             if (!expand_filter(expanded_rec))
                continue;
-            const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left_key, expanded_rec, right.first, right.second);
+            const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(left.first, left.second);
             results.push_back({key, rec.toSelected(key)});
+         }
+      } else {
+         for (auto& left : cached_left) {
+            for (auto& right : cached_right) {
+               auto& [left_key, left_rec] = left;
+               if (left_key != curr_key) {
+                  ol_sec1_t expanded_rec;
+                  this->tpcc->orderline.lookup1(
+                      {left_key.ol_w_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number}, [&](const orderline_t& ol_rec) {
+                         expanded_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, ol_rec.ol_quantity, ol_rec.ol_amount, ol_rec.ol_dist_info};
+                      });
+                  curr_key = left_key;
+               }
+               if (!expand_filter(expanded_rec))
+                  continue;
+               const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left_key, expanded_rec, right.first, right.second);
+               results.push_back({key, rec.toSelected(key)});
+            }
          }
       }
       return results;
@@ -152,7 +193,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       Base::newOrderRndCallback(
           w_id,
           [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& desc, Integer) {
-             if (Base::isSelected(key.s_i_id)) merged.template update1<stock_t>(key, cb, desc);
+             if (Base::isSelected(key.s_i_id))
+                merged.template update1<stock_t>(key, cb, desc);
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& rec) { merged.template insert<orderline_sec_t>(key, rec); }, order_size);
    }
