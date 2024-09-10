@@ -33,8 +33,7 @@ class MergeJoin
       if (produced > 99999) {
          std::cout << "~MergeJoin(): Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)"
                    << std::endl;
-         std::cout << "Left is exhausted: " << left_exhausted << std::endl;
-         std::cout << "Right is exhausted: " << right_exhausted << std::endl;
+         std::cout << "left_exhausted: " << left_exhausted << ", right_exhausted: " << right_exhausted << std::endl;
          std::cout << "Left semi-join selectivity: " << (double)left_matched / left_consumed << std::endl;
          std::cout << "Right semi-join selectivity: " << (double)right_matched / right_consumed << std::endl;
       }
@@ -74,32 +73,31 @@ class MergeJoin
                // std::cout << "Advance left because cached right records exhausted" << std::endl;
             } else if (compare_keys(true) > 0) {
                // The cached right records are too small, will never be joined with left records beyond this point
-               if (right_exhausted)
-                  return std::nullopt;  // The following left records has no cached rows or current row to join
+               if (right_exhausted) {
+                  break;  // The following left records has no cached rows or current row to join
+               }
                // std::cout << "Advance left because cached right records too small" << std::endl;
             }
 
             if (outer && !current_left_matched) {
-               auto ret = extendByNulls(left_key, left_record);
+               joined_record = std::make_optional(extendByNulls(left_key, left_record));
+               assert(joined_record.has_value());
                advance_left();
-               return ret;
+               break;
             } else {
                advance_left();
                continue;
             }
-         } else if (cmp > 0) {
-            if (!right_exhausted) {
-               // Current right record is too small. Cached right records are even smaller
-               if (outer && !current_right_matched) {
-                  auto ret = extendByNulls(right_key, right_record);
-                  advance_right();
-                  return ret;
-               } else {
-                  advance_right();
-                  continue;
-               }
+         } else if (cmp > 0) { // right_exhausted == false
+            // Current right record is too small. Cached right records are even smaller
+            if (outer && !current_right_matched) {
+               joined_record = std::make_optional(extendByNulls(right_key, right_record));
+               assert(joined_record.has_value());
+               advance_right();
+               break;
             } else {
-               return std::nullopt;
+               advance_right();
+               continue;
             }
          } else {
             UNREACHABLE();
@@ -108,6 +106,8 @@ class MergeJoin
 
       if (joined_record.has_value())
          produced++;
+      else
+         std::cout << "End of join: cycle exhausted" << std::endl;
       if (joined_record.has_value() && produced % 1000000 == 0) {
          std::cout << "Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)" << std::endl;
          std::cout << "Current joined record, key: " << joined_record.value().first << std::endl;
@@ -135,9 +135,14 @@ class MergeJoin
 
    // Only one merge_keys for all variants of joined_t
    template <typename JoinedKey = joined1_t::Key>
-   static JoinedKey merge_keys(const ol_sec1_t::Key& left_key, const stock_t::Key&)
+   static JoinedKey merge_keys(const ol_sec1_t::Key& left_key, const stock_t::Key& right_key)
    {
-      joined1_t::Key key{left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
+      joined1_t::Key key;
+      if (left_key == ol_sec1_t::Key{}) { // left key is null, use right key whenever possible
+         key = {right_key.s_w_id, right_key.s_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
+      } else {
+         key = {left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
+      }
       return key;
    }
 
@@ -145,6 +150,7 @@ class MergeJoin
    static Joined merge_records(const ol_sec1_t& left_rec, const stock_t& right_rec)
       requires(std::same_as<Joined, joined1_t>)
    {
+      // No overlapping fields
       joined1_t record{left_rec.ol_supply_w_id, left_rec.ol_delivery_d, left_rec.ol_quantity,   left_rec.ol_amount,  right_rec.s_quantity,
                        right_rec.s_dist_01,     right_rec.s_dist_02,    right_rec.s_dist_03,    right_rec.s_dist_04, right_rec.s_dist_05,
                        right_rec.s_dist_06,     right_rec.s_dist_07,    right_rec.s_dist_08,    right_rec.s_dist_09, right_rec.s_dist_10,
@@ -239,8 +245,6 @@ class MergeJoin
       if (current_right_matched) {
          right_matched++;
       }
-      if (right_exhausted)
-         return false;
       auto ret = right_scanner->next();
       if (!ret.has_value()) {
          right_exhausted = true;
