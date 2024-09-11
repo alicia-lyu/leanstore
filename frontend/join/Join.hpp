@@ -30,7 +30,7 @@ class MergeJoin
 
    ~MergeJoin()
    {
-      if (produced > 100) {
+      if (produced > 1000000) {
          std::cout << "~MergeJoin(): Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)"
                    << std::endl;
          std::cout << "left_exhausted: " << left_exhausted << ", right_exhausted: " << right_exhausted << std::endl;
@@ -110,8 +110,6 @@ class MergeJoin
 
       if (joined_record.has_value())
          produced++;
-      else
-         std::cout << "End of join: cycle exhausted" << std::endl;
       if (joined_record.has_value() && produced % 1000000 == 0) {
          std::cout << "Produced " << produced << ", consumed " << left_consumed << " (left) " << right_consumed << " (right)" << std::endl;
          std::cout << "Current joined record, key: " << joined_record.value().first << std::endl;

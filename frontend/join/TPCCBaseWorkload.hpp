@@ -70,11 +70,11 @@ class TPCCBaseWorkload
 
    void loadOrderlineSecondaryCallback(std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb, Integer w_id = 0)
    {
-      std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
-      uint64_t orderline_page_count = this->tpcc->orderline.estimatePages();
-      std::cout << "Orderline page count: " << orderline_page_count << " (" << pageCountToGB(orderline_page_count) << " GB)" << std::endl;
+      // std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
+      // uint64_t orderline_page_count = this->tpcc->orderline.estimatePages();
+      // std::cout << "Orderline page count: " << orderline_page_count << " (" << pageCountToGB(orderline_page_count) << " GB)" << std::endl;
 
-      uint64_t orderline_record_count = 0;
+      // uint64_t orderline_record_count = 0;
 
       this->tpcc->orderline.scan(
           {w_id, 0, 0, 0},
@@ -82,7 +82,7 @@ class TPCCBaseWorkload
              if (key.ol_w_id != w_id) {
                 return false;
              }
-             orderline_record_count++;
+            //  orderline_record_count++;
              typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
              if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
                 orderline_insert_cb(sec_key, {});
@@ -97,31 +97,13 @@ class TPCCBaseWorkload
           },
           []() {});
 
-      std::cout << "Orderline record count of warehouse " << w_id << ": " << orderline_record_count << std::endl;
+      // std::cout << "Orderline record count of warehouse " << w_id << ": " << orderline_record_count << std::endl;
    }
 
    void loadOrderlineSecondary(Integer w_id = 0)
    {
       this->loadOrderlineSecondaryCallback(
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, w_id);
-
-      uint64_t orderline_sec_page_count = this->orderline_secondary->estimatePages();
-      std::cout << "Orderline secondary page count: " << orderline_sec_page_count << " (" << pageCountToGB(orderline_sec_page_count)
-                << " GB) after loading warehouse " << w_id << std::endl;
-
-      uint64_t orderline_sec_record_count = 0;
-      this->orderline_secondary->scan(
-          {w_id, 0, 0, 0, 0},
-          [&](const orderline_sec_t::Key& key, const orderline_sec_t&) {
-             if (key.ol_w_id != w_id) {
-                std::cout << "orderline_secondary::scan: Warehouse " << w_id << " has ended at " << key.ol_w_id << std::endl;
-                return false;
-             }
-             orderline_sec_record_count++;
-             return true;
-          },
-          []() {});
-      std::cout << "Orderline secondary record count of warehouse " << w_id << ": " << orderline_sec_record_count << std::endl;
    }
 
    // Join with no extra column selection

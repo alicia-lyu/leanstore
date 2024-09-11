@@ -226,12 +226,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 
    void loadOrderlineSecondaryToMerged(Integer w_id = 0)
    {
-      uint64_t merged_page_count0 = merged.estimatePages();
-      std::cout << "Merged page count before loading orderline_secondary of warehouse " << w_id << ": " << merged_page_count0 << " (" << Base::pageCountToGB(merged_page_count0) << " GB)" << std::endl;
       this->loadOrderlineSecondaryCallback(
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { merged.template insert<orderline_sec_t>(key, payload); }, w_id);
-      uint64_t merged_page_count1 = merged.estimatePages();
-      std::cout << "Merged page count after loading orderline_secondary of warehouse " << w_id << ": " << merged_page_count1 << " (" << Base::pageCountToGB(merged_page_count1) << " GB)" << std::endl;
    }
 
    void verifyWarehouse(Integer w_id)

@@ -128,7 +128,7 @@ rocksdb-base: $(BUILD_DIR)/frontend/$(ROCKSDB_BASE_EXEC)
 %-write:
 	- $(MAKE) $* read=0 scan=0 write=100
 	
-%-all-tx-types: %-read %-locality %-scan %-write 
+%-all-tx: %-read %-locality %-scan %-write 
 	@echo "Completed all transaction types for $*"
 
 update-size:
@@ -137,13 +137,13 @@ update-size:
 	- $(MAKE) write update_size=20
 
 %-selectivity:
-	- $(MAKE) $*-all-tx-types selectivity=100
-	- $(MAKE) $*-all-tx-types selectivity=50
-	- $(MAKE) $*-all-tx-types selectivity=19
-	- $(MAKE) $*-all-tx-types selectivity=5
+	- $(MAKE) $*-all-tx selectivity=100
+	- $(MAKE) $*-all-tx selectivity=50
+	- $(MAKE) $*-all-tx selectivity=19
+	- $(MAKE) $*-all-tx selectivity=5
 
 no-columns:
-	- $(MAKE) all-tx-types included_columns=0
+	- $(MAKE) all-tx included_columns=0
 
 %-size:
 	- @for col in 1 0 2; do \
@@ -152,7 +152,7 @@ no-columns:
 		done \
 	done
 
-.PHONY: both read scan write all-tx-types update-size selectivity no-columns table-size
+.PHONY: both read scan write all-tx update-size selectivity no-columns table-size
 
 # ----------------- CLEAN -----------------
 clean:
