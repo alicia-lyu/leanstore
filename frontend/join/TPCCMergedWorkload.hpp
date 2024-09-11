@@ -201,7 +201,8 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 
    void loadStockToMerged(Integer w_id)
    {
-      std::cout << "Loading stock of warehouse " << w_id << " to merged" << std::endl;
+      std::cout << "Loading " << this->tpcc->ITEMS_NO * this->tpcc->scale_factor << " stock of warehouse " << w_id << " to merged" << std::endl;
+      int loaded = 0;
       for (Integer i = 0; i < this->tpcc->ITEMS_NO * this->tpcc->scale_factor; i++) {
          if (!Base::isSelected(i + 1)) {
             continue;
@@ -218,13 +219,19 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
               this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
               this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
               this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data});
+         loaded++;
       }
+      std::cout << "Loaded " << loaded << " stock of warehouse " << w_id << " to merged" << std::endl;
    }
 
    void loadOrderlineSecondaryToMerged(Integer w_id = 0)
    {
+      uint64_t merged_page_count0 = merged.estimatePages();
+      std::cout << "Merged page count before loading orderline_secondary of warehouse " << w_id << ": " << merged_page_count0 << " (" << Base::pageCountToGB(merged_page_count0) << " GB)" << std::endl;
       this->loadOrderlineSecondaryCallback(
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { merged.template insert<orderline_sec_t>(key, payload); }, w_id);
+      uint64_t merged_page_count1 = merged.estimatePages();
+      std::cout << "Merged page count after loading orderline_secondary of warehouse " << w_id << ": " << merged_page_count1 << " (" << Base::pageCountToGB(merged_page_count1) << " GB)" << std::endl;
    }
 
    void verifyWarehouse(Integer w_id)

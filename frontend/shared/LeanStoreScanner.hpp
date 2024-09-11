@@ -68,6 +68,8 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
       leanstore::OP_RESULT res = it.seek(keySlice);
       if (res == leanstore::OP_RESULT::OK)
          afterSeek = true;
+      else
+         std::cerr << "LeanStoreScanner::seek: seek failed" << std::endl;
       return res == leanstore::OP_RESULT::OK;
    }
 

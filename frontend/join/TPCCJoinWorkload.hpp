@@ -242,6 +242,10 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       crm.scheduleJobSync(0, [&]() { joined_ols_page_count = joined_ols.estimatePages(); });
       auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 
+      std::cout << "core page count: " << core_page_count << " (" << Base::pageCountToGB(core_page_count) << " GB), orderline secondary page count: "
+                << orderline_secondary_page_count << " (" << Base::pageCountToGB(orderline_secondary_page_count) << " GB), joined_ols page count: "
+                << joined_ols_page_count << " (" << Base::pageCountToGB(joined_ols_page_count) << " GB)" << std::endl;
+
       addSizesToCsv(Base::pageCountToGB(core_page_count), core_time, Base::pageCountToGB(orderline_secondary_page_count), orderline_secondary_time,
                     Base::pageCountToGB(joined_ols_page_count), joined_ols_time);
    }
