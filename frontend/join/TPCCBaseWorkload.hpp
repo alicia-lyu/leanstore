@@ -77,44 +77,27 @@ class TPCCBaseWorkload
       uint64_t orderline_record_count = 0;
 
       this->tpcc->orderline.scan(
-         {w_id, 0, 0, 0},
-          [&](const orderline_t::Key& key, const orderline_t&) {
+          {w_id, 0, 0, 0},
+          [&](const orderline_t::Key& key, const orderline_t& payload) {
              if (key.ol_w_id != w_id) {
                 return false;
              }
              orderline_record_count++;
+             typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+             if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
+                orderline_insert_cb(sec_key, {});
+             } else if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
+                orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
+                                               payload.ol_dist_info};
+                orderline_insert_cb(sec_key, sec_payload);
+             } else {
+               UNREACHABLE();
+             }
              return true;
           },
           []() {});
 
       std::cout << "Orderline record count of warehouse " << w_id << ": " << orderline_record_count << std::endl;
-
-      auto orderline_scanner = this->tpcc->orderline.getScanner();
-      orderline_scanner->seek({w_id, 0, 0, 0});
-      uint64_t inserted = 0;
-      while (true) {
-         auto ret = orderline_scanner->next();
-         if (!ret.has_value())
-            break;
-         auto [key, payload] = ret.value();
-         if (key.ol_w_id != w_id) {
-            std::cout << "loadOrderlineSecondaryCallback: Warehouse " << w_id << " has ended at " << key.ol_w_id << std::endl;
-            break;
-         }
-
-         typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-         if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
-            std::cout << "Inserting ol_sec0_t" << std::endl;
-            orderline_insert_cb(sec_key, {});
-         } else {
-            orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
-                                           payload.ol_dist_info};
-            orderline_insert_cb(sec_key, sec_payload);
-         }
-         inserted++;
-      }
-
-      std::cout << "Inserted " << inserted << " orderline secondary records" << std::endl;
    }
 
    void loadOrderlineSecondary(Integer w_id = 0)
@@ -123,7 +106,8 @@ class TPCCBaseWorkload
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, w_id);
 
       uint64_t orderline_sec_page_count = this->orderline_secondary->estimatePages();
-      std::cout << "Orderline secondary page count: " << orderline_sec_page_count << " (" << pageCountToGB(orderline_sec_page_count) << " GB) after loading warehouse " << w_id << std::endl;
+      std::cout << "Orderline secondary page count: " << orderline_sec_page_count << " (" << pageCountToGB(orderline_sec_page_count)
+                << " GB) after loading warehouse " << w_id << std::endl;
 
       uint64_t orderline_sec_record_count = 0;
       this->orderline_secondary->scan(
@@ -364,7 +348,8 @@ class TPCCBaseWorkload
       this->newOrderRndCallback(
           w_id,
           [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer) {
-             if (isSelected(key.s_i_id)) this->tpcc->stock.update1(key, cb, update_descriptor);
+             if (isSelected(key.s_i_id))
+                this->tpcc->stock.update1(key, cb, update_descriptor);
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, order_size);
    }
@@ -397,11 +382,13 @@ class TPCCBaseWorkload
    // -----------------------------------------------------------------
    // Methods not marked virtual: All relevant calls must be made without the need of dynamic casting / pointer casting
 
-   std::string getCsvFile(std::string csv_name)
+   std::string getCsvFile(std::string)
    {
-      std::string size_dir = ROCKSDB ? "size_rocksdb" : "size";
-      if (FLAGS_outer_join) size_dir += "_outer";
-      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / size_dir / csv_name;
+      std::string size_filename = ROCKSDB ? "size_rocksdb" : "size";
+      if (FLAGS_outer_join)
+         size_filename += "_outer";
+      size_filename += ".csv";
+      std::filesystem::path csv_path = std::filesystem::path(FLAGS_csv_path).parent_path().parent_path() / size_filename;
       std::filesystem::create_directories(csv_path.parent_path());
       std::cout << "Logging size to " << csv_path << std::endl;
       std::ofstream csv_file(csv_path, std::ios::app);
@@ -488,9 +475,9 @@ class TPCCBaseWorkload
    }
 
    void logSizes(std::chrono::steady_clock::time_point t0,
-                         std::chrono::steady_clock::time_point sec_start,
-                         std::chrono::steady_clock::time_point sec_end,
-                         RocksDB& map)
+                 std::chrono::steady_clock::time_point sec_start,
+                 std::chrono::steady_clock::time_point sec_end,
+                 RocksDB& map)
    {
       std::array<uint64_t, id_count> sizes = compactAndGetSizes(map);
 
@@ -518,9 +505,9 @@ class TPCCBaseWorkload
    }
 
    void logSizes(std::chrono::steady_clock::time_point t0,
-                         std::chrono::steady_clock::time_point sec_start,
-                         std::chrono::steady_clock::time_point sec_end,
-                         leanstore::cr::CRManager& crm)
+                 std::chrono::steady_clock::time_point sec_start,
+                 std::chrono::steady_clock::time_point sec_end,
+                 leanstore::cr::CRManager& crm)
    {
       auto core_page_count = getCorePageCount(crm, false);
 

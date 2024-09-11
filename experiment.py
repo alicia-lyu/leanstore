@@ -25,7 +25,7 @@ def get_tx_type(read_percentage, scan_percentage, write_percentage, locality_rea
         return f"mixed-{read_percentage}-{scan_percentage}-{write_percentage}"
 
 def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, write_percentage, order_size, selectivity, included_columns, locality_read, outer_join):
-    log_dir = "/home/alicia.w.lyu/logs/" + f"{method}-{dram_gib}-{target_gib}-" + get_tx_type(read_percentage, scan_percentage, write_percentage, locality_read)
+    log_dir = "/home/alicia.w.lyu/logs/" + f"{method}/{dram_gib}-{target_gib}-" + get_tx_type(read_percentage, scan_percentage, write_percentage, locality_read)
     
     if outer_join:
         log_dir += "-outer"
@@ -112,14 +112,9 @@ def main():
     print(f"DRAM: {args.dram_gib} GiB, target: {args.target_gib} GiB, read: {args.read_percentage}%, scan: {args.scan_percentage}%, write: {args.write_percentage}%")
     
     print(f"Order Size: {args.order_size}, Selectivity: {args.selectivity}, Included Columns: {args.included_columns}")
-
-    log_dir = get_log_dir(
-        method, args.dram_gib, args.target_gib, 
-        args.read_percentage, args.scan_percentage, args.write_percentage, 
-        args.order_size, args.selectivity, args.included_columns, args.locality_read, args.outer_join)
     
     recovery_file = build_dir / get_recovery_file(method, args.target_gib, args.selectivity, args.included_columns, "rocksdb" in method, args.outer_join)
-    
+        
     trunc = not recovery_file.exists()
     
     image = get_image(method, args.target_gib, args.selectivity, args.included_columns, args.outer_join)
@@ -139,53 +134,66 @@ def main():
                 
             image = write_image_file
     elif args.dram_gib >= args.target_gib * 2:
-        persist_file = './leanstore.json' # Do not persist for in-memory workload
+        persist_file = './leanstore.json' # Do not persist for in-memory workload; it takes too long
     else:
         persist_file = recovery_file
     
-    utc_offset_seconds = -time.timezone if not time.localtime().tm_isdst else -time.altzone
-    utc_offset = timedelta(seconds=utc_offset_seconds)
+    def run_cmd(dram_temp, trunc_temp, duration_temp):
 
-    local_timezone = timezone(utc_offset)
-    timestamp = datetime.now(tz=local_timezone).strftime("%m-%d-%H-%M")
+        log_dir = get_log_dir(
+            method, dram_temp, args.target_gib, 
+            args.read_percentage, args.scan_percentage, args.write_percentage, 
+            args.order_size, args.selectivity, args.included_columns, args.locality_read, args.outer_join)
+        
+        utc_offset_seconds = -time.timezone if not time.localtime().tm_isdst else -time.altzone
+        utc_offset = timedelta(seconds=utc_offset_seconds)
 
-    print("************************************************************ NEW EXPERIMENT ************************************************************")
+        local_timezone = timezone(utc_offset)
+        timestamp = datetime.now(tz=local_timezone).strftime("%m-%d-%H-%M")
 
-    cmd = [
-        args.executable,
-        f"--ssd_path={image}", f"--persist_file={persist_file}", f"--recover_file={recovery_file}",
-        f"--csv_path={log_dir}/{timestamp}", "--csv_truncate=true", f"--trunc={str(trunc).lower()}",
-        "--vi=false", "--mv=false", "--isolation_level=ser", "--optimistic_scan=false",
-        f"--run_for_seconds={duration}", "--pp_threads=2",
-        f"--dram_gib={args.dram_gib}", f"--target_gib={args.target_gib}", f"--tpcc_warehouse_count={args.target_gib}",
-        f"--read_percentage={args.read_percentage}", f"--scan_percentage={args.scan_percentage}", f"--write_percentage={args.write_percentage}", f"--locality_read={str(args.locality_read).lower()}",
-        f"--order_size={args.order_size}", f"--semijoin_selectivity={args.selectivity}",
-        f"--outer_join={str(args.outer_join).lower()}"
-    ]
+        print("************************************************************ NEW EXPERIMENT ************************************************************")
+        
+        cmd = [
+            args.executable,
+            f"--ssd_path={image}", f"--persist_file={persist_file}", f"--recover_file={recovery_file}",
+            f"--csv_path={log_dir}/{timestamp}", "--csv_truncate=true", f"--trunc={str(trunc_temp).lower()}",
+            "--vi=false", "--mv=false", "--isolation_level=ser", "--optimistic_scan=false",
+            f"--run_for_seconds={duration_temp}", "--pp_threads=2",
+            f"--dram_gib={dram_temp}", f"--target_gib={args.target_gib}", f"--tpcc_warehouse_count={args.target_gib}",
+            f"--read_percentage={args.read_percentage}", f"--scan_percentage={args.scan_percentage}", f"--write_percentage={args.write_percentage}", f"--locality_read={str(args.locality_read).lower()}",
+            f"--order_size={args.order_size}", f"--semijoin_selectivity={args.selectivity}",
+            f"--outer_join={str(args.outer_join).lower()}"
+        ]
 
-    print(f"Running command {' '.join(map(str, cmd))}\n")
+        print(f"Running command {' '.join(map(str, cmd))}\n")
+        
+        stdout_log_path = f"{log_dir}/{timestamp}.log"
+
+        with open(stdout_log_path, 'w') as log_file:
+            log_file.write(f"{timestamp}. Running experiment with method: {method}, DRAM: {dram_temp} GiB, target: {args.target_gib} GiB, read: {args.read_percentage}%, scan: {args.scan_percentage}%, write: {args.write_percentage}%\n")
+            log_file.write(f"Running command {' '.join(map(str, cmd))}")
+        
+        with open(stdout_log_path, 'a') as log_file:
+            result = subprocess.run(cmd, stdout=log_file, stderr=None)
+
+        if result.returncode != 0:
+            print("Experiment failed, you need to remove the persisted json file.")
+            sys.exit(1)
+
+        if "rocksdb" in method:
+            shutil.rmtree(image)
+        
+        if args.write_percentage > 0:
+            if "rocksdb" not in method:
+                with open(stdout_log_path, 'a') as log_file:
+                    log_file.write(f"Size of {image}: {os.path.getsize(image) / (1024**3)} GiB.\n")
+                    os.remove(write_image_file)
+
+    if trunc and args.dram_gib < args.target_gib:
+        run_cmd(16, True, 1) # Run in-memory workload first, because record loss happens with beyond-memory workload
+        # If memory is between [args.target_gib, 2 * args.target_gib), we'll risk it.
+    else:
+        run_cmd(args.dram_gib, False, duration)
     
-    stdout_log_path = f"{log_dir}/{timestamp}.log"
-
-    with open(stdout_log_path, 'w') as log_file:
-        log_file.write(f"{timestamp}. Running experiment with method: {method}, DRAM: {args.dram_gib} GiB, target: {args.target_gib} GiB, read: {args.read_percentage}%, scan: {args.scan_percentage}%, write: {args.write_percentage}%\n")
-        log_file.write(f"Running command {' '.join(map(str, cmd))}")
-    
-    with open(stdout_log_path, 'a') as log_file:
-        result = subprocess.run(cmd, stdout=log_file, stderr=None)
-
-    if result.returncode != 0:
-        print("Experiment failed, you need to remove the persisted json file.")
-        sys.exit(1)
-
-    if "rocksdb" in method:
-        shutil.rmtree(image)
-    
-    if args.write_percentage > 0:
-        if "rocksdb" not in method:
-            with open(stdout_log_path, 'a') as log_file:
-                log_file.write(f"Size of {image}: {os.path.getsize(image) / (1024**3)} GiB.\n")
-                os.remove(write_image_file)
-
 if __name__ == "__main__":
     main()
