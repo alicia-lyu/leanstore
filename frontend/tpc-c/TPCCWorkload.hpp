@@ -930,6 +930,7 @@ class TPCCWorkload
    void loadStock(Integer w_id)
    {
       std::cout << "Loading " << ITEMS_NO * scale_factor << " stock to warehouse " << w_id << ", with semi-join selectivity " << FLAGS_semijoin_selectivity << std::endl;
+      int loaded = 0;
       for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
          if (!isSelected(i + 1)) {
             continue;
@@ -942,7 +943,9 @@ class TPCCWorkload
          stock.insert({w_id, i + 1}, {randomNumeric(10, 100), randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24),
                                       randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24),
                                       randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24), 0, 0, 0, s_data});
+         loaded++;
       }
+      std::cout << "Loaded " << loaded << " stock to warehouse " << w_id << std::endl;
    }
    // -------------------------------------------------------------------------------------
    void loadDistrict(Integer w_id)
@@ -988,9 +991,11 @@ class TPCCWorkload
       Integer o_id = 1;
       // Every order for each customer
       // Each order has 5-15 lines
+      uint64_t ol_sum = 0;
       for (Integer o_c_id : c_ids) {
          Integer o_carrier_id = (o_id < 2101) ? rnd(10) + 1 : 0;
          Numeric o_ol_cnt = rnd(10) + 5;
+         ol_sum += o_ol_cnt;
 
          order.insert({w_id, d_id, o_id}, {o_c_id, now, o_carrier_id, o_ol_cnt, 1});
          if (order_wdc_index) {
@@ -1012,6 +1017,8 @@ class TPCCWorkload
          }
          o_id++;
       }
+
+      std::cout << "Loaded " << ol_sum << " orderlines for district " << d_id << ", warehouse " << w_id << std::endl;
 
       for (Integer i = (ITEMS_NO - NO_SCALE) * scale_factor; i <= ITEMS_NO * scale_factor; i++)
          neworder.insert({w_id, d_id, i}, {});

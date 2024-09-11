@@ -71,31 +71,73 @@ class TPCCBaseWorkload
    void loadOrderlineSecondaryCallback(std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb, Integer w_id = 0)
    {
       std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
+      uint64_t orderline_page_count = this->tpcc->orderline.estimatePages();
+      std::cout << "Orderline page count: " << orderline_page_count << " (" << pageCountToGB(orderline_page_count) << " GB)" << std::endl;
+
+      uint64_t orderline_record_count = 0;
+
+      this->tpcc->orderline.scan(
+         {w_id, 0, 0, 0},
+          [&](const orderline_t::Key& key, const orderline_t&) {
+             if (key.ol_w_id != w_id) {
+                return false;
+             }
+             orderline_record_count++;
+             return true;
+          },
+          []() {});
+
+      std::cout << "Orderline record count of warehouse " << w_id << ": " << orderline_record_count << std::endl;
+
       auto orderline_scanner = this->tpcc->orderline.getScanner();
       orderline_scanner->seek({w_id, 0, 0, 0});
+      uint64_t inserted = 0;
       while (true) {
          auto ret = orderline_scanner->next();
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         if (key.ol_w_id != w_id)
+         if (key.ol_w_id != w_id) {
+            std::cout << "loadOrderlineSecondaryCallback: Warehouse " << w_id << " has ended at " << key.ol_w_id << std::endl;
             break;
+         }
 
          typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
+            std::cout << "Inserting ol_sec0_t" << std::endl;
             orderline_insert_cb(sec_key, {});
          } else {
             orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
                                            payload.ol_dist_info};
             orderline_insert_cb(sec_key, sec_payload);
          }
+         inserted++;
       }
+
+      std::cout << "Inserted " << inserted << " orderline secondary records" << std::endl;
    }
 
    void loadOrderlineSecondary(Integer w_id = 0)
    {
       this->loadOrderlineSecondaryCallback(
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, w_id);
+
+      uint64_t orderline_sec_page_count = this->orderline_secondary->estimatePages();
+      std::cout << "Orderline secondary page count: " << orderline_sec_page_count << " (" << pageCountToGB(orderline_sec_page_count) << " GB) after loading warehouse " << w_id << std::endl;
+
+      uint64_t orderline_sec_record_count = 0;
+      this->orderline_secondary->scan(
+          {w_id, 0, 0, 0, 0},
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t&) {
+             if (key.ol_w_id != w_id) {
+                std::cout << "orderline_secondary::scan: Warehouse " << w_id << " has ended at " << key.ol_w_id << std::endl;
+                return false;
+             }
+             orderline_sec_record_count++;
+             return true;
+          },
+          []() {});
+      std::cout << "Orderline secondary record count of warehouse " << w_id << ": " << orderline_sec_record_count << std::endl;
    }
 
    // Join with no extra column selection
@@ -370,6 +412,7 @@ class TPCCBaseWorkload
 
    static double pageCountToGB(uint64_t page_count)
    {
+      // std::cout << "Effective page size: " << leanstore::storage::EFFECTIVE_PAGE_SIZE << std::endl;
       return (double)page_count * leanstore::storage::EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0 / 1024.0;
    }
 
@@ -460,6 +503,8 @@ class TPCCBaseWorkload
 
       uint64_t merged_size = sizes[8] + sizes[10];
 
+      std::cout << "Stock size: " << sizes[8] << ", orderline secondary size: " << sizes[10] << std::endl;
+
       addSizesToCsv(byteToGB(core_size), std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count(), byteToGB(merged_size),
                     std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count());
    }
@@ -483,6 +528,8 @@ class TPCCBaseWorkload
       crm.scheduleJobSync(0, [&]() { stock_page_count = this->tpcc->stock.estimatePages(); });
       uint64_t orderline_secondary_page_count = 0;
       crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->estimatePages(); });
+
+      std::cout << "stock page count: " << stock_page_count << ", orderline secondary page count: " << orderline_secondary_page_count << std::endl;
 
       addSizesToCsv(pageCountToGB(core_page_count), std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count(),
                     pageCountToGB(stock_page_count + orderline_secondary_page_count),
