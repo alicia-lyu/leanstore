@@ -92,8 +92,11 @@ struct RocksDB {
          rocksdb::WaitForCompactOptions wfc_options;
          wfc_options.close_db=true;
          rocksdb::Status s = db->WaitForCompact(wfc_options);
+         std::ofstream persist_file(FLAGS_persist_file, std::ios::trunc);
+         persist_file << "Placeholder. Code logic only needs the file to exist." << std::endl;
+      } else {
+         std::cout << "FLAGS_persist is false, compaction skipped. Unable to undo changes. You need to manually remove files.";
       }
-      std::cout << std::endl;
       delete db;
    }
 
@@ -155,7 +158,7 @@ struct RocksDB {
             csv << time++ << "," << FLAGS_tag << ",";
             u64 total_committed = 0, total_aborted = 0;
             // -------------------------------------------------------------------------------------
-            for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+            for (u64 t_i = 1; t_i < FLAGS_worker_threads; t_i++) { // ATTN: Skip thread 0
                total_committed += thread_committed[t_i].exchange(0);
                total_aborted += thread_aborted[t_i].exchange(0);
             }

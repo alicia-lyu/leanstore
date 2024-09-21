@@ -5,7 +5,7 @@ default_write := 0
 default_dram := 0.3
 default_target := 4
 default_update_size := 5
-default_selectivity := 19
+default_selectivity := 100
 included_columns ?= 1
 
 CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
@@ -142,11 +142,8 @@ update-size:
 	- $(MAKE) $*-all-tx selectivity=19
 	- $(MAKE) $*-all-tx selectivity=5
 
-no-columns:
-	- $(MAKE) all-tx included_columns=0
-
-%-size:
-	- @for col in 1 0 2; do \
+%-size: # Change back
+	- @for col in 2 0; do \
 		for sel in 5 19 50 100; do \
 			$(MAKE) $* dram=16 selectivity=$$sel included_columns=$$col duration=1 || echo "Failed for $$col columns and selectivity $$sel"; \
 		done \

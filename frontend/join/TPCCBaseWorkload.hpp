@@ -17,7 +17,7 @@ DEFINE_int32(tpcc_abort_pct, 0, "");
 DEFINE_uint64(run_until_tx, 0, "");
 DEFINE_bool(tpcc_verify, false, "");
 DEFINE_bool(tpcc_warehouse_affinity, false, "");
-DEFINE_bool(tpcc_remove, true, "");
+DEFINE_bool(tpcc_remove, false, "");
 DEFINE_bool(order_wdc_index, true, "");
 DEFINE_uint32(tpcc_threads, 0, "");
 DEFINE_uint32(read_percentage, 0, "");
@@ -70,34 +70,28 @@ class TPCCBaseWorkload
 
    void loadOrderlineSecondaryCallback(std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb, Integer w_id = 0)
    {
-      // std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
-      // uint64_t orderline_page_count = this->tpcc->orderline.estimatePages();
-      // std::cout << "Orderline page count: " << orderline_page_count << " (" << pageCountToGB(orderline_page_count) << " GB)" << std::endl;
+      std::cout << "Loading orderline secondary index for warehouse " << w_id << std::endl;
+      auto orderline_scanner = this->tpcc->orderline.getScanner();
+      orderline_scanner->seek({w_id, 0, 0, 0});
+      while (true) {
+         auto ret = orderline_scanner->next();
+         if (!ret.has_value())
+            break;
+         auto [key, payload] = ret.value();
+         if (key.ol_w_id != w_id)
+            break;
 
-      // uint64_t orderline_record_count = 0;
-
-      this->tpcc->orderline.scan(
-          {w_id, 0, 0, 0},
-          [&](const orderline_t::Key& key, const orderline_t& payload) {
-             if (key.ol_w_id != w_id) {
-                return false;
-             }
-            //  orderline_record_count++;
-             typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-             if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
-                orderline_insert_cb(sec_key, {});
-             } else if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
-                orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
-                                               payload.ol_dist_info};
-                orderline_insert_cb(sec_key, sec_payload);
-             } else {
-               UNREACHABLE();
-             }
-             return true;
-          },
-          []() {});
-
-      // std::cout << "Orderline record count of warehouse " << w_id << ": " << orderline_record_count << std::endl;
+         typename orderline_sec_t::Key sec_key = {key.ol_w_id, payload.ol_i_id, key.ol_d_id, key.ol_o_id, key.ol_number};
+         if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
+            orderline_insert_cb(sec_key, {});
+         } else if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
+            orderline_sec_t sec_payload = {payload.ol_supply_w_id, payload.ol_delivery_d, payload.ol_quantity, payload.ol_amount,
+                                           payload.ol_dist_info};
+            orderline_insert_cb(sec_key, sec_payload);
+         } else {
+            UNREACHABLE();
+         }
+      }
    }
 
    void loadOrderlineSecondary(Integer w_id = 0)
@@ -366,7 +360,7 @@ class TPCCBaseWorkload
 
    std::string getCsvFile(std::string)
    {
-      std::string size_filename = ROCKSDB ? "size_rocksdb" : "size";
+      std::string size_filename = "size";
       if (FLAGS_outer_join)
          size_filename += "_outer";
       size_filename += ".csv";

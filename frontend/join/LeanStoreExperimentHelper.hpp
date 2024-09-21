@@ -189,18 +189,24 @@ class LeanStoreExperimentHelper : public ExperimentHelper
                   if (w_id > FLAGS_tpcc_warehouse_count) {
                      return;
                   }
-                  tpcc_base->tx(w_id, FLAGS_read_percentage, FLAGS_scan_percentage, FLAGS_write_percentage, FLAGS_order_size);
-                  if (FLAGS_tpcc_abort_pct && tpcc.urand(0, 100) <= FLAGS_tpcc_abort_pct) {
-                     cr::Worker::my().abortTX();
+                  if (t_i != 0) {
+                     tpcc.touch(w_id); // One thread to run standard TPCC transactions
                   } else {
-                     cr::Worker::my().commitTX();
+                     tpcc_base->tx(w_id, FLAGS_read_percentage, FLAGS_scan_percentage, FLAGS_write_percentage, FLAGS_order_size);
                   }
-                  WorkerCounters::myCounters().tx++;
+                  if (FLAGS_tpcc_abort_pct && tpcc.urand(0, 100) <= FLAGS_tpcc_abort_pct) {
+                     cr::Worker::my().abortTX(); // counter: cc_ms_oltp_tx
+                  } else {
+                     cr::Worker::my().commitTX(); // counter: rfa_committed_tx
+                  }
+                  if (t_i == 0)
+                     WorkerCounters::myCounters().tx++;
                   tx_acc = tx_acc + 1;
                }
                jumpmuCatch()
                {
-                  WorkerCounters::myCounters().tx_abort++;
+                  if (t_i == 0)
+                     WorkerCounters::myCounters().tx_abort++;
                }
             }
             cr::Worker::my().shutdown();
