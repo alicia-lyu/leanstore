@@ -70,20 +70,20 @@ def get_image(method, target_gib, selectivity, included_columns, outer_join, wri
         Path(image_file).touch()
         print(f"Image File: {image_file}")
         if write_percentage > 0:
-            write_image_file = add_suffix_before_extension(image, "-write")
+            write_image_file = add_suffix_before_extension(image_file, "-write")
             print(f"Write Image File: {write_image_file}")
-            subprocess.run(["cp", "-f", image, write_image_file])
-            image = write_image_file
+            subprocess.run(["cp", "-f", image_file, write_image_file])
+            image_file = write_image_file
         return image_file
     else:
         image_dir = f"{prefix}"
         os.makedirs(image_dir, exist_ok=True)
         print(f"Image Directory: {image_dir}")
         if write_percentage > 0:
-            write_image_dir = f"{image}-write"
+            write_image_dir = f"{image_dir}-write"
             print(f"Write Image Directory: {write_image_dir}")
-            subprocess.run(["cp", "-f", "-r", image, write_image_dir])
-            image = write_image_dir
+            subprocess.run(["cp", "-f", "-r", image_dir, write_image_dir])
+            image_dir = write_image_dir
         return image_dir
 
 # Command runner
@@ -129,7 +129,7 @@ def run_experiment_cmd(args, method, dram_temp, duration_temp, build_dir):
         print("Experiment failed, you need to remove the persisted json file.")
         sys.exit(1)
 
-    if "rocksdb" in method:
+    if args.write_percentage > 0 and "rocksdb" in method:
         shutil.rmtree(image)
 
     if args.write_percentage > 0 and "rocksdb" not in method:
@@ -139,6 +139,15 @@ def run_experiment_cmd(args, method, dram_temp, duration_temp, build_dir):
 
 def get_recovery_et_al(build_dir, method, target_gib, selectivity, included_columns, outer_join, write_percentage, dram_gib):
     image = get_image(method, target_gib, selectivity, included_columns, outer_join, write_percentage)
+    
+    if "rocksdb" in method:
+        recovery_file = build_dir / get_recovery_file(method, target_gib, selectivity, included_columns, "rocksdb" in method, outer_join)
+        trunc = not recovery_file.exists()
+        if write_percentage > 0:
+            persist_file = './leanstore.json'
+        else:
+            persist_file = recovery_file
+        return recovery_file, image, trunc, persist_file
     
     if dram_gib >= target_gib * 2: # Start over and persist---as a chance to refresh stored data
         recovery_file = "./leanstore.json" 
@@ -181,7 +190,7 @@ def main():
     build_dir = args.executable.parents[1]
 
     # Set the actual experiment duration
-    duration = min(args.duration, 180) if args.dram_gib >= args.target_gib * 2 else args.duration or 240
+    duration = min(args.duration or 180, 180) if args.dram_gib >= args.target_gib * 2 else (args.duration or 240)
     print(f"Method: {method}, Build Directory: {build_dir}, run for seconds: {duration}")
     
     print(f"DRAM: {args.dram_gib} GiB, target: {args.target_gib} GiB, read: {args.read_percentage}%, scan: {args.scan_percentage}%, write: {args.write_percentage}%")

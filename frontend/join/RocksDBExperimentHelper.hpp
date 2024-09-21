@@ -181,13 +181,19 @@ class RocksDBExperimentHelper : public ExperimentHelper
                {
                   Integer w_id = context_ptr->tpcc.urand(1, FLAGS_tpcc_warehouse_count);
                   context_ptr->rocks_db.startTX();
-                  tpcc_base->tx(w_id, FLAGS_read_percentage, FLAGS_scan_percentage, FLAGS_write_percentage, FLAGS_order_size);
+                  if (t_i != 0) {
+                     context_ptr->tpcc.touch(w_id);
+                  } else {
+                     tpcc_base->tx(w_id, FLAGS_read_percentage, FLAGS_scan_percentage, FLAGS_write_percentage, FLAGS_order_size);
+                  }
                   context_ptr->rocks_db.commitTX();
-                  thread_committed[t_i]++;
+                  if (t_i == 0)
+                     thread_committed[t_i]++;
                }
                jumpmuCatch()
                {
-                  thread_aborted[t_i]++;
+                  if (t_i == 0)
+                     thread_aborted[t_i]++;
                }
             }
             running_threads_counter--;

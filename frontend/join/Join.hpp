@@ -17,11 +17,11 @@ class MergeJoin
 
   public:
    MergeJoin(Scanner<Record1>* left_scanner, Scanner<Record2>* right_scanner, bool outer = false)
-       : left_scanner(left_scanner),
+       : outer(outer),
+         left_scanner(left_scanner),
          right_scanner(right_scanner),
          cached_right_key(std::nullopt),
-         cached_right_records_iter(cached_right_records.begin()),
-         outer(outer)
+         cached_right_records_iter(cached_right_records.begin())
    {
       cached_right_records.reserve(100);
       advance_left();
@@ -121,12 +121,12 @@ class MergeJoin
 
    static std::pair<typename JoinedRecord::Key, JoinedRecord> extendByNulls(const typename Record1::Key& left_key, const Record1& left_rec)
    {
-      return {merge_keys<typename JoinedRecord::Key>(left_key, {}), merge_records<JoinedRecord>(left_rec, {})};
+      return merge(left_key, left_rec, {}, {});
    }
 
    static std::pair<typename JoinedRecord::Key, JoinedRecord> extendByNulls(const typename Record2::Key& right_key, const Record2& right_rec)
    {
-      return {merge_keys<typename JoinedRecord::Key>({}, right_key), merge_records<JoinedRecord>({}, right_rec)};
+      return merge({}, {}, right_key, right_rec);
    }
 
    template <typename LeftKey, typename RightKey, typename JoinedKey>

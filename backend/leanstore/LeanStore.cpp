@@ -207,14 +207,14 @@ void LeanStore::startProfilingThread()
          tx_console_header.push_back("Abort%");
          tx_console_data.push_back(std::to_string(tx_abort_pct));
 
-         const double rfa_pct = std::stod(cr_table.get("0", "rfa_committed_tx")) * 100.0 / tx;
-         const double remote_flushes_pct = 100.0 - rfa_pct;
-         tx_console_header.push_back("RF %");
-         tx_console_data.push_back(std::to_string(remote_flushes_pct));
+         // const double rfa_pct = std::stod(cr_table.get("0", "rfa_committed_tx")) * 100.0 / tx;
+         // const double remote_flushes_pct = 100.0 - rfa_pct;
+         // tx_console_header.push_back("RF %");
+         // tx_console_data.push_back(std::to_string(remote_flushes_pct));
 
-         const u64 olap_tx = std::stoi(cr_table.get("0", "olap_tx"));
-         tx_console_header.push_back("OLAP TX");
-         tx_console_data.push_back(std::to_string(olap_tx));
+         // const u64 olap_tx = std::stoi(cr_table.get("0", "olap_tx"));
+         // tx_console_header.push_back("OLAP TX");
+         // tx_console_data.push_back(std::to_string(olap_tx));
 
          tx_console_header.push_back("W MiB");
          tx_console_data.push_back(bm_table.get("0", "w_mib"));

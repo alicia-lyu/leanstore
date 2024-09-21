@@ -224,6 +224,10 @@ void HistoryTree::purgeVersions(WORKERID worker_id,
             HybridPageGuard<BTreeNode> leaf(std::move(bf_guard), bf);
             // -------------------------------------------------------------------------------------
             if (leaf->lower_fence.length == 0) {
+               if (leaf->count == 0) {
+                  std::cerr << "HistoryTree::purgeVersions: leaf->count == 0" << std::endl;
+                  return;
+               }
                std::vector<u8> last_key(leaf->getFullKeyLen(leaf->count - 1), 0);
                if (last_key.size() >= sizeof(TXID)) {
                   leaf->copyFullKey(leaf->count - 1, last_key.data());

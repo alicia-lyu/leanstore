@@ -471,6 +471,8 @@ class TPCCWorkload
       std::unique(items.begin(), items.end());
       unsigned count = 0;
       for (Integer i_id : items) {
+         if (!isSelected(i_id))
+            continue;
          auto res_s_quantity = stock.lookupField({w_id, i_id}, &stock_t::s_quantity);
          count += res_s_quantity < threshold;
       }
@@ -1137,6 +1139,37 @@ class TPCCWorkload
       rnd -= 400;
       newOrderRnd(w_id);
       return 4;
+   }
+
+   int touch(Integer w_id)
+   {
+      u64 rnd = leanstore::utils::RandomGenerator::getRand(0, 8);
+      Integer d_id = leanstore::utils::RandomGenerator::getRand(1, 10);
+      Integer c_id = leanstore::utils::RandomGenerator::getRand(1, (int) (CUSTOMER_SCALE * scale_factor / 10));
+      Integer o_id = leanstore::utils::RandomGenerator::getRand(1, (int) (CUSTOMER_SCALE * scale_factor / 10));
+      Integer i_id = leanstore::utils::RandomGenerator::getRand(1, (int) (ITEMS_NO * scale_factor));
+      if (rnd == 0) { // touch warehouse
+         warehouse.lookup1({w_id}, [&](const auto&) {});
+      } else if (rnd == 1) { // touch district
+         district.lookup1({w_id, d_id}, [&](const auto&) {});
+      } else if (rnd == 2) { // touch customer
+         customer.lookup1({w_id, d_id, c_id}, [&](const auto&) {});
+      } else if (rnd == 3) { // touch neworder_t
+         neworder.tryLookup({w_id, d_id, o_id}, [&](const auto&) {});
+      } else if (rnd == 4) { // touch order_t
+         order.lookup1({w_id, d_id, o_id}, [&](const auto&) {});
+      } else if (rnd == 5) { // touch order_wdc_t
+         order_wdc.tryLookup({w_id, d_id, c_id, o_id}, [&](const auto&) {});
+      } else if (rnd == 6) { // touch item_t
+         item.lookup1({i_id}, [&](const auto&) {});
+      } else if (rnd == 7) { // touch orderline
+         Integer ol_number = leanstore::utils::RandomGenerator::getRand(1, 15);
+         orderline.tryLookup({w_id, d_id, o_id, ol_number}, [&](const auto&) {});
+      } else if (rnd == 8) { // touch stock
+         stock.tryLookup({w_id, i_id}, [&](const auto&) {});
+      }
+      // Omitted history, customerwdl
+      return rnd;
    }
    // -------------------------------------------------------------------------------------
    template <typename Relation>
