@@ -52,10 +52,8 @@ check_perf_event_paranoid:
 $(TARGETS): check_perf_event_paranoid
 	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) $(EXEC) -j
 
-all-executables: $(TARGETS)
-
 executables: $(TARGETS)
-.PHONY: executables
+.PHONY: executables $(TARGETS)
 
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
@@ -71,12 +69,11 @@ $(foreach lldb_target, $(LLDB_TARGETS), \
   	$(eval $(lldb_target): CSV := $(BUILD_DIR_DEBUG)/$(lldb_target)) \
 )
 
+$(LLDB_TARGETS): $(BUILD_DIR_DEBUG)/frontend/$(EXEC)
 ifeq ($(lldb), true)
-$(LLDB_TARGETS):
-	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
+	lldb -- $< $(lldb_flags) --csv_path=$(CSV)
 else
-$(LLDB_TARGETS):
-	$(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
+	$< $(lldb_flags) --csv_path=$(CSV)
 endif
 
 run-plain-targets:
