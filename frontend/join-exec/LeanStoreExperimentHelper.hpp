@@ -217,3 +217,37 @@ class LeanStoreExperimentHelper
       return 0;
    }
 };
+
+#include <iostream>
+#include <unistd.h>
+
+#define RUN_UNTIL(db, keep_running, running_threads_counter, tx_per_thread, worker_threads, run_until_tx, run_for_seconds) \
+   { \
+      if (run_until_tx) { \
+         while (true) { \
+            if ((db).getGlobalStats().accumulated_tx_counter >= (run_until_tx)) { \
+               std::cout << (run_until_tx) << " has been reached"; \
+               break; \
+            } \
+            usleep(500); \
+         } \
+      } else { \
+         /* Shutdown threads */ \
+         sleep(run_for_seconds); \
+      } \
+      (keep_running) = false; \
+      while ((running_threads_counter)) { \
+      } \
+      (db).getCRManager().joinAll(); \
+   } \
+   std::cout << std::endl; \
+   { \
+      u64 total = 0; \
+      std::cout << "TXs per thread = "; \
+      for (u64 t_i = 0; t_i < (worker_threads); t_i++) { \
+         total += (tx_per_thread)[t_i]; \
+         std::cout << (tx_per_thread)[t_i] << ", "; \
+      } \
+      std::cout << std::endl; \
+      std::cout << "Total TPC-C TXs = " << total << std::endl; \
+   }

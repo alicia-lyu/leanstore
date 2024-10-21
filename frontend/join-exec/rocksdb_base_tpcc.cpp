@@ -84,14 +84,6 @@ int main(int argc, char** argv)
    context->rocks_db.startProfilingThread(running_threads_counter, keep_running, thread_committed, thread_aborted, FLAGS_print_header);
 
    helper.scheduleTransations(&tpcc_base, threads, keep_running, running_threads_counter, thread_committed, thread_aborted);
-   // -------------------------------------------------------------------------------------
-   sleep(FLAGS_run_for_seconds);
-   keep_running = false;
-   while (running_threads_counter) {
-   }
-   for (auto& thread : threads) {
-      thread.join();
-   }
-   // -------------------------------------------------------------------------------------
-   return 0;
+   
+   RUN_UNTIL(FLAGS_run_for_seconds, keep_running, running_threads_counter, threads);
 }
