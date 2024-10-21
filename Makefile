@@ -2,7 +2,7 @@
 default_read := 98
 default_scan := 2
 default_write := 0
-default_dram := 0.3
+default_dram := 1
 default_target := 4
 default_update_size := 5
 default_selectivity := 100
