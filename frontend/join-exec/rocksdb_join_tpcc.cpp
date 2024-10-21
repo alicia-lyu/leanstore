@@ -107,13 +107,5 @@ int main(int argc, char** argv)
 
    helper.scheduleTransations(&tpcc_join, threads, keep_running, running_threads_counter, thread_committed, thread_aborted);
 
-   sleep(FLAGS_run_for_seconds);
-   keep_running = false;
-   while (running_threads_counter) {
-   }
-   for (auto& thread : threads) {
-      thread.join();
-   }
-   // -------------------------------------------------------------------------------------
-   return 0;
+   RUN_UNTIL(FLAGS_run_for_seconds, keep_running, running_threads_counter, threads);
 }

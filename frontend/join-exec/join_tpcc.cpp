@@ -11,7 +11,6 @@
 #include <unistd.h>
 
 #include <chrono>
-#include <iostream>
 #include <string>
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -103,34 +102,5 @@ int main(int argc, char** argv)
 
    helper.scheduleTransations(&tpcc_join, keep_running, running_threads_counter, tx_per_thread);
 
-   {
-      if (FLAGS_run_until_tx) {
-         while (true) {
-            if (db.getGlobalStats().accumulated_tx_counter >= FLAGS_run_until_tx) {
-               cout << FLAGS_run_until_tx << " has been reached";
-               break;
-            }
-            usleep(500);
-         }
-      } else {
-         // Shutdown threads
-         sleep(FLAGS_run_for_seconds);
-      }
-      keep_running = false;
-
-      while (running_threads_counter) {
-      }
-      crm.joinAll();
-   }
-   cout << endl;
-   {
-      u64 total = 0;
-      cout << "TXs per thread = ";
-      for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
-         total += tx_per_thread[t_i];
-         cout << tx_per_thread[t_i] << ", ";
-      }
-      cout << endl;
-      cout << "Total TPC-C TXs = " << total << endl;
-   }
+   RUN_UNTIL(db, keep_running, running_threads_counter, tx_per_thread, FLAGS_worker_threads, FLAGS_run_until_tx, FLAGS_run_for_seconds);
 }

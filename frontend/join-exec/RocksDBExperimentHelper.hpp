@@ -202,3 +202,12 @@ class RocksDBExperimentHelper
       return 0;
    }
 };
+
+#define RUN_UNTIL(FLAGS_run_for_seconds, keep_running, running_threads_counter, threads) \
+   sleep(FLAGS_run_for_seconds); \
+   keep_running = false; \
+   while (running_threads_counter) {} \
+   for (auto& thread : threads) { \
+      thread.join(); \
+   } \
+   return 0;
