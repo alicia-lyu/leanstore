@@ -1,5 +1,5 @@
-#include "LeanStoreMergedAdapter.hpp"
-#include "TPCCMergedWorkload.hpp"
+#include "../shared/LeanStoreMergedAdapter.hpp"
+#include "../join-workload/TPCCMergedWorkload.hpp"
 #include "LeanStoreExperimentHelper.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"

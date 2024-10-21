@@ -2,8 +2,8 @@
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Exceptions.hpp"
 #include "RocksDBExperimentHelper.hpp"
-#include "RocksDBMergedAdapter.hpp"
-#include "TPCCMergedWorkload.hpp"
+#include "../shared/RocksDBMergedAdapter.hpp"
+#include "../join-workload/TPCCMergedWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
 #include <rocksdb/db.h>
