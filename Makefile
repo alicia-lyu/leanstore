@@ -60,20 +60,22 @@ SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
 lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --tpcc_warehouse_count=4 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --pp_threads=2 --order_size=10 --semijoin_selectivity=19 --csv_truncate=true --worker_threads=4 --locality_read=true --trunc=true --ssd_path=$(SSD_PATH)
 
-LLDB_TARGETS := $(foreach exec, $(EXECS), $(patsubst %_tpcc,%-lldb,$(exec)))
-
 lldb ?= true
+
+LLDB_TARGETS := $(foreach exec, $(EXECS), $(patsubst %_tpcc,%-lldb,$(exec)))
 
 $(foreach lldb_target, $(LLDB_TARGETS), \
 	$(eval $(lldb_target): EXEC := $(patsubst %-lldb,%_tpcc,$(lldb_target))) \
   	$(eval $(lldb_target): CSV := $(BUILD_DIR_DEBUG)/$(lldb_target)) \
-)
+) # Variable match work well for an array of targets
 
-$(LLDB_TARGETS): $(BUILD_DIR_DEBUG)/frontend/$(EXEC)
+$(LLDB_TARGETS):
+# Depedency match does not work well for an array of targets
+	$(MAKE) $(BUILD_DIR_DEBUG)/frontend/$(EXEC)
 ifeq ($(lldb), true)
-	lldb -- $< $(lldb_flags) --csv_path=$(CSV)
+	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
 else
-	$< $(lldb_flags) --csv_path=$(CSV)
+	$(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
 endif
 
 run-plain-targets:
