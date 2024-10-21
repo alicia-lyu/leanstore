@@ -158,7 +158,7 @@ struct RocksDB {
             csv << time++ << "," << FLAGS_tag << ",";
             u64 total_committed = 0, total_aborted = 0;
             // -------------------------------------------------------------------------------------
-            for (u64 t_i = 1; t_i < FLAGS_worker_threads; t_i++) { // ATTN: Skip thread 0
+            for (u64 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
                total_committed += thread_committed[t_i].exchange(0);
                total_aborted += thread_aborted[t_i].exchange(0);
             }
