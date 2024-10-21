@@ -5,12 +5,12 @@
 #include "../shared/RocksDBAdapter.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
-#include "ExperimentHelper.hpp"
+#include "../join-workload/TPCCBaseWorkload.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 
 DEFINE_string(rocks_db, "pessimistic", "none/pessimistic/optimistic");
 DEFINE_bool(print_header, true, "");
-class RocksDBExperimentHelper : public ExperimentHelper
+class RocksDBExperimentHelper
 {
   public:
    struct RocksDBExperimentContext {

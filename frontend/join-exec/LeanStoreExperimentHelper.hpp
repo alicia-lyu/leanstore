@@ -2,11 +2,11 @@
 #include "../shared/LeanStoreAdapter.hpp"
 #include "../tpc-c/Schema.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
-#include "ExperimentHelper.hpp"
+#include "../join-workload/TPCCBaseWorkload.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/tables/DTTable.hpp"
 
-class LeanStoreExperimentHelper : public ExperimentHelper
+class LeanStoreExperimentHelper
 {
    leanstore::profiling::DTTable* dt_table = nullptr;
 
