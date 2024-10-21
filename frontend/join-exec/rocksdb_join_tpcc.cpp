@@ -2,7 +2,7 @@
 #include "../tpc-c/TPCCWorkload.hpp"
 #include "Exceptions.hpp"
 #include "RocksDBExperimentHelper.hpp"
-#include "TPCCJoinWorkload.hpp"
+#include "../join-workload/TPCCJoinWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include <gflags/gflags.h>
 #include <rocksdb/db.h>

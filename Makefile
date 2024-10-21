@@ -52,33 +52,37 @@ check_perf_event_paranoid:
 $(TARGETS): check_perf_event_paranoid
 	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) $(EXEC) -j
 
+all-executables: $(TARGETS)
+
 executables: $(TARGETS)
 .PHONY: executables
 
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
-lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --tpcc_warehouse_count=4 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --pp_threads=2 --order_size=10 --semijoin_selectivity=19 --csv_truncate=true --worker_threads=4 --locality_read=true --trunc=true
+lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --tpcc_warehouse_count=4 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --pp_threads=2 --order_size=10 --semijoin_selectivity=19 --csv_truncate=true --worker_threads=4 --locality_read=true --trunc=true --ssd_path=$(SSD_PATH)
 
-join-lldb: $(BUILD_DIR_DEBUG)/frontend/$(JOIN_EXEC)
-	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(JOIN_EXEC) $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/join-lldb
+LLDB_TARGETS := $(foreach exec, $(EXECS), $(patsubst %_tpcc,%-lldb,$(exec)))
 
-merged-lldb: $(BUILD_DIR_DEBUG)/frontend/$(MERGED_EXEC)
-	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(MERGED_EXEC) $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/merged-lldb
+lldb ?= true
 
-base-lldb: $(BUILD_DIR_DEBUG)/frontend/$(BASE_EXEC)
-	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(BASE_EXEC) $(lldb_flags) --ssd_path=$(SSD_PATH) --csv_path=$(BUILD_DIR_DEBUG)/base-lldb
+$(foreach lldb_target, $(LLDB_TARGETS), \
+	$(eval $(lldb_target): EXEC := $(patsubst %-lldb,%_tpcc,$(lldb_target))) \
+  	$(eval $(lldb_target): CSV := $(BUILD_DIR_DEBUG)/$(lldb_target)) \
+)
 
-rocksdb-join-lldb: $(BUILD_DIR_DEBUG)/frontend/$(ROCKSDB_JOIN_EXEC)
-	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(ROCKSDB_JOIN_EXEC) $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-join-lldb
+ifeq ($(lldb), true)
+$(LLDB_TARGETS):
+	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
+else
+$(LLDB_TARGETS):
+	$(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
+endif
 
-rocksdb-merged-lldb: $(BUILD_DIR_DEBUG)/frontend/$(ROCKSDB_MERGED_EXEC)
-	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(ROCKSDB_MERGED_EXEC) $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-merged-lldb
+run-plain-targets:
+	$(MAKE) -j1 $(LLDB_TARGETS) lldb=false
 
-rocksdb-base-lldb: $(BUILD_DIR_DEBUG)/frontend/$(ROCKSDB_BASE_EXEC)
-	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(ROCKSDB_BASE_EXEC) $(lldb_flags) --ssd_path=$(SSD_DIR) --csv_path=$(BUILD_DIR_DEBUG)/rocksdb-base-lldb
-
-.PHONY: join-lldb merged-lldb base-lldb rocksdb-join-lldb rocksdb-merged-lldb rocksdb-base-lldb
+.PHONY: $(LLDB_TARGETS) run-plain-targets
 
 # ----------------- EXPERIMENTS -----------------
 dram ?= $(default_dram)

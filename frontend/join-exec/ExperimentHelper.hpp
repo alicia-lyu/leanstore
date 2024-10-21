@@ -3,8 +3,8 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
-#include "JoinedSchema.hpp"
-#include "TPCCBaseWorkload.hpp"
+#include "../join-workload/JoinedSchema.hpp"
+#include "../join-workload/TPCCBaseWorkload.hpp"
 #include "leanstore/Config.hpp"
 
 class ExperimentHelper
