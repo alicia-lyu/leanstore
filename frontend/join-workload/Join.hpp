@@ -8,6 +8,7 @@
 #include "../tpc-c/Schema.hpp"
 #include "Exceptions.hpp"
 #include "JoinedSchema.hpp"
+#include "types.hpp"
 
 template <typename Record1, typename Record2, typename JoinedRecord>
 class MergeJoin
@@ -92,7 +93,7 @@ class MergeJoin
                advance_left();
                continue;
             }
-         } else if (cmp > 0) { // right_exhausted == false
+         } else if (cmp > 0) {  // right_exhausted == false
             // Current right record is too small. Cached right records are even smaller
             if (outer && !current_right_matched) {
                joined_record = std::make_optional(extendByNulls(right_key, right_record));
@@ -137,10 +138,10 @@ class MergeJoin
 
    // Only one merge_keys for all variants of joined_t
    template <typename JoinedKey = joined1_t::Key>
-   static JoinedKey merge_keys(const ol_sec1_t::Key& left_key, const stock_t::Key& right_key)
+   static JoinedKey merge_keys(const orderline_sec_t::Key& left_key, const stock_sec_t::Key& right_key)
    {
       joined1_t::Key key;
-      if (left_key == ol_sec1_t::Key{}) { // left key is null, use right key whenever possible
+      if (left_key == ol_sec1_t::Key{}) {  // left key is null, use right key whenever possible
          key = {right_key.s_w_id, right_key.s_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
       } else {
          key = {left_key.ol_w_id, left_key.ol_i_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number};
@@ -162,38 +163,27 @@ class MergeJoin
    }
 
    template <typename Joined = joined0_t>
-   static Joined merge_records(const ol_sec0_t&, const stock_t&)
+   static Joined merge_records(const ol_sec0_t&, const stock_0_t&)
       requires(std::same_as<Joined, joined0_t>)
    {
       joined0_t record{};
       return record;
    }
 
-   static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec1_t::Key& left_key,
-                                                                    const ol_sec1_t& left_rec,
-                                                                    const stock_t::Key& right_key,
-                                                                    const stock_t& right_rec)
-      requires(std::same_as<JoinedRecord, joined_selected_t>)
+   template <typename Joined = joined_selected_t>
+   static Joined merge_records(const ol_sec1_t& left_rec, const stock_selected_t& right_rec)
+      requires(std::same_as<Joined, joined_selected_t>)
    {
-      joined1_t record = merge_records<joined1_t>(left_rec, right_rec);
-      joined1_t::Key key = merge_keys<joined1_t::Key>(left_key, right_key);
-      joined_selected_t selected = record.toSelected(key);
-      return {key, selected};
+      Joined record{left_rec.ol_supply_w_id, left_rec.ol_delivery_d, left_rec.ol_quantity,   left_rec.ol_amount, right_rec.s_quantity,
+                    right_rec.s_ytd,         right_rec.s_order_cnt,  right_rec.s_remote_cnt, right_rec.s_data};
+
+      return record;
    }
 
-   static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec0_t::Key& left_key,
-                                                                    const ol_sec0_t& left_rec,
-                                                                    const stock_t::Key& right_key,
-                                                                    const stock_t& right_rec)
-      requires(std::same_as<JoinedRecord, joined0_t>)
-   {
-      return {merge_keys<typename JoinedRecord::Key>(left_key, right_key), merge_records<JoinedRecord>(left_rec, right_rec)};
-   }
-
-   static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const ol_sec1_t::Key& left_key,
-                                                                    const ol_sec1_t& left_rec,
-                                                                    const stock_t::Key& right_key,
-                                                                    const stock_t& right_rec)
+   static std::pair<typename JoinedRecord::Key, JoinedRecord> merge(const orderline_sec_t::Key& left_key,
+                                                                    const orderline_sec_t& left_rec,
+                                                                    const stock_sec_t::Key& right_key,
+                                                                    const stock_sec_t& right_rec)
       requires(std::same_as<JoinedRecord, joined1_t>)
    {
       return {merge_keys<typename JoinedRecord::Key>(left_key, right_key), merge_records<JoinedRecord>(left_rec, right_rec)};

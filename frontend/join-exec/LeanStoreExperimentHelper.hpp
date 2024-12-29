@@ -251,3 +251,23 @@ class LeanStoreExperimentHelper
       std::cout << std::endl; \
       std::cout << "Total TPC-C TXs = " << total << std::endl; \
    }
+
+#define INITIALIZE_CONTEXT() \
+   gflags::SetUsageMessage("Leanstore Join TPC-C"); \
+   gflags::ParseCommandLineFlags(&argc, &argv, true); \
+   LeanStoreExperimentHelper helper; \
+   auto context = helper.prepareExperiment(); \
+   auto& crm = context->db.getCRManager(); \
+   auto& db = context->db; \
+   auto& tpcc = context->tpcc; \
+   
+#define INITIALIZE_SECONDARY_INDEXES(crm) \
+   LeanStoreAdapter<orderline_sec_t> orderline_secondary; \
+   LeanStoreAdapter<stock_t>* stock_secondary_ptr; \
+   LeanStoreAdapter<stock_t> stock_secondary; \
+   if (INCLUDE_COLUMNS == 1) stock_secondary_ptr = &context->stock; \
+   else stock_secondary_ptr = &stock_secondary; \
+   crm.scheduleJobSync(0, [&]() { \
+      orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary"); \
+      if (INCLUDE_COLUMNS != 1) stock_secondary = LeanStoreAdapter<stock_sec_t>(db, "stock_secondary"); \
+   });

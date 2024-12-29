@@ -1,8 +1,6 @@
 #pragma once
-#include <gflags/gflags_declare.h>
 #include <filesystem>
 #include <fstream>
-#include <type_traits>
 #include "../shared/RocksDB.hpp"
 #include "../shared/RocksDBAdapter.hpp"
 #include "../tpc-c/TPCCWorkload.hpp"
@@ -11,31 +9,32 @@
 #include "JoinedSchema.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
+#include "types.hpp"
 
-DEFINE_int64(tpcc_warehouse_count, 1, "");
-DEFINE_int32(tpcc_abort_pct, 0, "");
-DEFINE_uint64(run_until_tx, 0, "");
-DEFINE_bool(tpcc_verify, false, "");
-DEFINE_bool(tpcc_warehouse_affinity, false, "");
-DEFINE_bool(tpcc_remove, false, "");
-DEFINE_bool(order_wdc_index, true, "");
-DEFINE_uint32(tpcc_threads, 0, "");
-DEFINE_uint32(read_percentage, 0, "");
-DEFINE_uint32(scan_percentage, 0, "");
-DEFINE_uint32(write_percentage, 100, "");
-DEFINE_uint32(order_size, 5, "Number of lines in a new order");
-DEFINE_bool(locality_read, false, "Lookup key in the read transactions are the same or smaller than the join key.");
-DEFINE_bool(outer_join, false, "Outer join in the join transactions.");
-
-#if !defined(INCLUDE_COLUMNS)
-#define INCLUDE_COLUMNS \
-   1  // All columns, unless defined. Now included columns in orderline secondary and joined results are the same. Maybe should be different.
+#if INCLUDE_COLUMNS == 0
+#define PROCESS_PAYLOAD() auto selected_payload = payload.toSelected();
+#elif INCLUDE_COLUMNS == 1 || INCLUDE_COLUMNS == 2
+#define PROCESS_PAYLOAD()                                                                                                   \
+   if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) {                                                      \
+      stock_key = {key.w_id, key.i_id};                                                                                     \
+      this->tpcc->stock.lookup1(stock_key, [&](const stock_sec_t& rec) { stock_payload = rec; });                           \
+   }                                                                                                                        \
+   if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id || \
+       orderline_key.ol_number != key.ol_number) {                                                                          \
+      orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};                                                  \
+      this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });               \
+   }                                                                                                                        \
+   auto selected_payload = payload.expand(key, stock_payload, orderline_payload);  // Unique to joined0_t
+#else
+#error "Unsupported value for INCLUDE_COLUMNS"
 #endif
 
-using orderline_sec_t = typename std::conditional<INCLUDE_COLUMNS == 0, ol_sec0_t, ol_sec1_t>::type;  // INCLUDE_COLUMNS == 2 will still select all
-                                                                                                      // columns from orderline
-using joined_t = typename std::
-    conditional<INCLUDE_COLUMNS == 0, joined0_t, typename std::conditional<INCLUDE_COLUMNS == 1, joined1_t, joined_selected_t>::type>::type;
+#define PREPARE_MERGE_JOIN()                                                                                        \
+   std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();           \
+   auto stock_scanner = this->stock_secondary->getScanner();                                                        \
+   orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number}); \
+   stock_scanner->seek({seek_key.w_id, seek_key.i_id});                                                             \
+   MergeJoin<orderline_sec_t, stock_sec_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
 
 template <template <typename> class AdapterType, int id_count>  // Default to 11, defined in ../shared/TPCCWorkload.hpp
 class TPCCBaseWorkload
@@ -46,10 +45,13 @@ class TPCCBaseWorkload
    static constexpr bool ROCKSDB = std::is_same_v<AdapterType<int>, RocksDBAdapter<int>>;
 
    AdapterType<orderline_sec_t>* orderline_secondary;
+   AdapterType<stock_sec_t>* stock_secondary;  // If included columns are the same, just a pointer to stock_t
 
   public:
-   TPCCBaseWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary = nullptr)
-       : tpcc(tpcc), orderline_secondary(orderline_secondary)
+   TPCCBaseWorkload(TPCCWorkload<AdapterType>* tpcc,
+                    AdapterType<orderline_sec_t>* orderline_secondary = nullptr,
+                    AdapterType<stock_sec_t>* stock_secondary = nullptr)
+       : tpcc(tpcc), orderline_secondary(orderline_secondary), stock_secondary(stock_secondary)
    {
       if constexpr (INCLUDE_COLUMNS == 0) {
          std::cout << "Columns included: Key only" << std::endl;
@@ -100,81 +102,40 @@ class TPCCBaseWorkload
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, w_id);
    }
 
-   // Join with no extra column selection
-   void joinOrderlineAndStockOnTheFly(std::function<bool(joined_t::Key&, joined_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
+   // Join with no extra column selection or expansion, intended for materialized join
+   void joinOrderlineAndStock(std::function<bool(joined_t::Key&, joined_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
    {
-      std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
-      auto stock_scanner = this->tpcc->stock.getScanner();
-
-      orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
-      stock_scanner->seek({seek_key.w_id, seek_key.i_id});
-
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
+      PREPARE_MERGE_JOIN();
 
       while (true) {
          auto ret = merge_join.next();
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
+         // custom code to process key and payload
          if (!cb(key, payload))
             break;
       }
    }
 
-   // Join and get joined_selected_t, for joined0_t
+   // joined0_t: Back join with base tables to get joined_selected_t to answer queries
+   // joined1_t or joined_selected_t: Project only selected columns
    void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires(std::same_as<joined_t, joined0_t>)
    {
-      std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
-      auto stock_scanner = this->tpcc->stock.getScanner();
+      PREPARE_MERGE_JOIN();
 
-      orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
-      stock_scanner->seek({seek_key.w_id, seek_key.i_id});
-
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
-
-      stock_t::Key stock_key;
-      stock_t stock_payload;
+      // Only useful for joined0_t
+      stock_sec_t::Key stock_key;
+      stock_sec_t stock_payload;
       orderline_t::Key orderline_key;
       orderline_t orderline_payload;
-      while (true) {
-         auto ret = merge_join.next();
-         if (!ret.has_value())
-            break;
-         auto [key, payload] = ret.value();
-         if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) {
-            stock_key = {key.w_id, key.i_id};
-            this->tpcc->stock.lookup1(stock_key, [&](const stock_t& rec) { stock_payload = rec; });
-         }
-         if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id ||
-             orderline_key.ol_number != key.ol_number) {
-            orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-            this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });
-         }
-         auto selected_payload = payload.expand(key, stock_payload, orderline_payload);  // Unique to joined0_t
-         if (!cb(key, selected_payload))
-            break;
-      }
-   }
-
-   // Join and get joined_selected_t, for joined1_t and joined_selected_t
-   void joinOrderlineAndStockOnTheFly(std::function<bool(joined_selected_t::Key&, joined_selected_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
-      requires(std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
-   {
-      std::unique_ptr<Scanner<orderline_sec_t>> orderline_scanner = this->orderline_secondary->getScanner();
-      auto stock_scanner = this->tpcc->stock.getScanner();
-
-      orderline_scanner->seek({seek_key.w_id, seek_key.i_id, seek_key.ol_d_id, seek_key.ol_o_id, seek_key.ol_number});
-      stock_scanner->seek({seek_key.w_id, seek_key.i_id});
-
-      MergeJoin<orderline_sec_t, stock_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
 
       while (true) {
          auto ret = merge_join.next();
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         auto selected_payload = payload.toSelected(key);  // Unique to joined1_t and joined_selected_t
+         PROCESS_PAYLOAD();
          if (!cb(key, selected_payload))
             break;
       }
@@ -216,8 +177,8 @@ class TPCCBaseWorkload
 
    void newOrderRndCallback(
        Integer w_id,
-       std::function<void(const stock_t::Key&, std::function<void(stock_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&, Integer qty)>
-           stock_update_cb,
+       std::function<void(const stock_sec_t::Key&, std::function<void(stock_sec_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&, Integer qty)>
+           stock_sec_update_cb,
        std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
        Integer order_size = 5)
    {
@@ -282,17 +243,32 @@ class TPCCBaseWorkload
       // Batch update stock records
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
+         stock_t::Key key = {supwares[i], itemids[i]};
+         // Every method needs to update stock's primary index
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
-         stock_update_cb(
-             {supwares[i], itemids[i]},
-             [&](stock_t& rec) {
-                auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
-                s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
-                rec.s_remote_cnt += (supwares[i] != w_id);
-                rec.s_order_cnt++;
-                rec.s_ytd += qty;
-             },
-             stock_update_descriptor, qty);
+         if (isSelected(key.s_i_id))
+            this->tpcc->stock.update1(
+                key,
+                [&](stock_t& rec) {
+                   auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
+                   s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
+                   rec.s_remote_cnt += (supwares[i] != w_id);
+                   rec.s_order_cnt++;
+                   rec.s_ytd += qty;
+                },
+                stock_update_descriptor);
+         // Update secondary index if needed, be it stock_secondary or merged index
+         if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
+            stock_sec_update_cb(
+                key,
+                [&](stock_sec_t& rec) {
+                   rec.s_quantity = (rec.s_quantity >= qty + 10) ? rec.s_quantity - qty : rec.s_quantity + 91 - qty;
+                   rec.s_remote_cnt += (supwares[i] != w_id);
+                   rec.s_order_cnt++;
+                   rec.s_ytd += qty;
+                },
+                stock_update_descriptor, qty);
+         }
       }
 
       // Batch insert orderline records
@@ -323,9 +299,9 @@ class TPCCBaseWorkload
    {
       this->newOrderRndCallback(
           w_id,
-          [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer) {
+          [&](const stock_sec_t::Key& key, std::function<void(stock_sec_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer) {
              if (isSelected(key.s_i_id))
-                this->tpcc->stock.update1(key, cb, update_descriptor);
+                this->stock_secondary.update1(key, cb, update_descriptor);
           },
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, order_size);
    }
