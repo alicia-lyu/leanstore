@@ -28,7 +28,7 @@ int main(int argc, char** argv)
    // Step 1: Load order_line and stock with specific scale factor
    if (!FLAGS_recover) {
       std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-      auto ret = helper.loadCore(false);
+      auto ret = helper.loadCore();
       if (ret != 0) {
          return ret;
       }
