@@ -1,5 +1,6 @@
 #pragma once
 #include "Exceptions.hpp"
+#include "Join.hpp"
 #include "JoinedSchema.hpp"
 #include "TPCCBaseWorkload.hpp"
 
@@ -9,25 +10,7 @@
 #include <iostream>
 #include <numeric>
 #include "leanstore/concurrency-recovery/CRMG.hpp"
-
-#if INCLUDE_COLUMNS == 0
-#define PROCESS_PAYLOAD() auto selected_payload = payload.toSelected();
-#elif INCLUDE_COLUMNS == 1 || INCLUDE_COLUMNS == 2
-#define PROCESS_PAYLOAD() \
-   if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) { \
-      stock_key = {key.w_id, key.i_id}; \
-      this->tpcc->stock.lookup1(stock_key, [&](const stock_t& rec) { stock_payload = rec; }); \
-   } \
-   if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id || \
-      orderline_key.ol_number != key.ol_number) { \
-      orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number}; \
-      this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; }); \
-   } \
-   joined_t copied_rec = rec; \
-   auto selected_payload = copied_rec.expand(key, stock_payload, orderline_payload);
-#else
-#error "Unsupported value for INCLUDE_COLUMNS"
-#endif         
+#include "types.hpp"
 
 template <template <typename> class AdapterType, int id_count>
 class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
@@ -36,7 +19,10 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
    AdapterType<joined_t>& joined_ols;
 
   public:
-   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary, AdapterType<stock_sec_t>* stock_secondary, AdapterType<joined_t>& joined_ols)
+   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc,
+                    AdapterType<orderline_sec_t>* orderline_secondary,
+                    AdapterType<stock_sec_t>* stock_secondary,
+                    AdapterType<joined_t>& joined_ols)
        : Base(tpcc, orderline_secondary, stock_secondary), joined_ols(joined_ols)
    {
    }
@@ -44,13 +30,13 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
    {
       // Must be able to compile with joined1_t and joined_selected_t, requires expand (implemented as UNREACHABLE)
-      stock_t::Key stock_key;
-      stock_t stock_payload;
+      stock_sec_t::Key stock_key;
+      stock_sec_t stock_payload;
       orderline_t::Key orderline_key;
       orderline_t orderline_payload;
       joined_ols.scan(
           start_key,
-          [&](const joined_t::Key& key, const joined_t& rec) {
+          [&](const joined_t::Key& key, const joined_t& payload) {
              PROCESS_PAYLOAD();
              return cb(key, selected_payload);
           },
@@ -64,7 +50,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       typename joined_t::Key start_key = {w_id, 0, d_id, 0, 0};  // Starting from the first item in the warehouse and district
 
       atomic<uint64_t> scanCardinality = 0;
-      uint64_t resultsCardinality = 0;
+      [[maybe_unused]] uint64_t resultsCardinality = 0;
 
       scanJoin(start_key, [&](const typename joined_selected_t::Key& key, const joined_selected_t& rec) {
          if (key.w_id != w_id) {
@@ -84,7 +70,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       std::vector<joined_selected_t> results;
       typename joined_t::Key start_key = {w_id, i_id, FLAGS_locality_read ? 0 : d_id, 0, 0};
 
-      uint64_t lookupCardinality = 0;
+      [[maybe_unused]] uint64_t lookupCardinality = 0;
 
       scanJoin(start_key, [&](const joined_selected_t::Key& key, const joined_selected_t& rec) {
          if (key.w_id != w_id || key.i_id != i_id) {
@@ -103,7 +89,8 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
    {
       Base::newOrderRndCallback(
           w_id,
-          [&](const stock_t::Key& key, std::function<void(stock_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer qty) {
+          [&](const stock_sec_t::Key& key, std::function<void(stock_sec_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor,
+              Integer qty) {
              if (Base::isSelected(key.s_i_id)) {
                 this->tpcc->stock.update1(key, cb, update_descriptor);
              }
@@ -138,38 +125,16 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                 }
              }
           },
-          [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) {
-             this->orderline_secondary->insert(key, payload);
+          [&](const orderline_sec_t::Key& ol_key, const orderline_sec_t& ol_payload, const stock_sec_t::Key& stock_key,
+              const stock_sec_t& stock_payload) {
+             this->orderline_secondary->insert(ol_key, ol_payload);
              // Inserting orderline causes join results to be inserted
-             stock_t stock_rec;
-             bool ret = this->tpcc->stock.tryLookup({key.ol_w_id, key.ol_i_id}, [&](const stock_t& rec) { stock_rec = rec; });
-             if (ret) {
-                if constexpr (std::is_same_v<joined_t, joined1_t>) {
-                   ol_sec1_t expanded_payload = payload;
-                   joined1_t joined_rec = {expanded_payload.ol_supply_w_id,
-                                           expanded_payload.ol_delivery_d,
-                                           expanded_payload.ol_quantity,
-                                           expanded_payload.ol_amount,
-                                           stock_rec.s_quantity,
-                                           stock_rec.s_dist_01,
-                                           stock_rec.s_dist_02,
-                                           stock_rec.s_dist_03,
-                                           stock_rec.s_dist_04,
-                                           stock_rec.s_dist_05,
-                                           stock_rec.s_dist_06,
-                                           stock_rec.s_dist_07,
-                                           stock_rec.s_dist_08,
-                                           stock_rec.s_dist_09,
-                                           stock_rec.s_dist_10,
-                                           stock_rec.s_ytd,
-                                           stock_rec.s_order_cnt,
-                                           stock_rec.s_remote_cnt,
-                                           stock_rec.s_data};
-                   joined_ols.insert(key, joined_rec);
-                } else {
-                   joined_ols.insert(key, {});
-                }
+             if (stock_payload == stock_t{} && !FLAGS_outer_join) { // Out of stock
+                return;
              }
+             auto [joined_key, joined_payload] =
+                 MergeJoin<orderline_sec_t, stock_sec_t, joined_t>::merge(ol_key, ol_payload, stock_key, stock_payload);
+             joined_ols.insert(joined_key, joined_payload);
           },
           order_size);
    }
@@ -237,9 +202,10 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       crm.scheduleJobSync(0, [&]() { joined_ols_page_count = joined_ols.estimatePages(); });
       auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 
-      std::cout << "core page count: " << core_page_count << " (" << Base::pageCountToGB(core_page_count) << " GB), orderline secondary page count: "
-                << orderline_secondary_page_count << " (" << Base::pageCountToGB(orderline_secondary_page_count) << " GB), joined_ols page count: "
-                << joined_ols_page_count << " (" << Base::pageCountToGB(joined_ols_page_count) << " GB)" << std::endl;
+      std::cout << "core page count: " << core_page_count << " (" << Base::pageCountToGB(core_page_count)
+                << " GB), orderline secondary page count: " << orderline_secondary_page_count << " ("
+                << Base::pageCountToGB(orderline_secondary_page_count) << " GB), joined_ols page count: " << joined_ols_page_count << " ("
+                << Base::pageCountToGB(joined_ols_page_count) << " GB)" << std::endl;
 
       addSizesToCsv(Base::pageCountToGB(core_page_count), core_time, Base::pageCountToGB(orderline_secondary_page_count), orderline_secondary_time,
                     Base::pageCountToGB(joined_ols_page_count), joined_ols_time);

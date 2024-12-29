@@ -42,8 +42,8 @@ int main(int argc, char** argv)
                   return;
                }
                cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-               tpcc_merge.loadStockToMerged(w_id);
-               tpcc_merge.loadOrderlineSecondaryToMerged(w_id);
+               tpcc_merge.loadStock(w_id);
+               tpcc_merge.loadOrderlineSecondary(w_id);
                cr::Worker::my().commitTX();
             }
          });

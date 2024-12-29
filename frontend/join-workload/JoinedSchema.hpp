@@ -155,6 +155,14 @@ struct stock_selected_t: public stock_base_t {
   Numeric s_remote_cnt;
   Varchar<50> s_data;
 
+  stock_selected_t(const stock_t& rec) {
+    s_quantity =  rec.s_quantity;
+    s_ytd = rec.s_ytd;
+    s_order_cnt = rec.s_order_cnt;
+    s_remote_cnt = rec.s_remote_cnt;
+    s_data = rec.s_data;
+  }
+
   friend std::ostream& operator<<(std::ostream& os, const stock_selected_t& record) {
     os << "stock_selected: quantity: " << record.s_quantity << ", ytd: " << record.s_ytd << ", order_cnt: " << record.s_order_cnt << ", remote_cnt: " << record.s_remote_cnt << ", data: " << record.s_data.toString();
     return os;
@@ -259,7 +267,7 @@ struct joined1_t: public joined_base_t {
 
   joined_selected_t toSelected() const;
 
-  joined_selected_t expand(const Key&, const stock_t&, const orderline_t&);
+  joined_selected_t expand(const Key&, const stock_t&, const orderline_t&) const;
 };
 
 struct joined_selected_t: public joined_base_t {
@@ -291,12 +299,12 @@ struct joined_selected_t: public joined_base_t {
     return *this;
   }
 
-  joined_selected_t expand(const Key&, const stock_t&, const orderline_t&) {
+  joined_selected_t expand(const Key&, const stock_t&, const orderline_t&) const {
     UNREACHABLE(); // Only to suppress warning
   }
 };
 
-joined_selected_t joined1_t::toSelected() const {
+inline joined_selected_t joined1_t::toSelected() const {
   return joined_selected_t(
     ol_supply_w_id,
     ol_delivery_d,
@@ -310,7 +318,7 @@ joined_selected_t joined1_t::toSelected() const {
   );
 };
 
-joined_selected_t joined1_t::expand(const Key&, const stock_t&, const orderline_t&) {
+inline joined_selected_t joined1_t::expand(const Key&, const stock_t&, const orderline_t&) const {
   UNREACHABLE(); // Only to suppress warning
 }
 
@@ -332,7 +340,7 @@ struct joined0_t: public joined_base_t {
     // If one really needs joined_selected_t, lookups into base tables are needed
   }
 
-  joined_selected_t expand(const Key& key, const stock_t& stock, const orderline_t& orderline) {
+  joined_selected_t expand(const Key& key, const stock_t& stock, const orderline_t& orderline) const {
     Varchar<24> s_dist;
     switch (key.ol_d_id) {
       case 0: // Only possible in outer join (0 for null)
