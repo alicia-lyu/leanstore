@@ -603,7 +603,7 @@ class TPCCWorkload
          ensure(o_id > -1);
       }
       // -------------------------------------------------------------------------------------
-      Timestamp ol_delivery_d;
+      [[maybe_unused]] Timestamp ol_delivery_d;
       orderline.scan(
           {w_id, d_id, o_id, minInteger},
           [&](const orderline_t::Key& key, const orderline_t& rec) {
@@ -637,7 +637,7 @@ class TPCCWorkload
       Varchar<20> w_city;
       Varchar<2> w_state;
       Varchar<9> w_zip;
-      Numeric w_ytd;
+      [[maybe_unused]] Numeric w_ytd;
       warehouse.lookup1({w_id}, [&](const warehouse_t& rec) {
          w_name = rec.w_name;
          w_street_1 = rec.w_street_1;
@@ -656,7 +656,7 @@ class TPCCWorkload
       Varchar<20> d_city;
       Varchar<2> d_state;
       Varchar<9> d_zip;
-      Numeric d_ytd;
+      [[maybe_unused]] Numeric d_ytd;
       district.lookup1({w_id, d_id}, [&](const district_t& rec) {
          d_name = rec.d_name;
          d_street_1 = rec.d_street_1;
@@ -738,7 +738,7 @@ class TPCCWorkload
       Varchar<20> w_city;
       Varchar<2> w_state;
       Varchar<9> w_zip;
-      Numeric w_ytd;
+      [[maybe_unused]] Numeric w_ytd;
       warehouse.lookup1({w_id}, [&](const warehouse_t& rec) {
          w_name = rec.w_name;
          w_street_1 = rec.w_street_1;
@@ -758,7 +758,7 @@ class TPCCWorkload
       Varchar<20> d_city;
       Varchar<2> d_state;
       Varchar<9> d_zip;
-      Numeric d_ytd;
+      [[maybe_unused]] Numeric d_ytd;
       district.lookup1({w_id, d_id}, [&](const district_t& rec) {
          d_name = rec.d_name;
          d_street_1 = rec.d_street_1;
@@ -1232,7 +1232,7 @@ class TPCCWorkload
             ensure(false);
          }
       } else if (query_no == 3) {
-         u64 olap_counter = 0;
+         [[maybe_unused]] u64 olap_counter = 0;
          neworder_t::Key last_key;
          last_key.no_o_id = -1;
          neworder.scan(

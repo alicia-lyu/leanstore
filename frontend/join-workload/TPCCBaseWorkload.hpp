@@ -97,7 +97,7 @@ class TPCCBaseWorkload
       }
    }
 
-   void loadOrderlineSecondary(Integer w_id = 0)
+   virtual void loadOrderlineSecondary(Integer w_id = 0)
    {
       this->loadOrderlineSecondaryCallback(
           [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, w_id);
@@ -242,15 +242,27 @@ class TPCCBaseWorkload
       this->tpcc->neworder.insert({w_id, d_id, o_id}, {});
 
       // Batch update stock records
-      std::vector<stock_t> stock_record_copies;
+      std::vector<stock_sec_t> stock_record_copies;
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
          stock_t::Key key = {supwares[i], itemids[i]};
-         // Every method needs to update stock's primary index
+         // Every method needs to update stock's primary index (possibly part of merged index)
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
          if (isSelected(key.s_i_id))
          {
-            this->tpcc->stock.update1(
+            stock_sec_update_cb(
+                  key,
+                  [&](stock_sec_t& rec) {
+                     rec.s_quantity = (rec.s_quantity >= qty + 10) ? rec.s_quantity - qty : rec.s_quantity + 91 - qty;
+                     rec.s_remote_cnt += (supwares[i] != w_id);
+                     rec.s_order_cnt++;
+                     rec.s_ytd += qty;
+                     stock_record_copies.push_back(rec);
+                  },
+                  stock_update_descriptor, qty);
+            // Update primary index if different, be it stock_secondary or merged index
+            if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
+               this->tpcc->stock.update1(
                 key,
                 [&](stock_t& rec) {
                    auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
@@ -258,20 +270,8 @@ class TPCCBaseWorkload
                    rec.s_remote_cnt += (supwares[i] != w_id);
                    rec.s_order_cnt++;
                    rec.s_ytd += qty;
-                   stock_record_copies.push_back(rec);
                 },
                 stock_update_descriptor);
-            // Update secondary index if needed, be it stock_secondary or merged index
-            if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
-               stock_sec_update_cb(
-                  key,
-                  [&](stock_sec_t& rec) {
-                     rec.s_quantity = (rec.s_quantity >= qty + 10) ? rec.s_quantity - qty : rec.s_quantity + 91 - qty;
-                     rec.s_remote_cnt += (supwares[i] != w_id);
-                     rec.s_order_cnt++;
-                     rec.s_ytd += qty;
-                  },
-                  stock_update_descriptor, qty);
             }
          } else {
             stock_record_copies.push_back({});
