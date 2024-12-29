@@ -11,20 +11,13 @@
 #include <unistd.h>
 
 #include <cmath>
-#include <string>
 // -------------------------------------------------------------------------------------
 using namespace std;
 using namespace leanstore;
 // -------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-   gflags::SetUsageMessage("Leanstore Join TPC-C");
-   gflags::ParseCommandLineFlags(&argc, &argv, true);
-   LeanStoreExperimentHelper helper;
-   auto context = helper.prepareExperiment();
-   auto& crm = context->db.getCRManager();
-   auto& db = context->db;
-   auto& tpcc = context->tpcc;
+   INITIALIZE_CONTEXT();
 
    LeanStoreMergedAdapter merged;
    // -------------------------------------------------------------------------------------

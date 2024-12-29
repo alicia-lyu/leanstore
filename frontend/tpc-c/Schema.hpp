@@ -453,7 +453,7 @@ struct item_t {
    static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(i_im_id) + sizeof(i_name) + sizeof(i_price) + sizeof(i_data); };
 };
 
-struct stock_t {
+struct stock_base_t {
    static constexpr int id = 10;
    struct Key {
       static constexpr int id = 10;
@@ -466,6 +466,39 @@ struct stock_t {
          return os;
       }
    };
+
+   template <class T>
+   static unsigned foldKey(uint8_t* out, const T& record)
+   {
+      unsigned pos = 0;
+      pos += fold(out + pos, record.s_w_id);
+      pos += fold(out + pos, record.s_i_id);
+      return pos;
+   }
+
+   template <class T>
+   static unsigned foldJKey(uint8_t* out, const T& record)
+   {
+      return stock_base_t::foldKey<T>(out, record);
+   }
+
+   template <class T>
+   static unsigned unfoldKey(const uint8_t* in, T& record)
+   {
+      unsigned pos = 0;
+      pos += unfold(in + pos, record.s_w_id);
+      pos += unfold(in + pos, record.s_i_id);
+      return pos;
+   }
+
+   static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::s_w_id) + sizeof(Key::s_i_id); };
+
+   static constexpr unsigned joinKeyLength() { return stock_base_t::maxFoldLength(); };
+};
+
+struct stock_t: public stock_base_t {
+   using Key = stock_base_t::Key;
+   using stock_base_t::id;
    Numeric s_quantity;
    Varchar<24> s_dist_01;
    Varchar<24> s_dist_02;
@@ -482,34 +515,7 @@ struct stock_t {
    Numeric s_remote_cnt;
    Varchar<50> s_data;
 
-   template <class T>
-   static unsigned foldKey(uint8_t* out, const T& record)
-   {
-      unsigned pos = 0;
-      pos += fold(out + pos, record.s_w_id);
-      pos += fold(out + pos, record.s_i_id);
-      return pos;
-   }
-
-   template <class T>
-   static unsigned foldJKey(uint8_t* out, const T& record)
-   {
-      return stock_t::foldKey<T>(out, record);
-   }
-
-   template <class T>
-   static unsigned unfoldKey(const uint8_t* in, T& record)
-   {
-      unsigned pos = 0;
-      pos += unfold(in + pos, record.s_w_id);
-      pos += unfold(in + pos, record.s_i_id);
-      return pos;
-   }
-   static constexpr unsigned maxFoldLength() { return 0 + sizeof(Key::s_w_id) + sizeof(Key::s_i_id); };
-
    static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(s_quantity) + sizeof(s_dist_01) + sizeof(s_dist_02) + sizeof(s_dist_03) + sizeof(s_dist_04) + sizeof(s_dist_05) + sizeof(s_dist_06) + sizeof(s_dist_07) + sizeof(s_dist_08) + sizeof(s_dist_09) + sizeof(s_dist_10) + sizeof(s_ytd) + sizeof(s_order_cnt) + sizeof(s_remote_cnt) + sizeof(s_data); };
-
-   static constexpr unsigned joinKeyLength() { return stock_t::maxFoldLength(); };
 
    friend bool operator==(const stock_t& lhs, const stock_t& rhs)
    {

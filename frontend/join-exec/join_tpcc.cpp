@@ -11,7 +11,6 @@
 #include <unistd.h>
 
 #include <chrono>
-#include <string>
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 using namespace std;
@@ -19,22 +18,16 @@ using namespace leanstore;
 // -------------------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
-   gflags::SetUsageMessage("Leanstore Join TPC-C");
-   gflags::ParseCommandLineFlags(&argc, &argv, true);
-   LeanStoreExperimentHelper helper;
-   auto context = helper.prepareExperiment();
-   auto& crm = context->db.getCRManager();
-   auto& db = context->db;
-   auto& tpcc = context->tpcc;
+   INITIALIZE_CONTEXT();
 
-   LeanStoreAdapter<orderline_sec_t> orderline_secondary;
+   INITIALIZE_SECONDARY_INDEXES(crm);
+
    LeanStoreAdapter<joined_t> joined_ols;
 
    crm.scheduleJobSync(0, [&]() {
-      orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary");
       joined_ols = LeanStoreAdapter<joined_t>(db, "joined_ols");
    });
-   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, &orderline_secondary, joined_ols);
+   TPCCJoinWorkload<LeanStoreAdapter> tpcc_join(&tpcc, &orderline_secondary, stock_secondary_ptr, joined_ols);
 
    // -------------------------------------------------------------------------------------
    // Step 1: Load order_line and stock with specific scale factor

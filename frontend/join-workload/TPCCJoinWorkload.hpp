@@ -10,6 +10,25 @@
 #include <numeric>
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 
+#if INCLUDE_COLUMNS == 0
+#define PROCESS_PAYLOAD() auto selected_payload = payload.toSelected();
+#elif INCLUDE_COLUMNS == 1 || INCLUDE_COLUMNS == 2
+#define PROCESS_PAYLOAD() \
+   if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) { \
+      stock_key = {key.w_id, key.i_id}; \
+      this->tpcc->stock.lookup1(stock_key, [&](const stock_t& rec) { stock_payload = rec; }); \
+   } \
+   if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id || \
+      orderline_key.ol_number != key.ol_number) { \
+      orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number}; \
+      this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; }); \
+   } \
+   joined_t copied_rec = rec; \
+   auto selected_payload = copied_rec.expand(key, stock_payload, orderline_payload);
+#else
+#error "Unsupported value for INCLUDE_COLUMNS"
+#endif         
+
 template <template <typename> class AdapterType, int id_count>
 class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 {
@@ -17,26 +36,12 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
    AdapterType<joined_t>& joined_ols;
 
   public:
-   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary, AdapterType<joined_t>& joined_ols)
-       : Base(tpcc, orderline_secondary), joined_ols(joined_ols)
+   TPCCJoinWorkload(TPCCWorkload<AdapterType>* tpcc, AdapterType<orderline_sec_t>* orderline_secondary, AdapterType<stock_sec_t>* stock_secondary, AdapterType<joined_t>& joined_ols)
+       : Base(tpcc, orderline_secondary, stock_secondary), joined_ols(joined_ols)
    {
    }
 
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires(std::same_as<joined_t, joined1_t> || std::same_as<joined_t, joined_selected_t>)
-   {
-      // Must be able to compile with joined0_t too, requires toSelected (implemented as UNREACHABLE)
-      joined_ols.scan(
-          start_key,
-          [&](const joined_t::Key& key, const joined_t& rec) -> bool {
-             auto selected_rec = rec.toSelected(key);
-             return cb(key, selected_rec);
-          },
-          []() {});
-   }
-
-   void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
-      requires(std::same_as<joined_t, joined0_t>)
    {
       // Must be able to compile with joined1_t and joined_selected_t, requires expand (implemented as UNREACHABLE)
       stock_t::Key stock_key;
@@ -46,17 +51,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       joined_ols.scan(
           start_key,
           [&](const joined_t::Key& key, const joined_t& rec) {
-             if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) {
-                stock_key = {key.w_id, key.i_id};
-                this->tpcc->stock.lookup1(stock_key, [&](const stock_t& rec) { stock_payload = rec; });
-             }
-             if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id ||
-                 orderline_key.ol_number != key.ol_number) {
-                orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};
-                this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });
-             }
-             joined_t copied_rec = rec;
-             auto selected_payload = copied_rec.expand(key, stock_payload, orderline_payload);
+             PROCESS_PAYLOAD();
              return cb(key, selected_payload);
           },
           []() {});
@@ -181,7 +176,7 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 
    void joinOrderlineAndStock(Integer w_id = std::numeric_limits<Integer>::max())
    {
-      Base::joinOrderlineAndStockOnTheFly(
+      Base::joinOrderlineAndStock(
           [&](joined_t::Key& key, joined_t& rec) {
              if (key.w_id != w_id) {
                 return false;

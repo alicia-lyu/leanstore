@@ -127,6 +127,40 @@ struct ol_sec0_t: public orderline_secondary_base_t {
   }
 };
 
+// stock_1_t is stock_t
+struct stock_0_t: public stock_base_t {
+  using stock_base_t::id;
+  using Key = stock_base_t::Key;
+
+  stock_0_t() = default;
+
+  stock_0_t(const stock_t&) {}
+
+  friend std::ostream& operator<<(std::ostream& os, const stock_0_t&) {
+    os << "stock_key_only";
+    return os;
+  }
+};
+
+// remove all district info
+struct stock_selected_t: public stock_base_t {
+  using stock_base_t::id;
+  using Key = stock_base_t::Key;
+
+  stock_selected_t() = default;
+
+  Numeric s_quantity;
+  Numeric s_ytd;
+  Numeric s_order_cnt;
+  Numeric s_remote_cnt;
+  Varchar<50> s_data;
+
+  friend std::ostream& operator<<(std::ostream& os, const stock_selected_t& record) {
+    os << "stock_selected: quantity: " << record.s_quantity << ", ytd: " << record.s_ytd << ", order_cnt: " << record.s_order_cnt << ", remote_cnt: " << record.s_remote_cnt << ", data: " << record.s_data.toString();
+    return os;
+  };
+};
+
 struct joined_base_t {
   static constexpr int id = 12;
   struct Key {
@@ -223,7 +257,7 @@ struct joined1_t: public joined_base_t {
     return os;
   }
 
-  joined_selected_t toSelected(const Key& key) const;
+  joined_selected_t toSelected() const;
 
   joined_selected_t expand(const Key&, const stock_t&, const orderline_t&);
 };
@@ -232,8 +266,8 @@ struct joined_selected_t: public joined_base_t {
   using joined_base_t::id;
   using Key = joined_base_t::Key;
 
-  joined_selected_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Numeric s_quantity, Varchar<24> s_dist, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
-      : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), s_quantity(s_quantity), s_dist(s_dist), s_ytd(s_ytd), s_order_cnt(s_order_cnt), s_remote_cnt(s_remote_cnt), s_data(s_data) {}
+  joined_selected_t(Integer ol_supply_w_id, Timestamp ol_delivery_d, Numeric ol_quantity, Numeric ol_amount, Numeric s_quantity, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
+      : ol_supply_w_id(ol_supply_w_id), ol_delivery_d(ol_delivery_d), ol_quantity(ol_quantity), ol_amount(ol_amount), s_quantity(s_quantity), s_ytd(s_ytd), s_order_cnt(s_order_cnt), s_remote_cnt(s_remote_cnt), s_data(s_data) {}
 
   joined_selected_t() = default;
 
@@ -253,7 +287,7 @@ struct joined_selected_t: public joined_base_t {
     return os;
   }
 
-  joined_selected_t toSelected(const Key&) const {
+  joined_selected_t toSelected() const {
     return *this;
   }
 
@@ -262,52 +296,13 @@ struct joined_selected_t: public joined_base_t {
   }
 };
 
-joined_selected_t joined1_t::toSelected(const Key& key) const {
-  Varchar<24> s_dist;
-  switch (key.ol_d_id) {
-    case 0: // Only possible in outer join (0 for null)
-      s_dist = Varchar<24>();
-      break;
-    case 1:
-      s_dist = s_dist_01;
-      break;
-    case 2:
-      s_dist = s_dist_02;
-      break;
-    case 3:
-      s_dist = s_dist_03;
-      break;
-    case 4:
-      s_dist = s_dist_04;
-      break;
-    case 5:
-      s_dist = s_dist_05;
-      break;
-    case 6:
-      s_dist = s_dist_06;
-      break;
-    case 7:
-      s_dist = s_dist_07;
-      break;
-    case 8:
-      s_dist = s_dist_08;
-      break;
-    case 9:
-      s_dist = s_dist_09;
-      break;
-    case 10:
-      s_dist = s_dist_10;
-      break;
-    default:
-      throw std::runtime_error("Invalid ol_d_id " + std::to_string(key.ol_d_id));
-  }
+joined_selected_t joined1_t::toSelected() const {
   return joined_selected_t(
     ol_supply_w_id,
     ol_delivery_d,
     ol_quantity,
     ol_amount,
     s_quantity,
-    s_dist,
     s_ytd,
     s_order_cnt,
     s_remote_cnt,
@@ -332,7 +327,7 @@ struct joined0_t: public joined_base_t {
     return os;
   }
 
-  joined_selected_t toSelected(const joined0_t::Key&) const {
+  joined_selected_t toSelected() const {
     UNREACHABLE(); // Only to suppress warning
     // If one really needs joined_selected_t, lookups into base tables are needed
   }
@@ -382,7 +377,6 @@ struct joined0_t: public joined_base_t {
       orderline.ol_quantity,
       orderline.ol_amount,
       stock.s_quantity,
-      s_dist,
       stock.s_ytd,
       stock.s_order_cnt,
       stock.s_remote_cnt,

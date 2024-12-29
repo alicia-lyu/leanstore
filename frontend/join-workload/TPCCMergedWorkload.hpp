@@ -28,14 +28,14 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
          for (auto& right : cached_right) {
             // no filter for stock
             const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(right.first, right.second);
-            results.push_back({key, rec.toSelected(key)});
+            results.push_back({key, rec.toSelected()});
          }
       } else if (cached_right.empty() && FLAGS_outer_join) {
          for (auto& left : cached_left) {
             if (!filter(left.second))
                continue;
             const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(left.first, left.second);
-            results.push_back({key, rec.toSelected(key)});
+            results.push_back({key, rec.toSelected()});
          }
       } else {
          for (auto& left : cached_left) {
@@ -43,7 +43,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                if (!filter(left.second))
                   continue;
                const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left.first, left.second, right.first, right.second);
-               results.push_back({key, rec.toSelected(key)});
+               results.push_back({key, rec.toSelected()});
             }
          }
       }
@@ -65,7 +65,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
          for (auto& right : cached_right) {
             // no filter for stock
             const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(right.first, right.second);
-            results.push_back({key, rec.toSelected(key)});
+            results.push_back({key, rec.toSelected()});
          }
       } else if (cached_right.empty() && FLAGS_outer_join) {
          for (auto& left : cached_left) {
@@ -81,7 +81,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
             if (!expand_filter(expanded_rec))
                continue;
             const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::extendByNulls(left.first, left.second);
-            results.push_back({key, rec.toSelected(key)});
+            results.push_back({key, rec.toSelected()});
          }
       } else {
          for (auto& left : cached_left) {
@@ -98,7 +98,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                if (!expand_filter(expanded_rec))
                   continue;
                const auto [key, rec] = MergeJoin<ol_sec1_t, stock_t, joined1_t>::merge(left_key, expanded_rec, right.first, right.second);
-               results.push_back({key, rec.toSelected(key)});
+               results.push_back({key, rec.toSelected()});
             }
          }
       }
