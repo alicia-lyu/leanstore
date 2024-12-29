@@ -499,6 +499,7 @@ struct stock_base_t {
 struct stock_t: public stock_base_t {
    using Key = stock_base_t::Key;
    using stock_base_t::id;
+   
    Numeric s_quantity;
    Varchar<24> s_dist_01;
    Varchar<24> s_dist_02;
@@ -514,6 +515,11 @@ struct stock_t: public stock_base_t {
    Numeric s_order_cnt;
    Numeric s_remote_cnt;
    Varchar<50> s_data;
+
+   stock_t(Numeric s_quantity, Varchar<24> s_dist_01, Varchar<24> s_dist_02, Varchar<24> s_dist_03, Varchar<24> s_dist_04, Varchar<24> s_dist_05, Varchar<24> s_dist_06, Varchar<24> s_dist_07, Varchar<24> s_dist_08, Varchar<24> s_dist_09, Varchar<24> s_dist_10, Numeric s_ytd, Numeric s_order_cnt, Numeric s_remote_cnt, Varchar<50> s_data)
+       : s_quantity(s_quantity), s_dist_01(s_dist_01), s_dist_02(s_dist_02), s_dist_03(s_dist_03), s_dist_04(s_dist_04), s_dist_05(s_dist_05), s_dist_06(s_dist_06), s_dist_07(s_dist_07), s_dist_08(s_dist_08), s_dist_09(s_dist_09), s_dist_10(s_dist_10), s_ytd(s_ytd), s_order_cnt(s_order_cnt), s_remote_cnt(s_remote_cnt), s_data(s_data) {}
+   
+   stock_t() = default;
 
    static constexpr unsigned rowSize() { return maxFoldLength() + sizeof(s_quantity) + sizeof(s_dist_01) + sizeof(s_dist_02) + sizeof(s_dist_03) + sizeof(s_dist_04) + sizeof(s_dist_05) + sizeof(s_dist_06) + sizeof(s_dist_07) + sizeof(s_dist_08) + sizeof(s_dist_09) + sizeof(s_dist_10) + sizeof(s_ytd) + sizeof(s_order_cnt) + sizeof(s_remote_cnt) + sizeof(s_data); };
 

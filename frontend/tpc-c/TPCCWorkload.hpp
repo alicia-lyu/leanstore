@@ -1,6 +1,7 @@
 #pragma once
 #include <sys/types.h>
 #include "../shared/Adapter.hpp"
+#include "Exceptions.hpp"
 #include "Schema.hpp"
 #include "Units.hpp"
 // -------------------------------------------------------------------------------------
@@ -485,7 +486,7 @@ class TPCCWorkload
       Varchar<16> c_first;
       Varchar<2> c_middle;
       Varchar<16> c_last;
-      Numeric c_balance;
+      [[maybe_unused]] Numeric c_balance;
       customer.lookup1({w_id, d_id, c_id}, [&](const customer_t& rec) {
          c_first = rec.c_first;
          c_middle = rec.c_middle;
@@ -521,18 +522,18 @@ class TPCCWorkload
       }
       ensure(o_id > -1);
       // -------------------------------------------------------------------------------------
-      Timestamp o_entry_d;
-      Integer o_carrier_id;
+      [[maybe_unused]] Timestamp o_entry_d;
+      [[maybe_unused]] Integer o_carrier_id;
 
       order.lookup1({w_id, d_id, o_id}, [&](const order_t& rec) {
          o_entry_d = rec.o_entry_d;
          o_carrier_id = rec.o_carrier_id;
       });
-      Integer ol_i_id;
-      Integer ol_supply_w_id;
-      Timestamp ol_delivery_d;
-      Numeric ol_quantity;
-      Numeric ol_amount;
+      [[maybe_unused]] Integer ol_i_id;
+      [[maybe_unused]] Integer ol_supply_w_id;
+      [[maybe_unused]] Timestamp ol_delivery_d;
+      [[maybe_unused]] Numeric ol_quantity;
+      [[maybe_unused]] Numeric ol_amount;
       {
          // AAA: expensive
          orderline.scan(
@@ -931,6 +932,7 @@ class TPCCWorkload
 
    void loadStock(Integer w_id)
    {
+      UNREACHABLE();
       std::cout << "Loading " << ITEMS_NO * scale_factor << " stock to warehouse " << w_id << ", with semi-join selectivity " << FLAGS_semijoin_selectivity << std::endl;
       int loaded = 0;
       for (Integer i = 0; i < ITEMS_NO * scale_factor; i++) {
@@ -942,9 +944,9 @@ class TPCCWorkload
             s_data.length = rnd(s_data.length - 8);
             s_data = s_data || Varchar<10>("ORIGINAL");
          }
-         stock.insert({w_id, i + 1}, {randomNumeric(10, 100), randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24),
+         stock.insert({w_id, i + 1}, stock_t(randomNumeric(10, 100), randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24),
                                       randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24),
-                                      randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24), 0, 0, 0, s_data});
+                                      randomastring<24>(24, 24), randomastring<24>(24, 24), randomastring<24>(24, 24), 0, 0, 0, s_data));
          loaded++;
       }
       std::cout << "Loaded " << loaded << " stock to warehouse " << w_id << std::endl;

@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include "../shared/RocksDB.hpp"
@@ -11,9 +12,9 @@
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 #include "types.hpp"
 
-#if INCLUDE_COLUMNS == 0
+#if INCLUDE_COLUMNS == 1 || INCLUDE_COLUMNS == 2
 #define PROCESS_PAYLOAD() auto selected_payload = payload.toSelected();
-#elif INCLUDE_COLUMNS == 1 || INCLUDE_COLUMNS == 2
+#elif INCLUDE_COLUMNS == 0
 #define PROCESS_PAYLOAD()                                                                                                   \
    if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) {                                                      \
       stock_key = {key.w_id, key.i_id};                                                                                     \
@@ -125,10 +126,10 @@ class TPCCBaseWorkload
       PREPARE_MERGE_JOIN();
 
       // Only useful for joined0_t
-      stock_sec_t::Key stock_key;
-      stock_sec_t stock_payload;
-      orderline_t::Key orderline_key;
-      orderline_t orderline_payload;
+      [[maybe_unused]] stock_sec_t::Key stock_key;
+      [[maybe_unused]] stock_sec_t stock_payload;
+      [[maybe_unused]] orderline_t::Key orderline_key;
+      [[maybe_unused]] orderline_t orderline_payload;
 
       while (true) {
          auto ret = merge_join.next();
@@ -179,7 +180,7 @@ class TPCCBaseWorkload
        Integer w_id,
        std::function<void(const stock_sec_t::Key&, std::function<void(stock_sec_t&)>, leanstore::UpdateSameSizeInPlaceDescriptor&, Integer qty)>
            stock_sec_update_cb,
-       std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&)> orderline_insert_cb,
+       std::function<void(const orderline_sec_t::Key&, const orderline_sec_t&, const stock_sec_t::Key&, const stock_sec_t&)> orderline_insert_cb,
        Integer order_size = 5)
    {
       // this->tpcc->newOrderRnd(w_id);
@@ -241,12 +242,14 @@ class TPCCBaseWorkload
       this->tpcc->neworder.insert({w_id, d_id, o_id}, {});
 
       // Batch update stock records
+      std::vector<stock_t> stock_record_copies;
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
          stock_t::Key key = {supwares[i], itemids[i]};
          // Every method needs to update stock's primary index
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
          if (isSelected(key.s_i_id))
+         {
             this->tpcc->stock.update1(
                 key,
                 [&](stock_t& rec) {
@@ -255,19 +258,23 @@ class TPCCBaseWorkload
                    rec.s_remote_cnt += (supwares[i] != w_id);
                    rec.s_order_cnt++;
                    rec.s_ytd += qty;
+                   stock_record_copies.push_back(rec);
                 },
                 stock_update_descriptor);
-         // Update secondary index if needed, be it stock_secondary or merged index
-         if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
-            stock_sec_update_cb(
-                key,
-                [&](stock_sec_t& rec) {
-                   rec.s_quantity = (rec.s_quantity >= qty + 10) ? rec.s_quantity - qty : rec.s_quantity + 91 - qty;
-                   rec.s_remote_cnt += (supwares[i] != w_id);
-                   rec.s_order_cnt++;
-                   rec.s_ytd += qty;
-                },
-                stock_update_descriptor, qty);
+            // Update secondary index if needed, be it stock_secondary or merged index
+            if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
+               stock_sec_update_cb(
+                  key,
+                  [&](stock_sec_t& rec) {
+                     rec.s_quantity = (rec.s_quantity >= qty + 10) ? rec.s_quantity - qty : rec.s_quantity + 91 - qty;
+                     rec.s_remote_cnt += (supwares[i] != w_id);
+                     rec.s_order_cnt++;
+                     rec.s_ytd += qty;
+                  },
+                  stock_update_descriptor, qty);
+            }
+         } else {
+            stock_record_copies.push_back({});
          }
       }
 
@@ -286,9 +293,9 @@ class TPCCBaseWorkload
          // ********** Update Merged Index **********
          if constexpr (std::is_same_v<orderline_sec_t, ol_sec1_t>) {
             ol_sec1_t rec = {supware, ol_delivery_d, qty, ol_amount, s_dist};
-            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t(rec));
+            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t(rec), stock_t::Key{supware, itemid}, stock_record_copies.at(i));
          } else if constexpr (std::is_same_v<orderline_sec_t, ol_sec0_t>) {
-            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t());
+            orderline_insert_cb(orderline_sec_t::Key{w_id, itemid, d_id, o_id, lineNumber}, orderline_sec_t(), stock_t::Key{supware, itemid}, stock_record_copies.at(i));
          } else {
             UNREACHABLE();
          }
@@ -301,9 +308,9 @@ class TPCCBaseWorkload
           w_id,
           [&](const stock_sec_t::Key& key, std::function<void(stock_sec_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor, Integer) {
              if (isSelected(key.s_i_id))
-                this->stock_secondary.update1(key, cb, update_descriptor);
+                this->stock_secondary->update1(key, cb, update_descriptor);
           },
-          [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload) { this->orderline_secondary->insert(key, payload); }, order_size);
+          [&](const orderline_sec_t::Key& key, const orderline_sec_t& payload, const stock_sec_t::Key&, const stock_sec_t&) { this->orderline_secondary->insert(key, payload); }, order_size);
    }
 
    int tx(Integer w_id, int read_percentage, int scan_percentage, int write_percentage, Integer order_size = 5)
@@ -327,7 +334,44 @@ class TPCCBaseWorkload
 
    virtual void verifyWarehouse(Integer w_id) { tpcc->verifyWarehouse(w_id); }
 
-   virtual void loadStock(Integer w_id) { tpcc->loadStock(w_id); }
+   void loadStockCallback(Integer w_id,
+      std::function<void(const stock_sec_t::Key&, const stock_sec_t&)> stock_sec_insert_cb
+   ) { 
+      std::cout << "Loading " << this->tpcc->ITEMS_NO * this->tpcc->scale_factor << " stock of warehouse " << w_id << std::endl;
+      int loaded = 0;
+      for (Integer i = 0; i < this->tpcc->ITEMS_NO * this->tpcc->scale_factor; i++) {
+         if (!isSelected(i + 1)) {
+            continue;
+         }
+         Varchar<50> s_data = this->tpcc->template randomastring<50>(25, 50);
+         if (this->tpcc->rnd(10) == 0) {
+            s_data.length = this->tpcc->rnd(s_data.length - 8);
+            s_data = s_data || Varchar<10>("ORIGINAL");
+         }
+         stock_t::Key key{w_id, i + 1};
+         
+         stock_t rec = stock_t(this->tpcc->randomNumeric(10, 100), this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24),
+              this->tpcc->template randomastring<24>(24, 24), this->tpcc->template randomastring<24>(24, 24), 0, 0, 0, s_data);
+
+         stock_sec_insert_cb(key, rec);
+
+         // Also load to primary index if type is different
+         if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
+            this->tpcc->stock.insert(key, rec);
+         }
+         loaded++;
+      }
+      std::cout << "Loaded " << loaded << " stock of warehouse " << w_id << std::endl;
+   }
+
+   virtual void loadStock(Integer w_id)
+   {
+      this->loadStockCallback(w_id,
+          [&](const stock_sec_t::Key& key, const stock_sec_t& payload) { this->stock_secondary->insert(key, payload); });
+   }
 
    // -----------------------------------------------------------------
    // -------------------------- Logging ------------------------------
