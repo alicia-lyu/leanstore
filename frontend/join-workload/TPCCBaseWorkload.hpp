@@ -114,18 +114,18 @@ class TPCCBaseWorkload
    // Join with no extra column selection or expansion, intended for materialized join
    void joinOrderlineAndStock(std::function<bool(joined_t::Key&, joined_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
    {
-      std::cout << "TPCCBaseWorkload::joinOrderlineAndStock" << std::endl;
+      std::cout << "TPCCBaseWorkload::joinOrderlineAndStock from" << seek_key << std::endl;
 
       PREPARE_MERGE_JOIN();
 
-      u64 produced;
+      [[maybe_unused]] u64 produced = 0;
 
       while (true) {
          auto ret = merge_join.next();
          produced++;
-         if (produced % 100000 == 0) {
-            std::cout << "TPCCBaseWorkload::joinOrderlineAndStock -- Produced " << produced << " joined records" << std::endl;
-         }
+         // if (produced % 100000 == 0) {
+         //    std::cout << "TPCCBaseWorkload::joinOrderlineAndStock -- Produced " << produced << " joined records" << std::endl;
+         // }
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
@@ -424,7 +424,7 @@ class TPCCBaseWorkload
    static std::string getConfigString()
    {
       std::stringstream config;
-      config << FLAGS_dram_gib << "|" << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS;
+      config << FLAGS_dram_gib << "|" << FLAGS_target_gib << "|" << FLAGS_semijoin_selectivity << "|" << INCLUDE_COLUMNS << "|" << int(FLAGS_outer_join);
       return config.str();
    }
 
