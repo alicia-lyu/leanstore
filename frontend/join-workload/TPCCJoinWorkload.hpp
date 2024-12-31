@@ -30,14 +30,14 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
    void scanJoin(typename joined_t::Key start_key, std::function<bool(const typename joined_selected_t::Key&, const joined_selected_t&)> cb)
    {
       // Must be able to compile with joined1_t and joined_selected_t, requires expand (implemented as UNREACHABLE)
-      [[maybe_unused]] stock_sec_t::Key stock_key;
-      [[maybe_unused]] stock_sec_t stock_payload;
+      [[maybe_unused]] stock_t::Key stock_key;
+      [[maybe_unused]] stock_t stock_payload;
       [[maybe_unused]] orderline_t::Key orderline_key;
       [[maybe_unused]] orderline_t orderline_payload;
       joined_ols.scan(
           start_key,
           [&](const joined_t::Key& key, const joined_t& payload) {
-             PROCESS_PAYLOAD();
+             EXPAND_OR_PROJECT_JOIN_PAYLOAD();
              return cb(key, selected_payload);
           },
           []() {});
@@ -91,46 +91,33 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
           w_id,
           [&](const stock_sec_t::Key& key, std::function<void(stock_sec_t&)> cb, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor,
               Integer qty) {
-             if (Base::isSelected(key.s_i_id)) {
-                this->stock_secondary->update1(key, cb, update_descriptor);
-             } else if (!FLAGS_outer_join) {
-                return;
-             }
-             // Updating stock payload causes join results to be updated except---
-             if constexpr (std::is_same_v<joined_t, joined0_t>) {
-                return;
-             }
-             std::vector<joined_t::Key> keys;
-             joined_ols.scan(
-                 {key.s_w_id, key.s_i_id, 0, 0, 0},
-                 [&](const joined_t::Key& joined_key, const joined_t&) {
-                    if (joined_key.w_id != key.s_w_id || joined_key.i_id != key.s_i_id) {
-                       return false;
-                    }
-                    keys.push_back(joined_key);
-                    return true;
-                 },
-                 [&]() { /* undo */ });
-             UpdateDescriptorGenerator4(joined_ols_descriptor, joined_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
-             for (auto key : keys) {
-                joined_ols.update1(
-                    key,
-                    [&](joined_t& rec) {
-                       auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
-                       s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
-                       rec.s_remote_cnt += (key.w_id != w_id);
-                       rec.s_order_cnt++;
-                       rec.s_ytd += qty;
-                    },
-                    joined_ols_descriptor);
-             }
+             // Updating stock payload causes join result and stock secondary index when they include changed columns
+             CONDITIONAL_CALL(
+               if (Base::isSelected(key.s_i_id)) { this->stock_secondary->update1(key, cb, update_descriptor); } else if (!FLAGS_outer_join) return; \
+               std::vector<joined_t::Key> keys; joined_ols.scan( \
+                 {key.s_w_id, key.s_i_id, 0, 0, 0}, \
+                 [&](const joined_t::Key& joined_key, const joined_t&) { \
+                    if (joined_key.w_id != key.s_w_id || joined_key.i_id != key.s_i_id) return false;
+                    keys.push_back(joined_key); \
+                    return true; \
+                 }, \
+                 [&]() { /* undo */ }); \
+               UpdateDescriptorGenerator4(joined_ols_descriptor, joined_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity); \
+               for (auto key: keys) { \
+                  joined_ols.update1(key, [&](joined_t& rec) { \
+                     auto& s_quantity = rec.s_quantity;
+                     s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty; \
+                     rec.s_remote_cnt += (key.w_id != w_id); \
+                     rec.s_order_cnt++; \
+                     rec.s_ytd += qty; }, \
+                     joined_ols_descriptor); });
           },
           [&](const orderline_sec_t::Key& ol_key, const orderline_sec_t& ol_payload, const stock_sec_t::Key& stock_key,
               const stock_sec_t& stock_payload) {
              this->orderline_secondary->insert(ol_key, ol_payload);
              // Inserting orderline causes join results to be inserted
              // This is not redundant with the update above but merging them could be more efficient (not implemented)
-             if (stock_payload == stock_t{} && !FLAGS_outer_join) {  // Out of stock
+             if (stock_payload == stock_sec_t() && !FLAGS_outer_join) {  // Out of stock
                 return;
              }
              auto [joined_key, joined_payload] =

@@ -10,23 +10,6 @@
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "types.hpp"
 
-#if INCLUDE_COLUMNS == 0
-#define PROCESS_ORDERLINE()                                                                                                                      \
-   auto& [left_key, left_rec] = left;                                                                                                            \
-   if (left_key != curr_key) {                                                                                                                   \
-      this->tpcc->orderline.lookup1({left_key.ol_w_id, left_key.ol_d_id, left_key.ol_o_id, left_key.ol_number}, [&](const orderline_t& ol_rec) { \
-         left_rec = {ol_rec.ol_supply_w_id, ol_rec.ol_delivery_d, ol_rec.ol_quantity, ol_rec.ol_amount, ol_rec.ol_dist_info};                    \
-      });                                                                                                                                        \
-      curr_key = left_key;                                                                                                                       \
-   }
-#elif INCLUDE_COLUMNS == 1 || INCLUDE_COLUMNS == 2
-#define PROCESS_ORDERLINE() \
-   {                        \
-   }
-#else
-#error "Unsupported value for INCLUDE_COLUMNS"
-#endif
-
 template <template <typename> class AdapterType, class MergedAdapterType, int id_count>  // Default to 12
 class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 {
@@ -42,30 +25,24 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       std::vector<std::pair<joined_selected_t::Key, joined_selected_t>> results;
       results.reserve(cached_left.size() * cached_right.size());  // Reserve memory to avoid reallocations
 
-      if (cached_left.empty() && FLAGS_outer_join) {
+      if (FLAGS_outer_join) {
+         if (cached_left.empty()) {
+            cached_left.push_back({orderline_sec_t::Key(), orderline_sec_t()});
+         } else if (cached_right.empty()) {
+            cached_right.push_back({stock_sec_t::Key(), stock_sec_t()});
+         }
+      }
+      [[maybe_unused]] stock_t::Key stock_key;
+      [[maybe_unused]] stock_t stock_payload;
+      [[maybe_unused]] orderline_t::Key orderline_key;
+      [[maybe_unused]] orderline_t orderline_payload;
+      for (auto& left : cached_left) {
          for (auto& right : cached_right) {
-            // no filter for stock
-            const auto [key, rec] = MergeJoin<orderline_sec_t, stock_sec_t, joined_t>::extendByNulls(right.first, right.second);
-            results.push_back({key, rec.toSelected()});
-         }
-      } else if (cached_right.empty() && FLAGS_outer_join) {
-         for (auto& left : cached_left) {
-            auto& [left_key, left_rec] = left;
-            PROCESS_ORDERLINE();
-            if (!filter(left_rec))
+            auto [key, payload] = MergeJoin<orderline_sec_t, stock_sec_t, joined_t>::merge(left.first, left.second, right.first, right.second);
+            EXPAND_OR_PROJECT_JOIN_PAYLOAD();
+            results.push_back({key, selected_payload});
+            if (!filter(ol_sec1_t(selected_payload))) {
                continue;
-            const auto [key, rec] = MergeJoin<orderline_sec_t, stock_sec_t, joined_t>::extendByNulls(left_key, left_rec);
-            results.push_back({key, rec.toSelected()});
-         }
-      } else {
-         for (auto& left : cached_left) {
-            for (auto& right : cached_right) {
-               auto& [left_key, left_rec] = left;
-               PROCESS_ORDERLINE();
-               if (!filter(left_rec))
-                  continue;
-               const auto [key, rec] = MergeJoin<orderline_sec_t, stock_sec_t, joined_t>::merge(left_key, left_rec, right.first, right.second);
-               results.push_back({key, rec.toSelected()});
             }
          }
       }
@@ -171,11 +148,9 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
 
    void loadStock(Integer w_id)
    {
-      Base::loadStockCallback(
-          w_id,
-          [&](const stock_sec_t::Key& key, const stock_sec_t& payload) {
-             merged.template insert<stock_sec_t>(key, payload);  // implicit conversion
-          });
+      Base::loadStockCallback(w_id, [&](const stock_sec_t::Key& key, const stock_sec_t& payload) {
+         merged.template insert<stock_sec_t>(key, payload);  // implicit conversion
+      });
    }
 
    void loadOrderlineSecondary(Integer w_id = 0)

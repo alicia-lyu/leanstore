@@ -184,7 +184,6 @@ class MergeJoin
                                                                     const orderline_sec_t& left_rec,
                                                                     const stock_sec_t::Key& right_key,
                                                                     const stock_sec_t& right_rec)
-      requires(std::same_as<JoinedRecord, joined1_t>)
    {
       return {merge_keys<typename JoinedRecord::Key>(left_key, right_key), merge_records<JoinedRecord>(left_rec, right_rec)};
    }

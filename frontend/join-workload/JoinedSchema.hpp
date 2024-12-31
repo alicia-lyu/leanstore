@@ -86,6 +86,7 @@ struct orderline_secondary_base_t {
 };
 
 struct ol_sec0_t;
+struct joined_selected_t;
 
 struct ol_sec1_t: public orderline_secondary_base_t {
   using orderline_secondary_base_t::id;
@@ -99,6 +100,8 @@ struct ol_sec1_t: public orderline_secondary_base_t {
   ol_sec1_t(const ol_sec0_t&) {
     UNREACHABLE(); // To suppress compiler warning
   }
+
+  ol_sec1_t(const joined_selected_t& rec);
 
   Integer ol_supply_w_id;
   Timestamp ol_delivery_d;
@@ -121,6 +124,8 @@ struct ol_sec0_t: public orderline_secondary_base_t {
 
   ol_sec0_t(const ol_sec1_t&) {}
 
+  ol_sec0_t(const joined_selected_t&) {}
+
   friend std::ostream& operator<<(std::ostream& os, const ol_sec0_t&) {
     os << "ol_sec_key_only";
     return os;
@@ -140,6 +145,8 @@ struct stock_0_t: public stock_base_t {
     os << "stock_key_only";
     return os;
   }
+
+  int operator==(const stock_0_t&) const { return true; }
 };
 
 // remove all district info
@@ -167,6 +174,10 @@ struct stock_selected_t: public stock_base_t {
     os << "stock_selected: quantity: " << record.s_quantity << ", ytd: " << record.s_ytd << ", order_cnt: " << record.s_order_cnt << ", remote_cnt: " << record.s_remote_cnt << ", data: " << record.s_data.toString();
     return os;
   };
+
+  int operator==(const stock_selected_t& rhs) const {
+    return s_quantity == rhs.s_quantity && s_ytd == rhs.s_ytd && s_order_cnt == rhs.s_order_cnt && s_remote_cnt == rhs.s_remote_cnt && s_data == rhs.s_data;
+  }
 };
 
 struct joined_base_t {
@@ -392,3 +403,6 @@ struct joined0_t: public joined_base_t {
     );
   }
 };
+
+inline ol_sec1_t::ol_sec1_t(const joined_selected_t& rec)
+    : ol_supply_w_id(rec.ol_supply_w_id), ol_delivery_d(rec.ol_delivery_d), ol_quantity(rec.ol_quantity), ol_amount(rec.ol_amount), ol_dist_info(rec.s_dist) {}
