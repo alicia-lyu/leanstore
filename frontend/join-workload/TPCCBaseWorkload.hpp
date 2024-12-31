@@ -8,26 +8,34 @@
 #include "Exceptions.hpp"
 #include "Join.hpp"
 #include "JoinedSchema.hpp"
+#include "Units.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 #include "types.hpp"
 
 #if INCLUDE_COLUMNS == 1 || INCLUDE_COLUMNS == 2
-#define PROCESS_PAYLOAD() auto selected_payload = payload.toSelected();
+#define EXPAND_OR_PROJECT_JOIN_PAYLOAD() auto selected_payload = payload.toSelected();
 #elif INCLUDE_COLUMNS == 0
-#define PROCESS_PAYLOAD()                                                                                                   \
+#define EXPAND_OR_PROJECT_JOIN_PAYLOAD()                                                                                                   \
    if (stock_key.s_w_id != key.w_id || stock_key.s_i_id != key.i_id) {                                                      \
-      stock_key = {key.w_id, key.i_id};                                                                                     \
-      this->tpcc->stock.lookup1(stock_key, [&](const stock_sec_t& rec) { stock_payload = rec; });                           \
+      stock_key = {key.w_id, key.i_id};                                                       stock_payload = stock_t();                              \
+      this->tpcc->stock.tryLookup(stock_key, [&](const stock_t& rec) { stock_payload = rec; });                           \
    }                                                                                                                        \
    if (orderline_key.ol_w_id != key.w_id || orderline_key.ol_d_id != key.ol_d_id || orderline_key.ol_o_id != key.ol_o_id || \
        orderline_key.ol_number != key.ol_number) {                                                                          \
       orderline_key = {key.w_id, key.ol_d_id, key.ol_o_id, key.ol_number};                                                  \
-      this->tpcc->orderline.lookup1(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });               \
+      orderline_payload = orderline_t();                                                                                 \
+      this->tpcc->orderline.tryLookup(orderline_key, [&](const orderline_t& rec) { orderline_payload = rec; });               \
    }                                                                                                                        \
    auto selected_payload = payload.expand(key, stock_payload, orderline_payload);  // Unique to joined0_t
 #else
 #error "Unsupported value for INCLUDE_COLUMNS"
+#endif
+
+#if INCLUDE_COLUMNS == 0
+#define CONDITIONAL_CALL(custom_code) {}
+#else
+#define CONDITIONAL_CALL(custom_code) custom_code
 #endif
 
 #define PREPARE_MERGE_JOIN()                                                                                        \
@@ -106,10 +114,18 @@ class TPCCBaseWorkload
    // Join with no extra column selection or expansion, intended for materialized join
    void joinOrderlineAndStock(std::function<bool(joined_t::Key&, joined_t&)> cb, joined_t::Key seek_key = {0, 0, 0, 0, 0})
    {
+      std::cout << "TPCCBaseWorkload::joinOrderlineAndStock" << std::endl;
+
       PREPARE_MERGE_JOIN();
+
+      u64 produced;
 
       while (true) {
          auto ret = merge_join.next();
+         produced++;
+         if (produced % 100000 == 0) {
+            std::cout << "TPCCBaseWorkload::joinOrderlineAndStock -- Produced " << produced << " joined records" << std::endl;
+         }
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
@@ -126,8 +142,8 @@ class TPCCBaseWorkload
       PREPARE_MERGE_JOIN();
 
       // Only useful for joined0_t
-      [[maybe_unused]] stock_sec_t::Key stock_key;
-      [[maybe_unused]] stock_sec_t stock_payload;
+      [[maybe_unused]] stock_t::Key stock_key;
+      [[maybe_unused]] stock_t stock_payload;
       [[maybe_unused]] orderline_t::Key orderline_key;
       [[maybe_unused]] orderline_t orderline_payload;
 
@@ -136,7 +152,7 @@ class TPCCBaseWorkload
          if (!ret.has_value())
             break;
          auto [key, payload] = ret.value();
-         PROCESS_PAYLOAD();
+         EXPAND_OR_PROJECT_JOIN_PAYLOAD();
          if (!cb(key, selected_payload))
             break;
       }
@@ -246,36 +262,40 @@ class TPCCBaseWorkload
       for (unsigned i = 0; i < lineNumbers.size(); i++) {
          Integer qty = qtys[i];
          stock_t::Key key = {supwares[i], itemids[i]};
-         // Every method needs to update stock's primary index (possibly part of merged index)
          UpdateDescriptorGenerator4(stock_update_descriptor, stock_t, s_remote_cnt, s_order_cnt, s_ytd, s_quantity);
-         if (isSelected(key.s_i_id))
-         {
-            stock_sec_update_cb(
-                  key,
-                  [&](stock_sec_t& rec) {
-                     rec.s_quantity = (rec.s_quantity >= qty + 10) ? rec.s_quantity - qty : rec.s_quantity + 91 - qty;
-                     rec.s_remote_cnt += (supwares[i] != w_id);
-                     rec.s_order_cnt++;
-                     rec.s_ytd += qty;
-                     stock_record_copies.push_back(rec);
-                  },
-                  stock_update_descriptor, qty);
-            // Update primary index if different, be it stock_secondary or merged index
-            if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
-               this->tpcc->stock.update1(
-                key,
-                [&](stock_t& rec) {
-                   auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
-                   s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
-                   rec.s_remote_cnt += (supwares[i] != w_id);
-                   rec.s_order_cnt++;
-                   rec.s_ytd += qty;
-                },
-                stock_update_descriptor);
-            }
-         } else {
-            stock_record_copies.push_back({});
+         stock_sec_t stock_record_copy;
+         if (!isSelected(key.s_i_id)) {
+            stock_record_copies.push_back(stock_record_copy);
+            continue;
          }
+         // Update secondary index of stock if it includes changed columns
+         CONDITIONAL_CALL(
+            stock_sec_update_cb( \
+                  key, \
+                  [&](stock_sec_t& rec) { \
+                     rec.s_quantity = (rec.s_quantity >= qty + 10) ? rec.s_quantity - qty : rec.s_quantity + 91 - qty; \
+                     rec.s_remote_cnt += (supwares[i] != w_id); \
+                     rec.s_order_cnt++; \
+                     rec.s_ytd += qty; \
+                     stock_record_copy = rec; \
+                  }, \
+                  stock_update_descriptor, qty);
+         )
+         // Update primary index if different
+         if constexpr (!std::is_same_v<stock_sec_t, stock_t>) {
+            this->tpcc->stock.update1(
+               key,
+               [&](stock_t& rec) {
+                  auto& s_quantity = rec.s_quantity;  // Attention: we also modify s_quantity
+                  s_quantity = (s_quantity >= qty + 10) ? s_quantity - qty : s_quantity + 91 - qty;
+                  rec.s_remote_cnt += (supwares[i] != w_id);
+                  rec.s_order_cnt++;
+                  rec.s_ytd += qty;
+                  stock_record_copy = rec;
+               },
+               stock_update_descriptor);
+         }
+         stock_record_copies.push_back(stock_record_copy);
       }
 
       // Batch insert orderline records

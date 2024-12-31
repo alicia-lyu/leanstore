@@ -260,14 +260,23 @@ class LeanStoreExperimentHelper
    auto& crm = context->db.getCRManager(); \
    auto& db = context->db; \
    auto& tpcc = context->tpcc; \
-   
+
+#if INCLUDE_COLUMNS == 1
 #define INITIALIZE_SECONDARY_INDEXES(crm) \
    LeanStoreAdapter<orderline_sec_t> orderline_secondary; \
-   LeanStoreAdapter<stock_t>* stock_secondary_ptr; \
-   LeanStoreAdapter<stock_t> stock_secondary; \
-   if (INCLUDE_COLUMNS == 1) stock_secondary_ptr = &context->stock; \
-   else stock_secondary_ptr = &stock_secondary; \
+   LeanStoreAdapter<stock_sec_t>* stock_secondary_ptr; \
+   stock_secondary_ptr = &context->stock; \
    crm.scheduleJobSync(0, [&]() { \
       orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary"); \
-      if (INCLUDE_COLUMNS != 1) stock_secondary = LeanStoreAdapter<stock_sec_t>(db, "stock_secondary"); \
    });
+#else
+#define INITIALIZE_SECONDARY_INDEXES(crm) \
+   LeanStoreAdapter<orderline_sec_t> orderline_secondary; \
+   LeanStoreAdapter<stock_sec_t>* stock_secondary_ptr; \
+   LeanStoreAdapter<stock_sec_t> stock_secondary; \
+   stock_secondary_ptr = &stock_secondary; \
+   crm.scheduleJobSync(0, [&]() { \
+      orderline_secondary = LeanStoreAdapter<orderline_sec_t>(db, "orderline_secondary"); \
+      stock_secondary = LeanStoreAdapter<stock_sec_t>(db, "stock_secondary"); \
+   });
+#endif
