@@ -38,6 +38,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    u16 fence_length = 0;
    bool is_using_upper_fence;
    // -------------------------------------------------------------------------------------
+   virtual ~BTreePessimisticIterator() = default;
   protected:
    // We need a custom findLeafAndLatch to track the position in parent node
    template <LATCH_FALLBACK_MODE mode = LATCH_FALLBACK_MODE::SHARED>

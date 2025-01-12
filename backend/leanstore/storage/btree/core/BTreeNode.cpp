@@ -1,11 +1,5 @@
 #include "BTreeNode.hpp"
-
 #include "leanstore/sync-primitives/PageGuard.hpp"
-// -------------------------------------------------------------------------------------
-#include "gflags/gflags.h"
-// -------------------------------------------------------------------------------------
-// -------------------------------------------------------------------------------------
-// -------------------------------------------------------------------------------------
 namespace leanstore
 {
 namespace storage
@@ -219,7 +213,7 @@ void BTreeNode::copyKeyValueRange(BTreeNode* dst, u16 dstSlot, u16 srcSlot, u16 
       memcpy(dst->slot + dstSlot, slot + srcSlot, sizeof(Slot) * count);
       DEBUG_BLOCK()
       {
-         u32 total_space_used = upper_fence.length + lower_fence.length;
+         [[maybe_unused]] u32 total_space_used = upper_fence.length + lower_fence.length;
          for (u16 i = 0; i < this->count; i++) {
             total_space_used += getKeyLen(i) + getPayloadLength(i);
          }

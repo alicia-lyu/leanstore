@@ -2,15 +2,11 @@
 
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
-#include "leanstore/profiling/counters/PPCounters.hpp"
-#include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/profiling/tables/CRTable.hpp"
 #include "leanstore/profiling/tables/DTTable.hpp"
 #include "leanstore/profiling/tables/LatencyTable.hpp"
-#include "leanstore/utils/FVector.hpp"
-#include "leanstore/utils/ThreadLocalAggregator.hpp"
 // -------------------------------------------------------------------------------------
 #include "gflags/gflags.h"
 #include "rapidjson/document.h"
@@ -25,14 +21,13 @@
 #include <sys/resource.h>
 #include <termios.h>
 #include <unistd.h>
-
+#include <fcntl.h>
 #include <filesystem>
 #include <locale>
 #include <sstream>
-#include <stdexcept>
 // -------------------------------------------------------------------------------------
 using namespace tabulate;
-using leanstore::utils::threadlocal::sum;
+// using leanstore::utils::threadlocal::sum;
 namespace rs = rapidjson;
 namespace leanstore
 {

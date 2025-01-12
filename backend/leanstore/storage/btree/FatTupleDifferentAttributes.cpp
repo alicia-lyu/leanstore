@@ -1,12 +1,4 @@
 #include "BTreeVI.hpp"
-#include "leanstore/concurrency-recovery/CRMG.hpp"
-// -------------------------------------------------------------------------------------
-#include "gflags/gflags.h"
-// -------------------------------------------------------------------------------------
-#include <signal.h>
-
-#include <map>
-#include <set>
 #include <unordered_map>
 // -------------------------------------------------------------------------------------
 using namespace std;
@@ -187,7 +179,7 @@ void BTreeVI::FatTupleDifferentAttributes::garbageCollection()
    // -------------------------------------------------------------------------------------
    DEBUG_BLOCK()
    {
-      u32 should_used_space = value_length;
+      [[maybe_unused]] u32 should_used_space = value_length;
       for (u32 d_i = 0; d_i < deltas_count; d_i++) {
          should_used_space += sizeof(u16) + getDelta(d_i).totalLength();
       }

@@ -1,21 +1,10 @@
 #pragma once
-#include "Exceptions.hpp"
 #include "Units.hpp"
 #include "HistoryTreeInterface.hpp"
-#include "leanstore/Config.hpp"
-#include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/BTreeLL.hpp"
-#include "leanstore/utils/Misc.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
-#include <atomic>
-#include <condition_variable>
 #include <functional>
-#include <map>
-#include <shared_mutex>
-#include <thread>
-#include <unordered_map>
-#include <vector>
 // -------------------------------------------------------------------------------------
 namespace leanstore
 {
@@ -43,6 +32,7 @@ class HistoryTree : public HistoryTreeInterface
    Session remove_sessions[leanstore::cr::STATIC_MAX_WORKERS];
 
   public:
+   virtual ~HistoryTree() = default;
    std::unique_ptr<BTreeLL*[]> update_btrees;
    std::unique_ptr<BTreeLL*[]> remove_btrees;
    virtual void insertVersion(WORKERID worker_id,
