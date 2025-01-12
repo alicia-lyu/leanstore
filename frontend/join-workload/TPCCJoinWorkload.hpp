@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "types.hpp"
@@ -162,12 +163,12 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       joined_ols.scan({w_id, 0, 0, 0, 0}, [&](const joined_t::Key& key, const auto&) { return key.w_id == w_id; }, []() {});
    }
 
-   void addSizesToCsv(double core_size, uint64_t core_time, double ol_size, uint64_t ol_time, double join_size, uint64_t join_time)
+   void addSizesToCsv(double core_size, uint64_t core_time, double sec_size, uint64_t ol_time, double join_size, uint64_t join_time)
    {
       std::ofstream csv_file(this->getCsvFile("join_size.csv"), std::ios::app);
       auto config = this->getConfigString();
       csv_file << "core," << config << "," << core_size << "," << core_time << std::endl;
-      csv_file << "orderline_secondary," << config << "," << ol_size << "," << ol_time << std::endl;
+      csv_file << "secondary," << config << "," << sec_size << "," << ol_time << std::endl;
       csv_file << "join_results," << config << "," << join_size << "," << join_time << std::endl;
    }
 
@@ -182,8 +183,16 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
       auto orderline_secondary_page_count = 0;
-      crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->estimatePages(); });
-      auto orderline_secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+      auto stock_secondary_page_count = 0;
+      auto secondary_page_count = 0;
+      crm.scheduleJobSync(0, [&]() { 
+         orderline_secondary_page_count = this->orderline_secondary->estimatePages(); 
+         stock_secondary_page_count = this->stock_secondary->estimatePages();
+      });
+      if constexpr (INCLUDE_COLUMNS != 1) secondary_page_count = orderline_secondary_page_count + stock_secondary_page_count;
+      else secondary_page_count = orderline_secondary_page_count;
+
+      auto secondary_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
       u64 joined_ols_page_count = 0;
 
@@ -191,11 +200,11 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
       auto joined_ols_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 
       std::cout << "core page count: " << core_page_count << " (" << Base::pageCountToGB(core_page_count)
-                << " GB), orderline secondary page count: " << orderline_secondary_page_count << " ("
-                << Base::pageCountToGB(orderline_secondary_page_count) << " GB), joined_ols page count: " << joined_ols_page_count << " ("
+                << " GB), secondary page count: " << secondary_page_count << " ("
+                << Base::pageCountToGB(secondary_page_count) << " GB), joined_ols page count: " << joined_ols_page_count << " ("
                 << Base::pageCountToGB(joined_ols_page_count) << " GB)" << std::endl;
 
-      addSizesToCsv(Base::pageCountToGB(core_page_count), core_time, Base::pageCountToGB(orderline_secondary_page_count), orderline_secondary_time,
+      addSizesToCsv(Base::pageCountToGB(core_page_count), core_time, Base::pageCountToGB(secondary_page_count), secondary_time,
                     Base::pageCountToGB(joined_ols_page_count), joined_ols_time);
    }
 
@@ -205,18 +214,28 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                  std::chrono::steady_clock::time_point t3,
                  RocksDB& map)
    {
-      std::array<uint64_t, id_count> sizes = this->compactAndGetSizes(map);
+      std::array<uint64_t, id_count> sizes = Base::compactAndGetSizes(map);
+      int orderline_secondary_id = 11;
+      int stock_id = 13;
+      int joined_id = 12;
 
-      uint64_t core_size = std::accumulate(sizes.begin(), sizes.begin() + 11, 0);
+      uint64_t core_size = 0;
+      for (u32 i = 0; i <= 10; i++) {
+         if (i == orderline_secondary_id || i == stock_id || i == joined_id)
+            continue;
+         core_size += sizes[i];
+      }
 
-      uint64_t ol_size = sizes.at(11);
-      uint64_t join_size = sizes.at(12);
+      uint64_t merged_size = sizes[orderline_secondary_id] + sizes[stock_id];
+      uint64_t join_size = sizes[joined_id];
+
+      std::cout << "Stock size: " << sizes[stock_id] << ", orderline secondary size: " << sizes[orderline_secondary_id] << std::endl;
 
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
       auto ol_time = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
       auto join_time = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
 
-      addSizesToCsv(Base::byteToGB(core_size), core_time, Base::byteToGB(ol_size), ol_time, Base::byteToGB(join_size), join_time);
+      addSizesToCsv(Base::byteToGB(core_size), core_time, Base::byteToGB(merged_size), ol_time, Base::byteToGB(join_size), join_time);
    }
 
    void logSizes(leanstore::cr::CRManager& crm)
