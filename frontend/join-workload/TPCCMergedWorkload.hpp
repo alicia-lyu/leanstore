@@ -197,7 +197,7 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                  leanstore::cr::CRManager& crm)
    {
       u64 core_page_count = 0;
-      core_page_count = this->getCorePageCount(crm);
+      core_page_count = this->getCorePageCount(crm, INCLUDE_COLUMNS!=1);
       auto core_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
       u64 merged_page_count = 0;
       crm.scheduleJobSync(0, [&]() { merged_page_count = merged.estimatePages(); });
@@ -219,11 +219,22 @@ class TPCCMergedWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                  std::chrono::steady_clock::time_point sec_end,
                  RocksDB& map)
    {
-      std::array<uint64_t, id_count> sizes = this->compactAndGetSizes(map);
+      std::array<uint64_t, id_count> sizes = Base::compactAndGetSizes(map);
+      int orderline_secondary_id = 11;
+      int stock_id;
+      if (INCLUDE_COLUMNS == 1)  stock_id = 10;
+      else stock_id = 13;
 
-      uint64_t core_size = std::accumulate(sizes.begin(), sizes.begin() + 11, 0);
+      uint64_t core_size = 0;
+      for (u32 i = 0; i <= 10; i++) {
+         if (i == orderline_secondary_id || i == stock_id)
+            continue;
+         core_size += sizes[i];
+      }
 
-      uint64_t merged_size = sizes.at(11);
+      uint64_t merged_size = sizes[orderline_secondary_id] + sizes[stock_id];
+
+      std::cout << "Stock size: " << sizes[stock_id] << ", orderline secondary size: " << sizes[orderline_secondary_id] << std::endl;
 
       addSizesToCsv(Base::byteToGB(core_size), std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count(),
                     Base::byteToGB(merged_size), std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count());

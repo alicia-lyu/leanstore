@@ -151,7 +151,7 @@ struct stock_0_t: public stock_base_t {
 
 // remove all district info
 struct stock_selected_t: public stock_base_t {
-  using stock_base_t::id;
+  static constexpr int id = 13;
   using Key = stock_base_t::Key;
 
   stock_selected_t() = default;

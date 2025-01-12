@@ -45,7 +45,7 @@
    stock_scanner->seek({seek_key.w_id, seek_key.i_id});                                                             \
    MergeJoin<orderline_sec_t, stock_sec_t, joined_t> merge_join(orderline_scanner.get(), stock_scanner.get(), FLAGS_outer_join);
 
-template <template <typename> class AdapterType, int id_count>  // Default to 11, defined in ../shared/TPCCWorkload.hpp
+template <template <typename> class AdapterType, int id_count>  // Default to 14, defined in ../shared/TPCCWorkload.hpp
 class TPCCBaseWorkload
 {
   protected:
@@ -496,17 +496,21 @@ class TPCCBaseWorkload
                  RocksDB& map)
    {
       std::array<uint64_t, id_count> sizes = compactAndGetSizes(map);
+      int orderline_secondary_id = 11;
+      int stock_id;
+      if (INCLUDE_COLUMNS == 1)  stock_id = 10;
+      else stock_id = 13;
 
       uint64_t core_size = 0;
       for (u32 i = 0; i <= 10; i++) {
-         if (i == 8 || i == 10)
+         if (i == orderline_secondary_id || i == stock_id)
             continue;
          core_size += sizes[i];
       }
 
-      uint64_t merged_size = sizes[8] + sizes[10];
+      uint64_t merged_size = sizes[orderline_secondary_id] + sizes[stock_id];
 
-      std::cout << "Stock size: " << sizes[8] << ", orderline secondary size: " << sizes[10] << std::endl;
+      std::cout << "Stock size: " << sizes[stock_id] << ", orderline secondary size: " << sizes[orderline_secondary_id] << std::endl;
 
       addSizesToCsv(byteToGB(core_size), std::chrono::duration_cast<std::chrono::milliseconds>(sec_start - t0).count(), byteToGB(merged_size),
                     std::chrono::duration_cast<std::chrono::milliseconds>(sec_end - sec_start).count());
@@ -525,10 +529,10 @@ class TPCCBaseWorkload
                  std::chrono::steady_clock::time_point sec_end,
                  leanstore::cr::CRManager& crm)
    {
-      auto core_page_count = getCorePageCount(crm, false);
+      auto core_page_count = getCorePageCount(crm, INCLUDE_COLUMNS!=1); // count stock if different
 
       uint64_t stock_page_count = 0;
-      crm.scheduleJobSync(0, [&]() { stock_page_count = this->tpcc->stock.estimatePages(); });
+      crm.scheduleJobSync(0, [&]() { stock_page_count = this->stock_secondary->estimatePages(); });
       uint64_t orderline_secondary_page_count = 0;
       crm.scheduleJobSync(0, [&]() { orderline_secondary_page_count = this->orderline_secondary->estimatePages(); });
 

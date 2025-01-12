@@ -27,8 +27,9 @@ int main(int argc, char** argv)
    auto helper = RocksDBExperimentHelper();
    auto context = helper.prepareExperiment();
    RocksDBAdapter<orderline_sec_t> orderline_secondary(context->rocks_db);
+   GET_STOCK_SEC_PTR(context->rocks_db);
    RocksDBAdapter<joined_t> joined_ols(context->rocks_db);
-   TPCCJoinWorkload<RocksDBAdapter> tpcc_join(&context->tpcc, &orderline_secondary, joined_ols);
+   TPCCJoinWorkload<RocksDBAdapter> tpcc_join(&context->tpcc, &orderline_secondary, stock_secondary_ptr, joined_ols);
 
    std::atomic<u32> g_w_id = 1;
    std::vector<thread> threads;
@@ -46,6 +47,7 @@ int main(int argc, char** argv)
                jumpmuTry()
                {
                   context->rocks_db.startTX();
+                  tpcc_join.loadStock(w_id);
                   tpcc_join.loadOrderlineSecondary(w_id);
                   context->rocks_db.commitTX();
                }

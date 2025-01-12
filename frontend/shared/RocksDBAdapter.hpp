@@ -42,7 +42,8 @@ struct RocksDBAdapter : public Adapter<Record> {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
       const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);
       // -------------------------------------------------------------------------------------
-      rocksdb::PinnableSlice value;
+      std::string record_buf(sizeof(Record), 0);
+      rocksdb::PinnableSlice value(&record_buf);
       rocksdb::Status s;
       if (map.type == RocksDB::DB_TYPE::DB) {
          s = map.db->Get(map.ro, map.db->DefaultColumnFamily(), RSlice(folded_key, folded_key_len), &value);

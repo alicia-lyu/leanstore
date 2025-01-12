@@ -83,16 +83,16 @@ target_compile_definitions(rocksdb_base_tpcc PUBLIC ROCKSDB_ADAPTER INCLUDE_COLU
 # target_include_directories(lmdb_ycsb PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 # # sudo apt-get install liblmdb-dev
 add_executable(join_tpcc join-exec/join_tpcc.cpp)
-target_link_libraries(join_tpcc leanstore Threads::Threads)
+target_link_libraries(join_tpcc leanstore Threads::Threads rocksdb)
 target_include_directories(join_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 target_compile_definitions(join_tpcc PUBLIC INCLUDE_COLUMNS=${INCLUDED_COLUMNS})
 
 add_executable(merged_tpcc join-exec/merged_tpcc.cpp)
-target_link_libraries(merged_tpcc leanstore Threads::Threads)
+target_link_libraries(merged_tpcc leanstore Threads::Threads rocksdb)
 target_include_directories(merged_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 target_compile_definitions(merged_tpcc PUBLIC INCLUDE_COLUMNS=${INCLUDED_COLUMNS})
 
 add_executable(base_tpcc join-exec/base_tpcc.cpp)
-target_link_libraries(base_tpcc leanstore Threads::Threads)
+target_link_libraries(base_tpcc leanstore Threads::Threads rocksdb)
 target_include_directories(base_tpcc PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 target_compile_definitions(base_tpcc PUBLIC INCLUDE_COLUMNS=${INCLUDED_COLUMNS})
