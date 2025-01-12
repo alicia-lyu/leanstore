@@ -53,7 +53,6 @@ $(TARGETS): check_perf_event_paranoid
 	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) $(EXEC) -j
 
 executables: $(TARGETS)
-.PHONY: executables $(TARGETS)
 
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
@@ -152,15 +151,17 @@ rocksdb-base: $(BUILD_DIR)/frontend/$(ROCKSDB_BASE_EXEC)
 
 all:
 	@echo "Using a tmux session is recommended, as this will likely take more than a day."
-	@echo "==============================Running experiments on memory-resident b-trees (27 in total, approx. 27 * 5 minutes)=============================="
+	@echo "=====================Running experiments on memory-resident b-trees (27 in total, approx. 27 * 5 minutes)====================="
 	- $(MAKE) leanstore-all-tx-columns dram=16
-	@echo "==============================Running experiments on disk-resident b-trees (135 in total, approx. 135 * 10 minutes)=============================="
+	@echo "=====================Running experiments on disk-resident b-trees (135 in total, approx. 135 * 10 minutes)====================="
 	- $(MAKE) leanstore-selectivity-columns
-	@echo "==============================Running experiments on lsm-forest (27 in total, approx. 27 * 10 minutes)=============================="
+	@echo "=====================Running experiments on lsm-forest (27 in total, approx. 27 * 10 minutes)====================="
 	- $(MAKE) rocksdb-all-tx-columns
 
-.PHONY: both locality scan write all-tx update-size selectivity no-columns table-size
+.PHONY: leanstore join merged base rocksdb rocksdb-merged rocksdb-base rocksdb-join %-locality %-scan %-write %-all-tx %-selectivity %-columns all
 
 # ----------------- CLEAN -----------------
 clean:
 	rm -rf $(BUILD_DIRS)
+
+.PHONY: clean
