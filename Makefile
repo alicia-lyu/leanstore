@@ -58,8 +58,7 @@ executables: $(TARGETS)
 # ----------------- DEBUG -----------------
 SSD_PATH := /home/alicia.w.lyu/tmp/image
 SSD_DIR := /home/alicia.w.lyu/tmp/image_dir
-lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --pp_threads=2 --order_size=10 --semijoin_selectivity=19 --csv_truncate=true --worker_threads=4 --locality_read=true --trunc=true --ssd_path=$(SSD_PATH) 
-# --outer_join=true
+lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --tpcc_warehouse_count=2 --read_percentage=98 --scan_percentage=0 --write_percentage=2 --pp_threads=2 --order_size=10 --semijoin_selectivity=19 --csv_truncate=true --worker_threads=4 --locality_read=true --trunc=true --ssd_path=$(SSD_DIR) --outer_join=true
 
 lldb ?= true
 
@@ -146,12 +145,25 @@ update-size:
 	- $(MAKE) $*-all-tx selectivity=19
 	- $(MAKE) $*-all-tx selectivity=5
 
+%-columns:
+	- $(MAKE) $*-all-tx included_columns=1
+	- $(MAKE) $*-all-tx included_columns=0
+	- $(MAKE) $*-all-tx included_columns=2
+
 %-size: # Change back
 	- @for col in 2 0; do \
 		for sel in 5 19 50 100; do \
 			$(MAKE) $* dram=16 selectivity=$$sel included_columns=$$col duration=1 || echo "Failed for $$col columns and selectivity $$sel"; \
 		done \
 	done
+
+last-minute:
+	make leanstore-write included_columns=2 dram=16 duration=1
+	make leanstore-write included_columns=1 dram=16 duration=1
+	make leanstore-write included_columns=0 dram=16 duration=1
+	make rocksdb-write included_columns=2 dram=16 duration=1
+	make rocksdb-write included_columns=1 dram=16 duration=1
+	make rocksdb-write included_columns=0 dram=16 duration=1
 
 .PHONY: both read scan write all-tx update-size selectivity no-columns table-size
 

@@ -1,5 +1,4 @@
 #include "LeanStoreExperimentHelper.hpp"
-#include "../join-workload/TPCCBaseWorkload.hpp"
 #include "../join-workload/TPCCJoinWorkload.hpp"
 // -------------------------------------------------------------------------------------
 #include "leanstore/Config.hpp"
