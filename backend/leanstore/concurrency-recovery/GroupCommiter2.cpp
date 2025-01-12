@@ -1,9 +1,7 @@
 #include "CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/profiling/counters/CRCounters.hpp"
-#include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/utils/Misc.hpp"
-#include "leanstore/utils/Parallelize.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 #include <libaio.h>
@@ -28,7 +26,7 @@ void CRManager::groupCommiter2()
       CPUCounters::registerThread(thread_name, false);
       // -------------------------------------------------------------------------------------
       while (keep_running) {
-         u64 committed_tx = 0;
+         [[maybe_unused]] u64 committed_tx = 0;
          for (WORKERID w_i = 0; w_i < workers_count; w_i++) {
             Worker& worker = *workers[w_i];
             const auto time_now = std::chrono::high_resolution_clock::now();

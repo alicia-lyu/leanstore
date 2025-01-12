@@ -1,8 +1,4 @@
 #include "BTreeVI.hpp"
-
-#include "leanstore/concurrency-recovery/CRMG.hpp"
-// -------------------------------------------------------------------------------------
-#include "gflags/gflags.h"
 // -------------------------------------------------------------------------------------
 #include <signal.h>
 // -------------------------------------------------------------------------------------
@@ -348,7 +344,7 @@ OP_RESULT BTreeVI::updateSameSizeInPlace(u8* o_key,
       auto& tuple_head = *reinterpret_cast<ChainedTuple*>(primary_payload.data());
       const u16 delta_and_descriptor_size = update_descriptor.size() + update_descriptor.diffLength();
       const u16 version_payload_length = delta_and_descriptor_size + sizeof(UpdateVersion);
-      COMMANDID command_id;
+      COMMANDID command_id = 0;
       // -------------------------------------------------------------------------------------
       // Write the ChainedTupleDelta
       if (!FLAGS_vi_fupdate_chained) {

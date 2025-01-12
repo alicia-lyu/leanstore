@@ -6,6 +6,22 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import shutil
 import argparse
+from pathlib import Path
+
+try:
+    current_dir = Path(__file__).parent.resolve() if "__file__" in globals() else Path.cwd()
+    parent_dir = current_dir.parent.resolve()
+
+    parent_dir_str = str(parent_dir)
+    log_dir_str = f"{parent_dir_str}/logs"
+    image_dir_str = f"{parent_dir_str}/tmp"
+
+    os.makedirs(log_dir_str, exist_ok=True)
+    os.makedirs(image_dir_str, exist_ok=True)
+except PermissionError as e:
+    print(f"Permission denied: {e}")
+except Exception as e:
+    print(f"An error occurred: {e}")
 
 # Path utilities
 def add_suffix_before_extension(original_path, suffix):
@@ -25,7 +41,7 @@ def get_tx_type(read_percentage, scan_percentage, write_percentage, locality_rea
 
 # Log directory creation
 def get_log_dir(method, dram_gib, target_gib, read_percentage, scan_percentage, write_percentage, order_size, selectivity, included_columns, locality_read, outer_join):
-    log_dir = f"/home/alicia.w.lyu/logs/{method}/{dram_gib}-{target_gib}-{get_tx_type(read_percentage, scan_percentage, write_percentage, locality_read)}"
+    log_dir = f"{log_dir_str}/{method}/{dram_gib}-{target_gib}-{get_tx_type(read_percentage, scan_percentage, write_percentage, locality_read)}"
     if outer_join:
         log_dir += "-outer"
     if order_size != 5:
@@ -55,7 +71,7 @@ def get_recovery_file(method, target_gib, selectivity, included_columns, rocksdb
 # Image file/directory creation
 def get_image(method, target_gib, selectivity, included_columns, outer_join, write_percentage):
     def get_prefix():
-        prefix = f"/home/alicia.w.lyu/tmp/{method}-target{target_gib}g"
+        prefix = f"{image_dir_str}/{method}-target{target_gib}g"
         if outer_join:
             prefix = add_suffix_before_extension(prefix, "-outer")
         if selectivity != 100:

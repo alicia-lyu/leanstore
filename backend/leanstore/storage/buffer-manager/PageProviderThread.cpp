@@ -137,7 +137,7 @@ void BufferManager::pageProviderThread(u64 p_begin, u64 p_end)  // [p_begin, p_e
                // -------------------------------------------------------------------------------------
                // Suitable page founds, lets cool
                {
-                  const PID pid = r_buffer->header.pid;
+                  [[maybe_unused]] const PID pid = r_buffer->header.pid;
                   // r_x_guard can only be acquired and released while the partition mutex is locked
                   {
                      BMExclusiveUpgradeIfNeeded p_x_guard(parent_handler.parent_guard);

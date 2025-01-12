@@ -157,7 +157,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    Field lookupField(const typename Record::Key& key, Field Record::*f)
    {
       Field local_f;
-      bool found = false;
+      [[maybe_unused]] bool found = false;
       lookup1(key, [&](const Record& record) {
          found = true;
          local_f = (record).*f;

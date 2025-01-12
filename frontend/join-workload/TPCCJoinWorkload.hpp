@@ -215,9 +215,9 @@ class TPCCJoinWorkload : public TPCCBaseWorkload<AdapterType, id_count>
                  RocksDB& map)
    {
       std::array<uint64_t, id_count> sizes = Base::compactAndGetSizes(map);
-      int orderline_secondary_id = 11;
-      int stock_id = 13;
-      int joined_id = 12;
+      const u32 orderline_secondary_id = 11;
+      const u32 stock_id = 13;
+      const u32 joined_id = 12;
 
       uint64_t core_size = 0;
       for (u32 i = 0; i <= 10; i++) {
