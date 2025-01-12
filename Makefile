@@ -120,8 +120,8 @@ base: $(BUILD_DIR)/frontend/$(BASE_EXEC)
 rocksdb-base: $(BUILD_DIR)/frontend/$(ROCKSDB_BASE_EXEC)
 	python3 experiment.py $(BUILD_DIR)/frontend/$(ROCKSDB_BASE_EXEC) $(PY_FLAGS)
 
-%-read:
-	- $(MAKE) $* read=100 scan=0 write=0
+# %-read:
+# 	- $(MAKE) $* read=100 scan=0 write=0
 
 %-locality:
 	- $(MAKE) $* read=100 scan=0 write=0 locality_read=1
@@ -132,28 +132,35 @@ rocksdb-base: $(BUILD_DIR)/frontend/$(ROCKSDB_BASE_EXEC)
 %-write:
 	- $(MAKE) $* read=0 scan=0 write=100
 	
-%-all-tx: %-read %-locality %-scan %-write 
+%-all-tx: %-locality %-scan %-write 
 	@echo "Completed all transaction types for $*"
 
-update-size:
-# - $(MAKE) write update_size=5 # refer to write expriments
-	- $(MAKE) write update_size=10
-	- $(MAKE) write update_size=20
-
-%-selectivity:
+%-selectivity: # 5 * 3 (tx) * 3 (method) = 45
+	@echo "------------------------------Running selectivity experiments (45 in total)------------------------------"
 	- $(MAKE) $*-all-tx selectivity=100
 	- $(MAKE) $*-all-tx selectivity=50
 	- $(MAKE) $*-all-tx selectivity=19
 	- $(MAKE) $*-all-tx selectivity=5
+	- $(MAKE) $*-all-tx outer_join=1
 
-%-size: # Change back
-	- @for col in 2 0; do \
-		for sel in 5 19 50 100; do \
-			$(MAKE) $* dram=16 selectivity=$$sel included_columns=$$col duration=1 || echo "Failed for $$col columns and selectivity $$sel"; \
-		done \
-	done
+%-columns:
+	@echo "------------------------------Included columns: all------------------------------"
+	- $(MAKE) $* included_columns=1
+	@echo "------------------------------Included columns: covering------------------------------"
+	- $(MAKE) $* included_columns=2
+	@echo "------------------------------Included columns: keys------------------------------"
+	- $(MAKE) $* included_columns=0
 
-.PHONY: both read scan write all-tx update-size selectivity no-columns table-size
+all:
+	@echo "Using a tmux session is recommended, as this will likely take more than a day."
+	@echo "==============================Running experiments on memory-resident b-trees (27 in total, approx. 27 * 5 minutes)=============================="
+	- $(MAKE) leanstore-all-tx-columns dram=16
+	@echo "==============================Running experiments on disk-resident b-trees (135 in total, approx. 135 * 10 minutes)=============================="
+	- $(MAKE) leanstore-selectivity-columns
+	@echo "==============================Running experiments on lsm-forest (27 in total, approx. 27 * 10 minutes)=============================="
+	- $(MAKE) rocksdb-all-tx-columns
+
+.PHONY: both locality scan write all-tx update-size selectivity no-columns table-size
 
 # ----------------- CLEAN -----------------
 clean:
