@@ -87,7 +87,7 @@ class RocksDBExperimentHelper
       return context;
    };
 
-   int loadCore(bool load_stock = true)
+   int loadCore()
    {
       std::vector<std::thread> threads;
       context_ptr->rocks_db.startTX();
@@ -105,9 +105,6 @@ class RocksDBExperimentHelper
                jumpmuTry()
                {
                   context_ptr->rocks_db.startTX();
-                  if (load_stock) {
-                     context_ptr->tpcc.loadStock(w_id);
-                  }
                   context_ptr->tpcc.loadDistrict(w_id);
                   for (Integer d_id = 1; d_id <= 10; d_id++) {
                      context_ptr->tpcc.loadCustomer(w_id, d_id);
@@ -211,3 +208,14 @@ class RocksDBExperimentHelper
       thread.join(); \
    } \
    return 0;
+
+#if INCLUDE_COLUMNS == 1
+#define GET_STOCK_SEC_PTR(rockdb_ptr) \
+      RocksDBAdapter<stock_sec_t>* stock_secondary_ptr; \
+      stock_secondary_ptr = &context->stock;
+#else
+#define GET_STOCK_SEC_PTR(rockdb_ptr) \
+   RocksDBAdapter<stock_sec_t>* stock_secondary_ptr; \
+   RocksDBAdapter<stock_sec_t> stock_secondary(rockdb_ptr); \
+   stock_secondary_ptr = &stock_secondary;
+#endif

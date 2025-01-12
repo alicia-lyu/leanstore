@@ -29,14 +29,16 @@ int main(int argc, char** argv)
    auto context = helper.prepareExperiment();
 
    RocksDBAdapter<orderline_sec_t> orderline_secondary(context->rocks_db);
+
+   GET_STOCK_SEC_PTR(context->rocks_db);
    
-   TPCCBaseWorkload<RocksDBAdapter> tpcc_base(&context->tpcc, &orderline_secondary);
+   TPCCBaseWorkload<RocksDBAdapter> tpcc_base(&context->tpcc, &orderline_secondary, stock_secondary_ptr);
 
    std::vector<thread> threads;
    std::atomic<u32> g_w_id = 1;
    if (!FLAGS_recover) {
       std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-      helper.loadCore(false);
+      helper.loadCore();
       std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {

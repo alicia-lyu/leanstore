@@ -35,7 +35,7 @@ int main(int argc, char** argv)
    std::atomic<u32> g_w_id = 1;
    if (!FLAGS_recover) {
       std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-      helper.loadCore(false);
+      helper.loadCore();
       std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
       g_w_id = 1;
       for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
@@ -48,8 +48,8 @@ int main(int argc, char** argv)
                jumpmuTry()
                {
                   context->rocks_db.startTX();
-                  tpcc_merged.loadStockToMerged(w_id);
-                  tpcc_merged.loadOrderlineSecondaryToMerged(w_id);
+                  tpcc_merged.loadStock(w_id);
+                  tpcc_merged.loadOrderlineSecondary(w_id);
                   context->rocks_db.commitTX();
                }
                jumpmuCatch()
