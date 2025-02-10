@@ -1,6 +1,8 @@
-import argparse, os
+import argparse, os, time
 from pathlib import Path
 import shutil
+from datetime import datetime
+from zoneinfo import ZoneInfo
     
 parser = argparse.ArgumentParser(description="Run experiment with specified parameters.")
 parser.add_argument('executable', type=Path, help="Path to the executable.")
@@ -27,25 +29,18 @@ class Experiment:
         self.read_percentage = read_percentage
         self.scan_percentage = scan_percentage
         self.write_percentage = write_percentage
-        print(f"DRAM: {args.dram_gib} GiB, target: {args.target_gib} GiB\nRead: {args.read_percentage}%, scan: {args.scan_percentage}%, write: {args.write_percentage}%")
         self.selectivity = selectivity
         self.included_columns = included_columns
         self.outer_join = outer_join
-        print(f"Selectivity: {args.selectivity}, Included Columns: {args.included_columns}, Duration: {args.duration}, Outer Join: {args.outer_join}")
         # try-except block to handle path errors
         try:
             self.method = executable.stem.replace('_tpcc', '')
             self.build_dir = executable.parents[1]
             current_dir = Path(__file__).parent.resolve() if "__file__" in globals() else Path.cwd()
-            parent_dir = current_dir.parent.resolve()
-            self.log_pdir = parent_dir / "logs"
-            self.image_pdir = parent_dir / "tmp"
-            self.image_archive = Path("/mnt/hdd/merged-index-images")
-            self.log_pdir.mkdir(exist_ok=True)
-            self.image_pdir.mkdir(exist_ok=True)
-            self.image_archive.mkdir(exist_ok=True)
-            print(f"Log Directory: {self.log_pdir}, Image Directory: {self.image_pdir}")
-            print(f"Method: {self.method}, Build Directory: {self.build_dir}, run for seconds: {self.duration}")
+            self.home_dir = current_dir.parent.resolve()
+            self.recovery_path, self.persist_path, self.trunc = self.get_recovery_persist()
+            self.log_dir = self.get_log_dir()
+            self.image_path, self.archive_image = self.get_image_path()
         except Exception as e:
             print(f"An error occurred: {e}")
     
@@ -70,31 +65,58 @@ class Experiment:
         return f"{self.get_tx_type()}-{self.dram_gib}"
             
     def get_log_dir(self) -> Path:
+        log_pdir = self.home_dir / "logs"
+        log_pdir.mkdir(exist_ok=True)
         log_str = self.summarize_config() + self.summarize_runtime_config()
         log_dir = self.log_pdir / log_str
         log_dir.mkdir(exist_ok=True)
         return log_dir
     
-    def get_recovery_file(self) -> Path:
-        recovery_path = self.build_dir / f"self.summarize_config().json"
-        return recovery_path
+    def get_recovery_persist(self):
+        recovery_path = self.build_dir / f"{self.summarize_config()}.json"
+        # A necessary condition for recovery but subject to existence of image
+        if recovery_path.exists():
+            trunc = False # Do not truncate the image
+            persist_path = self.build_dir / "leanstore.json" # Do not persist as the image exists already
+        else:
+            trunc = True
+            persist_path = recovery_path
+            
+        return recovery_path, persist_path, trunc
     
     def get_image_path(self) -> Path:
+        self.image_pdir = self.home_dir / "tmp"
+        self.image_archive = Path("/mnt/hdd/merged-index-images")
+        self.image_pdir.mkdir(exist_ok=True)
+        self.image_archive.mkdir(exist_ok=True)
+        
         image_prefix = self.summarize_config()
         is_dir = "rocksdb" in self.method
         target_path = self.image_pdir / image_prefix if is_dir else self.image_pdir / f"{image_prefix}.image"
         archive_image = self.image_archive / image_prefix if is_dir else self.image_archive / f"{image_prefix}.image"
 
         if archive_image.exists():
+            t1 = time.time()
             shutil.copy(archive_image, target_path)
+            t2 = time.time()
+            print(f"Copying image took {t2 - t1} seconds.")
         else:
             target_path.mkdir(exist_ok=True) if is_dir else target_path.touch()
 
-        return target_path
+        return target_path, archive_image
+    
+    def __str__(self):
+        return f"Experiment: {self.method}, DRAM: {self.dram_gib} GiB, Target: {self.target_gib} GiB, Read: {self.read_percentage}%, Scan: {self.scan_percentage}%, Write: {self.write_percentage}%, Selectivity: {self.selectivity}, Included Columns: {self.included_columns}, Duration: {self.duration}, Outer Join: {self.outer_join}"
 
     def __call__(self):
+        # Get the current time in the system's local timezone
+        timestamp = datetime.now(ZoneInfo("US/Chicago")).strftime("%m-%d-%H-%M")
+        print(self)
+        
+        
         
         # Delete image if write_percentage > 0
-        # Otherwise, dump image to HDD: "/mnt/hdd/merged-index-images"
+        # Otherwise, dump image to HDD: "/mnt/hdd/merged-index-images" if size is different from the existing one
+        
         
         
