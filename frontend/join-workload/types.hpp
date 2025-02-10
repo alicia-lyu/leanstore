@@ -16,7 +16,7 @@ DEFINE_uint32(read_percentage, 0, "");
 DEFINE_uint32(scan_percentage, 0, "");
 DEFINE_uint32(write_percentage, 100, "");
 DEFINE_uint32(order_size, 5, "Number of lines in a new order");
-DEFINE_bool(locality_read, false, "Lookup key in the read transactions are the same or smaller than the join key.");
+DEFINE_bool(locality_read, true, "Lookup key in the read transactions are the same or smaller than the join key.");
 DEFINE_bool(outer_join, false, "Outer join in the join transactions.");
 
 #if !defined(INCLUDE_COLUMNS)
