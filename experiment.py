@@ -54,7 +54,7 @@ class Experiment:
         log_pdir = self.home_dir / "logs"
         log_pdir.mkdir(exist_ok=True)
         log_str = self.summarize_config() + self.summarize_runtime_config()
-        log_dir = self.log_pdir / log_str
+        log_dir = log_pdir / log_str
         log_dir.mkdir(exist_ok=True)
         return log_dir
     
@@ -66,8 +66,8 @@ class Experiment:
         
         image_prefix = self.summarize_config()
         is_dir = "rocksdb" in self.method
-        target_path = self.image_pdir / image_prefix if is_dir else self.image_pdir / f"{image_prefix}.image"
-        archive_image = self.image_archive / image_prefix if is_dir else self.image_archive / f"{image_prefix}.image"
+        target_path = self.image_pdir / image_prefix
+        archive_image = self.image_archive / image_prefix
 
         if archive_image.exists():
             t1 = time.time()
@@ -178,11 +178,9 @@ if __name__ == "__main__":
     parser.add_argument('read_percentage', type=int, help="Percentage of read operations.")
     parser.add_argument('scan_percentage', type=int, help="Percentage of scan operations.")
     parser.add_argument('write_percentage', type=int, help="Percentage of write operations.")
-    # parser.add_argument('order_size', type=int, help="Order size.")
     parser.add_argument('selectivity', type=int, help="Selectivity percentage.")
     parser.add_argument('included_columns', type=int, help="Number of included columns.")
     parser.add_argument('duration', type=int, nargs='?', default=240, help="Duration to run the experiment (optional, default is 240 seconds).")
-    # parser.add_argument('locality_read', type=bool, nargs='?', default=False, help="Locality read (optional, default is False).")
     parser.add_argument('outer_join', type=bool, nargs='?', default=False, help="Outer join (optional, default is False).")
 
     args = parser.parse_args()
