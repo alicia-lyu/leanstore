@@ -10,14 +10,21 @@ class DBConfig:
         self.selectivity = selectivity
         self.included_columns = included_columns
         self.outer_join = outer_join
-        self.recovery_path = self.build_dir / f"{self.summarize()}.json"
         
         try:
             self.method = executable.stem.replace('_tpcc', '')
             self.build_dir = executable.parents[1]
             current_dir = Path(__file__).parent.resolve() if "__file__" in globals() else Path.cwd()
             self.home_dir = current_dir.parent.resolve()
-            self.image_path, self.archive_image = self.get_image_path()
+            
+            image_pdir = self.home_dir / "tmp"
+            image_archive = Path("/mnt/hdd/merged-index-images")
+            image_prefix = self.summarize()
+            self.target_path = image_pdir / image_prefix
+            self.archive_image = image_archive / image_prefix
+            self.reloc_image()
+            
+            self.recovery_path = self.build_dir / f"{self.summarize()}.json"
         except Exception as e:
             print(f"An error occurred: {e}")
         
@@ -31,30 +38,22 @@ class DBConfig:
     def __str__(self):
         return f"********** DB Config **********\n" + f"Method: {self.method}, Target: {self.target_gib} GiB, Selectivity: {self.selectivity}, Included Columns: {self.included_columns}, Outer Join: {self.outer_join}"
     
-    def get_image_path(self) -> Path:
-        self.image_pdir = self.home_dir / "tmp"
-        self.image_archive = Path("/mnt/hdd/merged-index-images")
-        self.image_pdir.mkdir(exist_ok=True)
-        self.image_archive.mkdir(exist_ok=True)
-        
-        image_prefix = self.summarize()
+    def reloc_image(self) -> Path:
         is_dir = "rocksdb" in self.method
-        target_path = self.image_pdir / image_prefix
-        archive_image = self.image_archive / image_prefix
+        self.target_path.parent.mkdir(exist_ok=True)
+        self.archive_image.parent.mkdir(exist_ok=True)
 
-        if archive_image.exists():
+        if self.archive_image.exists():
             t1 = time.time()
-            shutil.copy(archive_image, target_path)
+            shutil.copy(self.archive_image, self.target_path)
             t2 = time.time()
             print(f"Copying image took {t2 - t1} seconds.")
         else:
-            target_path.mkdir(exist_ok=True) if is_dir else target_path.touch()
-
-        return target_path, archive_image
+            self.target_path.mkdir(exist_ok=True) if is_dir else self.target_path.touch()
     
     def get_flags(self):
         return [
-        f"--ssd_path={self.image_path}", f"--recover_file={self.recovery_path}",
+        f"--ssd_path={self.target_path}", f"--recover_file={self.recovery_path}",
         "--vi=false", "--mv=false", "--isolation_level=ser", "--optimistic_scan=false",
         f"--target_gib={self.target_gib}", f"--tpcc_warehouse_count={self.target_gib}",
         f"--semijoin_selectivity={self.selectivity}", f"--outer_join={str(self.outer_join).lower()}"
@@ -79,7 +78,7 @@ class RuntimeConfig:
         self.scan_percentage = scan_percentage
         self.write_percentage = write_percentage
         self.duration = min(duration or 180, 180) if dram_gib >= dbconfig.target_gib * 2 else (duration or 240)
-        self.timestamp = datetime.now(ZoneInfo("US/Chicago")).strftime("%m-%d-%H-%M")
+        self.timestamp = datetime.now(ZoneInfo("US/Central")).strftime("%m-%d-%H-%M")
         
         self.log_dir = self.get_log_dir()
         
@@ -113,21 +112,22 @@ class RuntimeConfig:
     
     def to_csv_row(self, dram_gib=None):
         dram_gib = dram_gib or self.dram_gib
-        return [self.get_tx_type(), dram_gib, self.timestamp, self.dbconfig.log_dir.relative_to(self.dbconfig.log_pdir) / self.timestamp]
+        return [self.get_tx_type(), dram_gib, self.timestamp, self.log_dir.parent.stem + "/" + self.log_dir.stem]
     
     def get_log_dir(self) -> Path:
         log_pdir = self.dbconfig.home_dir / "logs"
         log_pdir.mkdir(exist_ok=True)
-        log_str = self.dbconfig.summarize() + self.summarize()
+        log_str = self.dbconfig.summarize() + "-" + self.summarize()
         log_dir = log_pdir / log_str
         log_dir.mkdir(exist_ok=True)
+        print(f"Log directory: {log_dir}")
         return log_dir
     
     def get_flags(self):
         return [
             f"--csv_path={self.get_csv_prefix()}", "--csv_truncate=true", "--pp_threads=1", "--worker_threads=2",
         ], [
-            f"--persist_file={self.dbconfig.recovery_path if self.persist else self.build_dir / "leanstore.json"}", 
+            f"--persist_file={self.dbconfig.recovery_path if self.persist else self.dbconfig.build_dir}/leanstore.json", 
             f"--dram_gib={self.dram_gib}",
             f"--read_percentage={self.read_percentage}", f"--scan_percentage={self.scan_percentage}", f"--write_percentage={self.write_percentage}", f"--run_for_seconds={self.duration}"
         ]
@@ -148,16 +148,16 @@ class Experiment:
             f"--persist_file={self.dbconfig.recovery_path}", f"--dram_gib={self.dbconfig.target_gib * 2}",
             f"--read_percentage=100", f"--scan_percentage=0", f"--write_percentage=0", f"--run_for_seconds=1"
         ], [
-            f"--persist_file={self.dbconfig.build_dir / "leanstore.json"}", f"--dram_gib={self.runtimeconfig.dram_gib}",
+            f"--persist_file={self.dbconfig.build_dir}/leanstore.json", f"--dram_gib={self.runtimeconfig.dram_gib}",
             f"--read_percentage={self.runtimeconfig.read_percentage}", f"--scan_percentage={self.runtimeconfig.scan_percentage}", f"--write_percentage={self.runtimeconfig.write_percentage}", f"--run_for_seconds={self.runtimeconfig.duration}"
         ]
     
     def __call__(self):
         print(self)
         # For beyond-memory workload without existing image (notable by persist_file), run in-memory and persist it first
-        if self.runtimeconfig.two_phase():
+        if self.two_phase():
             # Create DB in memory and persist it
-            flags1, flags2 = self.runtimeconfig.get_2p_flags()
+            flags1, flags2 = self.get_2p_flags()
             self.run_command(flags1)
             # Run the experiment with the persisted image
             self.runtimeconfig.persist = False
@@ -188,6 +188,9 @@ class Experiment:
 
             if image_size != archive_size:
                 print(f"Warning: image size mismatch between {self.image_path} and {self.archive_image}.")
+                return False
+        
+        return True
                 
     def cleanup_image(self):
         image_path = self.dbconfig.image_path
@@ -215,11 +218,11 @@ class Experiment:
         with open(stdout_log_path, 'a') as log_file:
             result = subprocess.run(cmd, stdout=log_file, stderr=None)
             
-        self.dbconfig.check_image_size(cmd.index("--write_percentage=0") != -1, result.returncode)
+        size_mismatch = self.check_image_size(cmd.index("--write_percentage=0") != -1, result.returncode)
 
         # Not touching recovery path, it will become meaningless
         # Only change it if any of the b-trees are modified (e.g. schema)
-        if not self.runtimeconfig.persist or result.returncode != 0:
+        if (not self.runtimeconfig.persist and not size_mismatch) or result.returncode != 0:
             self.cleanup_image()
         else:
             self.copy2archive()
