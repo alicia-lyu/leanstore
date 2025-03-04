@@ -49,8 +49,10 @@ check_perf_event_paranoid:
 
 .PHONY: check_perf_event_paranoid
 
+NUMJOBS := $(shell nproc)
+
 $(TARGETS): check_perf_event_paranoid
-	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) $(EXEC) -j
+	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) $(EXEC) -j$(NUMJOBS)
 
 executables: $(TARGETS)
 
