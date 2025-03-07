@@ -2,18 +2,9 @@
 
 #include "Tables.hpp"
 
-#define DEFINE_PROJECTED_TYPE(ProjectedName, BaseType, ...) \
-    struct ProjectedName##base : { \
-        using Base = BaseType; \
-        (void)std::initializer_list<int>{((void)__VA_ARGS__, 0)...}; /* Ensure members exist */ \
-    }; \
-    struct ProjectedName : public RecordPrototype<ProjectedName, __VA_ARGS__> {};
+#define JoinedViewName(T1, T2) joined_##T1##_##T2
 
-DEFINE_PROJECTED_TYPE(part_proj, part_t, &part_t::p_name)
-
-#define JoinedViewName(T1, T2) join_##T1##_##T2
-
-template <typename T1, typename T2, typename K1, typename K2>
+template <typename T1, typename T2, typename K1, typename K2, int id>
 class JoinedViewName(T1, T2) {
    public:
     struct key_base {
@@ -45,5 +36,9 @@ class JoinedViewName(T1, T2) {
     static constexpr unsigned maxFoldLength() { return T1::maxFoldLength() + T2::maxFoldLength(); }
 
     static constexpr unsigned rowSize() { return T1::rowSize() + T2::rowSize(); }
-    
 };
+
+#define DefineMergedView(T, id) \
+    template <int id> \
+    class merged_##T : public T {};
+
