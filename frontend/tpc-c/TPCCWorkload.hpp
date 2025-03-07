@@ -23,6 +23,8 @@ template <template <typename> class AdapterType, int id_count = 14>
 class TPCCJoinWorkload;
 template <template <typename> class AdapterType, class MergedAdapterType, int id_count = 14>
 class TPCCMergedWorkload;
+template <template <typename> class AdapterType>
+class TPCHWorkload;
 // -------------------------------------------------------------------------------------
 template <template <typename> class AdapterType>
 class TPCCWorkload
@@ -35,6 +37,9 @@ class TPCCWorkload
 
    template <template <typename> class, class, int>
    friend class TPCCMergedWorkload;
+
+   template <template <typename> class>
+   friend class TPCHWorkload;
 
   private:
    static constexpr INTEGER OL_I_ID_C = 7911;  // in range [0, 8191]
