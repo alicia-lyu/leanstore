@@ -12,7 +12,7 @@ class KeyPrototype {
 };
 
 template <typename T, auto T::* ...Members>
-class RecordPrototype {
+struct RecordPrototype {
     static constexpr unsigned rowSize() { return (sizeof(std::declval<T>().*Members) + ...); }
     
     template <class K, auto K::* ...KMembers>
@@ -118,7 +118,7 @@ struct customer_base {
     Varchar<117> c_comment;
 };
 
-struct customer_t : public customer_base, public RecordPrototype<customer_base, &customer_base::c_name, &customer_base::c_address, &customer_base::c_nationkey, &customer_base::c_phone, &customer_base::c_acctbal, &customer_base::c_mktsegment, &customer_base::c_comment> {};
+struct customerh_t : public customer_base, public RecordPrototype<customer_base, &customer_base::c_name, &customer_base::c_address, &customer_base::c_nationkey, &customer_base::c_phone, &customer_base::c_acctbal, &customer_base::c_mktsegment, &customer_base::c_comment> {};
 
 struct orders_base {
     static constexpr int id = 4;

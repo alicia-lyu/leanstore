@@ -1,44 +1,106 @@
 #pragma once
 
+#include <cstdint>
 #include "Tables.hpp"
 
-#define JoinedViewName(T1, T2) joined_##T1##_##T2
-
-template <typename T1, typename T2, typename K1, typename K2, int id>
-class JoinedViewName(T1, T2) {
+template <int TID, typename JK, typename... Ts>
+class Joined {
    public:
+    static constexpr int id = TID;
     struct key_base {
-        K1 key1;
-        K2 key2;
+        static constexpr int id = TID;
+        JK jk;
+        std::tuple<typename Ts::Key...> keys;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::key1, &key_base::key2> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::jk, &key_base::keys> {};
 
-    T1 record1;
-    T2 record2;
+    std::tuple<Ts...> payloads;
+
+    explicit Joined(std::tuple<Ts...> tuple) : payloads(std::move(tuple)) {}
+
+    template <typename K, size_t... Is>
+    static unsigned foldKeyHelper(uint8_t* out, const K& key, std::index_sequence<Is...>) {
+        unsigned pos = 0;
+        ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::foldKey(out + pos, key)), ...);
+        return pos;
+    }
 
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key) {
+        return foldKeyHelper(out, key, std::index_sequence_for<Ts...>{});
+    }
+
+    template <typename K, size_t... Is>
+    static unsigned unfoldKeyHelper(const uint8_t* in, K& key, std::index_sequence<Is...>) {
         unsigned pos = 0;
-        pos += T1::foldKey(out + pos, key.key1);
-        pos += T2::foldKey(out + pos, key.key2);
+        ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::unfoldKey(in + pos, key)), ...);
         return pos;
     }
 
     template <typename K>
     static unsigned unfoldKey(const uint8_t* in, K& key) {
+        return unfoldKeyHelper(in, key, std::index_sequence_for<Ts...>{});
+    }
+
+    static constexpr unsigned maxFoldLength() {
+        return (0 + ... + Ts::maxFoldLength());
+    }
+
+    static constexpr unsigned rowSize() {
+        return (0 + ... + Ts::rowSize());
+    }
+};
+
+class joinedPPsL_t : public Joined<11, part_t, partsupp_t, lineitem_t> {};
+
+template <int TID, typename T, typename JK, bool foldPK>
+struct merged {
+    static constexpr int id = TID;
+    struct key_base {
+        static constexpr int id = TID;
+        JK jk;
+        T::Key pk;
+    };
+    struct Key: public key_base, public KeyPrototype<key_base, &key_base::jk, &key_base::pk> {};
+
+    T payload;
+
+    static constexpr unsigned rowSize() { return T::rowSize(); }
+
+    static unsigned foldKey(uint8_t* out, const Key& key) {
         unsigned pos = 0;
-        pos += T1::unfoldKey(in + pos, key.key1);
-        pos += T2::unfoldKey(in + pos, key.key2);
+        pos += JK::keyfold(out + pos, key.jk);
+        if (foldPK)
+            pos += T::foldKey(out + pos, key.pk);
         return pos;
     }
 
-    static constexpr unsigned maxFoldLength() { return T1::maxFoldLength() + T2::maxFoldLength(); }
+    static unsigned unfoldKey(const uint8_t* in, Key& key) {
+        unsigned pos = 0;
+        pos += JK::keyfold(in + pos, key.jk);
+        if (foldPK)
+            pos += T::unfoldKey(in + pos, key.pk);
+        return pos;
+    }
 
-    static constexpr unsigned rowSize() { return T1::rowSize() + T2::rowSize(); }
+    static constexpr unsigned maxFoldLength() { return 0 + JK::maxFoldLength() + (foldPK ? T::maxFoldLength() : 0); }  
 };
 
-#define DefineMergedView(T, id) \
-    template <int id> \
-    class merged_##T : public T {};
+struct PPsL_JK {
+    Integer l_partkey;
+    Integer l_partsuppkey;
 
+    static unsigned keyfold(uint8_t* out, const PPsL_JK& key) {
+        unsigned pos = 0;
+        pos += fold(out + pos, key.l_partkey);
+        pos += fold(out + pos, key.l_partsuppkey);
+        return pos;
+    };
+};
+
+using merged_part_t = merged<12, part_t, PPsL_JK, false>;
+
+using merged_partsupp_t = merged<12, partsupp_t, PPsL_JK, false>;
+
+using merged_lineitem_t = merged<12, lineitem_t, PPsL_JK, true>;
