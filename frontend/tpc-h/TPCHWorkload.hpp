@@ -102,6 +102,16 @@ class TPCHWorkload
             return urand(1, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
         }
 
+        inline Integer getNationID()
+        {
+            return urand(1, NATION_COUNT);
+        }
+
+        inline Integer getRegionID()
+        {
+            return urand(1, REGION_COUNT);
+        }
+
         void resetTables()
         {
             for (auto& t : tables) {
@@ -296,26 +306,78 @@ class TPCHWorkload
             leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
         }
 
+        void printProgress(std::string msg, Integer i, Integer scale) {
+            if (i % 10000 == 1)
+                std::cout << "\rLoading " << msg << ": " << i / scale * 100 << "%";
+        }
+
         void loadPart() {
-            std::cout << "Loading part" << std::endl;
             for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
-                part.insert({i}, part_t());
+                part.insert({i}, part_t::generateRandomRecord());
+                printProgress("part", i, PART_SCALE * FLAGS_tpch_scale_factor);
             }
         }
 
-        void loadSupplier();
+        void loadSupplier() {
+            for (Integer i = 1; i <= SUPPLIER_SCALE * FLAGS_tpch_scale_factor; i++) {
+                supplier.insert({i}, supplier_t::generateRandomRecord([this]() {
+                    return this->getNationID();
+                }));
+                printProgress("supplier", i, SUPPLIER_SCALE * FLAGS_tpch_scale_factor);
+            }
+        }
 
-        void loadPartsupp();
+        void loadPartsupp() {
+            for (Integer i = 1; i <= PARTSUPP_SCALE * FLAGS_tpch_scale_factor; i++) {
+                partsupp.insert({i}, partsupp_t::generateRandomRecord());
+                printProgress("partsupp", i, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
+            }
+        }
 
-        void loadCustomer();
+        void loadCustomer() {
+            for (Integer i = 1; i <= CUSTOMER_SCALE * FLAGS_tpch_scale_factor; i++) {
+                customer.insert({i}, customerh_t::generateRandomRecord([this]() {
+                    return this->getNationID();
+                }));
+                printProgress("customer", i, CUSTOMER_SCALE * FLAGS_tpch_scale_factor);
+            }
+        }
 
-        void loadOrders();
+        void loadOrders() {
+            for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
+                orders.insert({i}, orders_t::generateRandomRecord([this]() {
+                    return this->getCustomerID();
+                }));
+                printProgress("orders", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
+            }
+        }
 
-        void loadLineitem();
+        void loadLineitem() {
+            for (Integer i = 1; i <= LINEITEM_SCALE * FLAGS_tpch_scale_factor; i++) {
+                lineitem.insert({i}, lineitem_t::generateRandomRecord([this]() {
+                    return this->getPartID();
+                }, [this]() {
+                    return this->getSupplierID();
+                }));
+                printProgress("lineitem", i, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
+            }
+        }
 
-        void loadNation();
+        void loadNation() {
+            for (Integer i = 1; i <= NATION_COUNT; i++) {
+                nation.insert({i}, nation_t::generateRandomRecord([this]() {
+                    return this->getRegionID();
+                }));
+                printProgress("nation", i, NATION_COUNT);
+            }
+        }
 
-        void loadRegion();
+        void loadRegion() {
+            for (Integer i = 1; i <= REGION_COUNT; i++) {
+                region.insert({i}, region_t::generateRandomRecord());
+                printProgress("region", i, REGION_COUNT);
+            }
+        }
 
         // ------------------------------------LOAD VIEWS-------------------------------------------------
 

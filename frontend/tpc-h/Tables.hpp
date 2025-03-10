@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <ostream>
 #include "../shared/Types.hpp"
 #include "randutils.hpp"
@@ -66,22 +67,12 @@ struct part_t : public part_base, public RecordPrototype<part_base,
     &part_base::p_retailprice,
     &part_base::p_comment>
 {
-    explicit part_t(Varchar<55> p_name,
-        Varchar<25> p_mfgr,
-        Varchar<10> p_brand,
-        Varchar<25> p_type,
-        Integer p_size,
-        Varchar<10> p_container,
-        Numeric p_retailprice,
-        Varchar<23> p_comment)
-        : part_base(p_name, p_mfgr, p_brand, p_type, p_size, p_container, p_retailprice, p_comment)
-    {
-    }
+    explicit part_t(part_base base) : part_base(base) {}
 
     static part_t generateRandomRecord()
     {
-        return part_t(randomastring<55>(0, 55), randomastring<25>(25, 25), randomastring<10>(10, 10), randomastring<25>(0, 25),
-            urand(1, 50) * 5, randomastring<10>(10, 10), randomNumeric(0.0000, 100.0000), randomastring<23>(0, 23));
+        return part_t({randomastring<55>(0, 55), randomastring<25>(25, 25), randomastring<10>(10, 10), randomastring<25>(0, 25),
+            urand(1, 50) * 5, randomastring<10>(10, 10), randomNumeric(0.0000, 100.0000), randomastring<23>(0, 23)});
     }
 };
 
@@ -103,20 +94,12 @@ struct supplier_base {
 };
 
 struct supplier_t : public supplier_base, public RecordPrototype<supplier_base, &supplier_base::s_name, &supplier_base::s_address, &supplier_base::s_nationkey, &supplier_base::s_phone, &supplier_base::s_acctbal, &supplier_base::s_comment> {
-    explicit supplier_t(Varchar<25> s_name,
-        Varchar<40> s_address,
-        Integer s_nationkey,
-        Varchar<15> s_phone,
-        Numeric s_acctbal,
-        Varchar<101> s_comment)
-        : supplier_base(s_name, s_address, s_nationkey, s_phone, s_acctbal, s_comment)
-    {
-    }
+    explicit supplier_t(supplier_base base) : supplier_base(base) {}
 
-    static supplier_t generateRandomRecord(int nation_count)
+    static supplier_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
-        return supplier_t(randomastring<25>(25, 25), randomastring<40>(0, 40), urand(1, nation_count), randomastring<15>(15, 15),
-            randomNumeric(0.0000, 100.0000), randomastring<101>(0, 101));
+        return supplier_t({randomastring<25>(25, 25), randomastring<40>(0, 40), generate_nationkey(), randomastring<15>(15, 15),
+            randomNumeric(0.0000, 100.0000), randomastring<101>(0, 101)});
     }
 };
 
@@ -135,7 +118,14 @@ struct partsupp_base {
     Varchar<199> ps_comment;
 };
 
-struct partsupp_t : public partsupp_base, public RecordPrototype<partsupp_base, &partsupp_base::ps_availqty, &partsupp_base::ps_supplycost, &partsupp_base::ps_comment> {};
+struct partsupp_t : public partsupp_base, public RecordPrototype<partsupp_base, &partsupp_base::ps_availqty, &partsupp_base::ps_supplycost, &partsupp_base::ps_comment> {
+    explicit partsupp_t(partsupp_base base) : partsupp_base(base) {}
+
+    static partsupp_t generateRandomRecord()
+    {
+        return partsupp_t({urand(1, 100000), randomNumeric(0.0000, 100.0000), randomastring<199>(0, 199)});
+    }
+};
 
 struct customer_base {
     static constexpr int id = 3;
@@ -156,21 +146,12 @@ struct customer_base {
 };
 
 struct customerh_t : public customer_base, public RecordPrototype<customer_base, &customer_base::c_name, &customer_base::c_address, &customer_base::c_nationkey, &customer_base::c_phone, &customer_base::c_acctbal, &customer_base::c_mktsegment, &customer_base::c_comment> {
-    explicit customerh_t(Varchar<25> c_name,
-        Varchar<40> c_address,
-        Integer c_nationkey,
-        Varchar<15> c_phone,
-        Numeric c_acctbal,
-        Varchar<10> c_mktsegment,
-        Varchar<117> c_comment)
-        : customer_base(c_name, c_address, c_nationkey, c_phone, c_acctbal, c_mktsegment, c_comment)
-    {
-    }
+    explicit customerh_t(customer_base base) : customer_base(base) {}
 
-    static customerh_t generateRandomRecord(int nation_count)
+    static customerh_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
-        return customerh_t(randomastring<25>(0, 25), randomastring<40>(0, 40), urand(1, nation_count), randomastring<15>(15, 15),
-            randomNumeric(0.0000, 100.0000), randomastring<10>(10, 10), randomastring<117>(0, 117));
+        return customerh_t({randomastring<25>(0, 25), randomastring<40>(0, 40), generate_nationkey(), randomastring<15>(15, 15),
+            randomNumeric(0.0000, 100.0000), randomastring<10>(10, 10), randomastring<117>(0, 117)});
     }
 };
 
@@ -195,21 +176,13 @@ struct orders_base {
 
 struct orders_t : public orders_base, public RecordPrototype<orders_base, &orders_base::o_custkey, &orders_base::o_orderstatus, &orders_base::o_totalprice, &orders_base::o_orderdate, &orders_base::o_orderpriority, &orders_base::o_clerk, &orders_base::o_shippriority, &orders_base::o_comment> {
 
-    explicit orders_t(Integer o_custkey,
-        Varchar<1> o_orderstatus,
-        Numeric o_totalprice,
-        Timestamp o_orderdate,
-        Varchar<15> o_orderpriority,
-        Varchar<15> o_clerk,
-        Integer o_shippriority,
-        Varchar<79> o_comment)
-        : orders_base(o_custkey, o_orderstatus, o_totalprice, o_orderdate, o_orderpriority, o_clerk, o_shippriority, o_comment)
-    {
-    }
+    explicit orders_t(orders_base base) : orders_base(base) {}
 
-    static orders_t generateRandomRecord()
+    static orders_t generateRandomRecord(std::function<int()> generate_custkey)
     {
-        // TODO
+        return orders_t({generate_custkey(),
+            randomastring<1>(1, 1), randomNumeric(0.0000, 100.0000), urand(1, 10000), randomastring<15>(15, 15),
+            randomastring<15>(15, 15), urand(0, 5), randomastring<79>(0, 79)});
     }
 };
 
@@ -240,7 +213,16 @@ struct lineitem_base {
     Varchar<44> l_comment;
 };
 
-struct lineitem_t : public lineitem_base, public RecordPrototype<lineitem_base, &lineitem_base::l_partkey, &lineitem_base::l_suppkey, &lineitem_base::l_quantity, &lineitem_base::l_extendedprice, &lineitem_base::l_discount, &lineitem_base::l_tax, &lineitem_base::l_returnflag, &lineitem_base::l_linestatus, &lineitem_base::l_shipdate, &lineitem_base::l_commitdate, &lineitem_base::l_receiptdate, &lineitem_base::l_shipinstruct, &lineitem_base::l_shipmode, &lineitem_base::l_comment> {};
+struct lineitem_t : public lineitem_base, public RecordPrototype<lineitem_base, &lineitem_base::l_partkey, &lineitem_base::l_suppkey, &lineitem_base::l_quantity, &lineitem_base::l_extendedprice, &lineitem_base::l_discount, &lineitem_base::l_tax, &lineitem_base::l_returnflag, &lineitem_base::l_linestatus, &lineitem_base::l_shipdate, &lineitem_base::l_commitdate, &lineitem_base::l_receiptdate, &lineitem_base::l_shipinstruct, &lineitem_base::l_shipmode, &lineitem_base::l_comment> {
+    explicit lineitem_t(lineitem_base base) : lineitem_base(base) {}
+
+    static lineitem_t generateRandomRecord(std::function<int()> generate_partkey, std::function<int()> generate_suppkey)
+    {
+        return lineitem_t({generate_partkey(), generate_suppkey(), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000),
+            randomastring<1>(1, 1), randomastring<1>(1, 1), urand(1, 10000), urand(1, 10000), urand(1, 10000),
+            randomastring<25>(25, 25), randomastring<10>(10, 10), randomastring<44>(44, 44)});
+    }
+};
 
 struct nation_base {
     static constexpr int id = 6;
@@ -256,7 +238,14 @@ struct nation_base {
     Varchar<152> n_comment;
 };
 
-struct nation_t : public nation_base, public RecordPrototype<nation_base, &nation_base::n_name, &nation_base::n_regionkey, &nation_base::n_comment> {};
+struct nation_t : public nation_base, public RecordPrototype<nation_base, &nation_base::n_name, &nation_base::n_regionkey, &nation_base::n_comment> {
+    explicit nation_t(nation_base base) : nation_base(base) {}
+
+    static nation_t generateRandomRecord(std::function<int()> generate_regionkey)
+    {
+        return nation_t({randomastring<25>(0, 25), generate_regionkey(), randomastring<152>(0, 152)});
+    }
+};
 
 struct region_base {
     static constexpr int id = 7;
@@ -271,4 +260,11 @@ struct region_base {
     Varchar<152> r_comment;
 };
 
-struct region_t : public region_base, public RecordPrototype<region_base, &region_base::r_name, &region_base::r_comment> {};
+struct region_t : public region_base, public RecordPrototype<region_base, &region_base::r_name, &region_base::r_comment> {
+    explicit region_t(region_base base) : region_base(base) {}
+
+    static region_t generateRandomRecord()
+    {
+        return region_t({randomastring<25>(0, 25), randomastring<152>(0, 152)});
+    }
+};
