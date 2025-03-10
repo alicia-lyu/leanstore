@@ -4,15 +4,18 @@
 #include <chrono>
 #include <functional>
 #include <vector>
+#include <fstream>
+
 #include "Views.hpp"
-#include "leanstore/utils/RandomGenerator.hpp"
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
-#include "leanstore/concurrency-recovery/HistoryTree.hpp"
+#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/profiling/tables/CRTable.hpp"
 #include "leanstore/profiling/tables/DTTable.hpp"
 #include "leanstore/profiling/tables/ConfigsTable.hpp"
+
+
 #include "../join-workload/Join.hpp"
 #include "tabulate/table.hpp"
 
@@ -41,6 +44,7 @@ class TPCHWorkload
     AdapterType<lineitem_t>& lineitem;
     AdapterType<nation_t>& nation;
     AdapterType<region_t>& region;
+    AdapterType<history_t>& history;
     // TODO: Views
     AdapterType<joinedPPsL_t>& joinedPPsL;
     MergedAdapterType& mergedPPsL;
@@ -67,11 +71,6 @@ class TPCHWorkload
         static constexpr Integer PARTSUPP_SCALE = 800000;
         static constexpr Integer NATION_COUNT = 25;
         static constexpr Integer REGION_COUNT = 5;
-        
-        // [0, n)
-        Integer rnd(Integer n) { return leanstore::utils::RandomGenerator::getRand(0, n); }
-        // [low, high]
-        Integer urand(Integer low, Integer high) { return rnd(high - low + 1) + low; }
 
         inline Integer getPartID()
         {
@@ -93,17 +92,16 @@ class TPCHWorkload
             return urand(1, ORDERS_SCALE * FLAGS_tpch_scale_factor);
         }
 
-        inline Integer getLineItemID()
+        inline Integer getLineitemID()
         {
             return urand(1, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
         }
 
-        inline Integer getPartsuppID()
+        inline Integer getPartSuppID()
         {
             return urand(1, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
         }
 
-        // TODO: Move profiling tables here
         void resetTables()
         {
             for (auto& t : tables) {
@@ -117,9 +115,9 @@ class TPCHWorkload
             std::vector<std::ofstream> csvs;
             std::ofstream::openmode open_flags;
             if (FLAGS_csv_truncate) {
-                open_flags = ios::trunc;
+                open_flags = std::ios::trunc;
             } else {
-                open_flags = ios::app;
+                open_flags = std::ios::app;
             }
             std::string csv_dir_abs = FLAGS_csv_path + "/" + csv_dir;
             for (u64 t_i = 0; t_i < tables.size() + 1; t_i++) {
@@ -131,7 +129,7 @@ class TPCHWorkload
                     csv.open(csv_dir_abs + "sum.csv", open_flags); // summary
                     continue;
                 }
-                csv.seekp(0, ios::end);
+                csv.seekp(0, std::ios::end);
                 csv << std::setprecision(2) << std::fixed;
                 if (csv.tellp() == 0 && t_i < tables.size()) { // summary is output below
                     csv << "c_hash";
@@ -224,6 +222,7 @@ class TPCHWorkload
         // TXs: Measure end-to-end time
         void basicJoin() {
             // Enumrate materialized view
+            resetTables();
             auto mtdv_start = std::chrono::high_resolution_clock::now();
             joinedPPsL.scan(
                 {},
@@ -231,8 +230,10 @@ class TPCHWorkload
             );
             auto mtdv_end = std::chrono::high_resolution_clock::now();
             auto mtdv_t = std::chrono::duration_cast<std::chrono::microseconds>(mtdv_end - mtdv_start).count();
+            logTables(mtdv_t, "mtdv");
 
             // Scan merged index + join on the fly
+            resetTables();
             auto merged_start = std::chrono::high_resolution_clock::now();
             using JoinedRec = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>;
             using JoinedKey = JoinedRec::Key;
@@ -272,6 +273,7 @@ class TPCHWorkload
             );
             auto merged_end = std::chrono::high_resolution_clock::now();
             auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
+            logTables(merged_t, "merged");
         }
 
         void basicGroup();
@@ -280,9 +282,26 @@ class TPCHWorkload
 
         // ------------------------------------LOAD-------------------------------------------------
 
-        void prepare();
+        void prepare() {
+            std::cout << "Preparing TPC-C" << std::endl;
+            Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
+            Integer h_id = 0;
+            history.scanDesc(
+                {t_id, std::numeric_limits<Integer>::max()},
+                [&](const history_t::Key& key, const history_t&) {
+                    h_id = key.h_pk + 1;
+                    return false;
+                },
+                []() {});
+            leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
+        }
 
-        void loadPart();
+        void loadPart() {
+            std::cout << "Loading part" << std::endl;
+            for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
+                part.insert({i}, part_t());
+            }
+        }
 
         void loadSupplier();
 
