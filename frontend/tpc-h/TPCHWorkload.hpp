@@ -92,16 +92,6 @@ class TPCHWorkload
             return urand(1, ORDERS_SCALE * FLAGS_tpch_scale_factor);
         }
 
-        inline Integer getLineitemID()
-        {
-            return urand(1, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
-        }
-
-        inline Integer getPartSuppID()
-        {
-            return urand(1, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
-        }
-
         inline Integer getNationID()
         {
             return urand(1, NATION_COUNT);
@@ -257,27 +247,42 @@ class TPCHWorkload
                     cached_partsupp.clear();
                 }
             };
-            mergedPPsL.scan(
-                {},
-                [&](const merged_part_t::Key& k, const merged_part_t& v) {
-                    comp_clear(k.jk);
-                    cached_part.push_back({k, v});
-                },
-                [&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
-                    comp_clear(k.jk);
-                    cached_partsupp.push_back({k, v});
-                },
-                [&](const merged_lineitem_t::Key& k, const merged_lineitem_t& v) {
-                    comp_clear(k.jk);
-                    for (auto& [pk, pv] : cached_part) {
-                        for (auto& [psk, psv] : cached_partsupp) {
-                            [[maybe_unused]]
-                            JoinedKey joined_key = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>::Key{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)};
-                            [[maybe_unused]]
-                            JoinedRec joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
-                            // Do something with the result
-                        }
+            u8 start_jk[PPsL_JK::maxFoldLength()];
+            PPsL_JK::keyfold(start_jk, current_jk);
+
+            auto part_descriptor = MergedAdapterType::template create<merged_part_t>([&](const merged_part_t::Key& k, const merged_part_t& v) {
+                comp_clear(k.jk);
+                cached_part.push_back({k, v});
+                return false;
+            });
+
+            auto partsupp_descriptor = MergedAdapterType::template create<merged_partsupp_t>([&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
+                comp_clear(k.jk);
+                cached_partsupp.push_back({k, v});
+                return false;
+            });
+
+            auto lineitem_descriptor = MergedAdapterType::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k, const merged_lineitem_t& v) {
+                comp_clear(k.jk);
+                for (auto& [pk, pv] : cached_part) {
+                    for (auto& [psk, psv] : cached_partsupp) {
+                        [[maybe_unused]]
+                        JoinedKey joined_key = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>::Key{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)};
+                        [[maybe_unused]]
+                        JoinedRec joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
+                        // Do something with the result
                     }
+                }
+                return false;
+            });
+
+            mergedPPsL.scan(
+                start_jk,
+                PPsL_JK::maxFoldLength(),
+                std::vector<typename MergedAdapterType::ScanCallbackDescriptor>{
+                    part_descriptor,
+                    partsupp_descriptor,
+                    lineitem_descriptor
                 },
                 [&]() { } // undo
             );
