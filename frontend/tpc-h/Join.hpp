@@ -1,5 +1,6 @@
 #pragma once
 #include <functional>
+#include <optional>
 #include <vector>
 #include "Units.hpp"
 
@@ -44,36 +45,38 @@ class Join
       nextRight = nextRightFunc();
    }
 
-   std::pair<Key, Rec> next()
+   std::optional<std::pair<Key, Rec>> next()
    {
-      if (cachedRightPtr < cachedRight.size() && cachedRight.size() > 0) {  // Matching remains in current records
+      if (curr_left == std::pair<LeftKey, LeftRec>()) {
+         // Regular record is not zero-initialized
+         return std::nullopt;
+      }
+      if (cachedRight.size() > 0) {
+         if (cachedRightPtr == cachedRight.size())
+            curr_left = nextLeftFunc();
          auto curr_right = nextCachedRight();
-         return merge(curr_left.first, curr_left.second, curr_right.first, curr_right.second);
-      } else if (cachedRightPtr == cachedRight.size() && cachedRightPtr > 0) {
-         // Matching exhausted cached right
-         curr_left = nextLeftFunc();
-         auto curr_right = nextCachedRight();
-         if (extractLeftJKFunc(curr_left) == extractRightJKFunc(curr_right)) {
-            return next();  // go to first arm
-         } else {
+         if (cachedRightPtr != 0 || extractLeftJKFunc(curr_left) == extractRightJKFunc(curr_right)) { // current left & right match
+            return merge(curr_left.first, curr_left.second, curr_right.first, curr_right.second);
+         } else { // current left & right do not match
             cachedRight.clear();
+            assert(cachedRightPtr = 0);
          }
-      }  // else proceed
+      } // else proceed
       // zig zag to new current
       auto left_jk = extractLeftJKFunc(curr_left);
       auto right_jk = extractRightJKFunc(nextRight);
       if (left_jk < right_jk) {
          curr_left = nextLeftFunc();
-         return next();  // go to third (not explicit) arm and zig zag
+         return next();  // go to second if-else
       } else if (left_jk == right_jk) {
-         while (extractRightJKFunc(nextRight) == right_jk) {
+         while (extractRightJKFunc(nextRight) == left_jk) {
             cachedRight.push_back(nextRight);
             nextRight = nextRightFunc();
          }
-         return next();  // go to first arm
+         return next();  // go to first if-else
       } else {
          nextRight = nextRightFunc();
-         return next();  // go to third arm
+         return next();  // go to second if-else
       }
    };
 
