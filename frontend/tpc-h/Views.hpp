@@ -96,6 +96,10 @@ struct PPsL_JK {
         return pos;
     };
 
+    static constexpr unsigned maxFoldLength() {
+        return sizeof(Integer) + sizeof(Integer);
+    }
+
     bool operator==(const PPsL_JK& other) const {
         return l_partkey == other.l_partkey && l_partsuppkey == other.l_partsuppkey;
     }

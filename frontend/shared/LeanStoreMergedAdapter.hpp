@@ -185,6 +185,53 @@ struct LeanStoreMergedAdapter {
          cr::Worker::my().abortTX();
       }
    }
+   struct ScanCallbackDescriptor
+   {
+      using UntypedCallbackFn = bool (*)(const void*, const void*);
+
+      u16 folded_key_len;
+      u16 payload_size;
+      UntypedCallbackFn callback;
+      void* user_callback;
+
+      template <class Rec>
+      static ScanCallbackDescriptor create(std::function<bool(const typename Rec::Key&, const Rec&)> cb)
+      {
+         return {
+            Rec::maxFoldLength(),
+            sizeof(Rec),
+            [cb](const void* key, const void* payload) -> bool {
+               typename Rec::Key typed_key;
+               Rec::unfoldKey(key, typed_key);
+               auto& typed_payload = *reinterpret_cast<const Rec*>(payload);
+               return cb(typed_key, typed_payload);
+            },
+            std::function<bool(const typename Rec::Key&, const Rec&)>(std::move(cb))
+         };
+      }
+   };
+   void scan(u8* start_jk,
+         const u16 jk_len,
+         std::vector<ScanCallbackDescriptor> callback_descriptors,
+         std::function<void()> undo)
+   {
+   OP_RESULT ret = btree->scanAsc(
+      start_jk, jk_len,
+      [&](const u8* key_data, u16 key_length, const u8* payload, u16 payload_length) {
+         for (auto& desc : callback_descriptors) {
+            if (desc.folded_key_len == key_length && desc.payload_size == payload_length) {
+               return desc.callback(key_data, payload);
+            }
+         }
+         UNREACHABLE();
+      },
+      undo
+      );
+
+      if (ret == leanstore::OP_RESULT::ABORT_TX) {
+      cr::Worker::my().abortTX();
+      }
+   }
    // -------------------------------------------------------------------------------------
    template <class Field, class Record>
    Field lookupField(const typename Record::Key& key, Field Record::*f)
