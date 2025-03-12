@@ -14,6 +14,8 @@ using namespace leanstore;
 template <class Record>
 struct LeanStoreAdapter : Adapter<Record> {
    leanstore::KVInterface* btree;
+   leanstore::storage::btree::BTreeGeneric* btree_generic;
+   std::unique_ptr<leanstore::storage::btree::BTreeSharedIterator> it;
    string name;
    LeanStoreAdapter()
    {
@@ -34,6 +36,8 @@ struct LeanStoreAdapter : Adapter<Record> {
             btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
          }
       }
+      btree_generic = static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree));
+      it = std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(*btree_generic);
    }
    // -------------------------------------------------------------------------------------
    void printTreeHeight() { cout << name << " height = " << btree->getHeight() << endl; }
@@ -173,6 +177,36 @@ struct LeanStoreAdapter : Adapter<Record> {
       if (ret == leanstore::OP_RESULT::ABORT_TX) {
          cr::Worker::my().abortTX();
       }
+   }
+   
+   std::pair<typename Record::Key, Record> next() final {
+      leanstore::OP_RESULT res = it->next();
+      if (res != leanstore::OP_RESULT::OK)
+         return std::make_pair(typename Record::Key(), Record());
+      this->produced++;
+      it->assembleKey();
+      leanstore::Slice key = it->key();
+      leanstore::Slice payload = it->value();
+
+      Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
+
+      typename Record::Key typed_key;
+      Record::unfoldKey(key.data(), typed_key);
+      return std::make_pair({typed_key, typed_payload});
+   };
+
+   void seek(const typename Record::Key& key) final {
+      u8 keyBuffer[Record::maxFoldLength()];
+      Record::foldKey(keyBuffer, key);
+      leanstore::Slice keySlice(keyBuffer, Record::maxFoldLength());
+      leanstore::OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) {
+         std::cerr << "LeanStoreAdapter::seek failed" << std::endl;
+      }
+   }
+
+   void resetIterator() final {
+      it->reset();
    }
    // -------------------------------------------------------------------------------------
    template <class Field>

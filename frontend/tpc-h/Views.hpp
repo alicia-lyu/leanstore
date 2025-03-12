@@ -111,6 +111,10 @@ using merged_partsupp_t = merged<12, partsupp_t, PPsL_JK, false>;
 
 using merged_lineitem_t = merged<12, lineitem_t, PPsL_JK, true>;
 
-struct joinedPPsL_t : public Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t> {
-    joinedPPsL_t(merged_part_t p, merged_partsupp_t ps, merged_lineitem_t l): Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::make_tuple(p.payload, ps.payload, l.payload)) {}
+struct joinedPPs_t : public Joined<11, PPsL_JK, part_t, partsupp_t> {
+    joinedPPs_t(merged_part_t p, merged_partsupp_t ps): Joined<11, PPsL_JK, part_t, partsupp_t>(std::make_tuple(p.payload, ps.payload)) {};
+};
+
+struct joinedPPsL_t : public Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t> {
+    joinedPPsL_t(merged_part_t p, merged_partsupp_t ps, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::make_tuple(p.payload, ps.payload, l.payload)) {}
 };
