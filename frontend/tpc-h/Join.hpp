@@ -5,31 +5,27 @@
 #include "Units.hpp"
 
 // merge join
+// LATER: outer join
 template <typename Key, typename Rec, typename LeftKey, typename LeftRec, typename RightKey, typename RightRec>
 class Join
 {
-   std::function<Key(LeftKey, LeftRec)> extractLeftJKFunc;
-   std::function<Key(RightKey, RightRec)> extractRightJKFunc;
+   std::function<Key(LeftKey&, LeftRec&)> extractLeftJKFunc;
+   std::function<Key(RightKey&, RightRec&)> extractRightJKFunc;
    std::function<LeftKey(u8*, u16)> unfoldLeftKeyFunc;
    std::function<RightKey(u8*, u16)> unfoldRightKeyFunc;
 
    std::vector<std::pair<RightKey, RightRec>> cachedRight;
    int cachedRightPtr;
-   std::function<std::pair<LeftKey, LeftRec>> nextLeftFunc;
-   std::function<std::pair<RightKey, RightRec>> nextRightFunc;
+   std::function<std::pair<LeftKey, LeftRec>()> nextLeftFunc;
+   std::function<std::pair<RightKey, RightRec>()> nextRightFunc;
 
    std::pair<LeftKey, LeftRec> curr_left;
-
-   std::pair<RightKey, RightRec> nextCachedRight() { 
-      cachedRightPtr = ++cachedRightPtr % cachedRight.size();
-      return cachedRight.at(); 
-   }
 
    std::pair<RightKey, RightRec> nextRight;
 
   public:
-   Join(std::function<Key(LeftKey, LeftRec)> extractLeftJKFunc,
-        std::function<Key(RightKey, RightRec)> extractRightJKFunc,
+   Join(std::function<Key(LeftKey&, LeftRec&)> extractLeftJKFunc,
+        std::function<Key(RightKey&, RightRec&)> extractRightJKFunc,
         std::function<LeftKey(u8*, u16)> unfoldLeftKeyFunc,
         std::function<RightKey(u8*, u16)> unfoldRightKeyFunc,
         std::function<std::pair<LeftKey, LeftRec>()> nextLeftFunc,
@@ -53,14 +49,17 @@ class Join
       }
       if (cachedRight.size() > 0) {
          if (cachedRightPtr == cachedRight.size())
+         {
+            // see whether next left matches cached right
             curr_left = nextLeftFunc();
-         auto curr_right = nextCachedRight();
-         if (cachedRightPtr != 0 || extractLeftJKFunc(curr_left) == extractRightJKFunc(curr_right)) { // current left & right match
-            return merge(curr_left.first, curr_left.second, curr_right.first, curr_right.second);
-         } else { // current left & right do not match
-            cachedRight.clear();
-            assert(cachedRightPtr = 0);
+            cachedRightPtr = 0;
+            if (extractLeftJKFunc(curr_left) != extractRightJKFunc(cachedRight.front())) {
+               cachedRight.clear();
+               return next(); // go to second if-else
+            }
          }
+         auto curr_right = cachedRight.at(cachedRightPtr++);
+         return merge(curr_left.first, curr_left.second, curr_right.first, curr_right.second);
       } // else proceed
       // zig zag to new current
       auto left_jk = extractLeftJKFunc(curr_left);
