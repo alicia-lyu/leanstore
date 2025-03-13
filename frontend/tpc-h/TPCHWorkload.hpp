@@ -99,43 +99,8 @@ class TPCHWorkload
       }
    }
 
-   void logTables(std::chrono::microseconds elapsed, std::string csv_dir)
+   std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>> summarizeStats(std::chrono::microseconds elapsed)
    {
-      u64 config_hash = configs_table.hash();
-      std::vector<std::ofstream> csvs;
-      std::ofstream::openmode open_flags;
-      if (FLAGS_csv_truncate) {
-         open_flags = std::ios::trunc;
-      } else {
-         open_flags = std::ios::app;
-      }
-      std::string csv_dir_abs = FLAGS_csv_path + "/" + csv_dir;
-      for (u64 t_i = 0; t_i < tables.size() + 1; t_i++) {
-         csvs.emplace_back();
-         auto& csv = csvs.back();
-         if (t_i < tables.size())
-            csv.open(csv_dir_abs + "/" + tables[t_i]->getName() + ".csv", open_flags);
-         else {
-            csv.open(csv_dir_abs + "sum.csv", open_flags);  // summary
-            continue;
-         }
-         csv.seekp(0, std::ios::end);
-         csv << std::setprecision(2) << std::fixed;
-         if (csv.tellp() == 0 && t_i < tables.size()) {  // summary is output below
-            csv << "c_hash";
-            for (auto& c : tables[t_i]->getColumns()) {
-               csv << "," << c.first;
-            }
-            csv << endl;
-            csv << config_hash;
-            assert(tables[t_i]->size() == 1);
-            for (auto& c : tables[t_i]->getColumns()) {
-               csv << "," << c.second.values[0];
-            }
-            csv << endl;
-         }
-      }
-
       std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_header;
       std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_data;
       tx_console_header.reserve(20);
@@ -199,6 +164,50 @@ class TPCHWorkload
 
       tx_console_data.push_back(std::to_string(dt_page_reads));
       tx_console_data.push_back(std::to_string(dt_page_writes));
+
+      return {tx_console_header, tx_console_data};
+   }
+
+   void logTables(std::chrono::microseconds elapsed, std::string csv_dir)
+   {
+      u64 config_hash = configs_table.hash();
+      std::vector<std::ofstream> csvs;
+      std::string csv_dir_abs = FLAGS_csv_path + "/" + csv_dir;
+      for (u64 t_i = 0; t_i < tables.size(); t_i++) {
+         csvs.emplace_back();
+         auto& csv = csvs.back();
+         csv.open(csv_dir_abs + "/" + tables[t_i]->getName() + ".csv", std::ios::app);
+         csv << std::setprecision(2) << std::fixed;
+
+         if (csv.tellp() == 0) { // no header
+            csv << "c_hash";
+            for (auto& c : tables[t_i]->getColumns()) {
+               csv << "," << c.first;
+            }
+            csv << endl;
+         }
+         csv << config_hash;
+         assert(tables[t_i]->size() == 1);
+         for (auto& c : tables[t_i]->getColumns()) {
+            csv << "," << c.second.values[0];
+         }
+         csv << endl;
+         csv.close();
+
+         auto [tx_console_header, tx_console_data] = summarizeStats(elapsed);
+         std::ofstream csv_sum;
+         csv_sum.open(csv_dir_abs + "sum.csv", std::ios::app);
+         if (csv_sum.tellp() == 0) { // no header
+            for (auto& h: tx_console_header) {
+               std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, h);
+            }
+            csv_sum << endl;
+         }
+         for (auto& d: tx_console_data) {
+            std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, d);
+         }
+         csv_sum << endl;
+      }
    }
 
   public:
