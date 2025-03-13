@@ -278,7 +278,7 @@ class TPCHWorkload
    void prepare()
    {
       std::cout << "Preparing TPC-C" << std::endl;
-      Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
+      [[maybe_unused]] Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
       Integer h_id = 0;
       leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
    }
@@ -357,6 +357,7 @@ class TPCHWorkload
 
    void loadBasicJoin()
    {
+      // first join
       this->part.resetIterator();
       this->partsupp.resetIterator();
       Join<joinedPPs_t::Key, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
@@ -381,19 +382,42 @@ class TPCHWorkload
          auto& [k, v] = *kv;
          joinedPPs.insert(k, v);
       }
-      this->joinedPPs.resetIterator();
       // sort lineitem
       this->lineitem.resetIterator();
       while (true) {
          auto kv = this->lineitem.next();
-         if (kv == std::nullopt) {
+         if (kv == std::nullopt)
             break;
-         }
          auto& [k, v] = *kv;
          PPsL_JK jk{k.l_partkey, k.l_partsuppkey};
          merged_lineitem_t::Key k_new({jk, k});
          merged_lineitem_t v_new(v);
          this->sortedLineitem.insert(k_new, v_new);
+      }
+      // second join
+      this->joinedPPs.resetIterator();
+      this->sortedLineitem.resetIterator();
+      Join<joinedPPsL_t::Key, joinedPPsL_t, joinedPPs_t::Key, joinedPPs_t, merged_lineitem_t::Key, merged_lineitem_t> join2(
+          [](joinedPPs_t::Key& k, joinedPPs_t&) { return k.jk; },
+          [](merged_lineitem_t::Key& k, merged_lineitem_t&) { return k.jk; },
+          [](u8* in, u16) {
+             joinedPPs_t::Key k;
+             return joinedPPs_t::unfoldKey(in, k);
+          },
+          [](u8* in, u16) {
+             merged_lineitem_t::Key k;
+             return merged_lineitem_t::unfoldKey(in, k);
+          },
+          [this]() { return this->joinedPPs.next(); },
+          [this]() { return this->sortedLineitem.next(); }
+      );
+      while (true) {
+         auto kv = join2.next();
+         if (kv == std::nullopt) {
+            break;
+         }
+         auto& [k, v] = *kv;
+         joinedPPsL.insert(k, v);
       }
    };
 
