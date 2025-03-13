@@ -7,6 +7,7 @@
 #include "Tables.hpp"
 
 #include "Views.hpp"
+#include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
@@ -18,7 +19,7 @@
 #include "Join.hpp"
 #include "tabulate/table.hpp"
 
-DEFINE_int32(tpch_scale_factor, 1, "TPC-H scale factor");
+DEFINE_int64(tpch_scale_factor, 1, "TPC-H scale factor");
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCHWorkload
@@ -55,7 +56,11 @@ class TPCHWorkload
                 AdapterType<orders_t>& o,
                 AdapterType<lineitem_t>& l,
                 AdapterType<nation_t>& n,
-                AdapterType<region_t>& r)
+                AdapterType<region_t>& r,
+                MergedAdapterType& mbj,
+                AdapterType<joinedPPsL_t>& jppsl,
+                AdapterType<joinedPPs_t>& jpps,
+                AdapterType<merged_lineitem_t>& sl)
        : part(p),
          supplier(s),
          partsupp(ps),
@@ -64,10 +69,15 @@ class TPCHWorkload
          lineitem(l),
          nation(n),
          region(r),
+         mergedPPsL(mbj),
+         joinedPPsL(jppsl),
+         joinedPPs(jpps),
+         sortedLineitem(sl),
          bm_table(*buffer_manager.get()),
          dt_table(*buffer_manager.get()),
          tables({&bm_table, &dt_table, &cpu_table, &cr_table})
    {
+      leanstore::LeanStore::addS64Flag("TPCH_SCALE", &FLAGS_tpch_scale_factor);
    }
 
   private:
@@ -99,7 +109,8 @@ class TPCHWorkload
       }
    }
 
-   std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>> summarizeStats(std::chrono::microseconds elapsed)
+   std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>>
+   summarizeStats(std::chrono::microseconds elapsed)
    {
       std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_header;
       std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_data;
@@ -179,7 +190,7 @@ class TPCHWorkload
          csv.open(csv_dir_abs + "/" + tables[t_i]->getName() + ".csv", std::ios::app);
          csv << std::setprecision(2) << std::fixed;
 
-         if (csv.tellp() == 0) { // no header
+         if (csv.tellp() == 0) {  // no header
             csv << "c_hash";
             for (auto& c : tables[t_i]->getColumns()) {
                csv << "," << c.first;
@@ -197,13 +208,13 @@ class TPCHWorkload
          auto [tx_console_header, tx_console_data] = summarizeStats(elapsed);
          std::ofstream csv_sum;
          csv_sum.open(csv_dir_abs + "sum.csv", std::ios::app);
-         if (csv_sum.tellp() == 0) { // no header
-            for (auto& h: tx_console_header) {
+         if (csv_sum.tellp() == 0) {  // no header
+            for (auto& h : tx_console_header) {
                std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, h);
             }
             csv_sum << endl;
          }
-         for (auto& d: tx_console_data) {
+         for (auto& d : tx_console_data) {
             std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, d);
          }
          csv_sum << endl;
@@ -364,6 +375,22 @@ class TPCHWorkload
 
    // ------------------------------------LOAD VIEWS-------------------------------------------------
 
+   void loadSortedLineitem()
+   {
+      // sort lineitem
+      this->lineitem.resetIterator();
+      while (true) {
+         auto kv = this->lineitem.next();
+         if (kv == std::nullopt)
+            break;
+         auto& [k, v] = *kv;
+         PPsL_JK jk{k.l_partkey, k.l_partsuppkey};
+         merged_lineitem_t::Key k_new({jk, k});
+         merged_lineitem_t v_new(v);
+         this->sortedLineitem.insert(k_new, v_new);
+      }
+   }
+
    void loadBasicJoin()
    {
       // first join
@@ -380,9 +407,7 @@ class TPCHWorkload
              partsupp_t::Key k;
              return partsupp_t::unfoldKey(in, k);
           },
-          [this]() { return this->part.next(); },
-          [this]() { return this->partsupp.next(); }
-      );
+          [this]() { return this->part.next(); }, [this]() { return this->partsupp.next(); });
       while (true) {
          auto kv = join1.next();
          if (kv == std::nullopt) {
@@ -391,24 +416,12 @@ class TPCHWorkload
          auto& [k, v] = *kv;
          joinedPPs.insert(k, v);
       }
-      // sort lineitem
-      this->lineitem.resetIterator();
-      while (true) {
-         auto kv = this->lineitem.next();
-         if (kv == std::nullopt)
-            break;
-         auto& [k, v] = *kv;
-         PPsL_JK jk{k.l_partkey, k.l_partsuppkey};
-         merged_lineitem_t::Key k_new({jk, k});
-         merged_lineitem_t v_new(v);
-         this->sortedLineitem.insert(k_new, v_new);
-      }
       // second join
+      assert(this->sortedLineitem.estimatePages() > 0);
       this->joinedPPs.resetIterator();
       this->sortedLineitem.resetIterator();
       Join<joinedPPsL_t::Key, joinedPPsL_t, joinedPPs_t::Key, joinedPPs_t, merged_lineitem_t::Key, merged_lineitem_t> join2(
-          [](joinedPPs_t::Key& k, joinedPPs_t&) { return k.jk; },
-          [](merged_lineitem_t::Key& k, merged_lineitem_t&) { return k.jk; },
+          [](joinedPPs_t::Key& k, joinedPPs_t&) { return k.jk; }, [](merged_lineitem_t::Key& k, merged_lineitem_t&) { return k.jk; },
           [](u8* in, u16) {
              joinedPPs_t::Key k;
              return joinedPPs_t::unfoldKey(in, k);
@@ -417,9 +430,7 @@ class TPCHWorkload
              merged_lineitem_t::Key k;
              return merged_lineitem_t::unfoldKey(in, k);
           },
-          [this]() { return this->joinedPPs.next(); },
-          [this]() { return this->sortedLineitem.next(); }
-      );
+          [this]() { return this->joinedPPs.next(); }, [this]() { return this->sortedLineitem.next(); });
       while (true) {
          auto kv = join2.next();
          if (kv == std::nullopt) {
@@ -429,6 +440,10 @@ class TPCHWorkload
          joinedPPsL.insert(k, v);
       }
    };
+
+   void loadMergedBasicJoin() {
+      // TODO
+   }
 
    void loadBasicGroup();
 
