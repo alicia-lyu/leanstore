@@ -9,6 +9,7 @@
 #include <cassert>
 #include <cstring>
 #include <functional>
+#include <optional>
 
 using namespace leanstore;
 template <class Record>
@@ -179,10 +180,10 @@ struct LeanStoreAdapter : Adapter<Record> {
       }
    }
    
-   std::pair<typename Record::Key, Record> next() final {
+   std::optional<std::pair<typename Record::Key, Record>> next() final {
       leanstore::OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK)
-         return std::make_pair(typename Record::Key(), Record());
+         return std::nullopt;
       this->produced++;
       it->assembleKey();
       leanstore::Slice key = it->key();

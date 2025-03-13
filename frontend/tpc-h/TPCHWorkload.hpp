@@ -43,6 +43,7 @@ class TPCHWorkload
    AdapterType<region_t>& region;
    // TODO: Views
    AdapterType<joinedPPsL_t>& joinedPPsL;
+   AdapterType<joinedPPs_t>& joinedPPs;
    MergedAdapterType& mergedPPsL;
 
   public:
@@ -368,7 +369,19 @@ class TPCHWorkload
              partsupp_t::Key k;
              return partsupp_t::unfoldKey(in, k);
           },
-          [this]() { return this->part.next(); }, [this]() { return this->partsupp.next(); });
+          [this]() { return this->part.next(); },
+          [this]() { return this->partsupp.next(); }
+      );
+      while (true) {
+         auto kv = join1.next();
+         if (kv == std::nullopt) {
+            break;
+         }
+         auto& [k, v] = *kv;
+         joinedPPs.insert(k, v);
+      }
+      this->joinedPPs.resetIterator();
+      // sort lineitem
       
    };
 

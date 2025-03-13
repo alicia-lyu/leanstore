@@ -19,6 +19,9 @@ class Joined {
 
     explicit Joined(std::tuple<Ts...> tuple) : payloads(std::move(tuple)) {}
 
+    explicit Joined(Ts... records):
+        payloads(std::make_tuple(records...)) {}
+
     template <typename K, size_t... Is>
     static unsigned foldKeyHelper(uint8_t* out, const K& key, std::index_sequence<Is...>) {
         unsigned pos = 0;
@@ -112,9 +115,11 @@ using merged_partsupp_t = merged<12, partsupp_t, PPsL_JK, false>;
 using merged_lineitem_t = merged<12, lineitem_t, PPsL_JK, true>;
 
 struct joinedPPs_t : public Joined<11, PPsL_JK, part_t, partsupp_t> {
-    joinedPPs_t(merged_part_t p, merged_partsupp_t ps): Joined<11, PPsL_JK, part_t, partsupp_t>(std::make_tuple(p.payload, ps.payload)) {};
+    joinedPPs_t(merged_part_t p, merged_partsupp_t ps): Joined<11, PPsL_JK, part_t, partsupp_t>(std::make_tuple(p.payload, ps.payload)) {}
 };
 
 struct joinedPPsL_t : public Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t> {
     joinedPPsL_t(merged_part_t p, merged_partsupp_t ps, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::make_tuple(p.payload, ps.payload, l.payload)) {}
+
+    joinedPPsL_t(joinedPPs_t j, lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::tuple_cat(j.payloads, std::make_tuple(l))) {}
 };
