@@ -44,6 +44,7 @@ class TPCHWorkload
    // TODO: Views
    AdapterType<joinedPPsL_t>& joinedPPsL;
    AdapterType<joinedPPs_t>& joinedPPs;
+   AdapterType<merged_lineitem_t>& sorted_lineitem;
    MergedAdapterType& mergedPPsL;
 
   public:
@@ -231,26 +232,26 @@ class TPCHWorkload
       PPsL_JK::keyfold(start_jk, current_jk);
 
       auto part_descriptor = MergedAdapterType::template create<merged_part_t>([&](const merged_part_t::Key& k, const merged_part_t& v) {
-         comp_clear(k.jk);
+         comp_clear(k.base.jk);
          cached_part.push_back({k, v});
          return false;
       });
 
       auto partsupp_descriptor =
           MergedAdapterType::template create<merged_partsupp_t>([&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
-             comp_clear(k.jk);
+             comp_clear(k.base.jk);
              cached_partsupp.push_back({k, v});
              return false;
           });
 
       auto lineitem_descriptor =
           MergedAdapterType::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k, const merged_lineitem_t& v) {
-             comp_clear(k.jk);
+             comp_clear(k.base.jk);
              for (auto& [pk, pv] : cached_part) {
                 for (auto& [psk, psv] : cached_partsupp) {
                    [[maybe_unused]]
                    JoinedKey joined_key =
-                       Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>::Key{{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)}};
+                       Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>::Key({current_jk, std::make_tuple(pk.base.pk, psk.base.pk, k.base.pk)});
                    [[maybe_unused]]
                    JoinedRec joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
                    // Do something with the result
@@ -359,14 +360,14 @@ class TPCHWorkload
       this->part.resetIterator();
       this->partsupp.resetIterator();
       Join<joinedPPs_t::Key, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
-          [](part_t::Key& k, part_t&) { return PPsL_JK{k.p_partkey, 0}; },
-          [](partsupp_t::Key& k, partsupp_t&) { return PPsL_JK{k.ps_partkey, k.ps_suppkey}; },
+          [](part_t::Key& k, part_t&) { return PPsL_JK{k.base.p_partkey, 0}; },
+          [](partsupp_t::Key& k, partsupp_t&) { return PPsL_JK{k.base.ps_partkey, k.base.ps_suppkey}; },
           [](u8* in, u16) {
              part_t::Key k;
              return part_t::unfoldKey(in, k);
           },
           [](u8* in, u16) {
-             partsupp_t::Key k;
+             partsupp_t::key_base k;
              return partsupp_t::unfoldKey(in, k);
           },
           [this]() { return this->part.next(); },
@@ -382,6 +383,17 @@ class TPCHWorkload
       }
       this->joinedPPs.resetIterator();
       // sort lineitem
+      this->lineitem.resetIterator();
+      while (true) {
+         auto kv = this->lineitem.next();
+         if (kv == std::nullopt) {
+            break;
+         }
+         auto& [k, v] = *kv;
+         PPsL_JK jk = PPsL_JK{k.base.l_partkey, k.base.l_partsuppkey};
+         merged_lineitem_t::Key k2({jk, k});
+         merged_lineitem_t v2(v);
+      }
       
    };
 

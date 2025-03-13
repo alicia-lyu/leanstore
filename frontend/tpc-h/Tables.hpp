@@ -7,7 +7,10 @@
 using namespace randutils;
 
 template <typename K, auto K::* ...Members>
-class KeyPrototype {
+struct KeyPrototype {
+    K base;
+    KeyPrototype(const K& key) : base(key) {}
+    KeyPrototype() = default;
     friend std::ostream& operator<<(std::ostream& os, const K& record)
     {
         ((os << Members << ": " << record.*Members << ", "), ...);
@@ -20,6 +23,7 @@ struct RecordPrototype {
     static constexpr unsigned rowSize() { return (sizeof(std::declval<T>().*Members) + ...); }
     
     template <class K, auto K::* ...KMembers>
+    requires (!std::derived_from<K, KeyPrototype<K, KMembers...>>)
     static unsigned foldKey(uint8_t* out, const K& key)
     {
         unsigned pos = 0;
@@ -28,11 +32,26 @@ struct RecordPrototype {
     }
 
     template <class K, auto K::* ...KMembers>
+    requires (!std::derived_from<K, KeyPrototype<K, KMembers...>>)
+    static unsigned foldKey(uint8_t* out, const KeyPrototype<K, KMembers...>& key)
+    {
+        return foldKey(out, key.base);
+    }
+
+    template <class K, auto K::* ...KMembers>
+    requires (!std::derived_from<K, KeyPrototype<K, KMembers...>>)
     static unsigned unfoldKey(const uint8_t* in, K& key)
     {
         unsigned pos = 0;
         ((pos += unfold(in + pos, key.*KMembers)), ...);
         return pos;
+    }
+
+    template <class K, auto K::* ...KMembers>
+    requires (!std::derived_from<K, KeyPrototype<K, KMembers...>>)
+    static unsigned unfoldKey(const uint8_t* in, KeyPrototype<K, KMembers...>& key)
+    {
+        return unfoldKey(in, key.base);
     }
 
     static constexpr unsigned maxFoldLength() { return (sizeof(std::declval<T>().*Members) + ...); }
@@ -45,7 +64,9 @@ struct part_base {
         Integer p_partkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::p_partkey> {};
+    struct Key : public KeyPrototype<key_base, &key_base::p_partkey> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Varchar<55> p_name;
     Varchar<25> p_mfgr;
@@ -83,7 +104,9 @@ struct supplier_base {
         Integer s_suppkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::s_suppkey> {};
+    struct Key : public KeyPrototype<key_base, &key_base::s_suppkey> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Varchar<25> s_name;
     Varchar<40> s_address;
@@ -111,7 +134,9 @@ struct partsupp_base {
         Integer ps_suppkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::ps_partkey, &key_base::ps_suppkey> {};
+    struct Key : public KeyPrototype<key_base, &key_base::ps_partkey, &key_base::ps_suppkey> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Integer ps_availqty;
     Numeric ps_supplycost;
@@ -134,7 +159,9 @@ struct customer_base {
         Integer c_custkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::c_custkey> {};
+    struct Key : public KeyPrototype<key_base, &key_base::c_custkey> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Varchar<25> c_name;
     Varchar<40> c_address;
@@ -162,7 +189,9 @@ struct orders_base {
         Integer o_orderkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::o_orderkey> {};
+    struct Key : public KeyPrototype<key_base, &key_base::o_orderkey> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Integer o_custkey;
     Varchar<1> o_orderstatus;
@@ -194,7 +223,9 @@ struct lineitem_base {
         Integer l_linenumber;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::l_orderkey, &key_base::l_linenumber> {};
+    struct Key : public KeyPrototype<key_base, &key_base::l_orderkey, &key_base::l_linenumber> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Integer l_partkey;
     Integer l_suppkey;
@@ -231,7 +262,9 @@ struct nation_base {
         Integer n_nationkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::n_nationkey> {};
+    struct Key : public KeyPrototype<key_base, &key_base::n_nationkey> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Varchar<25> n_name;
     Integer n_regionkey;
@@ -254,7 +287,9 @@ struct region_base {
         Integer r_regionkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::r_regionkey> {};
+    struct Key : public KeyPrototype<key_base, &key_base::r_regionkey> {
+        using KeyPrototype::KeyPrototype;
+    };
 
     Varchar<25> r_name;
     Varchar<152> r_comment;
