@@ -180,7 +180,7 @@ struct LeanStoreAdapter : Adapter<Record> {
       }
    }
    
-   std::optional<std::pair<typename Record::Key, Record>> next() final {
+   std::optional<std::pair<typename Record::Key, Record>> next() {
       leanstore::OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK)
          return std::nullopt;
@@ -196,7 +196,7 @@ struct LeanStoreAdapter : Adapter<Record> {
       return std::make_pair({typed_key, typed_payload});
    };
 
-   void seek(const typename Record::Key& key) final {
+   void seek(const typename Record::Key& key) {
       u8 keyBuffer[Record::maxFoldLength()];
       Record::foldKey(keyBuffer, key);
       leanstore::Slice keySlice(keyBuffer, Record::maxFoldLength());
@@ -206,7 +206,7 @@ struct LeanStoreAdapter : Adapter<Record> {
       }
    }
 
-   void resetIterator() final {
+   void resetIterator() {
       it->reset();
    }
    // -------------------------------------------------------------------------------------
