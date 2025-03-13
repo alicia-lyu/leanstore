@@ -7,7 +7,7 @@
 using namespace randutils;
 
 template <typename K, auto K::* ...Members>
-class KeyPrototype {
+struct KeyPrototype {
     friend std::ostream& operator<<(std::ostream& os, const K& record)
     {
         ((os << Members << ": " << record.*Members << ", "), ...);
@@ -45,7 +45,10 @@ struct part_base {
         Integer p_partkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::p_partkey> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::p_partkey> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Varchar<55> p_name;
     Varchar<25> p_mfgr;
@@ -83,7 +86,10 @@ struct supplier_base {
         Integer s_suppkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::s_suppkey> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::s_suppkey> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Varchar<25> s_name;
     Varchar<40> s_address;
@@ -111,7 +117,10 @@ struct partsupp_base {
         Integer ps_suppkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::ps_partkey, &key_base::ps_suppkey> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::ps_partkey, &key_base::ps_suppkey> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Integer ps_availqty;
     Numeric ps_supplycost;
@@ -134,7 +143,10 @@ struct customer_base {
         Integer c_custkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::c_custkey> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::c_custkey> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Varchar<25> c_name;
     Varchar<40> c_address;
@@ -162,7 +174,10 @@ struct orders_base {
         Integer o_orderkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::o_orderkey> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::o_orderkey> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Integer o_custkey;
     Varchar<1> o_orderstatus;
@@ -194,7 +209,10 @@ struct lineitem_base {
         Integer l_linenumber;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::l_orderkey, &key_base::l_linenumber> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::l_orderkey, &key_base::l_linenumber> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Integer l_partkey;
     Integer l_suppkey;
@@ -231,7 +249,10 @@ struct nation_base {
         Integer n_nationkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::n_nationkey> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::n_nationkey> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Varchar<25> n_name;
     Integer n_regionkey;
@@ -254,7 +275,10 @@ struct region_base {
         Integer r_regionkey;
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::r_regionkey> {};
+    struct Key : public key_base, public KeyPrototype<key_base, &key_base::r_regionkey> {
+        Key() = default;
+        Key(const key_base& k) : key_base(k) {}
+    };
 
     Varchar<25> r_name;
     Varchar<152> r_comment;
