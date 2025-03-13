@@ -13,7 +13,9 @@ class Joined {
         std::tuple<typename Ts::Key...> keys; // LATER: use a boolean array to indicate which keys should be folded
     };
 
-    struct Key : public key_base, public KeyPrototype<key_base, &key_base::jk, &key_base::keys> {};
+    struct Key : public KeyPrototype<key_base, &key_base::jk, &key_base::keys> {
+        using KeyPrototype<key_base, &key_base::jk, &key_base::keys>::KeyPrototype;
+    };
 
     std::tuple<Ts...> payloads;
 
@@ -63,7 +65,7 @@ struct merged {
         JK jk;
         T::Key pk;
     };
-    struct Key: public key_base, public KeyPrototype<key_base, &key_base::jk, &key_base::pk> {};
+    struct Key: public KeyPrototype<key_base, &key_base::jk, &key_base::pk> {};
 
     T payload;
 
