@@ -44,6 +44,7 @@ class TPCHWorkload
    // TODO: Views
    AdapterType<joinedPPsL_t>& joinedPPsL;
    AdapterType<joinedPPs_t>& joinedPPs;
+   AdapterType<merged_lineitem_t>& sortedLineitem;
    MergedAdapterType& mergedPPsL;
 
   public:
@@ -382,7 +383,18 @@ class TPCHWorkload
       }
       this->joinedPPs.resetIterator();
       // sort lineitem
-      
+      this->lineitem.resetIterator();
+      while (true) {
+         auto kv = this->lineitem.next();
+         if (kv == std::nullopt) {
+            break;
+         }
+         auto& [k, v] = *kv;
+         PPsL_JK jk{k.l_partkey, k.l_partsuppkey};
+         merged_lineitem_t::Key k_new({jk, k});
+         merged_lineitem_t v_new(v);
+         this->sortedLineitem.insert(k_new, v_new);
+      }
    };
 
    void loadBasicGroup();
