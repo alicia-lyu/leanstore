@@ -3,6 +3,7 @@
 #include <chrono>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <vector>
 #include "Tables.hpp"
 
@@ -442,7 +443,57 @@ class TPCHWorkload
    };
 
    void loadMergedBasicJoin() {
-      // TODO
+      part.resetIterator();
+      part_t::Key pk;
+      part_t pv;
+      PPsL_JK pjk;
+      bool pkv = true; // current pjk is valid
+      partsupp.resetIterator();
+      partsupp_t::Key psk;
+      partsupp_t psv;
+      PPsL_JK psjk;
+      bool pskv = true;
+      sortedLineitem.resetIterator();
+      merged_lineitem_t::Key slk;
+      merged_lineitem_t slv;
+      PPsL_JK sljk;
+      bool slkv = true;
+      while (pkv || pskv || slkv) {
+         if (pkv == true && (pjk == PPsL_JK{} || (pjk < psjk && pjk < sljk))) {
+            merged_part_t::Key k({pjk, pk});
+            merged_part_t v(pv);
+            mergedPPsL.insert(k, v);
+            auto npkv = part.next();
+            if (npkv != std::nullopt) {
+               auto& [pk, pv] = *npkv;
+               pjk = PPsL_JK{pk.p_partkey, 0};
+            } else {
+               pkv = false;
+            }
+         } else if (pskv == true && (psjk == PPsL_JK{} || (psjk < pjk && psjk < sljk))) {
+            merged_partsupp_t::Key k({psjk, psk});
+            merged_partsupp_t v(psv);
+            mergedPPsL.insert(k, v);
+            auto npskv = partsupp.next();
+            if (npskv != std::nullopt) {
+               auto& [psk, psv] = *npskv;
+               psjk = PPsL_JK{psk.ps_partkey, psk.ps_suppkey};
+            } else {
+               pskv = false;
+            }
+         } else if (slkv == true && (sljk == PPsL_JK{} || (sljk < pjk && sljk < psjk))) {
+            mergedPPsL.insert(slk, slv);
+            auto nslkv = sortedLineitem.next();
+            if (nslkv != std::nullopt) {
+               auto& [slk, slv] = *nslkv;
+               sljk = slk.jk;
+            } else {
+               slkv = false;
+            }
+         } else {
+            break;
+         }
+      }
    }
 
    void loadBasicGroup();

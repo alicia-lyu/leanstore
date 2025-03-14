@@ -75,6 +75,8 @@ struct merged {
 
     explicit merged(T payload): payload(std::move(payload)) {}
 
+    merged() = default;
+
     static constexpr unsigned rowSize() { return T::rowSize(); }
 
     static unsigned foldKey(uint8_t* out, const Key& key) {
@@ -113,6 +115,12 @@ struct PPsL_JK {
 
     bool operator==(const PPsL_JK& other) const {
         return l_partkey == other.l_partkey && l_partsuppkey == other.l_partsuppkey;
+    }
+
+    bool operator<(const PPsL_JK& other) const {
+        if (l_partkey != other.l_partkey)
+            return l_partkey < other.l_partkey;
+        return l_partsuppkey < other.l_partsuppkey;
     }
 };
 
