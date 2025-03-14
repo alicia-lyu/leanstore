@@ -72,6 +72,8 @@ struct part_t : public part_base, public RecordPrototype<part_base,
 {
     explicit part_t(part_base base) : part_base(base) {}
 
+    part_t() = default;
+
     static part_t generateRandomRecord()
     {
         return part_t({randomastring<55>(0, 55), randomastring<25>(25, 25), randomastring<10>(10, 10), randomastring<25>(0, 25),
@@ -102,6 +104,8 @@ struct supplier_base {
 struct supplier_t : public supplier_base, public RecordPrototype<supplier_base, &supplier_base::s_name, &supplier_base::s_address, &supplier_base::s_nationkey, &supplier_base::s_phone, &supplier_base::s_acctbal, &supplier_base::s_comment> {
     explicit supplier_t(supplier_base base) : supplier_base(base) {}
 
+    supplier_t() = default;
+
     static supplier_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
         return supplier_t({randomastring<25>(25, 25), randomastring<40>(0, 40), generate_nationkey(), randomastring<15>(15, 15),
@@ -129,6 +133,8 @@ struct partsupp_base {
 
 struct partsupp_t : public partsupp_base, public RecordPrototype<partsupp_base, &partsupp_base::ps_availqty, &partsupp_base::ps_supplycost, &partsupp_base::ps_comment> {
     explicit partsupp_t(partsupp_base base) : partsupp_base(base) {}
+
+    partsupp_t() = default;
 
     static partsupp_t generateRandomRecord()
     {
@@ -159,6 +165,8 @@ struct customer_base {
 
 struct customerh_t : public customer_base, public RecordPrototype<customer_base, &customer_base::c_name, &customer_base::c_address, &customer_base::c_nationkey, &customer_base::c_phone, &customer_base::c_acctbal, &customer_base::c_mktsegment, &customer_base::c_comment> {
     explicit customerh_t(customer_base base) : customer_base(base) {}
+
+    customerh_t() = default;
 
     static customerh_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
@@ -192,6 +200,8 @@ struct orders_base {
 struct orders_t : public orders_base, public RecordPrototype<orders_base, &orders_base::o_custkey, &orders_base::o_orderstatus, &orders_base::o_totalprice, &orders_base::o_orderdate, &orders_base::o_orderpriority, &orders_base::o_clerk, &orders_base::o_shippriority, &orders_base::o_comment> {
 
     explicit orders_t(orders_base base) : orders_base(base) {}
+
+    orders_t() = default;
 
     static orders_t generateRandomRecord(std::function<int()> generate_custkey)
     {
@@ -234,6 +244,8 @@ struct lineitem_base {
 struct lineitem_t : public lineitem_base, public RecordPrototype<lineitem_base, &lineitem_base::l_partkey, &lineitem_base::l_suppkey, &lineitem_base::l_quantity, &lineitem_base::l_extendedprice, &lineitem_base::l_discount, &lineitem_base::l_tax, &lineitem_base::l_returnflag, &lineitem_base::l_linestatus, &lineitem_base::l_shipdate, &lineitem_base::l_commitdate, &lineitem_base::l_receiptdate, &lineitem_base::l_shipinstruct, &lineitem_base::l_shipmode, &lineitem_base::l_comment> {
     explicit lineitem_t(lineitem_base base) : lineitem_base(base) {}
 
+    lineitem_t() = default;
+
     static lineitem_t generateRandomRecord(std::function<int()> generate_partkey, std::function<int()> generate_suppkey)
     {
         return lineitem_t({generate_partkey(), generate_suppkey(), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000),
@@ -262,6 +274,8 @@ struct nation_base {
 struct nation_t : public nation_base, public RecordPrototype<nation_base, &nation_base::n_name, &nation_base::n_regionkey, &nation_base::n_comment> {
     explicit nation_t(nation_base base) : nation_base(base) {}
 
+    nation_t() = default;
+
     static nation_t generateRandomRecord(std::function<int()> generate_regionkey)
     {
         return nation_t({randomastring<25>(0, 25), generate_regionkey(), randomastring<152>(0, 152)});
@@ -286,6 +300,8 @@ struct region_base {
 
 struct region_t : public region_base, public RecordPrototype<region_base, &region_base::r_name, &region_base::r_comment> {
     explicit region_t(region_base base) : region_base(base) {}
+
+    region_t() = default;
 
     static region_t generateRandomRecord()
     {
