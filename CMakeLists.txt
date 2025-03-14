@@ -84,6 +84,6 @@ add_subdirectory("backend")
 # Executable
 # ---------------------------------------------------------------------------
 
-set(INCLUDED_COLUMNS 1 CACHE STRING "Include columns")
+# set(INCLUDED_COLUMNS 1 CACHE STRING "Include columns")
 
 add_subdirectory("frontend")
