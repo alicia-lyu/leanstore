@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include "Tables.hpp"
+#include <compare>
 
 template <int TID, typename JK, typename... Ts>
 class Joined {
@@ -113,15 +114,7 @@ struct PPsL_JK {
         return sizeof(Integer) + sizeof(Integer);
     }
 
-    bool operator==(const PPsL_JK& other) const {
-        return l_partkey == other.l_partkey && l_partsuppkey == other.l_partsuppkey;
-    }
-
-    bool operator<(const PPsL_JK& other) const {
-        if (l_partkey != other.l_partkey)
-            return l_partkey < other.l_partkey;
-        return l_partsuppkey < other.l_partsuppkey;
-    }
+    auto operator<=>(const PPsL_JK&) const = default; // lexicographical compare
 };
 
 using merged_part_t = merged<12, part_t, PPsL_JK, false>;

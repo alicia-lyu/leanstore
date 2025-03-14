@@ -46,13 +46,14 @@ int main(int argc, char** argv)
    });
 
    db.registerConfigEntry("tpch_scale_factor", FLAGS_tpch_scale_factor);
-   leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::TX_ISOLATION_LEVEL::SNAPSHOT_ISOLATION;
+   leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE;
    // -------------------------------------------------------------------------------------
    TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem);
 
    if (!FLAGS_recover) {
         std::cout << "Loading TPC-H" << std::endl;
         crm.scheduleJobSync(0, [&]() {
+            cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
             tpch.loadPart();
             tpch.loadSupplier();
             tpch.loadPartsupp();
@@ -61,8 +62,18 @@ int main(int argc, char** argv)
             tpch.loadLineitem();
             tpch.loadNation();
             tpch.loadRegion();
+            tpch.loadSortedLineitem();
             tpch.loadBasicJoin();
             tpch.loadMergedBasicJoin();
+            cr::Worker::my().commitTX();
         });
    }
+
+   crm.scheduleJobSync(0, [&]() {
+      tpch.prepare();
+      cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
+      tpch.basicJoin();
+      cr::Worker::my().commitTX();
+      cr::Worker::my().shutdown();
+   });
 }
