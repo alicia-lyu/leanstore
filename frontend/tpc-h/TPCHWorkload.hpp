@@ -459,10 +459,13 @@ class TPCHWorkload
       PPsL_JK sljk;
       bool slkv = true;
       while (pkv || pskv || slkv) {
-         if (pkv == true && (pjk == PPsL_JK{} || (pjk < psjk && pjk < sljk))) {
-            merged_part_t::Key k({pjk, pk});
-            merged_part_t v(pv);
-            mergedPPsL.insert(k, v);
+         if (pkv == true && pjk <= psjk && pjk <= sljk) {
+            if (pjk != PPsL_JK{})
+            {
+               merged_part_t::Key k({pjk, pk});
+               merged_part_t v(pv);
+               mergedPPsL.insert(k, v);
+            }
             auto npkv = part.next();
             if (npkv != std::nullopt) {
                auto& [pk, pv] = *npkv;
@@ -470,10 +473,13 @@ class TPCHWorkload
             } else {
                pkv = false;
             }
-         } else if (pskv == true && (psjk == PPsL_JK{} || (psjk < pjk && psjk < sljk))) {
-            merged_partsupp_t::Key k({psjk, psk});
-            merged_partsupp_t v(psv);
-            mergedPPsL.insert(k, v);
+         } else if (pskv == true && psjk <= pjk && psjk <= sljk) {
+            if (psjk != PPsL_JK{})
+            {
+               merged_partsupp_t::Key k({psjk, psk});
+               merged_partsupp_t v(psv);
+               mergedPPsL.insert(k, v);
+            }
             auto npskv = partsupp.next();
             if (npskv != std::nullopt) {
                auto& [psk, psv] = *npskv;
@@ -481,8 +487,11 @@ class TPCHWorkload
             } else {
                pskv = false;
             }
-         } else if (slkv == true && (sljk == PPsL_JK{} || (sljk < pjk && sljk < psjk))) {
-            mergedPPsL.insert(slk, slv);
+         } else if (slkv == true && sljk <= pjk && sljk <= psjk) {
+            if (sljk != PPsL_JK{})
+            {
+               mergedPPsL.insert(slk, slv);
+            }
             auto nslkv = sortedLineitem.next();
             if (nslkv != std::nullopt) {
                auto& [slk, slv] = *nslkv;
@@ -499,4 +508,6 @@ class TPCHWorkload
    void loadBasicGroup();
 
    void loadBasicJoinGroup();
+
+   // Log size
 };
