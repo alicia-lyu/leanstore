@@ -1,0 +1,54 @@
+CMAKE_DEBUG := cmake -DCMAKE_BUILD_TYPE=Debug ..
+CMAKE_RELWITHDEBINFO := cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+
+CMAKE_OPTIONS := -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS} -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++
+
+BUILD_DIR := build
+BUILD_DIR_DEBUG := $(BUILD_DIR)-debug
+BUILD_DIRS := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
+
+EXECS := basic_join
+
+TARGETS := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)/frontend/$(exec)))
+
+$(foreach dir, $(BUILD_DIRS), \
+  $(foreach exec, $(EXECS), \
+    $(eval $(dir)/frontend/$(exec): DIR := $(dir)) \
+    $(eval $(dir)/frontend/$(exec): EXEC := $(exec)) \
+    $(eval $(dir)/frontend/$(exec): CMAKE := $(if $(findstring debug,$(dir)),$(CMAKE_DEBUG),$(CMAKE_RELWITHDEBINFO)) \
+  ) \
+))
+
+PERF_PARANOID := $(shell sysctl -n kernel.perf_event_paranoid)
+
+check_perf_event_paranoid:
+	@if [ $(PERF_PARANOID) -gt 0 ]; then \
+		echo "Error: kernel.perf_event_paranoid is set to $(PERF_PARANOID). Must be 0."; \
+		echo "Hint: sudo sysctl -w kernel.perf_event_paranoid=0"; \
+		exit 1; \
+	fi
+
+$(TARGETS): check_perf_event_paranoid
+	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) $(EXEC) -j$(NUMJOBS)
+
+IMAGE_FILE := /mnt/ssd/image
+
+lldb ?= true
+
+LLDB_TARGETS := $(foreach exec, $(EXECS), $(patsubst %_tpcc,%-lldb,$(exec)))
+
+$(foreach exec, $(EXECS), \
+	$(eval $(patsubst %_tpcc,%-lldb,$(exec)): EXEC := $(exec)) \
+	$(eval $(patsubst %_tpcc,%-lldb,$(exec)): CSV := $(BUILD_DIR_DEBUG)/$(exec)) \
+) # Variable match work well for an array of targets
+
+lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --pp_threads=1 --csv_truncate=false --worker_threads=1 --trunc=true --ssd_path=$(IMAGE_FILE)
+
+$(LLDB_TARGETS):
+# Depedency match does not work well for an array of targets
+	$(MAKE) $(BUILD_DIR_DEBUG)/frontend/$(EXEC)
+ifeq ($(lldb), true)
+	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
+else
+	$(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(lldb_flags) --csv_path=$(CSV)
+endif
