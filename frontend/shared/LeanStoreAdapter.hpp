@@ -184,7 +184,6 @@ struct LeanStoreAdapter : Adapter<Record> {
       leanstore::OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK)
          return std::nullopt;
-      this->produced++;
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();
@@ -193,7 +192,7 @@ struct LeanStoreAdapter : Adapter<Record> {
 
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
-      return std::make_pair({typed_key, typed_payload});
+      return std::make_pair(typed_key, typed_payload);
    };
 
    void seek(const typename Record::Key& key) {

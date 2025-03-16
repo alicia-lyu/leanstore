@@ -111,7 +111,7 @@ class TPCHWorkload
    }
 
    std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>>
-   summarizeStats(std::chrono::microseconds elapsed)
+   summarizeStats(long elapsed)
    {
       std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_header;
       std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_data;
@@ -119,7 +119,7 @@ class TPCHWorkload
       tx_console_data.reserve(20);
 
       tx_console_header.push_back("Elapsed");
-      tx_console_data.push_back(std::to_string(elapsed.count()));
+      tx_console_data.push_back(std::to_string(elapsed));
 
       tx_console_header.push_back("W MiB");
       tx_console_data.push_back(bm_table.get("0", "w_mib"));
@@ -180,7 +180,7 @@ class TPCHWorkload
       return {tx_console_header, tx_console_data};
    }
 
-   void logTables(std::chrono::microseconds elapsed, std::string csv_dir)
+   void logTables(long elapsed, std::string csv_dir)
    {
       u64 config_hash = configs_table.hash();
       std::vector<std::ofstream> csvs;
@@ -229,7 +229,7 @@ class TPCHWorkload
       // Enumrate materialized view
       resetTables();
       auto mtdv_start = std::chrono::high_resolution_clock::now();
-      joinedPPsL.scan({}, [&](const auto&, const auto&) {});
+      joinedPPsL.scan({}, [&](const auto&, const auto&) { return true; }, [&]() {});
       auto mtdv_end = std::chrono::high_resolution_clock::now();
       auto mtdv_t = std::chrono::duration_cast<std::chrono::microseconds>(mtdv_end - mtdv_start).count();
       logTables(mtdv_t, "mtdv");
@@ -252,21 +252,21 @@ class TPCHWorkload
       u8 start_jk[PPsL_JK::maxFoldLength()];
       PPsL_JK::keyfold(start_jk, current_jk);
 
-      auto part_descriptor = MergedAdapterType::template create<merged_part_t>([&](const merged_part_t::Key& k, const merged_part_t& v) {
+      auto part_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_part_t>([&](const merged_part_t::Key& k, const merged_part_t& v) {
          comp_clear(k.jk);
          cached_part.push_back({k, v});
          return false;
       });
 
       auto partsupp_descriptor =
-          MergedAdapterType::template create<merged_partsupp_t>([&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
+          MergedAdapterType::ScanCallbackDescriptor::template create<merged_partsupp_t>([&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
              comp_clear(k.jk);
              cached_partsupp.push_back({k, v});
              return false;
           });
 
       auto lineitem_descriptor =
-          MergedAdapterType::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k, const merged_lineitem_t& v) {
+          MergedAdapterType::ScanCallbackDescriptor::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k, const merged_lineitem_t& v) {
              comp_clear(k.jk);
              for (auto& [pk, pv] : cached_part) {
                 for (auto& [psk, psv] : cached_partsupp) {
@@ -313,7 +313,7 @@ class TPCHWorkload
    void loadPart()
    {
       for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
-         part.insert({i}, part_t::generateRandomRecord());
+         part.insert(part_t::Key({i}), part_t::generateRandomRecord());
          printProgress("part", i, PART_SCALE * FLAGS_tpch_scale_factor);
       }
    }
@@ -321,7 +321,7 @@ class TPCHWorkload
    void loadSupplier()
    {
       for (Integer i = 1; i <= SUPPLIER_SCALE * FLAGS_tpch_scale_factor; i++) {
-         supplier.insert({i}, supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
+         supplier.insert(supplier_t::Key({i}), supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
          printProgress("supplier", i, SUPPLIER_SCALE * FLAGS_tpch_scale_factor);
       }
    }
@@ -329,7 +329,7 @@ class TPCHWorkload
    void loadPartsupp()
    {
       for (Integer i = 1; i <= PARTSUPP_SCALE * FLAGS_tpch_scale_factor; i++) {
-         partsupp.insert({i}, partsupp_t::generateRandomRecord());
+         partsupp.insert(partsupp_t::Key({i}), partsupp_t::generateRandomRecord());
          printProgress("partsupp", i, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
       }
    }
@@ -337,7 +337,7 @@ class TPCHWorkload
    void loadCustomer()
    {
       for (Integer i = 1; i <= CUSTOMER_SCALE * FLAGS_tpch_scale_factor; i++) {
-         customer.insert({i}, customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
+         customer.insert(customerh_t::Key({i}), customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
          printProgress("customer", i, CUSTOMER_SCALE * FLAGS_tpch_scale_factor);
       }
    }
@@ -345,7 +345,7 @@ class TPCHWorkload
    void loadOrders()
    {
       for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
-         orders.insert({i}, orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
+         orders.insert(orders_t::Key({i}), orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
          printProgress("orders", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
       }
    }
@@ -353,7 +353,7 @@ class TPCHWorkload
    void loadLineitem()
    {
       for (Integer i = 1; i <= LINEITEM_SCALE * FLAGS_tpch_scale_factor; i++) {
-         lineitem.insert({i}, lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
+         lineitem.insert(lineitem_t::Key({i}), lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
          printProgress("lineitem", i, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
       }
    }
@@ -361,7 +361,7 @@ class TPCHWorkload
    void loadNation()
    {
       for (Integer i = 1; i <= NATION_COUNT; i++) {
-         nation.insert({i}, nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
+         nation.insert(nation_t::Key({i}), nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
          printProgress("nation", i, NATION_COUNT);
       }
    }
@@ -369,7 +369,7 @@ class TPCHWorkload
    void loadRegion()
    {
       for (Integer i = 1; i <= REGION_COUNT; i++) {
-         region.insert({i}, region_t::generateRandomRecord());
+         region.insert(region_t::Key({i}), region_t::generateRandomRecord());
          printProgress("region", i, REGION_COUNT);
       }
    }
@@ -385,7 +385,7 @@ class TPCHWorkload
          if (kv == std::nullopt)
             break;
          auto& [k, v] = *kv;
-         PPsL_JK jk{k.l_partkey, k.l_partsuppkey};
+         PPsL_JK jk{v.l_partkey, v.l_suppkey};
          merged_lineitem_t::Key k_new({jk, k});
          merged_lineitem_t v_new(v);
          this->sortedLineitem.insert(k_new, v_new);
@@ -397,16 +397,18 @@ class TPCHWorkload
       // first join
       this->part.resetIterator();
       this->partsupp.resetIterator();
-      Join<joinedPPs_t::Key, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
+      Join<PPsL_JK, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
           [](part_t::Key& k, part_t&) { return PPsL_JK{k.p_partkey, 0}; },
           [](partsupp_t::Key& k, partsupp_t&) { return PPsL_JK{k.ps_partkey, k.ps_suppkey}; },
           [](u8* in, u16) {
              part_t::Key k;
-             return part_t::unfoldKey(in, k);
+             part_t::unfoldKey(in, k);
+             return k;
           },
           [](u8* in, u16) {
              partsupp_t::Key k;
-             return partsupp_t::unfoldKey(in, k);
+             partsupp_t::unfoldKey(in, k);
+             return k;
           },
           [this]() { return this->part.next(); }, [this]() { return this->partsupp.next(); });
       while (true) {
@@ -421,15 +423,17 @@ class TPCHWorkload
       assert(this->sortedLineitem.estimatePages() > 0);
       this->joinedPPs.resetIterator();
       this->sortedLineitem.resetIterator();
-      Join<joinedPPsL_t::Key, joinedPPsL_t, joinedPPs_t::Key, joinedPPs_t, merged_lineitem_t::Key, merged_lineitem_t> join2(
+      Join<PPsL_JK, joinedPPsL_t, joinedPPs_t::Key, joinedPPs_t, merged_lineitem_t::Key, merged_lineitem_t> join2(
           [](joinedPPs_t::Key& k, joinedPPs_t&) { return k.jk; }, [](merged_lineitem_t::Key& k, merged_lineitem_t&) { return k.jk; },
           [](u8* in, u16) {
              joinedPPs_t::Key k;
-             return joinedPPs_t::unfoldKey(in, k);
+             joinedPPs_t::unfoldKey(in, k);
+             return k;
           },
           [](u8* in, u16) {
              merged_lineitem_t::Key k;
-             return merged_lineitem_t::unfoldKey(in, k);
+             merged_lineitem_t::unfoldKey(in, k);
+             return k;
           },
           [this]() { return this->joinedPPs.next(); }, [this]() { return this->sortedLineitem.next(); });
       while (true) {
