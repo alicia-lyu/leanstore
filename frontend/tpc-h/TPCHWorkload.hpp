@@ -227,14 +227,29 @@ class TPCHWorkload
    void basicJoin()
    {
       // Enumrate materialized view
+      std::cout << "Enumerating materialized view" << std::endl;
       resetTables();
+      [[maybe_unused]] int produced = 0;
+      auto inspect_produced = [&](const std::string& msg) {
+         produced++;
+         if (produced % 100000 == 0) {
+            std::cout << "\r" << msg << produced / 1000 << "k";
+         }
+      };
       auto mtdv_start = std::chrono::high_resolution_clock::now();
-      joinedPPsL.scan({}, [&](const auto&, const auto&) { return true; }, [&]() {});
+      joinedPPsL.scan(
+          {},
+          [&](const auto&, const auto&) {
+             inspect_produced("Enumerating materialized view: ");
+             return true;
+          },
+          [&]() {});
       auto mtdv_end = std::chrono::high_resolution_clock::now();
       auto mtdv_t = std::chrono::duration_cast<std::chrono::microseconds>(mtdv_end - mtdv_start).count();
       logTables(mtdv_t, "mtdv");
 
       // Scan merged index + join on the fly
+      std::cout << "Scan merged index + join on the fly" << std::endl;
       resetTables();
       auto merged_start = std::chrono::high_resolution_clock::now();
       using JoinedRec = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>;
@@ -251,35 +266,39 @@ class TPCHWorkload
       };
       u8 start_jk[PPsL_JK::maxFoldLength()];
       PPsL_JK::keyfold(start_jk, current_jk);
+      produced = 0;
 
-      auto part_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_part_t>([&](const merged_part_t::Key& k, const merged_part_t& v) {
-         comp_clear(k.jk);
-         cached_part.push_back({k, v});
-         return false;
-      });
+      auto part_descriptor =
+          MergedAdapterType::ScanCallbackDescriptor::template create<merged_part_t>([&](const merged_part_t::Key& k, const merged_part_t& v) {
+             inspect_produced("Scanning merged index (at a part_t record): ");
+             comp_clear(k.jk);
+             cached_part.push_back({k, v});
+             return false;
+          });
 
-      auto partsupp_descriptor =
-          MergedAdapterType::ScanCallbackDescriptor::template create<merged_partsupp_t>([&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
+      auto partsupp_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_partsupp_t>(
+          [&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
+             inspect_produced("Scanning merged index (at a partsupp_t record): ");
              comp_clear(k.jk);
              cached_partsupp.push_back({k, v});
              return false;
           });
 
-      auto lineitem_descriptor =
-          MergedAdapterType::ScanCallbackDescriptor::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k, const merged_lineitem_t& v) {
-             comp_clear(k.jk);
-             for (auto& [pk, pv] : cached_part) {
-                for (auto& [psk, psv] : cached_partsupp) {
-                   [[maybe_unused]]
-                   JoinedKey joined_key =
-                       Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>::Key{{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)}};
-                   [[maybe_unused]]
-                   JoinedRec joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
-                   // Do something with the result
-                }
-             }
-             return false;
-          });
+      auto lineitem_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k,
+                                                                                                                   const merged_lineitem_t& v) {
+         inspect_produced("Scanning merged index (at a lineitem_t record): ");
+         comp_clear(k.jk);
+         for (auto& [pk, pv] : cached_part) {
+            for (auto& [psk, psv] : cached_partsupp) {
+               [[maybe_unused]]
+               JoinedKey joined_key = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>::Key{{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)}};
+               [[maybe_unused]]
+               JoinedRec joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
+               // Do something with the result
+            }
+         }
+         return false;
+      });
 
       mergedPPsL.scan(start_jk, PPsL_JK::maxFoldLength(),
                       std::vector<typename MergedAdapterType::ScanCallbackDescriptor>{part_descriptor, partsupp_descriptor, lineitem_descriptor},
@@ -313,6 +332,7 @@ class TPCHWorkload
    void loadPart()
    {
       for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
+         std::cout << "partkey: " << i << std::endl;
          part.insert(part_t::Key({i}), part_t::generateRandomRecord());
          printProgress("part", i, PART_SCALE * FLAGS_tpch_scale_factor);
       }
@@ -328,9 +348,22 @@ class TPCHWorkload
 
    void loadPartsupp()
    {
-      for (Integer i = 1; i <= PARTSUPP_SCALE * FLAGS_tpch_scale_factor; i++) {
-         partsupp.insert(partsupp_t::Key({i}), partsupp_t::generateRandomRecord());
-         printProgress("partsupp", i, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
+      for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
+         int supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
+         std::vector<Integer> suppliers = {};
+         while (true) {
+            Integer supplier_id = urand(1, SUPPLIER_SCALE * FLAGS_tpch_scale_factor);
+            if (std::find(suppliers.begin(), suppliers.end(), supplier_id) == suppliers.end()) {
+               suppliers.push_back(supplier_id);
+            }
+            if (suppliers.size() == supplier_cnt) {
+               break;
+            }
+         }
+         for (auto& s : suppliers) {
+            partsupp.insert(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
+            printProgress("partsupp", i * PARTSUPP_SCALE / PART_SCALE, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
+         }
       }
    }
 
@@ -352,9 +385,22 @@ class TPCHWorkload
 
    void loadLineitem()
    {
-      for (Integer i = 1; i <= LINEITEM_SCALE * FLAGS_tpch_scale_factor; i++) {
-         lineitem.insert(lineitem_t::Key({i}), lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
-         printProgress("lineitem", i, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
+      for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
+         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
+         std::vector<Integer> lineitems = {};
+         while (true) {
+            Integer lineitem_id = urand(1, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
+            if (std::find(lineitems.begin(), lineitems.end(), lineitem_id) == lineitems.end()) {
+               lineitems.push_back(lineitem_id);
+            }
+            if (lineitems.size() == lineitem_cnt) {
+               break;
+            }
+         }
+         for (auto& l : lineitems) {
+            lineitem.insert(lineitem_t::Key({i, l}), lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
+            printProgress("lineitem", i * LINEITEM_SCALE / ORDERS_SCALE, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
+         }
       }
    }
 
@@ -446,12 +492,13 @@ class TPCHWorkload
       }
    };
 
-   void loadMergedBasicJoin() {
+   void loadMergedBasicJoin()
+   {
       part.resetIterator();
       part_t::Key pk;
       part_t pv;
       PPsL_JK pjk;
-      bool pkv = true; // current pjk is valid
+      bool pkv = true;  // current pjk is valid
       partsupp.resetIterator();
       partsupp_t::Key psk;
       partsupp_t psv;
@@ -464,8 +511,7 @@ class TPCHWorkload
       bool slkv = true;
       while (pkv || pskv || slkv) {
          if (pkv == true && pjk <= psjk && pjk <= sljk) {
-            if (pjk != PPsL_JK{})
-            {
+            if (pjk != PPsL_JK{}) {
                merged_part_t::Key k({pjk, pk});
                merged_part_t v(pv);
                mergedPPsL.insert(k, v);
@@ -478,8 +524,7 @@ class TPCHWorkload
                pkv = false;
             }
          } else if (pskv == true && psjk <= pjk && psjk <= sljk) {
-            if (psjk != PPsL_JK{})
-            {
+            if (psjk != PPsL_JK{}) {
                merged_partsupp_t::Key k({psjk, psk});
                merged_partsupp_t v(psv);
                mergedPPsL.insert(k, v);
@@ -492,8 +537,7 @@ class TPCHWorkload
                pskv = false;
             }
          } else if (slkv == true && sljk <= pjk && sljk <= psjk) {
-            if (sljk != PPsL_JK{})
-            {
+            if (sljk != PPsL_JK{}) {
                mergedPPsL.insert(slk, slv);
             }
             auto nslkv = sortedLineitem.next();
