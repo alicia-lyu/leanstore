@@ -20,7 +20,7 @@
 #include "Join.hpp"
 #include "tabulate/table.hpp"
 
-DEFINE_int64(tpch_scale_factor, 1, "TPC-H scale factor");
+DEFINE_double(tpch_scale_factor, 1, "TPC-H scale factor");
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCHWorkload
@@ -78,7 +78,8 @@ class TPCHWorkload
          dt_table(*buffer_manager.get()),
          tables({&bm_table, &dt_table, &cpu_table, &cr_table})
    {
-      leanstore::LeanStore::addS64Flag("TPCH_SCALE", &FLAGS_tpch_scale_factor);
+      static fLS::clstring tpch_scale_factor_str = std::to_string(FLAGS_tpch_scale_factor);
+      leanstore::LeanStore::addStringFlag("TPCH_SCALE", &tpch_scale_factor_str);
    }
 
   private:
@@ -326,13 +327,17 @@ class TPCHWorkload
    void printProgress(std::string msg, Integer i, Integer scale)
    {
       if (i % 10000 == 1)
-         std::cout << "\rLoading " << msg << ": " << i / scale * 100 << "%";
+      {
+         double progress = (double) i / scale * 100;
+         std::cout << "\rLoading " << msg << ": " << progress << "%";
+      }
+         
    }
 
    void loadPart()
    {
       for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
-         std::cout << "partkey: " << i << std::endl;
+         // std::cout << "partkey: " << i << std::endl;
          part.insert(part_t::Key({i}), part_t::generateRandomRecord());
          printProgress("part", i, PART_SCALE * FLAGS_tpch_scale_factor);
       }

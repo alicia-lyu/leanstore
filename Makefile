@@ -42,7 +42,7 @@ $(foreach exec, $(EXECS), \
 	$(eval $(exec)_lldb: CSV := $(BUILD_DIR_DEBUG)/$(exec)) \
 ) # Variable match work well for an array of targets
 
-lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --pp_threads=1 --csv_truncate=false --worker_threads=2 --trunc=true --ssd_path=$(IMAGE_FILE)
+lldb_flags := --dram_gib=1 --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --pp_threads=1 --csv_truncate=false --worker_threads=2 --trunc=true --ssd_path=$(IMAGE_FILE) --tpch_scale_factor=0.01
 
 $(LLDB_TARGETS):
 # Depedency match does not work well for an array of targets
