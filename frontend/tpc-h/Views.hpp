@@ -36,6 +36,7 @@ class Joined {
     template <typename K, size_t... Is>
     static unsigned foldKeyHelper(uint8_t* out, const K& key, std::index_sequence<Is...>) {
         unsigned pos = 0;
+        pos += JK::keyfold(out + pos, key.jk);
         ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::foldKey(out + pos, std::get<Is>(key.keys))), ...);
         return pos;
     }
@@ -48,6 +49,7 @@ class Joined {
     template <typename K, size_t... Is>
     static unsigned unfoldKeyHelper(const uint8_t* in, K& key, std::index_sequence<Is...>) {
         unsigned pos = 0;
+        pos += JK::keyunfold(in + pos, key.jk);
         ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::unfoldKey(in + pos, std::get<Is>(key.keys))), ...);
         return pos;
     }
@@ -128,7 +130,24 @@ struct PPsL_JK {
         return sizeof(Integer) + sizeof(Integer);
     }
 
-    auto operator<=>(const PPsL_JK&) const = default; // lexicographical compare
+    auto operator<=>(const PPsL_JK& other) const {
+        if (l_partkey != 0 && other.l_partkey != 0) {
+            if (auto cmp = l_partkey <=> other.l_partkey; cmp != 0) {
+                return cmp;  // Prioritize partkey comparison
+            }
+        }
+    
+        if (l_partsuppkey != 0 && other.l_partsuppkey != 0) {
+            return l_partsuppkey <=> other.l_partsuppkey;
+        }
+    
+        return std::strong_ordering::equal;
+    }
+
+    bool operator==(const PPsL_JK& other) const {
+        return (l_partkey == 0 || other.l_partkey == 0 || l_partkey == other.l_partkey) &&
+               (l_partsuppkey == 0 || other.l_partsuppkey == 0 || l_partsuppkey == other.l_partsuppkey);
+    }
 
     friend std::ostream& operator<<(std::ostream& os, const PPsL_JK& jk) {
         os << "PPsL_JK(" << jk.l_partkey << ", " << jk.l_partsuppkey << ")";
