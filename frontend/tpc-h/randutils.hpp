@@ -2,9 +2,9 @@
 #include "../shared/Types.hpp"
 
 namespace randutils {
-    Integer rnd(Integer n) { return leanstore::utils::RandomGenerator::getRand(0, n); }
+    inline Integer rnd(Integer n) { return leanstore::utils::RandomGenerator::getRand(0, n); }
     // [low, high]
-    Integer urand(Integer low, Integer high) { return rnd(high - low + 1) + low; }
+    inline Integer urand(Integer low, Integer high) { return rnd(high - low + 1) + low; }
 
     template <int maxLength>
     Varchar<maxLength> randomastring(Integer minLenStr, Integer maxLenStr)
@@ -24,7 +24,7 @@ namespace randutils {
         return result;
     }
 
-    Varchar<16> randomnstring(Integer minLenStr, Integer maxLenStr)
+    inline Varchar<16> randomnstring(Integer minLenStr, Integer maxLenStr)
     {
         Integer len = rnd(maxLenStr - minLenStr + 1) + minLenStr;
         Varchar<16> result;
@@ -33,7 +33,7 @@ namespace randutils {
         return result;
     }
 
-    Numeric randomNumeric(Numeric min, Numeric max)
+    inline Numeric randomNumeric(Numeric min, Numeric max)
     {
         double range = (max - min);
         double div = RAND_MAX / range;

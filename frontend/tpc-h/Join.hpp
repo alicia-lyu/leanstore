@@ -9,6 +9,7 @@
 template <typename Key, typename Rec, typename LeftKey, typename LeftRec, typename RightKey, typename RightRec>
 class Join
 {
+   long produced;
    std::function<Key(LeftKey&, LeftRec&)> extractLeftJKFunc;
    std::function<Key(RightKey&, RightRec&)> extractRightJKFunc;
    std::function<LeftKey(u8*, u16)> unfoldLeftKeyFunc;
@@ -30,7 +31,9 @@ class Join
         std::function<RightKey(u8*, u16)> unfoldRightKeyFunc,
         std::function<std::optional<std::pair<LeftKey, LeftRec>>()> nextLeftFunc,
         std::function<std::optional<std::pair<RightKey, RightRec>>()> nextRightFunc)
-       : extractLeftJKFunc(extractLeftJKFunc),
+       : produced(0),
+         cachedRightPtr(0),
+         extractLeftJKFunc(extractLeftJKFunc),
          extractRightJKFunc(extractRightJKFunc),
          unfoldLeftKeyFunc(unfoldLeftKeyFunc),
          unfoldRightKeyFunc(unfoldRightKeyFunc),
@@ -44,13 +47,14 @@ class Join
    std::optional<std::pair<typename Rec::Key, Rec>> next()
    {
       if (!curr_left.has_value()) {
-         // Regular record is not zero-initialized
+         std::cout << "Produced: " << produced << std::endl;
          return std::nullopt;
       }
       auto& [lk, lr] = *curr_left;
       if (cachedRight.size() > 0) {
+         // std::cout << "size of cachedRight: " << cachedRight.size() << ", cachedRightPtr: " << cachedRightPtr << std::endl;
          auto curr_right = cachedRight.at(cachedRightPtr % cachedRight.size());
-         auto& [rk, rr] = curr_right;
+         [[maybe_unused]] auto& [rk, rr] = curr_right;
          if (cachedRightPtr == cachedRight.size())
          {
             // see whether next left matches cached right
@@ -70,11 +74,13 @@ class Join
       } // else proceed
       // zig zag to new current
       if (!nextRight.has_value()) {
+         std::cout << "Produced: " << produced << std::endl;
          return std::nullopt;
       }
       auto& [rk, rr] = *nextRight;
       auto left_jk = extractLeftJKFunc(lk, lr);
       auto right_jk = extractRightJKFunc(rk, rr);
+      // std::cout << "left_jk: " << left_jk << ", right_jk: " << right_jk << std::endl;
       if (left_jk < right_jk) {
          curr_left = nextLeftFunc();
          return next();  // go to second if-else
@@ -95,6 +101,10 @@ class Join
 
    std::pair<typename Rec::Key, Rec> merge(LeftKey& lk, LeftRec& lr, RightKey& rk, RightRec& rr)
    {
+      if ((++produced) % 10000 == 1) {
+         std::cout << "\rJoined " << produced << " records" << std::endl;
+      }
+      // std::cout << "Matched: " << lk << " with " << rk << std::endl;
       typename Rec::Key jk(lk, rk);
       Rec r(lr, rr);
       return std::make_pair(jk, r);

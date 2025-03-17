@@ -9,7 +9,6 @@
 
 #include "Views.hpp"
 #include "leanstore/LeanStore.hpp"
-#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/profiling/tables/CRTable.hpp"
@@ -26,8 +25,8 @@ template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCHWorkload
 {
   private:
-   std::unique_ptr<leanstore::storage::BufferManager> buffer_manager;
-   std::unique_ptr<leanstore::cr::CRManager> cr_manager;
+   leanstore::LeanStore& db;
+
    leanstore::profiling::BMTable bm_table;
    leanstore::profiling::DTTable dt_table;
    leanstore::profiling::CPUTable cpu_table;
@@ -50,7 +49,9 @@ class TPCHWorkload
    MergedAdapterType& mergedPPsL;
 
   public:
-   TPCHWorkload(AdapterType<part_t>& p,
+   TPCHWorkload(
+      leanstore::LeanStore& db,
+      AdapterType<part_t>& p,
                 AdapterType<supplier_t>& s,
                 AdapterType<partsupp_t>& ps,
                 AdapterType<customerh_t>& c,
@@ -62,7 +63,8 @@ class TPCHWorkload
                 AdapterType<joinedPPsL_t>& jppsl,
                 AdapterType<joinedPPs_t>& jpps,
                 AdapterType<merged_lineitem_t>& sl)
-       : part(p),
+       : db(db),
+       part(p),
          supplier(s),
          partsupp(ps),
          customer(c),
@@ -74,12 +76,16 @@ class TPCHWorkload
          joinedPPsL(jppsl),
          joinedPPs(jpps),
          sortedLineitem(sl),
-         bm_table(*buffer_manager.get()),
-         dt_table(*buffer_manager.get()),
+         bm_table(*db.buffer_manager.get()),
+         dt_table(*db.buffer_manager.get()),
          tables({&bm_table, &dt_table, &cpu_table, &cr_table})
    {
       static fLS::clstring tpch_scale_factor_str = std::to_string(FLAGS_tpch_scale_factor);
       leanstore::LeanStore::addStringFlag("TPCH_SCALE", &tpch_scale_factor_str);
+      for (auto& t : tables) {
+         t->open();
+         t->next();
+      }
    }
 
   private:
@@ -199,27 +205,47 @@ class TPCHWorkload
             }
             csv << endl;
          }
-         csv << config_hash;
-         assert(tables[t_i]->size() == 1);
-         for (auto& c : tables[t_i]->getColumns()) {
-            csv << "," << c.second.values[0];
-         }
-         csv << endl;
-         csv.close();
-
-         auto [tx_console_header, tx_console_data] = summarizeStats(elapsed);
-         std::ofstream csv_sum;
-         csv_sum.open(csv_dir_abs + "sum.csv", std::ios::app);
-         if (csv_sum.tellp() == 0) {  // no header
-            for (auto& h : tx_console_header) {
-               std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, h);
+         // assert(tables[t_i]->size() == 1);
+         for (u64 r_i = 0; r_i < tables[t_i]->size(); r_i++) {
+            csv << config_hash;
+            for (auto& c : tables[t_i]->getColumns()) {
+               csv << "," << c.second.values[r_i];
             }
-            csv_sum << endl;
+            csv << endl;
          }
-         for (auto& d : tx_console_data) {
-            std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, d);
+         csv.close();
+      }
+
+      auto [tx_console_header, tx_console_data] = summarizeStats(elapsed);
+      std::ofstream csv_sum;
+      csv_sum.open(csv_dir_abs + "sum.csv", std::ios::app);
+      if (csv_sum.tellp() == 0) {  // no header
+         for (auto& h : tx_console_header) {
+            std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, h);
          }
          csv_sum << endl;
+      }
+      for (auto& d : tx_console_data) {
+         std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, d);
+      }
+      csv_sum << endl;
+
+      tabulate::Table table;
+      table.add_row(tx_console_header);
+      table.add_row(tx_console_data);
+      table.format().width(10);
+      table.column(0).format().width(5);
+      table.column(1).format().width(12);
+      printTable(table);
+   }
+
+   static void printTable(tabulate::Table& table)
+   {
+      std::stringstream ss;
+      table.print(ss);
+      string str = ss.str();
+      for (u64 i = 0; i < str.size(); i++) {
+         cout << str[i];
       }
    }
 
@@ -326,12 +352,14 @@ class TPCHWorkload
 
    void printProgress(std::string msg, Integer i, Integer scale)
    {
-      if (i % 10000 == 1)
+      int progress = (double) i / scale * 100;
+      if (progress % 10 == 9)
       {
-         double progress = (double) i / scale * 100;
-         std::cout << "\rLoading " << msg << ": " << progress << "%";
+         std::cout << "\rLoading " << msg << ": " << progress << "%------------------------------------";
+         if (progress == 99) {
+            std::cout << std::endl;
+         }
       }
-         
    }
 
    void loadPart()
@@ -367,7 +395,7 @@ class TPCHWorkload
          }
          for (auto& s : suppliers) {
             partsupp.insert(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
-            printProgress("partsupp", i * PARTSUPP_SCALE / PART_SCALE, PARTSUPP_SCALE * FLAGS_tpch_scale_factor);
+            printProgress("partsupp", i, PART_SCALE * FLAGS_tpch_scale_factor);
          }
       }
    }
@@ -404,7 +432,7 @@ class TPCHWorkload
          }
          for (auto& l : lineitems) {
             lineitem.insert(lineitem_t::Key({i, l}), lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
-            printProgress("lineitem", i * LINEITEM_SCALE / ORDERS_SCALE, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
+            printProgress("lineitem", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
          }
       }
    }
@@ -445,7 +473,9 @@ class TPCHWorkload
 
    void loadBasicJoin()
    {
+      std::cout << "Loading basic join" << std::endl;
       // first join
+      std::cout << "Joining part and partsupp" << std::endl;
       this->part.resetIterator();
       this->partsupp.resetIterator();
       Join<PPsL_JK, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
@@ -471,6 +501,7 @@ class TPCHWorkload
          joinedPPs.insert(k, v);
       }
       // second join
+      std::cout << "Joining joinedPPs and lineitem" << std::endl;
       assert(this->sortedLineitem.estimatePages() > 0);
       this->joinedPPs.resetIterator();
       this->sortedLineitem.resetIterator();

@@ -48,7 +48,7 @@ int main(int argc, char** argv)
    db.registerConfigEntry("tpch_scale_factor", FLAGS_tpch_scale_factor);
    leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE;
    // -------------------------------------------------------------------------------------
-   TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem);
+   TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpch(db, part, supplier, partsupp, customer, orders, lineitem, nation, region, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem);
 
    if (!FLAGS_recover) {
         std::cout << "Loading TPC-H" << std::endl;
