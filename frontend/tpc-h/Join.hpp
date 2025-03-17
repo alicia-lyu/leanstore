@@ -95,7 +95,6 @@ class Join
 
    std::pair<typename Rec::Key, Rec> merge(LeftKey& lk, LeftRec& lr, RightKey& rk, RightRec& rr)
    {
-      Key k = extractLeftJKFunc(lk, lr);
       typename Rec::Key jk(lk, rk);
       Rec r(lr, rr);
       return std::make_pair(jk, r);
