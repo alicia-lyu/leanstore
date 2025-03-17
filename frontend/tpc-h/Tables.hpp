@@ -18,6 +18,7 @@ struct KeyPrototype {
 
 template <typename T, auto T::* ...Members>
 struct RecordPrototype {
+
     static constexpr unsigned rowSize() { return (sizeof(std::declval<T>().*Members) + ...); }
     
     template <class K, auto K::* ...KMembers>
@@ -37,6 +38,12 @@ struct RecordPrototype {
     }
 
     static constexpr unsigned maxFoldLength() { return (sizeof(std::declval<T>().*Members) + ...); }
+
+    friend std::ostream& operator<<(std::ostream& os, const T& record)
+    {
+        ((os << record.*Members << ", "), ...);
+        return os;
+    }
 };
 
 struct part_base {
@@ -75,6 +82,18 @@ struct part_t : public part_base, public RecordPrototype<part_base,
 
     part_t() = default;
 
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
+    }
+
     static part_t generateRandomRecord()
     {
         return part_t({randomastring<55>(0, 55), randomastring<25>(25, 25), randomastring<10>(10, 10), randomastring<25>(0, 25),
@@ -107,6 +126,18 @@ struct supplier_t : public supplier_base, public RecordPrototype<supplier_base, 
 
     supplier_t() = default;
 
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::s_suppkey>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::s_suppkey>(in, key);
+    }
+
     static supplier_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
         return supplier_t({randomastring<25>(25, 25), randomastring<40>(0, 40), generate_nationkey(), randomastring<15>(15, 15),
@@ -136,6 +167,18 @@ struct partsupp_t : public partsupp_base, public RecordPrototype<partsupp_base, 
     explicit partsupp_t(partsupp_base base) : partsupp_base(base) {}
 
     partsupp_t() = default;
+
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::ps_partkey, &K::key_base::ps_suppkey>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::ps_partkey, &K::key_base::ps_suppkey>(in, key);
+    }
 
     static partsupp_t generateRandomRecord()
     {
@@ -168,6 +211,18 @@ struct customerh_t : public customer_base, public RecordPrototype<customer_base,
     explicit customerh_t(customer_base base) : customer_base(base) {}
 
     customerh_t() = default;
+
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::c_custkey>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::c_custkey>(in, key);
+    }
 
     static customerh_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
@@ -203,6 +258,18 @@ struct orders_t : public orders_base, public RecordPrototype<orders_base, &order
     explicit orders_t(orders_base base) : orders_base(base) {}
 
     orders_t() = default;
+
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::o_orderkey>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::o_orderkey>(in, key);
+    }
 
     static orders_t generateRandomRecord(std::function<int()> generate_custkey)
     {
@@ -247,6 +314,18 @@ struct lineitem_t : public lineitem_base, public RecordPrototype<lineitem_base, 
 
     lineitem_t() = default;
 
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::l_orderkey, &K::key_base::l_linenumber>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::l_orderkey, &K::key_base::l_linenumber>(in, key);
+    }
+
     static lineitem_t generateRandomRecord(std::function<int()> generate_partkey, std::function<int()> generate_suppkey)
     {
         return lineitem_t({generate_partkey(), generate_suppkey(), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000), randomNumeric(0.0000, 100.0000),
@@ -277,6 +356,18 @@ struct nation_t : public nation_base, public RecordPrototype<nation_base, &natio
 
     nation_t() = default;
 
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::n_nationkey>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::n_nationkey>(in, key);
+    }
+
     static nation_t generateRandomRecord(std::function<int()> generate_regionkey)
     {
         return nation_t({randomastring<25>(0, 25), generate_regionkey(), randomastring<152>(0, 152)});
@@ -303,6 +394,18 @@ struct region_t : public region_base, public RecordPrototype<region_base, &regio
     explicit region_t(region_base base) : region_base(base) {}
 
     region_t() = default;
+
+    template <typename K>
+    static unsigned foldKey(uint8_t* out, const K& key)
+    {
+        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::r_regionkey>(out, key);
+    }
+
+    template <typename K>
+    static unsigned unfoldKey(const uint8_t* in, K& key)
+    {
+        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::r_regionkey>(in, key);
+    }
 
     static region_t generateRandomRecord()
     {

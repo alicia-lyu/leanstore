@@ -36,7 +36,7 @@ class Joined {
     template <typename K, size_t... Is>
     static unsigned foldKeyHelper(uint8_t* out, const K& key, std::index_sequence<Is...>) {
         unsigned pos = 0;
-        ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::foldKey(out + pos, key)), ...);
+        ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::foldKey(out + pos, std::get<Is>(key.keys))), ...);
         return pos;
     }
 
@@ -48,7 +48,7 @@ class Joined {
     template <typename K, size_t... Is>
     static unsigned unfoldKeyHelper(const uint8_t* in, K& key, std::index_sequence<Is...>) {
         unsigned pos = 0;
-        ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::unfoldKey(in + pos, key)), ...);
+        ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::unfoldKey(in + pos, std::get<Is>(key.keys))), ...);
         return pos;
     }
 
