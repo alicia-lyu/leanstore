@@ -1,6 +1,7 @@
 #pragma once
 #include <gflags/gflags.h>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <optional>
@@ -49,9 +50,8 @@ class TPCHWorkload
    MergedAdapterType& mergedPPsL;
 
   public:
-   TPCHWorkload(
-      leanstore::LeanStore& db,
-      AdapterType<part_t>& p,
+   TPCHWorkload(leanstore::LeanStore& db,
+                AdapterType<part_t>& p,
                 AdapterType<supplier_t>& s,
                 AdapterType<partsupp_t>& ps,
                 AdapterType<customerh_t>& c,
@@ -64,7 +64,7 @@ class TPCHWorkload
                 AdapterType<joinedPPs_t>& jpps,
                 AdapterType<merged_lineitem_t>& sl)
        : db(db),
-       part(p),
+         part(p),
          supplier(s),
          partsupp(ps),
          customer(c),
@@ -72,9 +72,9 @@ class TPCHWorkload
          lineitem(l),
          nation(n),
          region(r),
-         mergedPPsL(mbj),
          joinedPPsL(jppsl),
          joinedPPs(jpps),
+         mergedPPsL(mbj),
          sortedLineitem(sl),
          bm_table(*db.buffer_manager.get()),
          dt_table(*db.buffer_manager.get()),
@@ -192,6 +192,7 @@ class TPCHWorkload
       u64 config_hash = configs_table.hash();
       std::vector<std::ofstream> csvs;
       std::string csv_dir_abs = FLAGS_csv_path + "/" + csv_dir;
+      std::filesystem::create_directories(csv_dir_abs);
       for (u64 t_i = 0; t_i < tables.size(); t_i++) {
          csvs.emplace_back();
          auto& csv = csvs.back();
@@ -234,8 +235,6 @@ class TPCHWorkload
       table.add_row(tx_console_header);
       table.add_row(tx_console_data);
       table.format().width(10);
-      table.column(0).format().width(5);
-      table.column(1).format().width(12);
       printTable(table);
    }
 
@@ -344,7 +343,7 @@ class TPCHWorkload
 
    void prepare()
    {
-      std::cout << "Preparing TPC-C" << std::endl;
+      std::cout << "Preparing TPC-H" << std::endl;
       [[maybe_unused]] Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
       Integer h_id = 0;
       leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
@@ -352,11 +351,10 @@ class TPCHWorkload
 
    void printProgress(std::string msg, Integer i, Integer scale)
    {
-      int progress = (double) i / scale * 100;
-      if (progress % 10 == 9)
-      {
+      double progress = (double)i / scale * 100;
+      if (i % 100000 == 1) {
          std::cout << "\rLoading " << msg << ": " << progress << "%------------------------------------";
-         if (progress == 99) {
+         if (progress == (double)99) {
             std::cout << std::endl;
          }
       }
@@ -382,7 +380,7 @@ class TPCHWorkload
    void loadPartsupp()
    {
       for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
-         int supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
+         u64 supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
          std::vector<Integer> suppliers = {};
          while (true) {
             Integer supplier_id = urand(1, SUPPLIER_SCALE * FLAGS_tpch_scale_factor);
@@ -419,7 +417,7 @@ class TPCHWorkload
    void loadLineitem()
    {
       for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
-         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
+         u64 lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
          std::vector<Integer> lineitems = {};
          while (true) {
             Integer lineitem_id = urand(1, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
@@ -431,7 +429,8 @@ class TPCHWorkload
             }
          }
          for (auto& l : lineitems) {
-            lineitem.insert(lineitem_t::Key({i, l}), lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
+            lineitem.insert(lineitem_t::Key({i, l}),
+                            lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
             printProgress("lineitem", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
          }
       }
@@ -594,4 +593,29 @@ class TPCHWorkload
    void loadBasicJoinGroup();
 
    // Log size
+   void logSize()
+   {
+      std::cout << "Logging size" << std::endl;
+      std::ofstream size_csv;
+      size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
+      if (size_csv.tellp() == 0) {
+         size_csv << "table,size" << std::endl;
+      }
+      std::vector<std::ostream*> out = {&std::cout, &size_csv};
+      for (std::ostream* o: out) {
+         *o << "part," << part.size() << " MiB" << std::endl;
+         *o << "supplier," << supplier.size() << " MiB" << std::endl;
+         *o << "partsupp," << partsupp.size() << " MiB" << std::endl;
+         *o << "customer," << customer.size() << " MiB" << std::endl;
+         *o << "orders," << orders.size() << " MiB" << std::endl;
+         *o << "lineitem," << lineitem.size() << " MiB" << std::endl;
+         *o << "nation," << nation.size() << " MiB" << std::endl;
+         *o << "region," << region.size() << " MiB" << std::endl;
+         *o << "joinedPPsL," << joinedPPsL.size() << " MiB" << std::endl;
+         *o << "joinedPPs," << joinedPPs.size() << " MiB" << std::endl;
+         *o << "sortedLineitem," << sortedLineitem.size() << " MiB" << std::endl;
+         *o << "mergedPPsL," << mergedPPsL.size() << " MiB" << std::endl;
+      }
+      size_csv.close();
+   }
 };
