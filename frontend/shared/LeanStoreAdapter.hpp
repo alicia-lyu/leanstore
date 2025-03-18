@@ -5,6 +5,7 @@
 #include "leanstore/LeanStore.hpp"
 #include "LeanStoreScanner.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
+#include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 // -------------------------------------------------------------------------------------
 #include <cassert>
 #include <cstring>
@@ -262,5 +263,11 @@ struct LeanStoreAdapter : Adapter<Record> {
    }
 
    u64 estimatePages() final { return btree->estimatePages(); }
+   
+   double size() { 
+      double s = estimatePages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0; // MiB
+      return s;
+   }
+
    u64 estimateLeafs() final { return btree->estimateLeafs(); }
 };

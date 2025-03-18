@@ -3,6 +3,7 @@
 #include "Exceptions.hpp"
 // #include "MergedAdapter.hpp"
 #include "leanstore/LeanStore.hpp"
+#include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 
 using namespace leanstore;
 
@@ -256,6 +257,10 @@ struct LeanStoreMergedAdapter {
    u64 count() { return btree->countEntries(); }
 
    u64 estimatePages() { return btree->estimatePages(); }
+   double size() {
+      double s = btree->estimatePages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0;
+      return s;
+   }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
 
 };
