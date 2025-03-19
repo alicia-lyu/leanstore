@@ -43,6 +43,12 @@ struct Varchar {
 
    std::string toString() const { return std::string(data, length); };
 
+   friend std::ostream& operator<<(std::ostream& os, const Varchar<maxLength>& x)
+   {
+      os << x.toString();
+      return os;
+   }
+
    template <int otherMaxLength>
    Varchar<maxLength> operator||(const Varchar<otherMaxLength>& other) const
    {
