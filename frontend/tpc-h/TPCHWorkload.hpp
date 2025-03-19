@@ -352,8 +352,8 @@ class TPCHWorkload
 
    void printProgress(std::string msg, Integer i, Integer scale)
    {
-      double progress = (double)i / scale * 100;
       if (i % 1000 == 1 || i == scale) {
+         double progress = (double)i / scale * 100;
          std::cout << "\rLoading " << msg << ": " << progress << "%------------------------------------";
       }
       if (i == scale) {
@@ -382,7 +382,7 @@ class TPCHWorkload
    {
       // Generate and shuffle lineitem keys
       std::vector<lineitem_t::Key> lineitems = {};
-      for (Integer i = 1; i < ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
+      for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
          Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
          for (Integer j = 1; j <= lineitem_cnt; j++) {
             lineitems.push_back(lineitem_t::Key({i, j}));
@@ -390,7 +390,7 @@ class TPCHWorkload
       }
       std::random_shuffle(lineitems.begin(), lineitems.end());
       // Load partsupp and lineitem
-      long ps_cnt = 0;
+      long l_global_cnt = 0;
       for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
          // Randomly select suppliers for this part
          Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
@@ -408,20 +408,19 @@ class TPCHWorkload
             // load 1 partsupp
             partsupp.insert(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
             // load lineitems
-            u64 lineitem_cnt = urand(0, LINEITEM_SCALE / PARTSUPP_SCALE * 2); // No reference integrity but mostly matched
-            for (u64 l = 0; l < lineitem_cnt; l++) {
+            Integer lineitem_cnt = urand(0, LINEITEM_SCALE / PARTSUPP_SCALE * 2); // No reference integrity but mostly matched
+            for (Integer l = 0; l < lineitem_cnt; l++) {
                auto rec = lineitem_t::generateRandomRecord([i]() { return i; }, [s]() { return s; });
-               if (ps_cnt * l >= lineitems.size()) {
-                  auto rand_idx = urand(0, lineitems.size() - 1);
-                  lineitem.insert(lineitems[rand_idx], rec);
+               if (l_global_cnt >= lineitems.size()) {
                   std::cout << "Warning: lineitem table is not fully populated" << std::endl;
+                  break;
                } else {
-                  lineitem.insert(lineitems[ps_cnt * l], rec);
+                  lineitem.insert(lineitems[l_global_cnt], rec);
+                  l_global_cnt++;
                }
-               ps_cnt++;
             }
          }
-         printProgress("partsupp", i, PART_SCALE * FLAGS_tpch_scale_factor);
+         printProgress("partsupp and lineitem", i, PART_SCALE * FLAGS_tpch_scale_factor);
       }
    }
 

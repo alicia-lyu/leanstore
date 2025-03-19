@@ -243,6 +243,11 @@ struct LeanStoreMergedAdapter {
                   return desc.callback(key_data, payload);
                }
             }
+            std::cout << "Required length key: " << key_length << ", payload: " << payload_length << std::endl;
+            // all lengths of descriptors:
+            for (auto& desc : callback_descriptors) {
+               cout << "desc: key length: " << desc.folded_key_len << ", payload length: " << desc.payload_size << endl;
+            }
             UNREACHABLE();
          },
          undo
