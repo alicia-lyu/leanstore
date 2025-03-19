@@ -248,6 +248,7 @@ class TPCHWorkload
       for (u64 i = 0; i < str.size(); i++) {
          cout << str[i];
       }
+      cout << std::endl;
    }
 
   public:
@@ -608,22 +609,21 @@ class TPCHWorkload
       };
 
       auto lineitem_src = [this]() {
-         auto kv = lineitem.next();
+         auto kv = sortedLineitem.next();
          if (kv == std::nullopt) {
             return HeapEntry<PPsL_JK>{PPsL_JK::max(), {}, {}, 2};
          }
          auto& [k, v] = *kv;
          std::vector<std::byte> k_bytes(sizeof(k));
          std::memcpy(k_bytes.data(), &k, sizeof(k));
-
          std::vector<std::byte> v_bytes(sizeof(v));
          std::memcpy(v_bytes.data(), &v, sizeof(v));
-         return HeapEntry<PPsL_JK>{PPsL_JK{v.l_partkey, v.l_suppkey}, std::move(k_bytes), std::move(v_bytes), 2};
+         return HeapEntry<PPsL_JK>{PPsL_JK{k.jk.l_partkey, k.jk.l_partsuppkey}, std::move(k_bytes), std::move(v_bytes), 2};
       };
 
       auto lineitem_consume = [this](HeapEntry<PPsL_JK>& entry) {
-         merged_lineitem_t::Key k_new({entry.jk, bytes_to_struct<lineitem_t::Key>(entry.k)});
-         merged_lineitem_t v_new(bytes_to_struct<lineitem_t>(entry.v));
+         merged_lineitem_t::Key k_new = bytes_to_struct<merged_lineitem_t::Key>(entry.k);
+         merged_lineitem_t v_new = bytes_to_struct<merged_lineitem_t>(entry.v);
          this->mergedPPsL.insert(k_new, v_new);
       };
       
