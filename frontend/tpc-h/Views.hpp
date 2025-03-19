@@ -60,7 +60,7 @@ class Joined {
     }
 
     static constexpr unsigned maxFoldLength() {
-        return (0 + ... + Ts::maxFoldLength());
+        return (JK::maxFoldLength() + ... + Ts::maxFoldLength());
     }
 
     static constexpr unsigned rowSize() {
