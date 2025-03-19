@@ -286,7 +286,7 @@ class TPCHWorkload
       std::vector<std::pair<merged_part_t::Key, merged_part_t>> cached_part;
       std::vector<std::pair<merged_partsupp_t::Key, merged_partsupp_t>> cached_partsupp;
       std::function<void(PPsL_JK)> comp_clear = [&](PPsL_JK jk) {
-         if (current_jk != jk) {
+         if (current_jk.match(jk) != 0) {
             current_jk = jk;
             cached_part.clear();
             cached_partsupp.clear();
@@ -478,144 +478,156 @@ class TPCHWorkload
    {
       std::cout << "Loading basic join" << std::endl;
       // first join
-      std::cout << "Joining part and partsupp" << std::endl;
-      this->part.resetIterator();
-      this->partsupp.resetIterator();
-      Join<PPsL_JK, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
-          [](part_t::Key& k, part_t&) { return PPsL_JK{k.p_partkey, 0}; },
-          [](partsupp_t::Key& k, partsupp_t&) { return PPsL_JK{k.ps_partkey, k.ps_suppkey}; },
-          [](u8* in, u16) {
-             part_t::Key k;
-             part_t::unfoldKey(in, k);
-             return k;
-          },
-          [](u8* in, u16) {
-             partsupp_t::Key k;
-             partsupp_t::unfoldKey(in, k);
-             return k;
-          },
-          [this]() { return this->part.next(); }, [this]() { return this->partsupp.next(); });
-      while (true) {
-         auto kv = join1.next();
-         if (kv == std::nullopt) {
-            break;
+      {
+         std::cout << "Joining part and partsupp" << std::endl;
+         this->part.resetIterator();
+         this->partsupp.resetIterator();
+         Join<PPsL_JK, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
+             [](part_t::Key& k, part_t&) { return PPsL_JK{k.p_partkey, 0}; },
+             [](partsupp_t::Key& k, partsupp_t&) { return PPsL_JK{k.ps_partkey, k.ps_suppkey}; },
+             [](u8* in, u16) {
+                part_t::Key k;
+                part_t::unfoldKey(in, k);
+                return k;
+             },
+             [](u8* in, u16) {
+                partsupp_t::Key k;
+                partsupp_t::unfoldKey(in, k);
+                return k;
+             },
+             [this]() { return this->part.next(); }, [this]() { return this->partsupp.next(); });
+         while (true) {
+            auto kv = join1.next();
+            if (kv == std::nullopt) {
+               break;
+            }
+            auto& [k, v] = *kv;
+            joinedPPs.insert(k, v);
          }
-         auto& [k, v] = *kv;
-         joinedPPs.insert(k, v);
       }
+      
       // second join
-      std::cout << "Joining joinedPPs and lineitem" << std::endl;
-      assert(this->sortedLineitem.estimatePages() > 0);
-      this->joinedPPs.resetIterator();
-      this->sortedLineitem.resetIterator();
-      Join<PPsL_JK, joinedPPsL_t, joinedPPs_t::Key, joinedPPs_t, merged_lineitem_t::Key, merged_lineitem_t> join2(
-          [](joinedPPs_t::Key& k, joinedPPs_t&) { return k.jk; }, [](merged_lineitem_t::Key& k, merged_lineitem_t&) { return k.jk; },
-          [](u8* in, u16) {
-             joinedPPs_t::Key k;
-             joinedPPs_t::unfoldKey(in, k);
-             return k;
-          },
-          [](u8* in, u16) {
-             merged_lineitem_t::Key k;
-             merged_lineitem_t::unfoldKey(in, k);
-             return k;
-          },
-          [this]() { return this->joinedPPs.next(); }, [this]() { return this->sortedLineitem.next(); });
-      while (true) {
-         auto kv = join2.next();
-         if (kv == std::nullopt) {
-            break;
+      {
+         std::cout << "Joining joinedPPs and lineitem" << std::endl;
+         assert(this->sortedLineitem.estimatePages() > 0);
+         this->joinedPPs.resetIterator();
+         this->sortedLineitem.resetIterator();
+         Join<PPsL_JK, joinedPPsL_t, joinedPPs_t::Key, joinedPPs_t, merged_lineitem_t::Key, merged_lineitem_t> join2(
+            [](joinedPPs_t::Key& k, joinedPPs_t&) { return k.jk; }, [](merged_lineitem_t::Key& k, merged_lineitem_t&) { return k.jk; },
+            [](u8* in, u16) {
+               joinedPPs_t::Key k;
+               joinedPPs_t::unfoldKey(in, k);
+               return k;
+            },
+            [](u8* in, u16) {
+               merged_lineitem_t::Key k;
+               merged_lineitem_t::unfoldKey(in, k);
+               return k;
+            },
+            [this]() { return this->joinedPPs.next(); }, [this]() { return this->sortedLineitem.next(); });
+         while (true) {
+            auto kv = join2.next();
+            if (kv == std::nullopt) {
+               break;
+            }
+            auto& [k, v] = *kv;
+            joinedPPsL.insert(k, v);
          }
-         auto& [k, v] = *kv;
-         joinedPPsL.insert(k, v);
       }
    };
 
-   void loadMergedBasicJoin()
-   {
-      std::cout << "Loading merged basic join" << std::endl;
-      part.resetIterator();
-      part_t::Key pk;
-      part_t pv;
-      PPsL_JK pjk{};
-      int pkv = 2;  // current pjk is valid
-      partsupp.resetIterator();
-      partsupp_t::Key psk;
-      partsupp_t psv;
-      PPsL_JK psjk{};
-      int pskv = 2;
-      sortedLineitem.resetIterator();
-      merged_lineitem_t::Key slk;
-      merged_lineitem_t slv;
-      PPsL_JK sljk{};
-      int slkv = 2;
-      while (pkv != 0 || pskv != 0 || slkv != 0) {
-         u64 all_produced = part.produced + partsupp.produced + sortedLineitem.produced;
-         if (all_produced % 1000 == 0) {
-            std::cout << "\rConsumed: part " << part.produced 
-            << (pkv ? "" : "(finished)")
-            << ", partsupp " << partsupp.produced 
-            << (pskv ? "" : "(finished)")
-            << ", lineitem " << sortedLineitem.produced
-            << (slkv ? "" : "(finished)")
-            << "------------------------------------";
-         }
-         if (pkv != 0 && pjk <= psjk && pjk <= sljk) {
-            if (pkv == 1) {
-               merged_part_t::Key k({pjk, pk});
-               merged_part_t v(pv);
-               mergedPPsL.insert(k, v);
-            } else {
-               pkv = 1;
-            }
-            auto npkv = part.next();
-            if (npkv != std::nullopt) {
-               pk = npkv.value().first;
-               pv = npkv.value().second;
-               pjk = PPsL_JK{pk.p_partkey, 0};
-            } else {
-               pkv = 0;
-               pjk = PPsL_JK::max();
-            }
-         } else if (pskv != 0 && psjk <= pjk && psjk <= sljk) {
-            if (pskv == 1) {
-               merged_partsupp_t::Key k({psjk, psk});
-               merged_partsupp_t v(psv);
-               mergedPPsL.insert(k, v);
-            } else {
-               pskv = 1;
-            }
-            auto npskv = partsupp.next();
-            if (npskv != std::nullopt) {
-               psk = npskv.value().first;
-               psv = npskv.value().second;
-               psjk = PPsL_JK{psk.ps_partkey, psk.ps_suppkey};
-            } else {
-               pskv = 0;
-               psjk = PPsL_JK::max();
-            }
-         } else if (slkv != 0 && sljk <= pjk && sljk <= psjk) {
-            if (slkv == 1) {
-               mergedPPsL.insert(slk, slv);
-            } else {
-               slkv = 1;
-            }
-            auto nslkv = sortedLineitem.next();
-            if (nslkv != std::nullopt) {
-               slk = nslkv.value().first;
-               slv = nslkv.value().second;
-               sljk = slk.jk;
-            } else {
-               slkv = 0;
-               sljk = PPsL_JK::max();
-            }
-         } else {
-            std::cout << "Error: no record consumed" << std::endl;
-            break;
+   template <typename JK>
+   struct HeapEntry {
+      JK jk;
+      std::vector<std::byte> k;
+      std::vector<std::byte> v;
+      u8 source;
+
+      bool operator>(const HeapEntry& other) const { return jk > other.jk; }
+   };
+
+   template <typename JK>
+   void heapMerge(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
+   {  
+      std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<HeapEntry<JK>>> heap;
+      for (auto& s: sources) {
+         HeapEntry<JK> entry = s();
+         heap.push(entry);
+      }
+      while (!heap.empty()) {
+         HeapEntry<JK> entry = heap.top();
+         heap.pop();
+         consumes[entry.source](entry);
+         HeapEntry<JK> next = sources[entry.source]();
+         if (next.jk != JK::max()) {
+            heap.push(next);
          }
       }
-      std::cout << std::endl;
-      std::cout << "Consumed: part " << part.produced << ", partsupp " << partsupp.produced << ", lineitem " << sortedLineitem.produced << std::endl;
+   }
+
+   void loadMergedBasicJoin()
+   {
+      auto part_src = [this]() {
+         auto kv = part.next();
+         if (kv == std::nullopt) {
+            return HeapEntry<PPsL_JK>{PPsL_JK::max(), {}, {}, 0};
+         }
+         auto& [k, v] = *kv;
+         std::vector<std::byte> k_bytes(sizeof(k));
+         std::memcpy(k_bytes.data(), &k, sizeof(k));
+
+         std::vector<std::byte> v_bytes(sizeof(v));
+         std::memcpy(v_bytes.data(), &v, sizeof(v));
+         return HeapEntry<PPsL_JK>{PPsL_JK{k.p_partkey, 0}, std::move(k_bytes), std::move(v_bytes), 0};
+      };
+
+      auto part_consume = [this](HeapEntry<PPsL_JK>& entry) {
+         merged_part_t::Key k_new({entry.jk, bytes_to_struct<part_t::Key>(entry.k)});
+         merged_part_t v_new(bytes_to_struct<part_t>(entry.v));
+         this->mergedPPsL.insert(k_new, v_new);
+      };
+
+      auto partsupp_src = [this]() {
+         auto kv = partsupp.next();
+         if (kv == std::nullopt) {
+            return HeapEntry<PPsL_JK>{PPsL_JK::max(), {}, {}, 1};
+         }
+         auto& [k, v] = *kv;
+         std::vector<std::byte> k_bytes(sizeof(k));
+         std::memcpy(k_bytes.data(), &k, sizeof(k));
+
+         std::vector<std::byte> v_bytes(sizeof(v));
+         std::memcpy(v_bytes.data(), &v, sizeof(v));
+         return HeapEntry<PPsL_JK>{PPsL_JK{k.ps_partkey, k.ps_suppkey}, std::move(k_bytes), std::move(v_bytes), 1};
+      };
+
+      auto partsupp_consume = [this](HeapEntry<PPsL_JK>& entry) {
+         merged_partsupp_t::Key k_new({entry.jk, bytes_to_struct<partsupp_t::Key>(entry.k)});
+         merged_partsupp_t v_new(bytes_to_struct<partsupp_t>(entry.v));
+         this->mergedPPsL.insert(k_new, v_new);
+      };
+
+      auto lineitem_src = [this]() {
+         auto kv = lineitem.next();
+         if (kv == std::nullopt) {
+            return HeapEntry<PPsL_JK>{PPsL_JK::max(), {}, {}, 2};
+         }
+         auto& [k, v] = *kv;
+         std::vector<std::byte> k_bytes(sizeof(k));
+         std::memcpy(k_bytes.data(), &k, sizeof(k));
+
+         std::vector<std::byte> v_bytes(sizeof(v));
+         std::memcpy(v_bytes.data(), &v, sizeof(v));
+         return HeapEntry<PPsL_JK>{PPsL_JK{v.l_partkey, v.l_suppkey}, std::move(k_bytes), std::move(v_bytes), 2};
+      };
+
+      auto lineitem_consume = [this](HeapEntry<PPsL_JK>& entry) {
+         merged_lineitem_t::Key k_new({entry.jk, bytes_to_struct<lineitem_t::Key>(entry.k)});
+         merged_lineitem_t v_new(bytes_to_struct<lineitem_t>(entry.v));
+         this->mergedPPsL.insert(k_new, v_new);
+      };
+      
+      heapMerge<PPsL_JK>({part_src, partsupp_src, lineitem_src}, {part_consume, partsupp_consume, lineitem_consume});
    }
 
    void loadBasicGroup();

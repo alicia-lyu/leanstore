@@ -62,8 +62,8 @@ int main(int argc, char** argv)
             tpch.loadNation();
             tpch.loadRegion();
             tpch.loadSortedLineitem();
-            tpch.loadBasicJoin();
             tpch.loadMergedBasicJoin();
+            tpch.loadBasicJoin();
             tpch.logSize();
             cr::Worker::my().commitTX();
         });
