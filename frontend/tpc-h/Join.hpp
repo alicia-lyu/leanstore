@@ -56,6 +56,16 @@ class Join
       next_right = nextRight();
    }
 
+   ~Join()
+   {
+      std::cout << std::endl;
+      std::cout << "Left consumed: " << left_consumed << ", semi-join selectivity: " << (double)left_match_cnt / left_consumed * 100 << "%"
+                << std::endl;
+      std::cout << "Right consumed: " << right_consumed << ", semi-join selectivity: " << (double)right_match_cnt / right_consumed * 100 << "%"
+                << std::endl;
+      std::cout << "Produced: " << produced << std::endl;
+   }
+
    std::optional<std::pair<LeftKey, LeftRec>> nextLeft()
    {
       left_consumed++;
@@ -79,9 +89,6 @@ class Join
    std::optional<std::pair<typename Rec::Key, Rec>> next()
    {
       if (!curr_left.has_value()) {
-         std::cout << "Left consumed: " << left_consumed << ", semi-join selectivity: " << (double)left_match_cnt / left_consumed * 100 << "%" << std::endl;
-         std::cout << "Right consumed: " << right_consumed << ", semi-join selectivity: " << (double)right_match_cnt / right_consumed * 100 << "%" << std::endl;
-         std::cout << "Produced: " << produced << std::endl;
          return std::nullopt;
       }
       auto& [lk, lr] = *curr_left;
@@ -89,26 +96,24 @@ class Join
          // std::cout << "size of cachedRight: " << cachedRight.size() << ", cachedRightPtr: " << cachedRightPtr << std::endl;
          auto curr_right = cachedRight.at(cachedRightPtr % cachedRight.size());
          [[maybe_unused]] auto& [rk, rr] = curr_right;
-         if (cachedRightPtr == cachedRight.size())
-         {
+         if (cachedRightPtr == cachedRight.size()) {
             // see whether next left matches cached right
             curr_left = nextLeft();
             cachedRightPtr = 0;
             if (!curr_left.has_value()) {
-               return next(); // eventually return nullopt
+               return next();  // eventually return nullopt
             }
             auto& [lk, lr] = *curr_left;
             if (extractLeftJKFunc(lk, lr) != extractRightJKFunc(rk, rr)) {
                cachedRight.clear();
-               return next(); // go to second if-else
+               return next();  // go to second if-else
             }
          }
          cachedRightPtr++;
          return merge(lk, lr, rk, rr);
-      } // else proceed
+      }  // else proceed
       // zig zag to new current
       if (!next_right.has_value()) {
-         std::cout << "Produced: " << produced << std::endl;
          return std::nullopt;
       }
       auto& [rk, rr] = *next_right;
