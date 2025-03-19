@@ -66,6 +66,13 @@ class Joined {
     static constexpr unsigned rowSize() {
         return (0 + ... + Ts::rowSize());
     }
+
+    friend std::ostream& operator<<(std::ostream& os, const Joined& j) {
+        os << "Joined(";
+        std::apply([&](const auto&... args) { ((os << args << ", "), ...); }, j.payloads);
+        os << ")";
+        return os;
+    }
 };
 
 template <int TID, typename T, typename JK, bool foldPK>
@@ -76,9 +83,18 @@ struct merged {
         JK jk;
         typename T::Key pk;
     };
-    struct Key: public key_base, public KeyPrototype<key_base, &key_base::jk, &key_base::pk> {
+    struct Key: public key_base {
         Key() = default;
         Key(const key_base& k) : key_base(k) {}
+
+        friend std::ostream& operator<<(std::ostream& os, const Key& key) {
+            os << "mergedKey(" << key.jk;
+            if (foldPK) {
+                os << ", " << key.pk;
+            }
+            os << ")";
+            return os;
+        }
     };
 
     T payload;
@@ -106,6 +122,11 @@ struct merged {
     }
 
     static constexpr unsigned maxFoldLength() { return 0 + JK::maxFoldLength() + (foldPK ? T::maxFoldLength() : 0); }
+
+    friend std::ostream& operator<<(std::ostream& os, const merged& m) {
+        os << "merged(" << m.payload << ")";
+        return os;
+    }
 };
 
 struct PPsL_JK {

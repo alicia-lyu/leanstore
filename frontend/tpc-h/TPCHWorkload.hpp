@@ -565,14 +565,17 @@ class TPCHWorkload
                merged_part_t::Key k({pjk, pk});
                merged_part_t v(pv);
                mergedPPsL.insert(k, v);
+               // std::cout << "Inserting part: " << k << std::endl;
                pi++;
             } else {
                pkv = 1;
             }
             auto npkv = part.next();
             if (npkv != std::nullopt) {
-               auto [pk, pv] = *npkv;
+               pk = npkv.value().first;
+               pv = npkv.value().second;
                pjk = PPsL_JK{pk.p_partkey, 0};
+               // std::cout << "pk: " << pk << ", pv: " << pv << "pjk: " << pjk << std::endl;
             } else {
                pkv = 0;
                pjk = PPsL_JK::max();
@@ -582,14 +585,17 @@ class TPCHWorkload
                merged_partsupp_t::Key k({psjk, psk});
                merged_partsupp_t v(psv);
                mergedPPsL.insert(k, v);
+               // std::cout << "Inserting partsupp: " << k << std::endl;
                psi++;
             } else {
                pskv = 1;
             }
             auto npskv = partsupp.next();
             if (npskv != std::nullopt) {
-               auto [psk, psv] = *npskv;
+               psk = npskv.value().first;
+               psv = npskv.value().second;
                psjk = PPsL_JK{psk.ps_partkey, psk.ps_suppkey};
+               // std::cout << "psk: " << psk << ", psv: " << psv << ", psjk: " << psjk << std::endl;
             } else {
                pskv = 0;
                psjk = PPsL_JK::max();
@@ -597,20 +603,23 @@ class TPCHWorkload
          } else if (slkv != 0 && sljk <= pjk && sljk <= psjk) {
             if (slkv == 1) {
                mergedPPsL.insert(slk, slv);
+               // std::cout << "Inserting lineitem: " << slk << std::endl;
                sli++;
             } else {
                slkv = 1;
             }
             auto nslkv = sortedLineitem.next();
             if (nslkv != std::nullopt) {
-               auto [slk, slv] = *nslkv;
+               slk = nslkv.value().first;
+               slv = nslkv.value().second;
                sljk = slk.jk;
+               // std::cout << "slk: " << slk << ", slv: " << slv << ", sljk: " << sljk << std::endl;
             } else {
                slkv = 0;
                sljk = PPsL_JK::max();
             }
          } else {
-            std::cout << "Warning: no record consumed" << std::endl;
+            std::cout << "Error: no record consumed" << std::endl;
             break;
          }
       }

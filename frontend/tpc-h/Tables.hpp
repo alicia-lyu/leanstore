@@ -9,9 +9,9 @@ using namespace randutils;
 template <typename K, auto K::* ...Members>
 struct KeyPrototype {
     
-    friend std::ostream& operator<<(std::ostream& os, const K& record)
+    friend std::ostream& operator<<(std::ostream& os, const K& k)
     {
-        ((os << record.*Members << ", "), ...);
+        ((os << k.*Members << ", "), ...);
         return os;
     }
 };
