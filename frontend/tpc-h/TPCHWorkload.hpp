@@ -8,6 +8,7 @@
 #include <vector>
 #include "Tables.hpp"
 
+#include "Units.hpp"
 #include "Views.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
@@ -253,13 +254,12 @@ class TPCHWorkload
    void basicJoin()
    {
       // Enumrate materialized view
-      std::cout << "Enumerating materialized view" << std::endl;
       resetTables();
       [[maybe_unused]] int produced = 0;
       auto inspect_produced = [&](const std::string& msg) {
          produced++;
-         if (produced % 100000 == 0) {
-            std::cout << "\r" << msg << produced / 1000 << "k";
+         if (produced % 1000 == 1) {
+            std::cout << "\r" << msg << (double) produced / 1000 << "k------------------------------------";
          }
       };
       auto mtdv_start = std::chrono::high_resolution_clock::now();
@@ -330,6 +330,7 @@ class TPCHWorkload
                       std::vector<typename MergedAdapterType::ScanCallbackDescriptor>{part_descriptor, partsupp_descriptor, lineitem_descriptor},
                       [&]() {}  // undo
       );
+      std::cout << "Scanned " << produced << " records in merged index" << std::endl;
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
       logTables(merged_t, "merged");
@@ -352,11 +353,11 @@ class TPCHWorkload
    void printProgress(std::string msg, Integer i, Integer scale)
    {
       double progress = (double)i / scale * 100;
-      if (i % 100000 == 1) {
+      if (i % 1000 == 1 || i == scale) {
          std::cout << "\rLoading " << msg << ": " << progress << "%------------------------------------";
-         if (progress == (double)99) {
-            std::cout << std::endl;
-         }
+      }
+      if (i == scale) {
+         std::cout << std::endl;
       }
    }
 
@@ -393,8 +394,8 @@ class TPCHWorkload
          }
          for (auto& s : suppliers) {
             partsupp.insert(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
-            printProgress("partsupp", i, PART_SCALE * FLAGS_tpch_scale_factor);
          }
+         printProgress("partsupp", i, PART_SCALE * FLAGS_tpch_scale_factor);
       }
    }
 
@@ -431,8 +432,8 @@ class TPCHWorkload
          for (auto& l : lineitems) {
             lineitem.insert(lineitem_t::Key({i, l}),
                             lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
-            printProgress("lineitem", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
          }
+         printProgress("lineitem", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
       }
    }
 
@@ -529,63 +530,93 @@ class TPCHWorkload
 
    void loadMergedBasicJoin()
    {
+      std::cout << "Loading merged basic join" << std::endl;
       part.resetIterator();
       part_t::Key pk;
       part_t pv;
-      PPsL_JK pjk;
-      bool pkv = true;  // current pjk is valid
+      PPsL_JK pjk{};
+      int pkv = 2;  // current pjk is valid
+      u64 pi = 0;
       partsupp.resetIterator();
       partsupp_t::Key psk;
       partsupp_t psv;
-      PPsL_JK psjk;
-      bool pskv = true;
+      PPsL_JK psjk{};
+      int pskv = 2;
+      u64 psi = 0;
       sortedLineitem.resetIterator();
       merged_lineitem_t::Key slk;
       merged_lineitem_t slv;
-      PPsL_JK sljk;
-      bool slkv = true;
-      while (pkv || pskv || slkv) {
-         if (pkv == true && pjk <= psjk && pjk <= sljk) {
-            if (pjk != PPsL_JK{}) {
+      PPsL_JK sljk{};
+      int slkv = 2;
+      u64 sli = 0;
+      while (pkv != 0 || pskv != 0 || slkv != 0) {
+         u64 all_produced = part.produced + partsupp.produced + sortedLineitem.produced;
+         if (all_produced % 1000 == 0) {
+            std::cout << "\rConsumed: part " << part.produced 
+            << (pkv ? "" : "(finished)")
+            << ", partsupp " << partsupp.produced 
+            << (pskv ? "" : "(finished)")
+            << ", lineitem " << sortedLineitem.produced
+            << (slkv ? "" : "(finished)")
+            << "------------------------------------";
+         }
+         if (pkv != 0 && pjk <= psjk && pjk <= sljk) {
+            if (pkv == 1) {
                merged_part_t::Key k({pjk, pk});
                merged_part_t v(pv);
                mergedPPsL.insert(k, v);
+               pi++;
+            } else {
+               pkv = 1;
             }
             auto npkv = part.next();
             if (npkv != std::nullopt) {
-               auto& [pk, pv] = *npkv;
+               auto [pk, pv] = *npkv;
                pjk = PPsL_JK{pk.p_partkey, 0};
             } else {
-               pkv = false;
+               pkv = 0;
+               pjk = PPsL_JK::max();
             }
-         } else if (pskv == true && psjk <= pjk && psjk <= sljk) {
-            if (psjk != PPsL_JK{}) {
+         } else if (pskv != 0 && psjk <= pjk && psjk <= sljk) {
+            if (pskv == 1) {
                merged_partsupp_t::Key k({psjk, psk});
                merged_partsupp_t v(psv);
                mergedPPsL.insert(k, v);
+               psi++;
+            } else {
+               pskv = 1;
             }
             auto npskv = partsupp.next();
             if (npskv != std::nullopt) {
-               auto& [psk, psv] = *npskv;
+               auto [psk, psv] = *npskv;
                psjk = PPsL_JK{psk.ps_partkey, psk.ps_suppkey};
             } else {
-               pskv = false;
+               pskv = 0;
+               psjk = PPsL_JK::max();
             }
-         } else if (slkv == true && sljk <= pjk && sljk <= psjk) {
-            if (sljk != PPsL_JK{}) {
+         } else if (slkv != 0 && sljk <= pjk && sljk <= psjk) {
+            if (slkv == 1) {
                mergedPPsL.insert(slk, slv);
+               sli++;
+            } else {
+               slkv = 1;
             }
             auto nslkv = sortedLineitem.next();
             if (nslkv != std::nullopt) {
-               auto& [slk, slv] = *nslkv;
+               auto [slk, slv] = *nslkv;
                sljk = slk.jk;
             } else {
-               slkv = false;
+               slkv = 0;
+               sljk = PPsL_JK::max();
             }
          } else {
+            std::cout << "Warning: no record consumed" << std::endl;
             break;
          }
       }
+      std::cout << std::endl;
+      std::cout << "Consumed: part " << part.produced << ", partsupp " << partsupp.produced << ", lineitem " << sortedLineitem.produced << std::endl;
+      std::cout << "Inserted: part " << pi << ", partsupp " << psi << ", lineitem " << sli << std::endl;
    }
 
    void loadBasicGroup();
@@ -599,22 +630,23 @@ class TPCHWorkload
       std::ofstream size_csv;
       size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
       if (size_csv.tellp() == 0) {
-         size_csv << "table,size" << std::endl;
+         size_csv << "table,size (MiB)" << std::endl;
       }
+      std::cout << "table,size" << std::endl;
       std::vector<std::ostream*> out = {&std::cout, &size_csv};
       for (std::ostream* o: out) {
-         *o << "part," << part.size() << " MiB" << std::endl;
-         *o << "supplier," << supplier.size() << " MiB" << std::endl;
-         *o << "partsupp," << partsupp.size() << " MiB" << std::endl;
-         *o << "customer," << customer.size() << " MiB" << std::endl;
-         *o << "orders," << orders.size() << " MiB" << std::endl;
-         *o << "lineitem," << lineitem.size() << " MiB" << std::endl;
-         *o << "nation," << nation.size() << " MiB" << std::endl;
-         *o << "region," << region.size() << " MiB" << std::endl;
-         *o << "joinedPPsL," << joinedPPsL.size() << " MiB" << std::endl;
-         *o << "joinedPPs," << joinedPPs.size() << " MiB" << std::endl;
-         *o << "sortedLineitem," << sortedLineitem.size() << " MiB" << std::endl;
-         *o << "mergedPPsL," << mergedPPsL.size() << " MiB" << std::endl;
+         *o << "part," << part.size() << std::endl;
+         *o << "supplier," << supplier.size() << std::endl;
+         *o << "partsupp," << partsupp.size() << std::endl;
+         *o << "customer," << customer.size() << std::endl;
+         *o << "orders," << orders.size() << std::endl;
+         *o << "lineitem," << lineitem.size() << std::endl;
+         *o << "nation," << nation.size() << std::endl;
+         *o << "region," << region.size() << std::endl;
+         *o << "joinedPPsL," << joinedPPsL.size() << std::endl;
+         *o << "joinedPPs," << joinedPPs.size() << std::endl;
+         *o << "sortedLineitem," << sortedLineitem.size() << std::endl;
+         *o << "mergedPPsL," << mergedPPsL.size() << std::endl;
       }
       size_csv.close();
    }

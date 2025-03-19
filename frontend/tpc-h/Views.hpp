@@ -112,6 +112,10 @@ struct PPsL_JK {
     Integer l_partkey;
     Integer l_partsuppkey;
 
+    static PPsL_JK max() {
+        return {std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()};
+    }
+
     static unsigned keyfold(uint8_t* out, const PPsL_JK& key) {
         unsigned pos = 0;
         pos += fold(out + pos, key.l_partkey); // TODO: Only fold the first field for part_t
@@ -131,21 +135,19 @@ struct PPsL_JK {
     }
 
     auto operator<=>(const PPsL_JK& other) const {
-        if (l_partkey != 0 && other.l_partkey != 0) {
-            if (auto cmp = l_partkey <=> other.l_partkey; cmp != 0) {
-                return cmp;  // Prioritize partkey comparison
-            }
+        if (auto cmp = l_partkey <=> other.l_partkey; cmp != 0) {
+            return cmp;  // Prioritize partkey comparison
         }
-    
-        if (l_partsuppkey != 0 && other.l_partsuppkey != 0) {
-            return l_partsuppkey <=> other.l_partsuppkey;
+        
+        // Allow partsuppkey 0 to match any partsuppkey
+        if (l_partsuppkey == 0 || other.l_partsuppkey == 0) {
+            return std::strong_ordering::equal;
         }
-    
-        return std::strong_ordering::equal;
+        return l_partsuppkey <=> other.l_partsuppkey;
     }
 
     bool operator==(const PPsL_JK& other) const {
-        return (l_partkey == 0 || other.l_partkey == 0 || l_partkey == other.l_partkey) &&
+        return (l_partkey == other.l_partkey) &&
                (l_partsuppkey == 0 || other.l_partsuppkey == 0 || l_partsuppkey == other.l_partsuppkey);
     }
 

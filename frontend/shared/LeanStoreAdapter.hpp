@@ -19,12 +19,13 @@ struct LeanStoreAdapter : Adapter<Record> {
    leanstore::KVInterface* btree;
    leanstore::storage::btree::BTreeGeneric* btree_generic;
    std::unique_ptr<leanstore::storage::btree::BTreeSharedIterator> it;
+   u64 produced;
    string name;
    LeanStoreAdapter()
    {
       // hack
    }
-   LeanStoreAdapter(LeanStore& db, string name) : name(name)
+   LeanStoreAdapter(LeanStore& db, string name) : name(name), produced(0)
    {
       if (FLAGS_vi) {
          if (FLAGS_recover) {
@@ -205,6 +206,7 @@ struct LeanStoreAdapter : Adapter<Record> {
 
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
+      produced++;
       return std::make_pair(typed_key, typed_payload);
    };
 
@@ -220,6 +222,7 @@ struct LeanStoreAdapter : Adapter<Record> {
 
    void resetIterator() {
       it->reset();
+      produced = 0;
    }
    // -------------------------------------------------------------------------------------
    template <class Field>
