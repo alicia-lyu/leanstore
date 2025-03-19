@@ -226,26 +226,30 @@ struct LeanStoreMergedAdapter {
          };
       }
    };
-   void scan(u8* start_jk,
-         const u16 jk_len,
+
+   template <typename JK>
+   void scan(JK start_jk,
          std::vector<ScanCallbackDescriptor> callback_descriptors,
          std::function<void()> undo)
    {
-   OP_RESULT ret = btree->scanAsc(
-      start_jk, jk_len,
-      [&](const u8* key_data, u16 key_length, const u8* payload, u16 payload_length) {
-         for (auto& desc : callback_descriptors) {
-            if (desc.folded_key_len == key_length && desc.payload_size == payload_length) {
-               return desc.callback(key_data, payload);
+      u16 jk_len = JK::maxFoldLength();
+      u8 folded_jk[jk_len];
+      JK::keyfold(folded_jk, start_jk);
+      OP_RESULT ret = btree->scanAsc(
+         folded_jk, jk_len,
+         [&](const u8* key_data, u16 key_length, const u8* payload, u16 payload_length) {
+            for (auto& desc : callback_descriptors) {
+               if (desc.folded_key_len == key_length && desc.payload_size == payload_length) {
+                  return desc.callback(key_data, payload);
+               }
             }
-         }
-         UNREACHABLE();
-      },
-      undo
+            UNREACHABLE();
+         },
+         undo
       );
 
       if (ret == leanstore::OP_RESULT::ABORT_TX) {
-      cr::Worker::my().abortTX();
+         cr::Worker::my().abortTX();
       }
    }
    // -------------------------------------------------------------------------------------

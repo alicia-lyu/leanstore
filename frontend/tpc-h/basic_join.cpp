@@ -56,10 +56,9 @@ int main(int argc, char** argv)
             cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
             tpch.loadPart();
             tpch.loadSupplier();
-            tpch.loadPartsupp();
             tpch.loadCustomer();
             tpch.loadOrders();
-            tpch.loadLineitem();
+            tpch.loadPartsuppLineitem();
             tpch.loadNation();
             tpch.loadRegion();
             tpch.loadSortedLineitem();
