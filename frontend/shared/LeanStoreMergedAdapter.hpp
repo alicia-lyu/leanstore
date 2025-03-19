@@ -64,7 +64,20 @@ struct LeanStoreMergedAdapter {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
       const OP_RESULT res = btree->insert(folded_key, folded_key_len, (u8*)(&record), sizeof(Record));
-      ensure(res == leanstore::OP_RESULT::OK || res == leanstore::OP_RESULT::ABORT_TX);
+      if (res != leanstore::OP_RESULT::OK && res != leanstore::OP_RESULT::ABORT_TX) {
+         std::cerr << "LeanStoreMergedAdapter::insert failed with res value " << std::to_string((int) res) << ", key: " << key << std::endl;
+         // print hex
+         std::cout << "folded key length: " << folded_key_len << std::endl;
+         for (size_t i = 0; i < folded_key_len; ++i) {
+            std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)folded_key[i] << " ";
+         }
+         std::cout << std::dec << std::endl;
+         // try unfold
+         typename Record::Key typed_key;
+         Record::unfoldKey(folded_key, typed_key);
+         std::cout << "unfolded key: " << typed_key << std::endl;
+         exit(1);
+      }
       if (res == leanstore::OP_RESULT::ABORT_TX) {
          cr::Worker::my().abortTX();
       }

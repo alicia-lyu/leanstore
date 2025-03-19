@@ -137,9 +137,8 @@ class Join
    std::pair<typename Rec::Key, Rec> merge(LeftKey& lk, LeftRec& lr, RightKey& rk, RightRec& rr)
    {
       if ((++produced) % 10000 == 1) {
-         std::cout << "\rJoined " << produced << " records" << std::endl;
+         std::cout << "\rJoined " << produced << " records------------------------------------";
       }
-      // std::cout << "Matched: " << lk << " with " << rk << std::endl;
       left_matched = true;
       typename Rec::Key jk(lk, rk);
       Rec r(lr, rr);
