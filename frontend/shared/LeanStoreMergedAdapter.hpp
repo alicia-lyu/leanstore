@@ -257,6 +257,7 @@ struct LeanStoreMergedAdapter {
          cr::Worker::my().abortTX();
       }
    }
+
    // -------------------------------------------------------------------------------------
    template <class Field, class Record>
    Field lookupField(const typename Record::Key& key, Field Record::*f)

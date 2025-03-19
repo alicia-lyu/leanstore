@@ -104,7 +104,7 @@ class Join
                return next();  // eventually return nullopt
             }
             auto& [lk, lr] = *curr_left;
-            if (extractLeftJKFunc(lk, lr) != extractRightJKFunc(rk, rr)) {
+            if (extractLeftJKFunc(lk, lr).match(extractRightJKFunc(rk, rr)) != 0) {
                cachedRight.clear();
                return next();  // go to second if-else
             }
@@ -120,11 +120,11 @@ class Join
       auto left_jk = extractLeftJKFunc(lk, lr);
       auto right_jk = extractRightJKFunc(rk, rr);
       // std::cout << "left_jk: " << left_jk << ", right_jk: " << right_jk << std::endl;
-      if (left_jk < right_jk) {
+      if (left_jk.match(right_jk) < 0) {
          curr_left = nextLeft();
          return next();  // go to second if-else
-      } else if (left_jk == right_jk) {
-         while (extractRightJKFunc(rk, rr) == left_jk) {
+      } else if (left_jk.match(right_jk) == 0) {
+         while (extractRightJKFunc(rk, rr).match(left_jk) == 0) {
             next_right_matched = true;
             cachedRight.push_back(next_right.value());
             next_right = nextRight();
@@ -141,7 +141,7 @@ class Join
 
    std::pair<typename Rec::Key, Rec> merge(LeftKey& lk, LeftRec& lr, RightKey& rk, RightRec& rr)
    {
-      if ((++produced) % 10000 == 1) {
+      if ((++produced) % 1000 == 1) {
          std::cout << "\rJoined " << produced << " records------------------------------------";
       }
       left_matched = true;

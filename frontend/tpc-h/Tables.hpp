@@ -1,10 +1,19 @@
 #pragma once
 #include <functional>
 #include <ostream>
+#include <span>
 #include "../shared/Types.hpp"
 #include "randutils.hpp"
 
 using namespace randutils;
+
+template <typename T>
+inline T bytes_to_struct(const std::vector<std::byte>& s) {
+    static_assert(std::is_standard_layout_v<T>, "Must be standard-layout");
+    T t;
+    std::memcpy(&t, s.data(), sizeof(T));
+    return t;
+}
 
 template <typename K, auto K::* ...Members>
 struct KeyPrototype {

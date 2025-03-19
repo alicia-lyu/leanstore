@@ -155,26 +155,19 @@ struct PPsL_JK {
         return sizeof(Integer) + sizeof(Integer);
     }
 
-    auto operator<=>(const PPsL_JK& other) const {
-        if (auto cmp = l_partkey <=> other.l_partkey; cmp != 0) {
-            return cmp;  // Prioritize partkey comparison
-        }
-        
-        // Allow partsuppkey 0 to match any partsuppkey
-        if (l_partsuppkey == 0 || other.l_partsuppkey == 0) {
-            return std::strong_ordering::equal;
-        }
-        return l_partsuppkey <=> other.l_partsuppkey;
-    }
-
-    bool operator==(const PPsL_JK& other) const {
-        return (l_partkey == other.l_partkey) &&
-               (l_partsuppkey == 0 || other.l_partsuppkey == 0 || l_partsuppkey == other.l_partsuppkey);
-    }
-
     friend std::ostream& operator<<(std::ostream& os, const PPsL_JK& jk) {
         os << "PPsL_JK(" << jk.l_partkey << ", " << jk.l_partsuppkey << ")";
         return os;
+    }
+
+    auto operator<=>(const PPsL_JK&) const = default;
+
+    int match(const PPsL_JK& other) const {
+        if (l_partkey != 0 && other.l_partkey != 0)
+            return l_partkey - other.l_partkey;
+        if (l_partsuppkey != 0 && other.l_partsuppkey != 0)
+            return l_partsuppkey - other.l_partsuppkey;
+        return 0;
     }
 };
 
