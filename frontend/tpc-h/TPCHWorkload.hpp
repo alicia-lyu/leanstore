@@ -1,5 +1,6 @@
 #pragma once
 #include <gflags/gflags.h>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -278,9 +279,10 @@ class TPCHWorkload
       std::cout << "Scan merged index + join on the fly" << std::endl;
       resetTables();
       auto merged_start = std::chrono::high_resolution_clock::now();
+      
       using JoinedRec = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>;
       using JoinedKey = JoinedRec::Key;
-      PPsL_JK current_jk;
+      PPsL_JK current_jk{};
       std::vector<std::pair<merged_part_t::Key, merged_part_t>> cached_part;
       std::vector<std::pair<merged_partsupp_t::Key, merged_partsupp_t>> cached_partsupp;
       std::function<void(PPsL_JK)> comp_clear = [&](PPsL_JK jk) {
@@ -290,8 +292,6 @@ class TPCHWorkload
             cached_partsupp.clear();
          }
       };
-      u8 start_jk[PPsL_JK::maxFoldLength()];
-      PPsL_JK::keyfold(start_jk, current_jk);
       produced = 0;
 
       auto part_descriptor =
@@ -299,7 +299,7 @@ class TPCHWorkload
              inspect_produced("Scanning merged index (at a part_t record): ");
              comp_clear(k.jk);
              cached_part.push_back({k, v});
-             return false;
+             return true;
           });
 
       auto partsupp_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_partsupp_t>(
@@ -307,7 +307,7 @@ class TPCHWorkload
              inspect_produced("Scanning merged index (at a partsupp_t record): ");
              comp_clear(k.jk);
              cached_partsupp.push_back({k, v});
-             return false;
+             return true;
           });
 
       auto lineitem_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k,
@@ -323,10 +323,10 @@ class TPCHWorkload
                // Do something with the result
             }
          }
-         return false;
+         return true;
       });
 
-      mergedPPsL.scan(start_jk, PPsL_JK::maxFoldLength(),
+      mergedPPsL.scan(current_jk,
                       std::vector<typename MergedAdapterType::ScanCallbackDescriptor>{part_descriptor, partsupp_descriptor, lineitem_descriptor},
                       [&]() {}  // undo
       );
@@ -378,10 +378,22 @@ class TPCHWorkload
       }
    }
 
-   void loadPartsupp()
+   void loadPartsuppLineitem()
    {
+      // Generate and shuffle lineitem keys
+      std::vector<lineitem_t::Key> lineitems = {};
+      for (Integer i = 1; i < ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
+         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
+         for (Integer j = 1; j <= lineitem_cnt; j++) {
+            lineitems.push_back(lineitem_t::Key({i, j}));
+         }
+      }
+      std::random_shuffle(lineitems.begin(), lineitems.end());
+      // Load partsupp and lineitem
+      long ps_cnt = 0;
       for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
-         u64 supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
+         // Randomly select suppliers for this part
+         Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
          std::vector<Integer> suppliers = {};
          while (true) {
             Integer supplier_id = urand(1, SUPPLIER_SCALE * FLAGS_tpch_scale_factor);
@@ -393,7 +405,21 @@ class TPCHWorkload
             }
          }
          for (auto& s : suppliers) {
+            // load 1 partsupp
             partsupp.insert(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
+            // load lineitems
+            u64 lineitem_cnt = urand(0, LINEITEM_SCALE / PARTSUPP_SCALE * 2); // No reference integrity but mostly matched
+            for (u64 l = 0; l < lineitem_cnt; l++) {
+               auto rec = lineitem_t::generateRandomRecord([i]() { return i; }, [s]() { return s; });
+               if (ps_cnt * l >= lineitems.size()) {
+                  auto rand_idx = urand(0, lineitems.size() - 1);
+                  lineitem.insert(lineitems[rand_idx], rec);
+                  std::cout << "Warning: lineitem table is not fully populated" << std::endl;
+               } else {
+                  lineitem.insert(lineitems[ps_cnt * l], rec);
+               }
+               ps_cnt++;
+            }
          }
          printProgress("partsupp", i, PART_SCALE * FLAGS_tpch_scale_factor);
       }
@@ -412,28 +438,6 @@ class TPCHWorkload
       for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
          orders.insert(orders_t::Key({i}), orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
          printProgress("orders", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
-      }
-   }
-
-   void loadLineitem()
-   {
-      for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
-         u64 lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
-         std::vector<Integer> lineitems = {};
-         while (true) {
-            Integer lineitem_id = urand(1, LINEITEM_SCALE * FLAGS_tpch_scale_factor);
-            if (std::find(lineitems.begin(), lineitems.end(), lineitem_id) == lineitems.end()) {
-               lineitems.push_back(lineitem_id);
-            }
-            if (lineitems.size() == lineitem_cnt) {
-               break;
-            }
-         }
-         for (auto& l : lineitems) {
-            lineitem.insert(lineitem_t::Key({i, l}),
-                            lineitem_t::generateRandomRecord([this]() { return this->getPartID(); }, [this]() { return this->getSupplierID(); }));
-         }
-         printProgress("lineitem", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
       }
    }
 
@@ -536,19 +540,16 @@ class TPCHWorkload
       part_t pv;
       PPsL_JK pjk{};
       int pkv = 2;  // current pjk is valid
-      u64 pi = 0;
       partsupp.resetIterator();
       partsupp_t::Key psk;
       partsupp_t psv;
       PPsL_JK psjk{};
       int pskv = 2;
-      u64 psi = 0;
       sortedLineitem.resetIterator();
       merged_lineitem_t::Key slk;
       merged_lineitem_t slv;
       PPsL_JK sljk{};
       int slkv = 2;
-      u64 sli = 0;
       while (pkv != 0 || pskv != 0 || slkv != 0) {
          u64 all_produced = part.produced + partsupp.produced + sortedLineitem.produced;
          if (all_produced % 1000 == 0) {
@@ -565,8 +566,6 @@ class TPCHWorkload
                merged_part_t::Key k({pjk, pk});
                merged_part_t v(pv);
                mergedPPsL.insert(k, v);
-               // std::cout << "Inserting part: " << k << std::endl;
-               pi++;
             } else {
                pkv = 1;
             }
@@ -575,7 +574,6 @@ class TPCHWorkload
                pk = npkv.value().first;
                pv = npkv.value().second;
                pjk = PPsL_JK{pk.p_partkey, 0};
-               // std::cout << "pk: " << pk << ", pv: " << pv << "pjk: " << pjk << std::endl;
             } else {
                pkv = 0;
                pjk = PPsL_JK::max();
@@ -585,8 +583,6 @@ class TPCHWorkload
                merged_partsupp_t::Key k({psjk, psk});
                merged_partsupp_t v(psv);
                mergedPPsL.insert(k, v);
-               // std::cout << "Inserting partsupp: " << k << std::endl;
-               psi++;
             } else {
                pskv = 1;
             }
@@ -595,7 +591,6 @@ class TPCHWorkload
                psk = npskv.value().first;
                psv = npskv.value().second;
                psjk = PPsL_JK{psk.ps_partkey, psk.ps_suppkey};
-               // std::cout << "psk: " << psk << ", psv: " << psv << ", psjk: " << psjk << std::endl;
             } else {
                pskv = 0;
                psjk = PPsL_JK::max();
@@ -603,8 +598,6 @@ class TPCHWorkload
          } else if (slkv != 0 && sljk <= pjk && sljk <= psjk) {
             if (slkv == 1) {
                mergedPPsL.insert(slk, slv);
-               // std::cout << "Inserting lineitem: " << slk << std::endl;
-               sli++;
             } else {
                slkv = 1;
             }
@@ -613,7 +606,6 @@ class TPCHWorkload
                slk = nslkv.value().first;
                slv = nslkv.value().second;
                sljk = slk.jk;
-               // std::cout << "slk: " << slk << ", slv: " << slv << ", sljk: " << sljk << std::endl;
             } else {
                slkv = 0;
                sljk = PPsL_JK::max();
@@ -625,7 +617,6 @@ class TPCHWorkload
       }
       std::cout << std::endl;
       std::cout << "Consumed: part " << part.produced << ", partsupp " << partsupp.produced << ", lineitem " << sortedLineitem.produced << std::endl;
-      std::cout << "Inserted: part " << pi << ", partsupp " << psi << ", lineitem " << sli << std::endl;
    }
 
    void loadBasicGroup();
