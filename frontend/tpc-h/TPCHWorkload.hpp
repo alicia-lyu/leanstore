@@ -284,15 +284,16 @@ class TPCHWorkload
       std::vector<merged_part_t> cached_parts;
       std::vector<merged_partsupp_t> cached_partsupps;
       PPsL_JK current_jk{};
-
+      [[maybe_unused]] long joined_cnt = 0;
       auto comp_clear = [&](PPsL_JK& jk) {
-         if (current_jk.match(jk)) {
-            current_jk = jk;
+         if (current_jk.match(jk) != 0) {
             cached_parts.clear();
             cached_partsupps.clear();
+            // std::cout << "New JK: " << jk << ", joined " << joined_cnt / 1000 << "k records so far" << std::endl;
          }
+         current_jk = jk;
       };
-      [[maybe_unused]] long joined_cnt = 0;
+      
       mergedPPsL.resetIterator();
       while (true) {
          auto kv = mergedPPsL.next();
@@ -318,6 +319,7 @@ class TPCHWorkload
             merged_lineitem_t::unfoldKey(k.data(), key);
             const merged_lineitem_t& rec = *reinterpret_cast<const merged_lineitem_t*>(v.data());
             comp_clear(key.jk);
+            // std::cout << "Joining one lineitem with " << cached_parts.size() << " parts and " << cached_partsupps.size() << " partsupps" << std::endl;
             for (auto& p : cached_parts) {
                for (auto& ps : cached_partsupps) {
                   auto joined = joinedPPsL_t(p, ps, rec);
@@ -331,7 +333,7 @@ class TPCHWorkload
          }
 
          if (mergedPPsL.produced % 100 == 0) {
-            std::cout << "\rScanning merged index: " << (double) mergedPPsL.produced / 1000 << ", joined " << joined_cnt << " records------------------------------------";
+            std::cout << "\rScanning merged index: " << (double) mergedPPsL.produced / 1000 << "k, joined " << joined_cnt / 1000 << "k records------------------------------------";
          }
       }
 

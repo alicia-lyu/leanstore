@@ -157,7 +157,15 @@ struct PPsL_JK {
     auto operator<=>(const PPsL_JK&) const = default;
 
     int match(const PPsL_JK& other) const {
-        if (l_partkey != 0 && other.l_partkey != 0)
+        // {0, 0} cannot be used as wildcard
+        if (*this == PPsL_JK{} && other == PPsL_JK{})
+            return 0;
+        else if (*this == PPsL_JK{})
+            return -1;
+        else if (other == PPsL_JK{})
+            return 1;
+
+        if (l_partkey != 0 && other.l_partkey != 0 && l_partkey != other.l_partkey)
             return l_partkey - other.l_partkey;
         if (l_partsuppkey != 0 && other.l_partsuppkey != 0)
             return l_partsuppkey - other.l_partsuppkey;
@@ -179,7 +187,7 @@ struct joinedPPs_t : public Joined<11, PPsL_JK, part_t, partsupp_t> {
     struct Key: public Joined::Key {
         Key() = default;
         Key(const Joined::Key& k): Joined::Key(k) {}
-        Key(const merged_part_t::Key& pk, const merged_partsupp_t::Key& psk): Joined::Key({pk.jk, std::tuple_cat(std::make_tuple(pk.pk), std::make_tuple(psk.pk))}) {}
+        Key(const merged_part_t::Key& pk, const merged_partsupp_t::Key& psk): Joined::Key({psk.jk, std::tuple_cat(std::make_tuple(pk.pk), std::make_tuple(psk.pk))}) {}
         Key(const part_t::Key& pk, const partsupp_t::Key& psk): Joined::Key({PPsL_JK{pk.p_partkey, psk.ps_suppkey}, std::make_tuple(pk, psk)}) {}
     };
 };

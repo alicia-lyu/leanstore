@@ -107,7 +107,11 @@ class Join
             if (extractLeftJKFunc(lk, lr).match(extractRightJKFunc(rk, rr)) != 0) {
                cachedRight.clear();
                return next();  // go to second if-else
-            }
+            } 
+            // else {
+            //    std::cout << lk << " matches " << rk << std::endl;
+            //    throw std::runtime_error("Should not happen");
+            // }
          }
          cachedRightPtr++;
          return merge(lk, lr, rk, rr);
