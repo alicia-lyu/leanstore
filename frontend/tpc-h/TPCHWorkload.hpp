@@ -286,10 +286,12 @@ class TPCHWorkload
       PPsL_JK current_jk{};
       [[maybe_unused]] long joined_cnt = 0;
       auto comp_clear = [&](PPsL_JK& jk) {
-         if (current_jk.match(jk) != 0) {
+         PPsL_JK pjk = {current_jk.l_partkey, 0};
+         if (pjk.match(jk) != 0) {
             cached_parts.clear();
+         }
+         if (current_jk.match(jk) != 0) {
             cached_partsupps.clear();
-            // std::cout << "New JK: " << jk << ", joined " << joined_cnt / 1000 << "k records so far" << std::endl;
          }
          current_jk = jk;
       };
