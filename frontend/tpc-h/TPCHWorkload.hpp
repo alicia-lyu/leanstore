@@ -281,66 +281,9 @@ class TPCHWorkload
       // Scan merged index + join on the fly
       resetTables();
       auto merged_start = std::chrono::high_resolution_clock::now();
-      std::vector<merged_part_t> cached_parts;
-      std::vector<merged_partsupp_t> cached_partsupps;
-      PPsL_JK current_jk{};
-      [[maybe_unused]] long joined_cnt = 0;
-      auto comp_clear = [&](PPsL_JK& jk) {
-         PPsL_JK pjk = {current_jk.l_partkey, 0};
-         if (pjk.match(jk) != 0) {
-            cached_parts.clear();
-         }
-         if (current_jk.match(jk) != 0) {
-            cached_partsupps.clear();
-         }
-         current_jk = jk;
-      };
+
+      mergedPPsL.template scanJoin<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
       
-      mergedPPsL.resetIterator();
-      while (true) {
-         auto kv = mergedPPsL.next();
-         if (!kv.has_value()) {
-            break;
-         }
-         
-         auto& [k, v] = kv.value();
-         if (k.size() == merged_part_t::maxFoldLength() && v.size() == sizeof(merged_part_t)) {
-            merged_part_t::Key key;
-            merged_part_t::unfoldKey(k.data(), key);
-            const merged_part_t& rec = *reinterpret_cast<const merged_part_t*>(v.data());
-            comp_clear(key.jk);
-            cached_parts.push_back(rec);
-         } else if (k.size() == merged_partsupp_t::maxFoldLength() && v.size() == sizeof(merged_partsupp_t)) {
-            merged_partsupp_t::Key key;
-            merged_partsupp_t::unfoldKey(k.data(), key);
-            const merged_partsupp_t& rec = *reinterpret_cast<const merged_partsupp_t*>(v.data());
-            comp_clear(key.jk);
-            cached_partsupps.push_back(rec);
-         } else if (k.size() == merged_lineitem_t::maxFoldLength() && v.size() == sizeof(merged_lineitem_t)) {
-            merged_lineitem_t::Key key;
-            merged_lineitem_t::unfoldKey(k.data(), key);
-            const merged_lineitem_t& rec = *reinterpret_cast<const merged_lineitem_t*>(v.data());
-            comp_clear(key.jk);
-            // std::cout << "Joining one lineitem with " << cached_parts.size() << " parts and " << cached_partsupps.size() << " partsupps" << std::endl;
-            for (auto& p : cached_parts) {
-               for (auto& ps : cached_partsupps) {
-                  auto joined = joinedPPsL_t(p, ps, rec);
-                  joined_cnt++;
-               }
-            }
-         } else {
-            std::cout << "Key size mismatch: expected " << merged_part_t::maxFoldLength() << " or " << merged_partsupp_t::maxFoldLength() << " or " << merged_lineitem_t::maxFoldLength() << " but got " << k.size() << std::endl;
-            std::cout << "Value size mismatch: expected " << sizeof(merged_part_t) << " or " << sizeof(merged_partsupp_t) << " or " << sizeof(merged_lineitem_t) << " but got " << v.size() << std::endl;
-            UNREACHABLE();
-         }
-
-         if (mergedPPsL.produced % 100 == 0) {
-            std::cout << "\rScanning merged index: " << (double) mergedPPsL.produced / 1000 << "k, joined " << joined_cnt / 1000 << "k records------------------------------------";
-         }
-      }
-
-      std::cout << std::endl;
-      std::cout << "Scanned " << mergedPPsL.produced << " merged records, joined " << joined_cnt << " records" << std::endl;
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
       logTables(merged_t, "merged");

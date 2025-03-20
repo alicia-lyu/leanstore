@@ -14,7 +14,8 @@ struct LeanStoreMergedAdapter {
    std::unique_ptr<leanstore::storage::btree::BTreeSharedIterator> it;
    u64 produced;
 
-   LeanStoreMergedAdapter() {
+   LeanStoreMergedAdapter()
+   {
       // hack
    }
 
@@ -70,7 +71,7 @@ struct LeanStoreMergedAdapter {
       u16 folded_key_len = Record::foldKey(folded_key, key);
       const OP_RESULT res = btree->insert(folded_key, folded_key_len, (u8*)(&record), sizeof(Record));
       if (res != leanstore::OP_RESULT::OK && res != leanstore::OP_RESULT::ABORT_TX) {
-         std::cerr << "LeanStoreMergedAdapter::insert failed with res value " << std::to_string((int) res) << ", key: " << key << std::endl;
+         std::cerr << "LeanStoreMergedAdapter::insert failed with res value " << std::to_string((int)res) << ", key: " << key << std::endl;
          // print hex
          std::cout << "folded key length: " << folded_key_len << std::endl;
          for (size_t i = 0; i < folded_key_len; ++i) {
@@ -179,7 +180,7 @@ struct LeanStoreMergedAdapter {
 
       u16 folded_key_len = Record::maxFoldLength();
       u16 other_folded_key_len = OtherRec::maxFoldLength();
-      
+
       OP_RESULT ret = btree->scanAsc(
           folded_joinkey, folded_joinkey_len,
           [&](const u8* key, u16 key_length, const u8* payload, u16 payload_length) {
@@ -204,10 +205,15 @@ struct LeanStoreMergedAdapter {
          cr::Worker::my().abortTX();
       }
    }
-   
-   void resetIterator() { it->reset(); produced = 0; }
 
-   std::optional<std::pair<leanstore::Slice, leanstore::Slice>> next() {
+   void resetIterator()
+   {
+      it->reset();
+      produced = 0;
+   }
+
+   std::optional<std::pair<leanstore::Slice, leanstore::Slice>> next()
+   {
       const OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK) {
          return std::nullopt;
@@ -219,9 +225,105 @@ struct LeanStoreMergedAdapter {
       return std::make_pair(key, payload);
    }
 
+   template <typename JK, typename JoinedRec, typename... Records>
+   void scanJoin()
+   {
+      std::tuple<std::vector<Records>...> cached_records;
+      JK current_jk{};
+      [[maybe_unused]] long joined_cnt = 0;
+
+      // calculate cartesian produce of current cached records
+      auto join_current = [&]() {
+         int curr_joined_cnt = 1;
+         for (auto& vec: cached_records) {
+            curr_joined_cnt *= vec.size();
+         }
+         std::vector<std::tuple<Records...>> matched_records(curr_joined_cnt);
+         joined_cnt += curr_joined_cnt;
+         int batch_size = curr_joined_cnt;
+         int level = 0;
+         std::apply([&](auto&... vec) { 
+            ([&] {
+               int repeat = batch_size / vec.size(); // repeat times for each vec in a batch
+               int batch_cnt = curr_joined_cnt / batch_size;
+               for (int x = 0; x < batch_cnt; x++) {
+                  for (int i = 0; i < repeat; i++) {
+                     for (int j = 0; j < vec.size(); j++) {
+                        std::get<level>(matched_records[x * batch_size + j * repeat + i]) = vec[i];
+                     }
+                  }
+               }
+               level++;
+               batch_size /= vec.size();
+            }, ...);
+         }, cached_records);
+         for (auto& rec: matched_records) {
+            std::apply([&](auto&... rec) {
+               auto joined_rec = JoinedRec(rec...);
+            }, rec);
+         }
+         joined_cnt += curr_joined_cnt;
+      };
+
+      auto comp_clear = [&](const JK& jk) {
+         std::apply([&jk](auto&... vec) { 
+            ([&] {
+               using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
+               if (!vec.empty() && jk.match(RecordType::getJK(vec.front())) != 0) {
+                  join_current();
+                  vec.clear();
+               }
+            }, ...); 
+         }, cached_records);
+         current_jk = jk;
+      };
+
+      this->resetIterator();
+      while (true) {
+         auto kv = this->next();
+         if (!kv.has_value()) {
+            break;
+         }
+
+         leanstore::Slice& k = kv->first;
+         leanstore::Slice& v = kv->second;
+         bool matched = false;
+
+         std::apply(
+             [&](auto&... vec) {
+                (([&] {
+                    using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
+                    if (!matched && k.size() == RecordType::maxFoldLength() && v.size() == sizeof(RecordType)) {
+                       typename RecordType::Key key;
+                       RecordType::unfoldKey(k.data(), key);
+                       const RecordType& rec = *reinterpret_cast<const RecordType*>(v.data());
+                       comp_clear(key.jk);
+                       vec.push_back(rec);
+                       matched = true;
+                    }
+                 }()),
+                 ...);
+             },
+             cached_records);
+
+         if (!matched) {
+            std::cout << "Key size mismatch or value size mismatch. Key size: " << k.size() << " Value size: " << v.size() << std::endl;
+            UNREACHABLE();
+         }
+
+         if (produced % 100 == 0) {
+            std::cout << "\rScanning merged index: " << (double)produced / 1000 << "k, joined " << joined_cnt / 1000
+                      << "k records------------------------------------";
+         }
+      }
+
+      std::cout << std::endl;
+      std::cout << "Scanned " << produced << " merged records, joined " << joined_cnt << " records" << std::endl;
+   }
+
    // -------------------------------------------------------------------------------------
    template <class Field, class Record>
-   Field lookupField(const typename Record::Key& key, Field Record::*f)
+   Field lookupField(const typename Record::Key& key, Field Record::* f)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
@@ -241,10 +343,10 @@ struct LeanStoreMergedAdapter {
    u64 count() { return btree->countEntries(); }
 
    u64 estimatePages() { return btree->estimatePages(); }
-   double size() {
+   double size()
+   {
       double s = btree->estimatePages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0;
       return s;
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
-
 };
