@@ -241,7 +241,7 @@ struct LeanStoreMergedAdapter {
              for (int x = 0; x < batch_cnt; x++) {
                 for (int i = 0; i < repeat; i++) {
                    for (int j = 0; j < vec.size(); j++) {
-                      std::get<Is>(matched_records[x * *batch_size + j * repeat + i]) = vec[i];
+                      std::get<Is>(matched_records.at(x * *batch_size + j * repeat + i)) = vec.at(j);
                    }
                 }
              }
@@ -251,10 +251,10 @@ struct LeanStoreMergedAdapter {
    }
 
    template <typename Tuple, typename Func>
-   void forEach(const Tuple& tup, Func func)
+   void forEach(Tuple& tup, Func func)
    {
       std::apply(
-          [&func](const auto&... elems) {
+          [&func](auto&... elems) {
              (..., func(elems));  // Fold expression to call `func` on each element
           },
           tup);
@@ -270,9 +270,17 @@ struct LeanStoreMergedAdapter {
       // calculate cartesian produce of current cached records
       auto join_current = [&]() {
          int curr_joined_cnt = 1;
-         std::apply([&](auto&... vec) { ([&] { curr_joined_cnt *= vec.size(); }(), ...); }, cached_records);
+         std::cout << current_jk << ": ";
+         forEach(cached_records, [&](const auto& vec) { 
+            std::cout << vec.size() << ", ";
+            curr_joined_cnt *= vec.size(); 
+         });
+         std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
          std::vector<std::tuple<Records...>> matched_records(curr_joined_cnt);
          joined_cnt += curr_joined_cnt;
+         if (curr_joined_cnt == 0) {
+            return;
+         }
          unsigned long batch_size = curr_joined_cnt;
          assignRecords(matched_records, cached_records, &batch_size, curr_joined_cnt, std::index_sequence_for<Records...>{});
          for (auto& rec : matched_records) {
@@ -282,19 +290,13 @@ struct LeanStoreMergedAdapter {
       };
 
       auto comp_clear = [&](const JK& jk) {
-         std::apply(
-             [&jk](auto&... vec) {
-                (
-                    [&] {
-                       using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
-                       if (!vec.empty() && jk.match(RecordType::getJK(vec.front())) != 0) {
-                          join_current();
-                          vec.clear();
-                       }
-                    }(),
-                    ...);
-             },
-             cached_records);
+         forEach(cached_records, [&](auto& vec) {
+            using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
+            if (jk.match(RecordType::getJK(current_jk)) != 0) {
+               join_current();
+               vec.clear();
+            }
+         });
          current_jk = jk;
       };
 
@@ -309,23 +311,17 @@ struct LeanStoreMergedAdapter {
          leanstore::Slice& v = kv->second;
          bool matched = false;
 
-         std::apply(
-             [&](auto&... vec) {
-                (
-                    [&] {
-                       using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
-                       if (!matched && k.size() == RecordType::maxFoldLength() && v.size() == sizeof(RecordType)) {
-                          typename RecordType::Key key;
-                          RecordType::unfoldKey(k.data(), key);
-                          const RecordType& rec = *reinterpret_cast<const RecordType*>(v.data());
-                          comp_clear(key.jk);
-                          vec.push_back(rec);
-                          matched = true;
-                       }
-                    }(),
-                    ...);
-             },
-             cached_records);
+         forEach(cached_records, [&](auto& vec) {
+            using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
+            if (!matched && k.size() == RecordType::maxFoldLength() && v.size() == sizeof(RecordType)) {
+               typename RecordType::Key key;
+               RecordType::unfoldKey(k.data(), key);
+               const RecordType& rec = *reinterpret_cast<const RecordType*>(v.data());
+               comp_clear(key.jk);
+               vec.push_back(rec);
+               matched = true;
+            }
+         });
 
          if (!matched) {
             std::cout << "Key size mismatch or value size mismatch. Key size: " << k.size() << " Value size: " << v.size() << std::endl;
