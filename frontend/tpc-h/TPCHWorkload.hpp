@@ -7,6 +7,7 @@
 #include <functional>
 #include <optional>
 #include <vector>
+#include "Exceptions.hpp"
 #include "Tables.hpp"
 
 #include "Units.hpp"
@@ -280,56 +281,62 @@ class TPCHWorkload
       // Scan merged index + join on the fly
       resetTables();
       auto merged_start = std::chrono::high_resolution_clock::now();
-      
-      using JoinedRec = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>;
-      using JoinedKey = JoinedRec::Key;
+      std::vector<merged_part_t> cached_parts;
+      std::vector<merged_partsupp_t> cached_partsupps;
       PPsL_JK current_jk{};
-      std::vector<std::pair<merged_part_t::Key, merged_part_t>> cached_part;
-      std::vector<std::pair<merged_partsupp_t::Key, merged_partsupp_t>> cached_partsupp;
-      auto comp_clear = [&](PPsL_JK jk) {
-         if (current_jk.match(jk) != 0) {
+
+      auto comp_clear = [&](PPsL_JK& jk) {
+         if (current_jk.match(jk)) {
             current_jk = jk;
-            cached_part.clear();
-            cached_partsupp.clear();
+            cached_parts.clear();
+            cached_partsupps.clear();
          }
       };
-      produced = 0;
-
-      auto part_descriptor =
-          MergedAdapterType::ScanCallbackDescriptor::template create<merged_part_t>([&](const merged_part_t::Key& k, const merged_part_t& v) {
-             inspect_produced("Scanning merged index (at a part_t record): ");
-             comp_clear(k.jk);
-             cached_part.push_back({k, v});
-             return true;
-          });
-
-      auto partsupp_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_partsupp_t>(
-          [&](const merged_partsupp_t::Key& k, const merged_partsupp_t& v) {
-             inspect_produced("Scanning merged index (at a partsupp_t record): ");
-             comp_clear(k.jk);
-             cached_partsupp.push_back({k, v});
-             return true;
-          });
-
-      auto lineitem_descriptor = MergedAdapterType::ScanCallbackDescriptor::template create<merged_lineitem_t>([&](const merged_lineitem_t::Key& k,
-                                                                                                                   const merged_lineitem_t& v) {
-         inspect_produced("Scanning merged index (at a lineitem_t record): ");
-         comp_clear(k.jk);
-         for (auto& [pk, pv] : cached_part) {
-            for (auto& [psk, psv] : cached_partsupp) {
-               [[maybe_unused]] auto joined_key = JoinedKey{{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)}};
-               [[maybe_unused]] auto joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
-               // Do something with the result
-            }
+      [[maybe_unused]] long joined_cnt = 0;
+      mergedPPsL.resetIterator();
+      while (true) {
+         auto kv = mergedPPsL.next();
+         if (!kv.has_value()) {
+            break;
          }
-         return true;
-      });
+         
+         auto& [k, v] = kv.value();
+         if (k.size() == merged_part_t::maxFoldLength() && v.size() == sizeof(merged_part_t)) {
+            merged_part_t::Key key;
+            merged_part_t::unfoldKey(k.data(), key);
+            const merged_part_t& rec = *reinterpret_cast<const merged_part_t*>(v.data());
+            comp_clear(key.jk);
+            cached_parts.push_back(rec);
+         } else if (k.size() == merged_partsupp_t::maxFoldLength() && v.size() == sizeof(merged_partsupp_t)) {
+            merged_partsupp_t::Key key;
+            merged_partsupp_t::unfoldKey(k.data(), key);
+            const merged_partsupp_t& rec = *reinterpret_cast<const merged_partsupp_t*>(v.data());
+            comp_clear(key.jk);
+            cached_partsupps.push_back(rec);
+         } else if (k.size() == merged_lineitem_t::maxFoldLength() && v.size() == sizeof(merged_lineitem_t)) {
+            merged_lineitem_t::Key key;
+            merged_lineitem_t::unfoldKey(k.data(), key);
+            const merged_lineitem_t& rec = *reinterpret_cast<const merged_lineitem_t*>(v.data());
+            comp_clear(key.jk);
+            for (auto& p : cached_parts) {
+               for (auto& ps : cached_partsupps) {
+                  auto joined = joinedPPsL_t(p, ps, rec);
+                  joined_cnt++;
+               }
+            }
+         } else {
+            std::cout << "Key size mismatch: expected " << merged_part_t::maxFoldLength() << " or " << merged_partsupp_t::maxFoldLength() << " or " << merged_lineitem_t::maxFoldLength() << " but got " << k.size() << std::endl;
+            std::cout << "Value size mismatch: expected " << sizeof(merged_part_t) << " or " << sizeof(merged_partsupp_t) << " or " << sizeof(merged_lineitem_t) << " but got " << v.size() << std::endl;
+            UNREACHABLE();
+         }
 
-      mergedPPsL.scan(current_jk,
-                      std::vector<typename MergedAdapterType::ScanCallbackDescriptor>{part_descriptor, partsupp_descriptor, lineitem_descriptor},
-                      [&]() {}  // undo
-      );
+         if (mergedPPsL.produced % 100 == 0) {
+            std::cout << "\rScanning merged index: " << (double) mergedPPsL.produced / 1000 << ", joined " << joined_cnt << " records------------------------------------";
+         }
+      }
+
       std::cout << std::endl;
+      std::cout << "Scanned " << mergedPPsL.produced << " merged records, joined " << joined_cnt << " records" << std::endl;
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
       logTables(merged_t, "merged");

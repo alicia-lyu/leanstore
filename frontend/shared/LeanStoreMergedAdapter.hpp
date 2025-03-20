@@ -9,13 +9,16 @@ using namespace leanstore;
 
 struct LeanStoreMergedAdapter {
    leanstore::KVInterface* btree;
+   leanstore::storage::btree::BTreeGeneric* btree_generic;
    string name;
+   std::unique_ptr<leanstore::storage::btree::BTreeSharedIterator> it;
+   u64 produced;
 
    LeanStoreMergedAdapter() {
       // hack
    }
 
-   LeanStoreMergedAdapter(LeanStore& db, string name) : name(name)
+   LeanStoreMergedAdapter(LeanStore& db, string name) : name(name), produced(0)
    {
       if (FLAGS_vi) {
          if (FLAGS_recover) {
@@ -30,6 +33,8 @@ struct LeanStoreMergedAdapter {
             btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
          }
       }
+      btree_generic = static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree));
+      it = std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(*btree_generic);
    }
 
    void printTreeHeight() { cout << name << " height = " << btree->getHeight() << endl; }
@@ -199,63 +204,19 @@ struct LeanStoreMergedAdapter {
          cr::Worker::my().abortTX();
       }
    }
-   struct ScanCallbackDescriptor
-   {
-      using UntypedCallbackFn = bool(*)(const u8*, const u8*);
+   
+   void resetIterator() { it->reset(); produced = 0; }
 
-      u16 folded_key_len;
-      u16 payload_size;
-      UntypedCallbackFn callback;
-      std::shared_ptr<void> user_callback;
-
-      template <class Rec>
-      static ScanCallbackDescriptor create(bool(*cb)(const typename Rec::Key&, const Rec&))
-      {
-
-         auto cb_ptr = std::make_shared<bool(*)(const typename Rec::Key&, const Rec&)>(std::move(cb));
-         return {
-            Rec::maxFoldLength(),
-            sizeof(Rec),
-            [cb_ptr](const u8* key, const u8* payload) -> bool {
-               typename Rec::Key typed_key;
-               Rec::unfoldKey(key, typed_key);
-               auto& typed_payload = *reinterpret_cast<const Rec*>(payload);
-               return (*cb_ptr)(typed_key, typed_payload);
-            },
-            cb_ptr
-         };
+   std::optional<std::pair<leanstore::Slice, leanstore::Slice>> next() {
+      const OP_RESULT res = it->next();
+      if (res != leanstore::OP_RESULT::OK) {
+         return std::nullopt;
       }
-   };
-
-   template <typename JK>
-   void scan(JK start_jk,
-         std::vector<ScanCallbackDescriptor> callback_descriptors,
-         std::function<void()> undo)
-   {
-      u16 jk_len = JK::maxFoldLength();
-      u8 folded_jk[jk_len];
-      JK::keyfold(folded_jk, start_jk);
-      OP_RESULT ret = btree->scanAsc(
-         folded_jk, jk_len,
-         [&](const u8* key_data, u16 key_length, const u8* payload, u16 payload_length) {
-            for (auto& desc : callback_descriptors) {
-               if (desc.folded_key_len == key_length && desc.payload_size == payload_length) {
-                  return desc.callback(key_data, payload);
-               }
-            }
-            std::cout << "Required length key: " << key_length << ", payload: " << payload_length << std::endl;
-            // all lengths of descriptors:
-            for (auto& desc : callback_descriptors) {
-               cout << "desc: key length: " << desc.folded_key_len << ", payload length: " << desc.payload_size << endl;
-            }
-            UNREACHABLE();
-         },
-         undo
-      );
-
-      if (ret == leanstore::OP_RESULT::ABORT_TX) {
-         cr::Worker::my().abortTX();
-      }
+      it->assembleKey();
+      leanstore::Slice key = it->key();
+      leanstore::Slice payload = it->value();
+      produced++;
+      return std::make_pair(key, payload);
    }
 
    // -------------------------------------------------------------------------------------
