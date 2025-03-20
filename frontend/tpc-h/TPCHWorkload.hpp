@@ -127,7 +127,7 @@ class TPCHWorkload
       tx_console_header.reserve(20);
       tx_console_data.reserve(20);
 
-      tx_console_header.push_back("Elapsed");
+      tx_console_header.push_back("Elapsed (us)");
       tx_console_data.push_back(std::to_string(elapsed));
 
       tx_console_header.push_back("W MiB");
@@ -257,12 +257,12 @@ class TPCHWorkload
    {
       // Enumrate materialized view
       resetTables();
-      [[maybe_unused]] int produced = 0;
+      [[maybe_unused]] long produced = 0;
       auto inspect_produced = [&](const std::string& msg) {
-         produced++;
-         if (produced % 1000 == 1) {
+         if (produced % 100 == 0) {
             std::cout << "\r" << msg << (double) produced / 1000 << "k------------------------------------";
          }
+         produced++;
       };
       auto mtdv_start = std::chrono::high_resolution_clock::now();
       joinedPPsL.scan(
@@ -272,12 +272,12 @@ class TPCHWorkload
              return true;
           },
           [&]() {});
+      std::cout << std::endl;
       auto mtdv_end = std::chrono::high_resolution_clock::now();
       auto mtdv_t = std::chrono::duration_cast<std::chrono::microseconds>(mtdv_end - mtdv_start).count();
       logTables(mtdv_t, "mtdv");
 
       // Scan merged index + join on the fly
-      std::cout << "Scan merged index + join on the fly" << std::endl;
       resetTables();
       auto merged_start = std::chrono::high_resolution_clock::now();
       
@@ -286,7 +286,7 @@ class TPCHWorkload
       PPsL_JK current_jk{};
       std::vector<std::pair<merged_part_t::Key, merged_part_t>> cached_part;
       std::vector<std::pair<merged_partsupp_t::Key, merged_partsupp_t>> cached_partsupp;
-      std::function<void(PPsL_JK)> comp_clear = [&](PPsL_JK jk) {
+      auto comp_clear = [&](PPsL_JK jk) {
          if (current_jk.match(jk) != 0) {
             current_jk = jk;
             cached_part.clear();
@@ -317,10 +317,8 @@ class TPCHWorkload
          comp_clear(k.jk);
          for (auto& [pk, pv] : cached_part) {
             for (auto& [psk, psv] : cached_partsupp) {
-               [[maybe_unused]]
-               JoinedKey joined_key = Joined<11, PPsL_JK, part_t, partsupp_t, lineitem_t>::Key{{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)}};
-               [[maybe_unused]]
-               JoinedRec joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
+               [[maybe_unused]] auto joined_key = JoinedKey{{current_jk, std::make_tuple(pk.pk, psk.pk, k.pk)}};
+               [[maybe_unused]] auto joined_rec = JoinedRec{std::make_tuple(pv.payload, psv.payload, v.payload)};
                // Do something with the result
             }
          }
@@ -331,7 +329,7 @@ class TPCHWorkload
                       std::vector<typename MergedAdapterType::ScanCallbackDescriptor>{part_descriptor, partsupp_descriptor, lineitem_descriptor},
                       [&]() {}  // undo
       );
-      std::cout << "Scanned " << produced << " records in merged index" << std::endl;
+      std::cout << std::endl;
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
       logTables(merged_t, "merged");
