@@ -31,8 +31,6 @@ struct KeyPrototype {
 
 template <typename T, auto T::* ...Members>
 struct RecordPrototype {
-
-    static constexpr unsigned rowSize() { return (sizeof(std::declval<T>().*Members) + ...); }
     
     template <class K, auto K::* ...KMembers>
     static unsigned foldKey(uint8_t* out, const K& key)

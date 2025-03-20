@@ -63,10 +63,6 @@ class Joined {
         return (JK::maxFoldLength() + ... + Ts::maxFoldLength());
     }
 
-    static constexpr unsigned rowSize() {
-        return (0 + ... + Ts::rowSize());
-    }
-
     friend std::ostream& operator<<(std::ostream& os, const Joined& j) {
         os << "Joined(";
         std::apply([&](const auto&... args) { ((os << args << ", "), ...); }, j.payloads);
@@ -102,8 +98,6 @@ struct merged {
     explicit merged(T payload): payload(std::move(payload)) {}
 
     merged() = default;
-
-    static constexpr unsigned rowSize() { return T::rowSize(); }
 
     static unsigned foldKey(uint8_t* out, const Key& key) {
         unsigned pos = 0;
