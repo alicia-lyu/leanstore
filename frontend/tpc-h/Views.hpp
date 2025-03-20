@@ -69,6 +69,10 @@ class Joined {
         os << ")";
         return os;
     }
+
+    static JK getJK(const Key& key) {
+        return key.jk;
+    }
 };
 
 template <int TID, typename T, typename JK, bool foldPK>
@@ -120,6 +124,10 @@ struct merged {
     friend std::ostream& operator<<(std::ostream& os, const merged& m) {
         os << "merged(" << m.payload << ")";
         return os;
+    }
+
+    static JK getJK(const Key& key) {
+        return key.jk;
     }
 };
 
@@ -173,7 +181,13 @@ struct PPsL_JK {
     }
 };
 
-using merged_part_t = merged<12, part_t, PPsL_JK, false>;
+struct merged_part_t : public merged<12, part_t, PPsL_JK, false> {
+    using merged::merged;
+
+    static PPsL_JK getJK(const Key& key) {
+        return {key.jk.l_partkey, 0};
+    }
+};
 
 using merged_partsupp_t = merged<12, partsupp_t, PPsL_JK, false>;
 
