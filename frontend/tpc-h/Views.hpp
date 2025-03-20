@@ -70,8 +70,8 @@ class Joined {
         return os;
     }
 
-    static JK getJK(const Key& key) {
-        return key.jk;
+    static JK getJK(const JK& jk) {
+        return jk;
     }
 };
 
@@ -126,8 +126,8 @@ struct merged {
         return os;
     }
 
-    static JK getJK(const Key& key) {
-        return key.jk;
+    static JK getJK(const JK& jk) {
+        return jk;
     }
 };
 
@@ -184,8 +184,8 @@ struct PPsL_JK {
 struct merged_part_t : public merged<12, part_t, PPsL_JK, false> {
     using merged::merged;
 
-    static PPsL_JK getJK(const Key& key) {
-        return {key.jk.l_partkey, 0};
+    static PPsL_JK getJK(const PPsL_JK& jk) {
+        return {jk.l_partkey, 0};
     }
 };
 
