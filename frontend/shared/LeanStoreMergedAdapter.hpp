@@ -270,12 +270,12 @@ struct LeanStoreMergedAdapter {
       // calculate cartesian produce of current cached records
       auto join_current = [&]() {
          int curr_joined_cnt = 1;
-         std::cout << current_jk << ": ";
+         // std::cout << current_jk << ": ";
          forEach(cached_records, [&](const auto& vec) { 
-            std::cout << vec.size() << ", ";
+            // std::cout << vec.size() << ", ";
             curr_joined_cnt *= vec.size(); 
          });
-         std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
+         // std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
          std::vector<std::tuple<Records...>> matched_records(curr_joined_cnt);
          joined_cnt += curr_joined_cnt;
          if (curr_joined_cnt == 0) {
@@ -286,7 +286,6 @@ struct LeanStoreMergedAdapter {
          for (auto& rec : matched_records) {
             std::apply([&](auto&... rec) { auto joined_rec = JoinedRec(rec...); }, rec);
          }
-         joined_cnt += curr_joined_cnt;
       };
 
       auto comp_clear = [&](const JK& jk) {
