@@ -201,7 +201,7 @@ struct LeanStoreMergedAdapter {
    }
    struct ScanCallbackDescriptor
    {
-      using UntypedCallbackFn = std::function<bool(const u8*, const u8*)>;
+      using UntypedCallbackFn = bool(*)(const u8*, const u8*);
 
       u16 folded_key_len;
       u16 payload_size;
@@ -209,10 +209,10 @@ struct LeanStoreMergedAdapter {
       std::shared_ptr<void> user_callback;
 
       template <class Rec>
-      static ScanCallbackDescriptor create(std::function<bool(const typename Rec::Key&, const Rec&)> cb)
+      static ScanCallbackDescriptor create(bool(*cb)(const typename Rec::Key&, const Rec&))
       {
 
-         auto cb_ptr = std::make_shared<std::function<bool(const typename Rec::Key&, const Rec&)>>(std::move(cb));
+         auto cb_ptr = std::make_shared<bool(*)(const typename Rec::Key&, const Rec&)>(std::move(cb));
          return {
             Rec::maxFoldLength(),
             sizeof(Rec),
