@@ -2,42 +2,33 @@
 #include <gflags/gflags.h>
 #include <algorithm>
 #include <chrono>
-#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <optional>
 #include <vector>
-#include "Exceptions.hpp"
+#include <queue>
+
 #include "Tables.hpp"
 
 #include "Units.hpp"
 #include "Views.hpp"
-#include "leanstore/LeanStore.hpp"
-#include "leanstore/profiling/tables/BMTable.hpp"
-#include "leanstore/profiling/tables/CPUTable.hpp"
-#include "leanstore/profiling/tables/CRTable.hpp"
-#include "leanstore/profiling/tables/ConfigsTable.hpp"
-#include "leanstore/profiling/tables/DTTable.hpp"
-#include "leanstore/storage/buffer-manager/BufferManager.hpp"
 
 #include "Join.hpp"
-#include "tabulate/table.hpp"
+#include "Logger.hpp"
+#include "leanstore/Config.hpp"
+
 
 DEFINE_double(tpch_scale_factor, 1, "TPC-H scale factor");
 
 template <template <typename> class AdapterType, class MergedAdapterType>
+class BasicJoin;
+
+template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCHWorkload
 {
+   friend class BasicJoin<AdapterType, MergedAdapterType>;
   private:
-   leanstore::LeanStore& db;
-
-   leanstore::profiling::BMTable bm_table;
-   leanstore::profiling::DTTable dt_table;
-   leanstore::profiling::CPUTable cpu_table;
-   leanstore::profiling::CRTable cr_table;
-   leanstore::profiling::ConfigsTable configs_table;
-   std::vector<leanstore::profiling::ProfilingTable*> tables;
-   // TODO: compatible with rocksdb
+   Logger& logger;
    AdapterType<part_t>& part;
    AdapterType<supplier_t>& supplier;
    AdapterType<partsupp_t>& partsupp;
@@ -53,8 +44,7 @@ class TPCHWorkload
    MergedAdapterType& mergedPPsL;
 
   public:
-   TPCHWorkload(leanstore::LeanStore& db,
-                AdapterType<part_t>& p,
+   TPCHWorkload(AdapterType<part_t>& p,
                 AdapterType<supplier_t>& s,
                 AdapterType<partsupp_t>& ps,
                 AdapterType<customerh_t>& c,
@@ -65,8 +55,9 @@ class TPCHWorkload
                 MergedAdapterType& mbj,
                 AdapterType<joinedPPsL_t>& jppsl,
                 AdapterType<joinedPPs_t>& jpps,
-                AdapterType<merged_lineitem_t>& sl)
-       : db(db),
+                AdapterType<merged_lineitem_t>& sl,
+                Logger& logger)
+       : 
          part(p),
          supplier(s),
          partsupp(ps),
@@ -79,17 +70,8 @@ class TPCHWorkload
          joinedPPs(jpps),
          mergedPPsL(mbj),
          sortedLineitem(sl),
-         bm_table(*db.buffer_manager.get()),
-         dt_table(*db.buffer_manager.get()),
-         tables({&bm_table, &dt_table, &cpu_table, &cr_table})
-   {
-      static fLS::clstring tpch_scale_factor_str = std::to_string(FLAGS_tpch_scale_factor);
-      leanstore::LeanStore::addStringFlag("TPCH_SCALE", &tpch_scale_factor_str);
-      for (auto& t : tables) {
-         t->open();
-         t->next();
-      }
-   }
+         logger(logger)
+   {  }
 
   private:
    static constexpr Integer PART_SCALE = 200000;
@@ -113,151 +95,12 @@ class TPCHWorkload
 
    inline Integer getRegionID() { return urand(1, REGION_COUNT); }
 
-   void resetTables()
-   {
-      for (auto& t : tables) {
-         t->next();
-      }
-   }
-
-   std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>>
-   summarizeStats(long elapsed)
-   {
-      std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_header;
-      std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_data;
-      tx_console_header.reserve(20);
-      tx_console_data.reserve(20);
-
-      tx_console_header.push_back("Elapsed (us)");
-      tx_console_data.push_back(std::to_string(elapsed));
-
-      tx_console_header.push_back("W MiB");
-      tx_console_data.push_back(bm_table.get("0", "w_mib"));
-
-      tx_console_header.push_back("R MiB");
-      tx_console_data.push_back(bm_table.get("0", "r_mib"));
-      if (cpu_table.workers_agg_events.contains("instr")) {
-         const double instr_cnt = cpu_table.workers_agg_events["instr"];
-         tx_console_header.push_back("Instrs");
-         tx_console_data.push_back(std::to_string(instr_cnt));
-      }
-
-      if (cpu_table.workers_agg_events.contains("cycle")) {
-         const double cycles_cnt = cpu_table.workers_agg_events["cycle"];
-         tx_console_header.push_back("Cycles");
-         tx_console_data.push_back(std::to_string(cycles_cnt));
-      }
-
-      if (cpu_table.workers_agg_events.contains("CPU")) {
-         tx_console_header.push_back("Utilized CPUs");
-         tx_console_data.push_back(std::to_string(cpu_table.workers_agg_events["CPU"]));
-      }
-
-      if (cpu_table.workers_agg_events.contains("task")) {
-         tx_console_header.push_back("CPUTime(ms)");
-         tx_console_data.push_back(std::to_string(cpu_table.workers_agg_events["task"]));
-      }
-
-      if (cpu_table.workers_agg_events.contains("L1-miss")) {
-         tx_console_header.push_back("L1-miss");
-         tx_console_data.push_back(std::to_string(cpu_table.workers_agg_events["L1-miss"]));
-      }
-
-      if (cpu_table.workers_agg_events.contains("LLC-miss")) {
-         tx_console_header.push_back("LLC-miss");
-         tx_console_data.push_back(std::to_string(cpu_table.workers_agg_events["LLC-miss"]));
-      }
-
-      if (cpu_table.workers_agg_events.contains("GHz")) {
-         tx_console_header.push_back("GHz");
-         tx_console_data.push_back(std::to_string(cpu_table.workers_agg_events["GHz"]));
-      }
-
-      tx_console_header.push_back("WAL GiB/s");
-      tx_console_data.push_back(cr_table.get("0", "wal_write_gib"));
-
-      tx_console_header.push_back("GCT GiB/s");
-      tx_console_data.push_back(cr_table.get("0", "gct_write_gib"));
-
-      u64 dt_page_reads = dt_table.getSum("dt_page_reads");
-      tx_console_header.push_back("SSDReads");
-      u64 dt_page_writes = dt_table.getSum("dt_page_writes");
-      tx_console_header.push_back("SSDWrites");
-
-      tx_console_data.push_back(std::to_string(dt_page_reads));
-      tx_console_data.push_back(std::to_string(dt_page_writes));
-
-      return {tx_console_header, tx_console_data};
-   }
-
-   void logTables(long elapsed, std::string csv_dir)
-   {
-      u64 config_hash = configs_table.hash();
-      std::vector<std::ofstream> csvs;
-      std::string csv_dir_abs = FLAGS_csv_path + "/" + csv_dir;
-      std::filesystem::create_directories(csv_dir_abs);
-      for (u64 t_i = 0; t_i < tables.size(); t_i++) {
-         csvs.emplace_back();
-         auto& csv = csvs.back();
-         csv.open(csv_dir_abs + "/" + tables[t_i]->getName() + ".csv", std::ios::app);
-         csv << std::setprecision(2) << std::fixed;
-
-         if (csv.tellp() == 0) {  // no header
-            csv << "c_hash";
-            for (auto& c : tables[t_i]->getColumns()) {
-               csv << "," << c.first;
-            }
-            csv << endl;
-         }
-         // assert(tables[t_i]->size() == 1);
-         for (u64 r_i = 0; r_i < tables[t_i]->size(); r_i++) {
-            csv << config_hash;
-            for (auto& c : tables[t_i]->getColumns()) {
-               csv << "," << c.second.values[r_i];
-            }
-            csv << endl;
-         }
-         csv.close();
-      }
-
-      auto [tx_console_header, tx_console_data] = summarizeStats(elapsed);
-      std::ofstream csv_sum;
-      csv_sum.open(csv_dir_abs + "sum.csv", std::ios::app);
-      if (csv_sum.tellp() == 0) {  // no header
-         for (auto& h : tx_console_header) {
-            std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, h);
-         }
-         csv_sum << endl;
-      }
-      for (auto& d : tx_console_data) {
-         std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, d);
-      }
-      csv_sum << endl;
-
-      tabulate::Table table;
-      table.add_row(tx_console_header);
-      table.add_row(tx_console_data);
-      table.format().width(10);
-      printTable(table);
-   }
-
-   static void printTable(tabulate::Table& table)
-   {
-      std::stringstream ss;
-      table.print(ss);
-      string str = ss.str();
-      for (u64 i = 0; i < str.size(); i++) {
-         cout << str[i];
-      }
-      cout << std::endl;
-   }
-
   public:
    // TXs: Measure end-to-end time
    void basicJoin()
    {
       // Enumrate materialized view
-      resetTables();
+      logger.reset();
       [[maybe_unused]] long produced = 0;
       auto inspect_produced = [&](const std::string& msg) {
          if (produced % 100 == 0) {
@@ -276,17 +119,17 @@ class TPCHWorkload
       std::cout << std::endl;
       auto mtdv_end = std::chrono::high_resolution_clock::now();
       auto mtdv_t = std::chrono::duration_cast<std::chrono::microseconds>(mtdv_end - mtdv_start).count();
-      logTables(mtdv_t, "mtdv");
+      logger.log(mtdv_t, "mtdv");
 
       // Scan merged index + join on the fly
-      resetTables();
+      logger.reset();
       auto merged_start = std::chrono::high_resolution_clock::now();
 
       mergedPPsL.template scanJoin<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
       
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
-      logTables(merged_t, "merged");
+      logger.log(merged_t, "merged");
    }
 
    void basicGroup();
@@ -297,10 +140,7 @@ class TPCHWorkload
 
    void prepare()
    {
-      std::cout << "Preparing TPC-H" << std::endl;
-      [[maybe_unused]] Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
-      Integer h_id = 0;
-      leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
+      logger.prepare();
    }
 
    void printProgress(std::string msg, Integer i, Integer scale)
