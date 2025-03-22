@@ -1,10 +1,8 @@
 #pragma once
 #include <gflags/gflags.h>
 #include <algorithm>
-#include <chrono>
 #include <fstream>
 #include <functional>
-#include <optional>
 #include <vector>
 #include <queue>
 
@@ -15,8 +13,7 @@
 #include "Logger.hpp"
 #include "leanstore/Config.hpp"
 
-
-DEFINE_double(tpch_scale_factor, 1, "TPC-H scale factor");
+DECLARE_double(tpch_scale_factor);
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class BasicJoin;
@@ -212,7 +209,7 @@ class TPCHWorkload
    };
 
    template <typename JK>
-   void heapMerge(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
+   static void heapMerge(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
    {  
       std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<HeapEntry<JK>>> heap;
       for (auto& s: sources) {
