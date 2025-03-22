@@ -7,6 +7,7 @@
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "LeanStoreLogger.hpp"
+#include "BasicJoin.hpp"
 
 using namespace leanstore;
 
@@ -50,23 +51,18 @@ int main(int argc, char** argv)
    leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE;
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
-   TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem, logger);
+   TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
+   BasicJoin<LeanStoreAdapter, LeanStoreMergedAdapter> tpchBasicJoin(tpch, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem);
 
    if (!FLAGS_recover) {
         std::cout << "Loading TPC-H" << std::endl;
         crm.scheduleJobSync(0, [&]() {
             cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-            tpch.loadPart();
-            tpch.loadSupplier();
-            tpch.loadCustomer();
-            tpch.loadOrders();
-            tpch.loadPartsuppLineitem();
-            tpch.loadNation();
-            tpch.loadRegion();
-            tpch.loadSortedLineitem();
-            tpch.loadMergedBasicJoin();
-            tpch.loadBasicJoin();
-            tpch.logSize();
+            tpchBasicJoin.loadBaseTables();
+            tpchBasicJoin.loadSortedLineitem();
+            tpchBasicJoin.loadBasicJoin();
+            tpchBasicJoin.loadMergedBasicJoin();
+            tpchBasicJoin.logSize();
             cr::Worker::my().commitTX();
         });
    }
@@ -74,7 +70,7 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(0, [&]() {
       tpch.prepare();
       cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
-      tpch.basicJoin();
+      tpchBasicJoin.basicJoin();
       cr::Worker::my().commitTX();
       cr::Worker::my().shutdown();
    });
