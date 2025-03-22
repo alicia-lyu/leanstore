@@ -10,7 +10,7 @@ template <typename T>
 inline T bytes_to_struct(const std::vector<std::byte>& s) {
     static_assert(std::is_standard_layout_v<T>, "Must be standard-layout");
     if (sizeof(T) != s.size()) {
-        throw std::runtime_error("Size mismatch");
+        throw std::runtime_error("Size mismatch: expected " + std::to_string(sizeof(T)) + ", got " + std::to_string(s.size()));
     }
     T t;
     std::memcpy(&t, s.data(), sizeof(T));

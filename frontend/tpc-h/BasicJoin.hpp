@@ -3,11 +3,13 @@
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
 #include "Views.hpp"
+#include <chrono>
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class BasicJoin
 {
-   TPCHWorkload<AdapterType, MergedAdapterType>& workload;
+   using TPCH = TPCHWorkload<AdapterType, MergedAdapterType>;
+   TPCH& workload;
    AdapterType<joinedPPsL_t>& joinedPPsL;
    AdapterType<joinedPPs_t>& joinedPPs;
    AdapterType<merged_lineitem_t>& sortedLineitem;
@@ -22,10 +24,10 @@ class BasicJoin
    AdapterType<nation_t>& nation;
    AdapterType<region_t>& region;
    template <typename JK>
-   using HeapEntry = typename TPCHWorkload<AdapterType, MergedAdapterType>::template HeapEntry<JK>;
+   using HeapEntry = typename TPCH::template HeapEntry<JK>;
 
   public:
-   BasicJoin(TPCHWorkload<AdapterType, MergedAdapterType>& workload,
+   BasicJoin(TPCH& workload,
              MergedAdapterType& mbj,
              AdapterType<joinedPPsL_t>& jppsl,
              AdapterType<joinedPPs_t>& jpps,
@@ -92,7 +94,6 @@ class BasicJoin
         workload.loadPartsuppLineitem();
         workload.loadNation();
         workload.loadRegion();
-        workload.loadSortedLineitem();
         workload.logSize();
     }
 
@@ -235,7 +236,7 @@ class BasicJoin
          this->mergedPPsL.insert(k_new, v_new);
       };
 
-      heapMerge<PPsL_JK>({part_src, partsupp_src, lineitem_src}, {part_consume, partsupp_consume, lineitem_consume});
+      TPCH::template heapMerge<PPsL_JK>({part_src, partsupp_src, lineitem_src}, {part_consume, partsupp_consume, lineitem_consume});
    }
 
    void logSize()

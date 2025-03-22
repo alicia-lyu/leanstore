@@ -11,6 +11,8 @@
 
 using namespace leanstore;
 
+DEFINE_double(tpch_scale_factor, 1, "TPC-H scale factor");
+
 int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Leanstore Join TPC-H");
