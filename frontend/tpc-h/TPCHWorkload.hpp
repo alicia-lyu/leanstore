@@ -214,6 +214,10 @@ class TPCHWorkload
       std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<HeapEntry<JK>>> heap;
       for (auto& s: sources) {
          HeapEntry<JK> entry = s();
+         if (entry.jk == JK::max()) {
+            std::cout << "Warning: source is empty" << std::endl;
+            continue;
+         }
          heap.push(entry);
       }
       while (!heap.empty()) {
