@@ -121,30 +121,18 @@ struct merged {
 
     static constexpr unsigned maxFoldLength() { return 0 + JK::maxFoldLength() + (foldPK ? T::maxFoldLength() : 0); }
 
-    static std::vector<std::byte> toBytes(const T& record)
+    template <typename Type>
+    static std::vector<std::byte> toBytes(const Type& keyOrRec)
     {
-        std::vector<std::byte> v_bytes(sizeof(record));
-        std::memcpy(v_bytes.data(), &record, sizeof(record));
-        return v_bytes;
+        std::vector<std::byte> bytes(sizeof(keyOrRec));
+        std::memcpy(bytes.data(), &keyOrRec, sizeof(keyOrRec));
+        return bytes;
     }
 
-    static T fromBytes(const std::vector<std::byte>& s)
+    template <typename Type>
+    static Type fromBytes(const std::vector<std::byte>& s)
     {
-        return bytes_to_struct<T>(s);
-    }
-
-    template <typename K>
-    static std::vector<std::byte> toBytes(const K& key)
-    {
-        std::vector<std::byte> k_bytes(sizeof(key));
-        std::memcpy(k_bytes.data(), &key, sizeof(key));
-        return k_bytes;
-    }
-
-    template <typename K>
-    static K fromBytes(const std::vector<std::byte>& s)
-    {
-        return bytes_to_struct<K>(s);
+        return bytes_to_struct<Type>(s);
     }
 
     friend std::ostream& operator<<(std::ostream& os, const merged& m) {
@@ -235,6 +223,8 @@ struct joinedPPs_t : public Joined<11, PPsL_JK, part_t, partsupp_t> {
 struct joinedPPsL_t : public Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t> {
     using Joined::Joined;
     joinedPPsL_t(merged_part_t p, merged_partsupp_t ps, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::make_tuple(p.payload, ps.payload, l.payload)) {}
+
+    joinedPPsL_t(part_t p, partsupp_t ps, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::make_tuple(p, ps, l.payload)) {}
 
     joinedPPsL_t(joinedPPs_t j, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::tuple_cat(j.payloads, std::make_tuple(l.payload))) {}
 

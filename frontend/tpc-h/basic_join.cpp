@@ -72,7 +72,7 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(0, [&]() {
       tpch.prepare();
       cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
-      tpchBasicJoin.basicJoin();
+      tpchBasicJoin.query();
       cr::Worker::my().commitTX();
       cr::Worker::my().shutdown();
    });
