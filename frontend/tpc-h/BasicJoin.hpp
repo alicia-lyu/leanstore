@@ -49,9 +49,7 @@ class BasicJoin
    {
    }
 
-   // TXs: Measure end-to-end time
-   void basicJoin()
-   {
+   void queryByView() {
       // Enumrate materialized view
       logger.reset();
       [[maybe_unused]] long produced = 0;
@@ -73,7 +71,11 @@ class BasicJoin
       auto mtdv_end = std::chrono::high_resolution_clock::now();
       auto mtdv_t = std::chrono::duration_cast<std::chrono::microseconds>(mtdv_end - mtdv_start).count();
       logger.log(mtdv_t, "mtdv");
+   }
 
+   // TXs: Measure end-to-end time
+   void queryByMerged()
+   {
       // Scan merged index + join on the fly
       logger.reset();
       auto merged_start = std::chrono::high_resolution_clock::now();
@@ -83,6 +85,11 @@ class BasicJoin
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
       logger.log(merged_t, "merged");
+   }
+
+   void queryByIndex()
+   {
+
    }
 
    void loadBaseTables()
@@ -183,59 +190,46 @@ class BasicJoin
       auto part_src = [this]() {
          auto kv = part.next();
          if (kv == std::nullopt) {
-            return HeapEntry<PPsL_JK>{PPsL_JK::max(), {}, {}, 0};
+            return HeapEntry<PPsL_JK>();
          }
          auto& [k, v] = *kv;
-         std::vector<std::byte> k_bytes(sizeof(k));
-         std::memcpy(k_bytes.data(), &k, sizeof(k));
-
-         std::vector<std::byte> v_bytes(sizeof(v));
-         std::memcpy(v_bytes.data(), &v, sizeof(v));
-         return HeapEntry<PPsL_JK>{PPsL_JK{k.p_partkey, 0}, std::move(k_bytes), std::move(v_bytes), 0};
+         
+         return HeapEntry<PPsL_JK>{PPsL_JK{k.p_partkey, 0}, part_t::toBytes(k), part_t::toBytes(v), 0};
       };
 
       auto part_consume = [this](HeapEntry<PPsL_JK>& entry) {
-         merged_part_t::Key k_new({entry.jk, bytes_to_struct<part_t::Key>(entry.k)});
-         merged_part_t v_new(bytes_to_struct<part_t>(entry.v));
+         merged_part_t::Key k_new({entry.jk, part_t::fromBytes(entry.k)});
+         merged_part_t v_new(part_t::fromBytes(entry.v));
          this->mergedPPsL.insert(k_new, v_new);
       };
 
       auto partsupp_src = [this]() {
          auto kv = partsupp.next();
          if (kv == std::nullopt) {
-            return HeapEntry<PPsL_JK>{PPsL_JK::max(), {}, {}, 1};
+            return HeapEntry<PPsL_JK>();
          }
          auto& [k, v] = *kv;
-         std::vector<std::byte> k_bytes(sizeof(k));
-         std::memcpy(k_bytes.data(), &k, sizeof(k));
-
-         std::vector<std::byte> v_bytes(sizeof(v));
-         std::memcpy(v_bytes.data(), &v, sizeof(v));
-         return HeapEntry<PPsL_JK>{PPsL_JK{k.ps_partkey, k.ps_suppkey}, std::move(k_bytes), std::move(v_bytes), 1};
+         return HeapEntry<PPsL_JK>{PPsL_JK{k.ps_partkey, k.ps_suppkey}, partsupp_t::toBytes(k), partsupp_t::toBytes(v), 1};
       };
 
       auto partsupp_consume = [this](HeapEntry<PPsL_JK>& entry) {
-         merged_partsupp_t::Key k_new({entry.jk, bytes_to_struct<partsupp_t::Key>(entry.k)});
-         merged_partsupp_t v_new(bytes_to_struct<partsupp_t>(entry.v));
+         merged_partsupp_t::Key k_new({entry.jk, partsupp_t::fromBytes(entry.k)});
+         merged_partsupp_t v_new(partsupp_t::fromBytes(entry.v));
          this->mergedPPsL.insert(k_new, v_new);
       };
 
       auto lineitem_src = [this]() {
          auto kv = sortedLineitem.next();
          if (kv == std::nullopt) {
-            return HeapEntry<PPsL_JK>{PPsL_JK::max(), {}, {}, 2};
+            return HeapEntry<PPsL_JK>();
          }
          auto& [k, v] = *kv;
-         std::vector<std::byte> k_bytes(sizeof(k));
-         std::memcpy(k_bytes.data(), &k, sizeof(k));
-         std::vector<std::byte> v_bytes(sizeof(v));
-         std::memcpy(v_bytes.data(), &v, sizeof(v));
-         return HeapEntry<PPsL_JK>{PPsL_JK{k.jk.l_partkey, k.jk.l_partsuppkey}, std::move(k_bytes), std::move(v_bytes), 2};
+         return HeapEntry<PPsL_JK>{k.jk, merged_lineitem_t::toBytes(k), merged_lineitem_t::toBytes(v), 2};
       };
 
       auto lineitem_consume = [this](HeapEntry<PPsL_JK>& entry) {
-         merged_lineitem_t::Key k_new = bytes_to_struct<merged_lineitem_t::Key>(entry.k);
-         merged_lineitem_t v_new = bytes_to_struct<merged_lineitem_t>(entry.v);
+         merged_lineitem_t::Key k_new({entry.jk, merged_lineitem_t::fromBytes(entry.k)});
+         merged_lineitem_t v_new(merged_lineitem_t::fromBytes(entry.v));
          this->mergedPPsL.insert(k_new, v_new);
       };
 
