@@ -266,10 +266,10 @@ struct LeanStoreMergedAdapter {
    {
       int curr_joined_cnt = 1;
       forEach(cached_records, [&](const auto& vec) { 
-         std::cout << vec.size() << ", ";
+         // std::cout << vec.size() << ", ";
          curr_joined_cnt *= vec.size(); 
       });
-      std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
+      // std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
       std::vector<std::tuple<Records...>> matched_records(curr_joined_cnt);
       joined_cnt += curr_joined_cnt;
       if (joined_cnt % 1000 == 0) {
