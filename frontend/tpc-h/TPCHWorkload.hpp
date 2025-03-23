@@ -209,6 +209,8 @@ class TPCHWorkload
 
       HeapEntry() : jk(JK::max()), k(), v(), source(std::numeric_limits<u8>::max()) {}
 
+      HeapEntry(JK jk, std::vector<std::byte> k, std::vector<std::byte> v, u8 source) : jk(jk), k(k), v(v), source(source) {}
+
       bool operator>(const HeapEntry& other) const { return jk > other.jk; }
    };
 
@@ -217,7 +219,7 @@ class TPCHWorkload
    {  
       std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<HeapEntry<JK>>> heap;
       for (auto& s: sources) {
-         HeapEntry<JK> entry = s();
+         auto entry = s();
          if (entry.jk == JK::max()) {
             std::cout << "Warning: source is empty" << std::endl;
             continue;
@@ -227,8 +229,8 @@ class TPCHWorkload
       while (!heap.empty()) {
          HeapEntry<JK> entry = heap.top();
          heap.pop();
-         consumes[entry.source](entry);
-         HeapEntry<JK> next = sources[entry.source]();
+         consumes.at(entry.source)(entry);
+         HeapEntry<JK> next = sources.at(entry.source)();
          if (next.jk != JK::max()) {
             heap.push(next);
          }
@@ -236,25 +238,16 @@ class TPCHWorkload
    }
 
    template <typename JK, typename RecordType>
-   std::function<HeapEntry<JK>()> getHeapSource(AdapterType<RecordType>& adapter)
+   static std::function<HeapEntry<JK>()> getHeapSource(AdapterType<RecordType>& adapter, u8 source, std::function<JK(const typename RecordType::Key&, const RecordType&)> getJK)
    {
-      return [&adapter]() {
+      return [source, &adapter, getJK]() {
          auto kv = adapter.next();
          if (kv == std::nullopt) {
             return HeapEntry<JK>();
          }
          auto& [k, v] = *kv;
-         return HeapEntry<JK>{k, RecordType::toBytes(k), RecordType::toBytes(v), 0};
-      };
-   }
-
-   template <typename JK, typename RecordType>
-   std::function<void(HeapEntry<JK>&)> getHeapConsume(MergedAdapterType& mergedAdapter)
-   {
-      return [&mergedAdapter](HeapEntry<JK>& entry) {
-         typename MergedAdapterType::Key k_new({entry.jk, RecordType::fromBytes(entry.k)});
-         typename MergedAdapterType::Value v_new(RecordType::fromBytes(entry.v));
-         mergedAdapter.insert(k_new, v_new);
+         JK jk = getJK(k, v);
+         return HeapEntry<JK>(jk, RecordType::toBytes(k), RecordType::toBytes(v), source);
       };
    }
 

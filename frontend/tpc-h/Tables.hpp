@@ -48,30 +48,18 @@ struct RecordPrototype {
         return pos;
     }
 
-    static std::vector<std::byte> toBytes(const T& record)
+    template <typename Type>
+    static std::vector<std::byte> toBytes(const Type& keyOrRec)
     {
-        std::vector<std::byte> v_bytes(sizeof(record));
-        std::memcpy(v_bytes.data(), &record, sizeof(record));
-        return v_bytes;
+        std::vector<std::byte> bytes(sizeof(keyOrRec));
+        std::memcpy(bytes.data(), &keyOrRec, sizeof(keyOrRec));
+        return bytes;
     }
 
-    static T fromBytes(const std::vector<std::byte>& s)
+    template <typename Type>
+    static Type fromBytes(const std::vector<std::byte>& s)
     {
-        return bytes_to_struct<T>(s);
-    }
-
-    template <typename K>
-    static std::vector<std::byte> toBytes(const K& key)
-    {
-        std::vector<std::byte> k_bytes(sizeof(key));
-        std::memcpy(k_bytes.data(), &key, sizeof(key));
-        return k_bytes;
-    }
-
-    template <typename K>
-    static K fromBytes(const std::vector<std::byte>& s)
-    {
-        return bytes_to_struct<K>(s);
+        return bytes_to_struct<Type>(s);
     }
 
     friend std::ostream& operator<<(std::ostream& os, const T& record)
@@ -114,6 +102,8 @@ struct part_t : public part_base, public RecordPrototype<part_base,
     &part_base::p_comment>
 {
     explicit part_t(part_base base) : part_base(base) {}
+
+    using part_base::Key;
 
     part_t() = default;
 
@@ -163,6 +153,8 @@ struct supplier_t : public supplier_base, public RecordPrototype<supplier_base, 
 
     supplier_t() = default;
 
+    using supplier_base::Key;
+
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)
     {
@@ -206,6 +198,8 @@ struct partsupp_t : public partsupp_base, public RecordPrototype<partsupp_base, 
     explicit partsupp_t(partsupp_base base) : partsupp_base(base) {}
 
     partsupp_t() = default;
+
+    using partsupp_base::Key;
 
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)
@@ -252,6 +246,8 @@ struct customerh_t : public customer_base, public RecordPrototype<customer_base,
     explicit customerh_t(customer_base base) : customer_base(base) {}
 
     customerh_t() = default;
+
+    using customer_base::Key;
 
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)
@@ -301,6 +297,8 @@ struct orders_t : public orders_base, public RecordPrototype<orders_base, &order
     explicit orders_t(orders_base base) : orders_base(base) {}
 
     orders_t() = default;
+
+    using orders_base::Key;
 
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)
@@ -359,6 +357,8 @@ struct lineitem_t : public lineitem_base, public RecordPrototype<lineitem_base, 
 
     lineitem_t() = default;
 
+    using lineitem_base::Key;
+
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)
     {
@@ -403,6 +403,8 @@ struct nation_t : public nation_base, public RecordPrototype<nation_base, &natio
 
     nation_t() = default;
 
+    using nation_base::Key;
+
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)
     {
@@ -443,6 +445,8 @@ struct region_t : public region_base, public RecordPrototype<region_base, &regio
     explicit region_t(region_base base) : region_base(base) {}
 
     region_t() = default;
+
+    using region_base::Key;
 
     template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)

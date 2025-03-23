@@ -227,7 +227,7 @@ struct LeanStoreMergedAdapter {
    }
 
    template <size_t... Is, typename... Records>
-   void assignRecords(std::vector<std::tuple<Records...>>& matched_records,
+   static void assignRecords(std::vector<std::tuple<Records...>>& matched_records,
                       const std::tuple<std::vector<Records>...>& cached_records,
                       unsigned long* batch_size,
                       int curr_joined_cnt,
@@ -251,7 +251,7 @@ struct LeanStoreMergedAdapter {
    }
 
    template <typename Tuple, typename Func>
-   void forEach(Tuple& tup, Func func)
+   static void forEach(Tuple& tup, Func func)
    {
       std::apply(
           [&func](auto&... elems) {
@@ -260,39 +260,45 @@ struct LeanStoreMergedAdapter {
           tup);
    }
 
+   // calculate cartesian produce of current cached records
+   template <typename JK, typename JoinedRec, typename... Records>
+   static int joinCurrent(const std::tuple<std::vector<Records>...>& cached_records, long& joined_cnt)
+   {
+      int curr_joined_cnt = 1;
+      forEach(cached_records, [&](const auto& vec) { 
+         std::cout << vec.size() << ", ";
+         curr_joined_cnt *= vec.size(); 
+      });
+      std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
+      std::vector<std::tuple<Records...>> matched_records(curr_joined_cnt);
+      joined_cnt += curr_joined_cnt;
+      if (joined_cnt % 1000 == 0) {
+         std::cout << "\rJoined " << joined_cnt / 1000 << "k records------------------------------------";
+      }
+      if (curr_joined_cnt == 0) {
+         return 0;
+      }
+      unsigned long batch_size = curr_joined_cnt;
+      assignRecords(matched_records, cached_records, &batch_size, curr_joined_cnt, std::index_sequence_for<Records...>{});
+      for (auto& rec : matched_records) {
+         std::apply([&](auto&... rec) { [[maybe_unused]] auto joined_rec = JoinedRec(rec...); }, rec);
+      }
+      return curr_joined_cnt;
+   }
+
    template <typename JK, typename JoinedRec, typename... Records>
    void scanJoin()
    {
       std::tuple<std::vector<Records>...> cached_records;
+
       JK current_jk{};
       [[maybe_unused]] long joined_cnt = 0;
-
-      // calculate cartesian produce of current cached records
-      auto join_current = [&]() {
-         int curr_joined_cnt = 1;
-         // std::cout << current_jk << ": ";
-         forEach(cached_records, [&](const auto& vec) { 
-            // std::cout << vec.size() << ", ";
-            curr_joined_cnt *= vec.size(); 
-         });
-         // std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
-         std::vector<std::tuple<Records...>> matched_records(curr_joined_cnt);
-         joined_cnt += curr_joined_cnt;
-         if (curr_joined_cnt == 0) {
-            return;
-         }
-         unsigned long batch_size = curr_joined_cnt;
-         assignRecords(matched_records, cached_records, &batch_size, curr_joined_cnt, std::index_sequence_for<Records...>{});
-         for (auto& rec : matched_records) {
-            std::apply([&](auto&... rec) { auto joined_rec = JoinedRec(rec...); }, rec);
-         }
-      };
 
       auto comp_clear = [&](const JK& jk) {
          forEach(cached_records, [&](auto& vec) {
             using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
             if (jk.match(RecordType::getJK(current_jk)) != 0) {
-               join_current();
+               joinCurrent<JK, JoinedRec, Records...>(cached_records, joined_cnt);
                vec.clear();
             }
          });
@@ -332,6 +338,8 @@ struct LeanStoreMergedAdapter {
                       << "k records------------------------------------";
          }
       }
+
+      joinCurrent<JK, JoinedRec, Records...>(cached_records, joined_cnt);
 
       std::cout << std::endl;
       std::cout << "Scanned " << produced << " merged records, joined " << joined_cnt << " records" << std::endl;
