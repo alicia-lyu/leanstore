@@ -177,6 +177,9 @@ class BasicJoin
 
    void loadMergedBasicJoin()
    {
+      part.resetIterator();
+      partsupp.resetIterator();
+      sortedLineitem.resetIterator();
       auto part_src = [this]() {
          auto kv = part.next();
          if (kv == std::nullopt) {
