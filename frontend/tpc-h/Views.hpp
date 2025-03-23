@@ -121,6 +121,32 @@ struct merged {
 
     static constexpr unsigned maxFoldLength() { return 0 + JK::maxFoldLength() + (foldPK ? T::maxFoldLength() : 0); }
 
+    static std::vector<std::byte> toBytes(const T& record)
+    {
+        std::vector<std::byte> v_bytes(sizeof(record));
+        std::memcpy(v_bytes.data(), &record, sizeof(record));
+        return v_bytes;
+    }
+
+    static T fromBytes(const std::vector<std::byte>& s)
+    {
+        return bytes_to_struct<T>(s);
+    }
+
+    template <typename K>
+    static std::vector<std::byte> toBytes(const K& key)
+    {
+        std::vector<std::byte> k_bytes(sizeof(key));
+        std::memcpy(k_bytes.data(), &key, sizeof(key));
+        return k_bytes;
+    }
+
+    template <typename K>
+    static K fromBytes(const std::vector<std::byte>& s)
+    {
+        return bytes_to_struct<K>(s);
+    }
+
     friend std::ostream& operator<<(std::ostream& os, const merged& m) {
         os << "merged(" << m.payload << ")";
         return os;

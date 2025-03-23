@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <fstream>
 #include <functional>
+#include <limits>
+#include <optional>
 #include <vector>
 #include <queue>
 
@@ -205,6 +207,8 @@ class TPCHWorkload
       std::vector<std::byte> v;
       u8 source;
 
+      HeapEntry() : jk(JK::max()), k(), v(), source(std::numeric_limits<u8>::max()) {}
+
       bool operator>(const HeapEntry& other) const { return jk > other.jk; }
    };
 
@@ -229,6 +233,29 @@ class TPCHWorkload
             heap.push(next);
          }
       }
+   }
+
+   template <typename JK, typename RecordType>
+   std::function<HeapEntry<JK>()> getHeapSource(AdapterType<RecordType>& adapter)
+   {
+      return [&adapter]() {
+         auto kv = adapter.next();
+         if (kv == std::nullopt) {
+            return HeapEntry<JK>();
+         }
+         auto& [k, v] = *kv;
+         return HeapEntry<JK>{k, RecordType::toBytes(k), RecordType::toBytes(v), 0};
+      };
+   }
+
+   template <typename JK, typename RecordType>
+   std::function<void(HeapEntry<JK>&)> getHeapConsume(MergedAdapterType& mergedAdapter)
+   {
+      return [&mergedAdapter](HeapEntry<JK>& entry) {
+         typename MergedAdapterType::Key k_new({entry.jk, RecordType::fromBytes(entry.k)});
+         typename MergedAdapterType::Value v_new(RecordType::fromBytes(entry.v));
+         mergedAdapter.insert(k_new, v_new);
+      };
    }
 
    void loadBasicGroup();
