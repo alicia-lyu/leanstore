@@ -5,8 +5,10 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <set>
 #include <vector>
 #include <queue>
+#include <future>
 
 #include "Tables.hpp"
 
@@ -54,7 +56,11 @@ class TPCHWorkload
          lineitem(l),
          nation(n),
          region(r),
-         logger(logger)
+         logger(logger),
+         last_part_id(0),
+         last_supplier_id(0),
+         last_customer_id(0),
+         last_order_id(0)
    {  }
 
   private:
@@ -66,6 +72,12 @@ class TPCHWorkload
    static constexpr Integer PARTSUPP_SCALE = 800000;
    static constexpr Integer NATION_COUNT = 25;
    static constexpr Integer REGION_COUNT = 5;
+
+   Integer last_part_id;
+   Integer last_supplier_id;
+   Integer last_customer_id;
+   Integer last_order_id;
+
 
    inline Integer getPartID() { return urand(1, PART_SCALE * FLAGS_tpch_scale_factor); }
 
@@ -96,90 +108,123 @@ class TPCHWorkload
    {
       if (i % 1000 == 1 || i == scale) {
          double progress = (double)i / scale * 100;
-         std::cout << "\rLoading " << msg << ": " << progress << "%------------------------------------";
+         std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
       }
       if (i == scale) {
          std::cout << std::endl;
       }
    }
 
-   void loadPart()
+   void loadPart(Integer start = 1, Integer end = PART_SCALE * FLAGS_tpch_scale_factor)
    {
-      for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
+      for (Integer i = start; i <= end; i++) {
          // std::cout << "partkey: " << i << std::endl;
          part.insert(part_t::Key({i}), part_t::generateRandomRecord());
-         printProgress("part", i, PART_SCALE * FLAGS_tpch_scale_factor);
+         printProgress("part", start, end);
       }
+      last_part_id = end;
    }
 
-   void loadSupplier()
+   void loadSupplier(Integer start = 1, Integer end = SUPPLIER_SCALE * FLAGS_tpch_scale_factor)
    {
-      for (Integer i = 1; i <= SUPPLIER_SCALE * FLAGS_tpch_scale_factor; i++) {
+      for (Integer i = start; i <= end; i++) {
          supplier.insert(supplier_t::Key({i}), supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
-         printProgress("supplier", i, SUPPLIER_SCALE * FLAGS_tpch_scale_factor);
+         printProgress("supplier", i, end);
       }
+      last_supplier_id = end;
    }
 
-   void loadPartsuppLineitem()
+   void loadPartsuppLineitem(Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor, Integer order_start = 1, Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
    {
       // Generate and shuffle lineitem keys
-      std::vector<lineitem_t::Key> lineitems = {};
-      for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
+      std::vector<lineitem_t::Key> lineitem_keys = {};
+      for (Integer i = order_start; i <= order_end; i++) {
          Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
          for (Integer j = 1; j <= lineitem_cnt; j++) {
-            lineitems.push_back(lineitem_t::Key({i, j}));
+            lineitem_keys.push_back(lineitem_t::Key({i, j}));
          }
       }
-      std::random_shuffle(lineitems.begin(), lineitems.end());
+      std::random_shuffle(lineitem_keys.begin(), lineitem_keys.end());
       // Load partsupp and lineitem
       long l_global_cnt = 0;
-      for (Integer i = 1; i <= PART_SCALE * FLAGS_tpch_scale_factor; i++) {
+      const Integer partsupp_size = (PARTSUPP_SCALE / PART_SCALE) * (part_end - part_start);
+      std::cout << "Lineitem size: " << lineitem_keys.size() << ", partsupp size: " << partsupp_size << std::endl;
+      for (Integer i = part_start; i <= part_end; i++) {
          // Randomly select suppliers for this part
          Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
-         std::vector<Integer> suppliers = {};
-         while (true) {
-            Integer supplier_id = urand(1, SUPPLIER_SCALE * FLAGS_tpch_scale_factor);
-            if (std::find(suppliers.begin(), suppliers.end(), supplier_id) == suppliers.end()) {
-               suppliers.push_back(supplier_id);
-            }
-            if (suppliers.size() == supplier_cnt) {
-               break;
-            }
+         std::set<Integer> suppliers = {};
+         while (suppliers.size() < supplier_cnt) {
+            Integer supplier_id = urand(1, last_supplier_id);
+            suppliers.insert(supplier_id);
          }
          for (auto& s : suppliers) {
             // load 1 partsupp
             partsupp.insert(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
             // load lineitems
-            Integer lineitem_cnt = urand(0, LINEITEM_SCALE / PARTSUPP_SCALE * 2); // No reference integrity but mostly matched
+            Integer lineitem_cnt = urand(0, lineitem_keys.size() / partsupp_size * 2);
+            // No reference integrity but mostly matched
             for (Integer l = 0; l < lineitem_cnt; l++) {
                auto rec = lineitem_t::generateRandomRecord([i]() { return i; }, [s]() { return s; });
-               if (l_global_cnt >= lineitems.size()) {
+               if (l_global_cnt >= lineitem_keys.size()) {
                   std::cout << "Warning: lineitem table is not fully populated" << std::endl;
                   break;
                } else {
-                  lineitem.insert(lineitems[l_global_cnt], rec);
+                  lineitem.insert(lineitem_keys[l_global_cnt], rec);
                   l_global_cnt++;
                }
             }
          }
-         printProgress("partsupp and lineitem", i, PART_SCALE * FLAGS_tpch_scale_factor);
+         printProgress("parts of partsupp and lineitem", i, part_end);
       }
    }
 
-   void loadCustomer()
+   void loadPartsupp(Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
    {
-      for (Integer i = 1; i <= CUSTOMER_SCALE * FLAGS_tpch_scale_factor; i++) {
+      loadPartsuppLineitem(part_start, part_end, last_order_id, last_order_id);
+   }
+
+   void loadLineitem(Integer order_start, Integer order_end)
+   {
+      for (Integer i = order_start; i <= order_end; i++) {
+         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
+         std::cout << "Loading " << lineitem_cnt << " lineitem for order " << i << std::endl;
+         for (Integer j = 1; j <= lineitem_cnt; j++) {
+            // look up partsupp
+            auto p = urand(1, last_part_id);
+            auto s = urand(1, last_supplier_id);
+            auto start_key = partsupp_t::Key({p, s});
+            partsupp.scan(start_key, [&](const partsupp_t::Key& k, const partsupp_t&) {
+               std::cout << "Found partsupp: " << k << std::endl;
+               p = k.ps_partkey;
+               s = k.ps_suppkey;
+               // LATER: each ps pair does not have uniform chance of being selected
+               return false;
+            }, []() {});
+            std::cout <<"Inserting lineitem: " << i << ", " << j << ", " << p << ", " << s << std::endl;
+            lineitem.insert(
+               lineitem_t::Key({i, j}),
+               lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
+         }
+         printProgress("orders of lineitem", i, order_end);
+      }
+   }
+
+   void loadCustomer(Integer start = 1, Integer end = CUSTOMER_SCALE * FLAGS_tpch_scale_factor)
+   {
+      for (Integer i = start; i <= end; i++) {
          customer.insert(customerh_t::Key({i}), customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
-         printProgress("customer", i, CUSTOMER_SCALE * FLAGS_tpch_scale_factor);
+         printProgress("customer", i, end);
       }
+      last_customer_id = end;
    }
 
-   void loadOrders()
+   void loadOrders(Integer start = 1, Integer end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
    {
-      for (Integer i = 1; i <= ORDERS_SCALE * FLAGS_tpch_scale_factor; i++) {
+      for (Integer i = start; i <= end; i++) {
          orders.insert(orders_t::Key({i}), orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
-         printProgress("orders", i, ORDERS_SCALE * FLAGS_tpch_scale_factor);
+         printProgress("orders", i, end);
       }
+      last_order_id = end;
    }
 
    void loadNation()
