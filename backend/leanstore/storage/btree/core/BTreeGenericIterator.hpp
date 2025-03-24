@@ -74,9 +74,9 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             // -------------------------------------------------------------------------------------
             p_guard.unlock();
             if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-               target_guard.toExclusive();
+               target_guard.tryToExclusive();
             } else {
-               target_guard.toShared();
+               target_guard.tryToShared();
             }
             // -------------------------------------------------------------------------------------
             prefix_copied = false;

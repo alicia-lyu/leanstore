@@ -169,6 +169,35 @@ class BasicJoin
       logger.log(index_t, "index");
    }
 
+   void maintainMerged()
+   {
+
+   }
+
+   void maintainView()
+   {
+
+   }
+
+   void maintainIndex()
+   {
+      logger.reset();
+      auto start = std::chrono::high_resolution_clock::now();
+      // 100 new orders
+      auto order_start = workload.last_order_id + 1;
+      auto order_end = workload.last_order_id + 100;
+      workload.loadOrders(order_start, order_end);
+      workload.loadLineitem(order_start, order_end);
+      // 1 new part & several partsupps
+      auto part_start = workload.last_part_id + 1;
+      auto part_end = workload.last_part_id + 1;
+      workload.loadPart(part_start, part_end);
+      workload.loadPartsupp(part_start, part_end);
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "index-maintain");
+   }
+
    void loadBaseTables()
    {
       workload.loadPart();
