@@ -5,9 +5,9 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <queue>
 #include <set>
 #include <vector>
-#include <queue>
 
 #include "Tables.hpp"
 
@@ -25,6 +25,7 @@ template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCHWorkload
 {
    friend class BasicJoin<AdapterType, MergedAdapterType>;
+
   private:
    Logger& logger;
    AdapterType<part_t>& part;
@@ -46,8 +47,7 @@ class TPCHWorkload
                 AdapterType<nation_t>& n,
                 AdapterType<region_t>& r,
                 Logger& logger)
-       : 
-         part(p),
+       : part(p),
          supplier(s),
          partsupp(ps),
          customer(c),
@@ -60,7 +60,8 @@ class TPCHWorkload
          last_supplier_id(0),
          last_customer_id(0),
          last_order_id(0)
-   {  }
+   {
+   }
 
   private:
    static constexpr Integer PART_SCALE = 200000;
@@ -77,7 +78,6 @@ class TPCHWorkload
    Integer last_customer_id;
    Integer last_order_id;
 
-
    inline Integer getPartID() { return urand(1, PART_SCALE * FLAGS_tpch_scale_factor); }
 
    inline Integer getSupplierID() { return urand(1, SUPPLIER_SCALE * FLAGS_tpch_scale_factor); }
@@ -91,23 +91,19 @@ class TPCHWorkload
    inline Integer getRegionID() { return urand(1, REGION_COUNT); }
 
   public:
-
    void basicGroup();
 
    void basicJoinGroup();
 
    // ------------------------------------LOAD-------------------------------------------------
 
-   void prepare()
-   {
-      logger.prepare();
-   }
+   void prepare() { logger.prepare(); }
 
    void printProgress(std::string msg, Integer i, Integer start, Integer end)
    {
       if (i % 1000 == start || i == end) {
          auto scale = end - start + 1;
-         double progress = (double) (i - start + 1) / scale * 100;
+         double progress = (double)(i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
       }
       if (i == end) {
@@ -144,7 +140,12 @@ class TPCHWorkload
       loadSupplier([this](const supplier_t::Key& k, const supplier_t& v) { this->supplier.insert(k, v); }, start, end);
    }
 
-   void loadPartsuppLineitem(std::function<void(const partsupp_t::Key&, const partsupp_t&)> ps_insert_func, std::function<void(const lineitem_t::Key&, const lineitem_t&)> l_insert_func, Integer part_start, Integer part_end, Integer order_start, Integer order_end)
+   void loadPartsuppLineitem(std::function<void(const partsupp_t::Key&, const partsupp_t&)> ps_insert_func,
+                             std::function<void(const lineitem_t::Key&, const lineitem_t&)> l_insert_func,
+                             Integer part_start,
+                             Integer part_end,
+                             Integer order_start,
+                             Integer order_end)
    {
       // Generate and shuffle lineitem keys
       std::vector<lineitem_t::Key> lineitem_keys = {};
@@ -187,15 +188,19 @@ class TPCHWorkload
       }
    }
 
-   void loadPartsuppLineitem(Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor, Integer order_start = 1, Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
+   void loadPartsuppLineitem(Integer part_start = 1,
+                             Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor,
+                             Integer order_start = 1,
+                             Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
    {
       loadPartsuppLineitem([this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); },
-                           [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
-         part_start, part_end, order_start, order_end);
+                           [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); }, part_start, part_end, order_start,
+                           order_end);
    }
 
-   void loadPartsupp(std::function<void(const partsupp_t::Key&, const partsupp_t&)> insert_func, 
-      Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
+   void loadPartsupp(std::function<void(const partsupp_t::Key&, const partsupp_t&)> insert_func,
+                     Integer part_start = 1,
+                     Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
    {
       loadPartsuppLineitem(insert_func, [this](const lineitem_t::Key&, const lineitem_t&) {}, part_start, part_end, last_order_id, last_order_id - 1);
    }
@@ -209,15 +214,16 @@ class TPCHWorkload
             auto p = urand(1, last_part_id);
             auto s = urand(1, last_supplier_id);
             auto start_key = partsupp_t::Key({p, s});
-            partsupp.scan(start_key, [&](const partsupp_t::Key& k, const partsupp_t&) {
-               p = k.ps_partkey;
-               s = k.ps_suppkey;
-               // LATER: each ps pair does not have uniform chance of being selected
-               return false;
-            }, []() {});
-            insert_func(
-               lineitem_t::Key({i, j}),
-               lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
+            partsupp.scan(
+                start_key,
+                [&](const partsupp_t::Key& k, const partsupp_t&) {
+                   p = k.ps_partkey;
+                   s = k.ps_suppkey;
+                   // LATER: each ps pair does not have uniform chance of being selected
+                   return false;
+                },
+                []() {});
+            insert_func(lineitem_t::Key({i, j}), lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
          }
          printProgress("orders of lineitem", i, order_start, order_end);
       }
@@ -225,8 +231,7 @@ class TPCHWorkload
 
    void loadLineitem(Integer order_start, Integer order_end)
    {
-      loadLineitem([&](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
-         order_start, order_end);
+      loadLineitem([&](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); }, order_start, order_end);
    }
 
    void loadCustomer(std::function<void(const customerh_t::Key&, const customerh_t&)> insert_func, Integer start, Integer end)
@@ -301,9 +306,9 @@ class TPCHWorkload
 
    template <typename JK>
    static void heapMerge(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
-   {  
+   {
       std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<HeapEntry<JK>>> heap;
-      for (auto& s: sources) {
+      for (auto& s : sources) {
          auto entry = s();
          if (entry.jk == JK::max()) {
             std::cout << "Warning: source is empty" << std::endl;
@@ -323,7 +328,9 @@ class TPCHWorkload
    }
 
    template <typename JK, typename RecordType>
-   static std::function<HeapEntry<JK>()> getHeapSource(AdapterType<RecordType>& adapter, u8 source, std::function<JK(const typename RecordType::Key&, const RecordType&)> getJK)
+   static std::function<HeapEntry<JK>()> getHeapSource(AdapterType<RecordType>& adapter,
+                                                       u8 source,
+                                                       std::function<JK(const typename RecordType::Key&, const RecordType&)> getJK)
    {
       return [source, &adapter, getJK]() {
          auto kv = adapter.next();
@@ -351,7 +358,7 @@ class TPCHWorkload
       }
       std::cout << "table,size" << std::endl;
       std::vector<std::ostream*> out = {&std::cout, &size_csv};
-      for (std::ostream* o: out) {
+      for (std::ostream* o : out) {
          *o << "part," << part.size() << std::endl;
          *o << "supplier," << supplier.size() << std::endl;
          *o << "partsupp," << partsupp.size() << std::endl;
