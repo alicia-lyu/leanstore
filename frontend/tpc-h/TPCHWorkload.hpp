@@ -8,7 +8,6 @@
 #include <set>
 #include <vector>
 #include <queue>
-#include <future>
 
 #include "Tables.hpp"
 
@@ -116,26 +115,36 @@ class TPCHWorkload
       }
    }
 
-   void loadPart(Integer start = 1, Integer end = PART_SCALE * FLAGS_tpch_scale_factor)
+   void loadPart(std::function<void(const part_t::Key&, const part_t&)> insert_func, Integer start, Integer end)
    {
       for (Integer i = start; i <= end; i++) {
          // std::cout << "partkey: " << i << std::endl;
-         part.insert(part_t::Key({i}), part_t::generateRandomRecord());
+         insert_func(part_t::Key({i}), part_t::generateRandomRecord());
          printProgress("part", i, start, end);
       }
       last_part_id = end;
    }
 
-   void loadSupplier(Integer start = 1, Integer end = SUPPLIER_SCALE * FLAGS_tpch_scale_factor)
+   void loadPart(Integer start = 1, Integer end = PART_SCALE * FLAGS_tpch_scale_factor)
+   {
+      loadPart([this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); }, start, end);
+   }
+
+   void loadSupplier(std::function<void(const supplier_t::Key&, const supplier_t&)> insert_func, Integer start, Integer end)
    {
       for (Integer i = start; i <= end; i++) {
-         supplier.insert(supplier_t::Key({i}), supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
+         insert_func(supplier_t::Key({i}), supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
          printProgress("supplier", i, start, end);
       }
       last_supplier_id = end;
    }
 
-   void loadPartsuppLineitem(Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor, Integer order_start = 1, Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
+   void loadSupplier(Integer start = 1, Integer end = SUPPLIER_SCALE * FLAGS_tpch_scale_factor)
+   {
+      loadSupplier([this](const supplier_t::Key& k, const supplier_t& v) { this->supplier.insert(k, v); }, start, end);
+   }
+
+   void loadPartsuppLineitem(std::function<void(const partsupp_t::Key&, const partsupp_t&)> ps_insert_func, std::function<void(const lineitem_t::Key&, const lineitem_t&)> l_insert_func, Integer part_start, Integer part_end, Integer order_start, Integer order_end)
    {
       // Generate and shuffle lineitem keys
       std::vector<lineitem_t::Key> lineitem_keys = {};
@@ -159,7 +168,7 @@ class TPCHWorkload
          }
          for (auto& s : suppliers) {
             // load 1 partsupp
-            partsupp.insert(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
+            ps_insert_func(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
             // load lineitems
             Integer lineitem_cnt = urand(0, lineitem_keys.size() / partsupp_size * 2);
             // No reference integrity but mostly matched
@@ -169,7 +178,7 @@ class TPCHWorkload
                   std::cout << "Warning: lineitem table is not fully populated" << std::endl;
                   break;
                } else {
-                  lineitem.insert(lineitem_keys[l_global_cnt], rec);
+                  l_insert_func(lineitem_keys[l_global_cnt], rec);
                   l_global_cnt++;
                }
             }
@@ -178,12 +187,20 @@ class TPCHWorkload
       }
    }
 
-   void loadPartsupp(Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
+   void loadPartsuppLineitem(Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor, Integer order_start = 1, Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
    {
-      loadPartsuppLineitem(part_start, part_end, last_order_id, last_order_id - 1);
+      loadPartsuppLineitem([this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); },
+                           [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
+         part_start, part_end, order_start, order_end);
    }
 
-   void loadLineitem(Integer order_start, Integer order_end)
+   void loadPartsupp(std::function<void(const partsupp_t::Key&, const partsupp_t&)> insert_func, 
+      Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
+   {
+      loadPartsuppLineitem(insert_func, [this](const lineitem_t::Key&, const lineitem_t&) {}, part_start, part_end, last_order_id, last_order_id - 1);
+   }
+
+   void loadLineitem(std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_func, Integer order_start, Integer order_end)
    {
       for (Integer i = order_start; i <= order_end; i++) {
          Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
@@ -198,7 +215,7 @@ class TPCHWorkload
                // LATER: each ps pair does not have uniform chance of being selected
                return false;
             }, []() {});
-            lineitem.insert(
+            insert_func(
                lineitem_t::Key({i, j}),
                lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
          }
@@ -206,38 +223,64 @@ class TPCHWorkload
       }
    }
 
-   void loadCustomer(Integer start = 1, Integer end = CUSTOMER_SCALE * FLAGS_tpch_scale_factor)
+   void loadLineitem(Integer order_start, Integer order_end)
+   {
+      loadLineitem([&](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
+         order_start, order_end);
+   }
+
+   void loadCustomer(std::function<void(const customerh_t::Key&, const customerh_t&)> insert_func, Integer start, Integer end)
    {
       for (Integer i = start; i <= end; i++) {
-         customer.insert(customerh_t::Key({i}), customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
+         insert_func(customerh_t::Key({i}), customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
          printProgress("customer", i, start, end);
       }
       last_customer_id = end;
    }
 
-   void loadOrders(Integer start = 1, Integer end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
+   void loadCustomer(Integer start = 1, Integer end = CUSTOMER_SCALE * FLAGS_tpch_scale_factor)
+   {
+      loadCustomer([this](const customerh_t::Key& k, const customerh_t& v) { this->customer.insert(k, v); }, start, end);
+   }
+
+   void loadOrders(std::function<void(const orders_t::Key&, const orders_t&)> insert_func, Integer start, Integer end)
    {
       for (Integer i = start; i <= end; i++) {
-         orders.insert(orders_t::Key({i}), orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
+         insert_func(orders_t::Key({i}), orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
          printProgress("orders", i, start, end);
       }
       last_order_id = end;
    }
 
-   void loadNation()
+   void loadOrders(Integer start = 1, Integer end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
+   {
+      loadOrders([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); }, start, end);
+   }
+
+   void loadNation(std::function<void(const nation_t::Key&, const nation_t&)> insert_func)
    {
       for (Integer i = 1; i <= NATION_COUNT; i++) {
-         nation.insert(nation_t::Key({i}), nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
+         insert_func(nation_t::Key({i}), nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
          printProgress("nation", i, 1, NATION_COUNT);
+      }
+   }
+
+   void loadNation()
+   {
+      loadNation([this](const nation_t::Key& k, const nation_t& v) { this->nation.insert(k, v); });
+   }
+
+   void loadRegion(std::function<void(const region_t::Key&, const region_t&)> insert_func)
+   {
+      for (Integer i = 1; i <= REGION_COUNT; i++) {
+         insert_func(region_t::Key({i}), region_t::generateRandomRecord());
+         printProgress("region", i, 1, REGION_COUNT);
       }
    }
 
    void loadRegion()
    {
-      for (Integer i = 1; i <= REGION_COUNT; i++) {
-         region.insert(region_t::Key({i}), region_t::generateRandomRecord());
-         printProgress("region", i, 1, REGION_COUNT);
-      }
+      loadRegion([this](const region_t::Key& k, const region_t& v) { this->region.insert(k, v); });
    }
 
    // ------------------------------------LOAD VIEWS-------------------------------------------------

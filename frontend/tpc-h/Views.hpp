@@ -99,7 +99,7 @@ struct merged {
 
     T payload;
 
-    explicit merged(T payload): payload(std::move(payload)) {}
+    merged(T payload): payload(std::move(payload)) {}
 
     merged() = default;
 
@@ -149,8 +149,15 @@ struct PPsL_JK {
     Integer l_partkey;
     Integer l_partsuppkey;
 
+    PPsL_JK() = default;
+    PPsL_JK(Integer partkey, Integer partsuppkey): l_partkey(partkey), l_partsuppkey(partsuppkey) {}
+
+    PPsL_JK(const part_t::Key& pk, const part_t&): l_partkey(pk.p_partkey), l_partsuppkey(0) {}
+    PPsL_JK(const partsupp_t::Key& pk, const partsupp_t&): l_partkey(pk.ps_partkey), l_partsuppkey(pk.ps_suppkey) {}
+    PPsL_JK(const lineitem_t::Key&, const lineitem_t& v): l_partkey(v.l_partkey), l_partsuppkey(v.l_suppkey) {}
+
     static PPsL_JK max() {
-        return {std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()};
+        return PPsL_JK({std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()});
     }
 
     static unsigned keyfold(uint8_t* out, const PPsL_JK& key) {
