@@ -194,13 +194,11 @@ class TPCHWorkload
             auto s = urand(1, last_supplier_id);
             auto start_key = partsupp_t::Key({p, s});
             partsupp.scan(start_key, [&](const partsupp_t::Key& k, const partsupp_t&) {
-               std::cout << "Found partsupp: " << k << std::endl;
                p = k.ps_partkey;
                s = k.ps_suppkey;
                // LATER: each ps pair does not have uniform chance of being selected
                return false;
             }, []() {});
-            std::cout <<"Inserting lineitem: " << i << ", " << j << ", " << p << ", " << s << std::endl;
             lineitem.insert(
                lineitem_t::Key({i, j}),
                lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));

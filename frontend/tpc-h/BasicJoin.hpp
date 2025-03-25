@@ -167,6 +167,10 @@ class BasicJoin
                 << "Scanned " << part.produced << " parts, " << partsupp.produced << " partsupps, " << sortedLineitem.produced
                 << " lineitems, joined " << joined_cnt << " records" << std::endl;
       logger.log(index_t, "index");
+
+      part.resetIterator();
+      partsupp.resetIterator();
+      sortedLineitem.resetIterator();
    }
 
    void maintainMerged()
@@ -224,6 +228,7 @@ class BasicJoin
          merged_lineitem_t v_new(v);
          this->sortedLineitem.insert(k_new, v_new);
       }
+      this->lineitem.resetIterator();
    }
 
    void loadBasicJoin()
@@ -256,6 +261,8 @@ class BasicJoin
             auto& [k, v] = *kv;
             joinedPPs.insert(k, v);
          }
+         this->part.resetIterator();
+         this->partsupp.resetIterator();
       }
 
       // second join
@@ -285,6 +292,8 @@ class BasicJoin
             auto& [k, v] = *kv;
             joinedPPsL.insert(k, v);
          }
+         this->joinedPPs.resetIterator();
+         this->sortedLineitem.resetIterator();
       }
    };
 
@@ -327,6 +336,10 @@ class BasicJoin
       std::vector<std::function<HeapEntry<PPsL_JK>()>> sources = {part_src, partsupp_src, lineitem_src};
       std::vector<std::function<void(HeapEntry<PPsL_JK>&)>> consumes = {part_consume, partsupp_consume, lineitem_consume};
       TPCH::template heapMerge<PPsL_JK>(sources, consumes);
+
+      part.resetIterator();
+      partsupp.resetIterator();
+      sortedLineitem.resetIterator();
    }
 
    void logSize()
