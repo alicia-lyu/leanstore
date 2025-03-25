@@ -104,13 +104,14 @@ class TPCHWorkload
       logger.prepare();
    }
 
-   void printProgress(std::string msg, Integer i, Integer scale)
+   void printProgress(std::string msg, Integer i, Integer start, Integer end)
    {
-      if (i % 1000 == 1 || i == scale) {
-         double progress = (double)i / scale * 100;
+      if (i % 1000 == start || i == end) {
+         auto scale = end - start + 1;
+         double progress = (double) (i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
       }
-      if (i == scale) {
+      if (i == end) {
          std::cout << std::endl;
       }
    }
@@ -120,7 +121,7 @@ class TPCHWorkload
       for (Integer i = start; i <= end; i++) {
          // std::cout << "partkey: " << i << std::endl;
          part.insert(part_t::Key({i}), part_t::generateRandomRecord());
-         printProgress("part", start, end);
+         printProgress("part", i, start, end);
       }
       last_part_id = end;
    }
@@ -129,7 +130,7 @@ class TPCHWorkload
    {
       for (Integer i = start; i <= end; i++) {
          supplier.insert(supplier_t::Key({i}), supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
-         printProgress("supplier", i, end);
+         printProgress("supplier", i, start, end);
       }
       last_supplier_id = end;
    }
@@ -147,8 +148,7 @@ class TPCHWorkload
       std::random_shuffle(lineitem_keys.begin(), lineitem_keys.end());
       // Load partsupp and lineitem
       long l_global_cnt = 0;
-      const Integer partsupp_size = (PARTSUPP_SCALE / PART_SCALE) * (part_end - part_start);
-      std::cout << "Lineitem size: " << lineitem_keys.size() << ", partsupp size: " << partsupp_size << std::endl;
+      const Integer partsupp_size = (PARTSUPP_SCALE / PART_SCALE) * (part_end - part_start + 1);
       for (Integer i = part_start; i <= part_end; i++) {
          // Randomly select suppliers for this part
          Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
@@ -174,20 +174,19 @@ class TPCHWorkload
                }
             }
          }
-         printProgress("parts of partsupp and lineitem", i, part_end);
+         printProgress("parts of partsupp and lineitem", i, part_start, part_end);
       }
    }
 
    void loadPartsupp(Integer part_start = 1, Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
    {
-      loadPartsuppLineitem(part_start, part_end, last_order_id, last_order_id);
+      loadPartsuppLineitem(part_start, part_end, last_order_id, last_order_id - 1);
    }
 
    void loadLineitem(Integer order_start, Integer order_end)
    {
       for (Integer i = order_start; i <= order_end; i++) {
          Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
-         std::cout << "Loading " << lineitem_cnt << " lineitem for order " << i << std::endl;
          for (Integer j = 1; j <= lineitem_cnt; j++) {
             // look up partsupp
             auto p = urand(1, last_part_id);
@@ -203,7 +202,7 @@ class TPCHWorkload
                lineitem_t::Key({i, j}),
                lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
          }
-         printProgress("orders of lineitem", i, order_end);
+         printProgress("orders of lineitem", i, order_start, order_end);
       }
    }
 
@@ -211,7 +210,7 @@ class TPCHWorkload
    {
       for (Integer i = start; i <= end; i++) {
          customer.insert(customerh_t::Key({i}), customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
-         printProgress("customer", i, end);
+         printProgress("customer", i, start, end);
       }
       last_customer_id = end;
    }
@@ -220,7 +219,7 @@ class TPCHWorkload
    {
       for (Integer i = start; i <= end; i++) {
          orders.insert(orders_t::Key({i}), orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
-         printProgress("orders", i, end);
+         printProgress("orders", i, start, end);
       }
       last_order_id = end;
    }
@@ -229,7 +228,7 @@ class TPCHWorkload
    {
       for (Integer i = 1; i <= NATION_COUNT; i++) {
          nation.insert(nation_t::Key({i}), nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
-         printProgress("nation", i, NATION_COUNT);
+         printProgress("nation", i, 1, NATION_COUNT);
       }
    }
 
@@ -237,7 +236,7 @@ class TPCHWorkload
    {
       for (Integer i = 1; i <= REGION_COUNT; i++) {
          region.insert(region_t::Key({i}), region_t::generateRandomRecord());
-         printProgress("region", i, REGION_COUNT);
+         printProgress("region", i, 1, REGION_COUNT);
       }
    }
 
