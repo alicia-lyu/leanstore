@@ -71,6 +71,7 @@ struct LeanStoreAdapter : Adapter<Record> {
    // -------------------------------------------------------------------------------------
    void insert(const typename Record::Key& key, const Record& record) final
    {
+      
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
       const OP_RESULT res = btree->insert(folded_key, folded_key_len, (u8*)(&record), sizeof(Record));
