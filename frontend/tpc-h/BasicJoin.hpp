@@ -100,11 +100,11 @@ class BasicJoin
 
    template <typename JK, typename JoinedRec, typename TupleVecs, typename TupleFuncs, std::size_t... Is>
    void joinAndClear(TupleVecs& cached_records_all,
-                                  TupleFuncs& getJKs,
-                                  const JK& current_jk,
-                                  const HeapEntry<JK>& entry,
-                                  long& joined_cnt,
-                                  std::index_sequence<Is...>)
+                     TupleFuncs& getJKs,
+                     const JK& current_jk,
+                     const HeapEntry<JK>& entry,
+                     long& joined_cnt,
+                     std::index_sequence<Is...>)
    {
       (..., ([&] {
           auto& vec = std::get<Is>(cached_records_all);
@@ -176,24 +176,23 @@ class BasicJoin
    void maintainMerged()
    {
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
-      maintainTemplate(
-         [this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
-         [this](const lineitem_t::Key& k, const lineitem_t& v) { 
-            merged_lineitem_t::Key k_new({PPsL_JK(k, v), k});
-            merged_lineitem_t v_new(v);
-            mergedPPsL.insert(k_new, v_new);
-         },
-         [this](const part_t::Key& k, const part_t& v) { 
-            merged_part_t::Key k_new({PPsL_JK(k, v), k});
-            merged_part_t v_new(v);
-            mergedPPsL.insert(k_new, v_new);
-         },
-         [this](const partsupp_t::Key& k, const partsupp_t& v) { 
-            merged_partsupp_t::Key k_new({PPsL_JK(k, v), k});
-            merged_partsupp_t v_new(v);
-            mergedPPsL.insert(k_new, v_new);
-         },
-         "merged");
+      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+                       [this](const lineitem_t::Key& k, const lineitem_t& v) {
+                          merged_lineitem_t::Key k_new({PPsL_JK(k, v), k});
+                          merged_lineitem_t v_new(v);
+                          mergedPPsL.insert(k_new, v_new);
+                       },
+                       [this](const part_t::Key& k, const part_t& v) {
+                          merged_part_t::Key k_new({PPsL_JK(k, v), k});
+                          merged_part_t v_new(v);
+                          mergedPPsL.insert(k_new, v_new);
+                       },
+                       [this](const partsupp_t::Key& k, const partsupp_t& v) {
+                          merged_partsupp_t::Key k_new({PPsL_JK(k, v), k});
+                          merged_partsupp_t v_new(v);
+                          mergedPPsL.insert(k_new, v_new);
+                       },
+                       "merged");
    }
 
    void maintainView()
@@ -202,40 +201,37 @@ class BasicJoin
       std::vector<std::tuple<part_t::Key, part_t>> new_parts;
       std::vector<std::tuple<partsupp_t::Key, partsupp_t>> new_partsupps;
       std::vector<std::tuple<lineitem_t::Key, lineitem_t>> new_lineitems;
-      maintainTemplate(
-         [this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
-         [&, this](const lineitem_t::Key& k, const lineitem_t& v) { 
-            this->lineitem.insert(k, v); 
-            new_lineitems.push_back({k, v});
-         },
-         [&, this](const part_t::Key& k, const part_t& v) { 
-            this->part.insert(k, v); 
-            new_parts.push_back({k, v});
-         },
-         [&, this](const partsupp_t::Key& k, const partsupp_t& v) { 
-            this->partsupp.insert(k, v); 
-            new_partsupps.push_back({k, v});
-         },
-         "view");
-         // TODO: update join view
+      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+                       [&, this](const lineitem_t::Key& k, const lineitem_t& v) {
+                          this->lineitem.insert(k, v);
+                          new_lineitems.push_back({k, v});
+                       },
+                       [&, this](const part_t::Key& k, const part_t& v) {
+                          this->part.insert(k, v);
+                          new_parts.push_back({k, v});
+                       },
+                       [&, this](const partsupp_t::Key& k, const partsupp_t& v) {
+                          this->partsupp.insert(k, v);
+                          new_partsupps.push_back({k, v});
+                       },
+                       "view");
+      // Step 1 Join deltas
+      // Step 2 delta join
    }
 
    void maintainBase()
    {
-      maintainTemplate(
-         [this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
-         [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
-         [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
-         [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); },
-         "base");
+      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+                       [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
+                       [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
+                       [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); }, "base");
    }
 
-   void maintainTemplate(
-      std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
-      std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
-      std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
-      std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
-      std::string name)
+   void maintainTemplate(std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
+                         std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
+                         std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
+                         std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
+                         std::string name)
    {
       logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
