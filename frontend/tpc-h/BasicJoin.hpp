@@ -175,31 +175,83 @@ class BasicJoin
 
    void maintainMerged()
    {
-
+      // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
+      maintainTemplate(
+         [this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+         [this](const lineitem_t::Key& k, const lineitem_t& v) { 
+            merged_lineitem_t::Key k_new({PPsL_JK(k, v), k});
+            merged_lineitem_t v_new(v);
+            mergedPPsL.insert(k_new, v_new);
+         },
+         [this](const part_t::Key& k, const part_t& v) { 
+            merged_part_t::Key k_new({PPsL_JK(k, v), k});
+            merged_part_t v_new(v);
+            mergedPPsL.insert(k_new, v_new);
+         },
+         [this](const partsupp_t::Key& k, const partsupp_t& v) { 
+            merged_partsupp_t::Key k_new({PPsL_JK(k, v), k});
+            merged_partsupp_t v_new(v);
+            mergedPPsL.insert(k_new, v_new);
+         },
+         "merged");
    }
 
    void maintainView()
    {
-
+      // sortedLineitem and all base tables cannot be replaced by this view
+      std::vector<std::tuple<part_t::Key, part_t>> new_parts;
+      std::vector<std::tuple<partsupp_t::Key, partsupp_t>> new_partsupps;
+      std::vector<std::tuple<lineitem_t::Key, lineitem_t>> new_lineitems;
+      maintainTemplate(
+         [this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+         [&, this](const lineitem_t::Key& k, const lineitem_t& v) { 
+            this->lineitem.insert(k, v); 
+            new_lineitems.push_back({k, v});
+         },
+         [&, this](const part_t::Key& k, const part_t& v) { 
+            this->part.insert(k, v); 
+            new_parts.push_back({k, v});
+         },
+         [&, this](const partsupp_t::Key& k, const partsupp_t& v) { 
+            this->partsupp.insert(k, v); 
+            new_partsupps.push_back({k, v});
+         },
+         "view");
+         // TODO: update join view
    }
 
-   void maintainIndex()
+   void maintainBase()
+   {
+      maintainTemplate(
+         [this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+         [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
+         [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
+         [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); },
+         "base");
+   }
+
+   void maintainTemplate(
+      std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
+      std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
+      std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
+      std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
+      std::string name)
    {
       logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
       // 100 new orders
       auto order_start = workload.last_order_id + 1;
       auto order_end = workload.last_order_id + 100;
-      workload.loadOrders(order_start, order_end);
-      workload.loadLineitem(order_start, order_end);
+      workload.loadOrders(order_insert_func, order_start, order_end);
+      workload.loadLineitem(lineitem_insert_func, order_start, order_end);
       // 1 new part & several partsupps
       auto part_start = workload.last_part_id + 1;
       auto part_end = workload.last_part_id + 1;
-      workload.loadPart(part_start, part_end);
-      workload.loadPartsupp(part_start, part_end);
+      workload.loadPart(part_insert_func, part_start, part_end);
+      workload.loadPartsupp(partsupp_insert_func, part_start, part_end);
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "index-maintain");
+      logger.log(t, "maintain-" + name);
    }
 
    void loadBaseTables()
