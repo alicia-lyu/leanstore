@@ -290,59 +290,6 @@ class TPCHWorkload
 
    // ------------------------------------LOAD VIEWS-------------------------------------------------
 
-   template <typename JK>
-   struct HeapEntry {
-      JK jk;
-      std::vector<std::byte> k;
-      std::vector<std::byte> v;
-      u8 source;
-
-      HeapEntry() : jk(JK::max()), k(), v(), source(std::numeric_limits<u8>::max()) {}
-
-      HeapEntry(JK jk, std::vector<std::byte> k, std::vector<std::byte> v, u8 source) : jk(jk), k(k), v(v), source(source) {}
-
-      bool operator>(const HeapEntry& other) const { return jk > other.jk; }
-   };
-
-   template <typename JK>
-   static void heapMerge(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
-   {
-      std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<HeapEntry<JK>>> heap;
-      for (auto& s : sources) {
-         auto entry = s();
-         if (entry.jk == JK::max()) {
-            std::cout << "Warning: source is empty" << std::endl;
-            continue;
-         }
-         heap.push(entry);
-      }
-      while (!heap.empty()) {
-         HeapEntry<JK> entry = heap.top();
-         heap.pop();
-         consumes.at(entry.source)(entry);
-         HeapEntry<JK> next = sources.at(entry.source)();
-         if (next.jk != JK::max()) {
-            heap.push(next);
-         }
-      }
-   }
-
-   template <typename JK, typename RecordType>
-   static std::function<HeapEntry<JK>()> getHeapSource(AdapterType<RecordType>& adapter,
-                                                       u8 source,
-                                                       std::function<JK(const typename RecordType::Key&, const RecordType&)> getJK)
-   {
-      return [source, &adapter, getJK]() {
-         auto kv = adapter.next();
-         if (kv == std::nullopt) {
-            return HeapEntry<JK>();
-         }
-         auto& [k, v] = *kv;
-         JK jk = getJK(k, v);
-         return HeapEntry<JK>(jk, RecordType::toBytes(k), RecordType::toBytes(v), source);
-      };
-   }
-
    void loadBasicGroup();
 
    void loadBasicJoinGroup();

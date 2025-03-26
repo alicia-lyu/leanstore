@@ -3,6 +3,7 @@
 #include <tuple>
 #include "Exceptions.hpp"
 // #include "MergedAdapter.hpp"
+#include "../tpc-h/Merge.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 
@@ -226,126 +227,33 @@ struct LeanStoreMergedAdapter {
       return std::make_pair(key, payload);
    }
 
-   template <size_t... Is, typename... Records>
-   static void assignRecords(std::vector<std::tuple<Records...>>& matched_records,
-                      const std::tuple<std::vector<Records>...>& cached_records,
-                      unsigned long* batch_size,
-                      int curr_joined_cnt,
-                      std::index_sequence<Is...>)
-   {
-      (
-          [&] {
-             auto& vec = std::get<Is>(cached_records);
-             int repeat = *batch_size / vec.size();  // repeat times for each vec in a batch
-             int batch_cnt = curr_joined_cnt / *batch_size;
-             for (int x = 0; x < batch_cnt; x++) {
-                for (int i = 0; i < repeat; i++) {
-                   for (int j = 0; j < vec.size(); j++) {
-                      std::get<Is>(matched_records.at(x * *batch_size + j * repeat + i)) = vec.at(j);
-                   }
-                }
-             }
-             *batch_size /= vec.size();
-          }(),
-          ...);
-   }
-
-   template <typename Tuple, typename Func>
-   static void forEach(Tuple& tup, Func func)
-   {
-      std::apply(
-          [&func](auto&... elems) {
-             (..., func(elems));  // Fold expression to call `func` on each element
-          },
-          tup);
-   }
-
-   // calculate cartesian produce of current cached records
-   template <typename JK, typename JoinedRec, typename... Records>
-   static int joinCurrent(const std::tuple<std::vector<Records>...>& cached_records, long& joined_cnt, const std::function<void(JoinedRec)>& cb = [](JoinedRec) {})
-   {
-      int curr_joined_cnt = 1;
-      forEach(cached_records, [&](const auto& vec) { 
-         // std::cout << vec.size() << ", ";
-         curr_joined_cnt *= vec.size(); 
-      });
-      // std::cout << "curr_joined_cnt: " << curr_joined_cnt << std::endl;
-      std::vector<std::tuple<Records...>> matched_records(curr_joined_cnt);
-      joined_cnt += curr_joined_cnt;
-      if (joined_cnt % 1000 == 0) {
-         std::cout << "\rJoined " << joined_cnt / 1000 << "k records------------------------------------";
-      }
-      if (curr_joined_cnt == 0) {
-         return 0;
-      }
-      unsigned long batch_size = curr_joined_cnt;
-      assignRecords(matched_records, cached_records, &batch_size, curr_joined_cnt, std::index_sequence_for<Records...>{});
-      for (auto& rec : matched_records) {
-         std::apply([&](auto&... rec) { 
-            [[maybe_unused]] auto joined_rec = JoinedRec(rec...); 
-            cb(joined_rec);
-         }, rec);
-      }
-      return curr_joined_cnt;
-   }
-
    template <typename JK, typename JoinedRec, typename... Records>
    void scanJoin()
    {
-      std::tuple<std::vector<Records>...> cached_records;
+      using Merge = MultiWayMerge<JK, JoinedRec, Records...>;
+      using Merge::HeapEntry;
+      Merge multiway_merge({[&]() {
+                              auto kv = this->next();
+                              if (!kv.has_value()) {
+                                 return HeapEntry();
+                              }
 
-      JK current_jk{};
-      [[maybe_unused]] long joined_cnt = 0;
-
-      auto comp_clear = [&](const JK& jk) {
-         forEach(cached_records, [&](auto& vec) {
-            using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
-            if (jk.match(RecordType::getJK(current_jk)) != 0) {
-               joinCurrent<JK, JoinedRec, Records...>(cached_records, joined_cnt);
-               vec.clear();
-            }
-         });
-         current_jk = jk;
-      };
-
-      this->resetIterator();
-      while (true) {
-         auto kv = this->next();
-         if (!kv.has_value()) {
-            break;
-         }
-
-         leanstore::Slice& k = kv->first;
-         leanstore::Slice& v = kv->second;
-         bool matched = false;
-
-         forEach(cached_records, [&](auto& vec) {
-            using RecordType = typename std::remove_reference_t<decltype(vec)>::value_type;
-            if (!matched && k.size() == RecordType::maxFoldLength() && v.size() == sizeof(RecordType)) {
-               typename RecordType::Key key;
-               RecordType::unfoldKey(k.data(), key);
-               const RecordType& rec = *reinterpret_cast<const RecordType*>(v.data());
-               comp_clear(key.jk);
-               vec.push_back(rec);
-               matched = true;
-            }
-         });
-
-         if (!matched) {
-            std::cout << "Key size mismatch or value size mismatch. Key size: " << k.size() << " Value size: " << v.size() << std::endl;
-            UNREACHABLE();
-         }
-
-         if (produced % 100 == 0) {
-            std::cout << "\rScanning merged index: " << (double)produced / 1000 << "k, joined " << joined_cnt / 1000
-                      << "k records------------------------------------";
-         }
-      }
-
-      joinCurrent<JK, JoinedRec, Records...>(cached_records, joined_cnt);
-
-      std::cout << std::endl;
-      std::cout << "Scanned " << produced << " merged records, joined " << joined_cnt << " records" << std::endl;
+                              leanstore::Slice& k = kv->first;
+                              leanstore::Slice& v = kv->second;
+                              bool matched = false;
+                              int source = 0;
+                              (([&]() {
+                                  if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
+                                     typename Records::Key key;
+                                     Records::unfoldKey(k.data(), key);
+                                     const Records& rec = *reinterpret_cast<const Records*>(v.data());
+                                     matched = true;
+                                     return HeapEntry(key.jk, Records::toBytes(key), Records::toBytes(rec), ++source);
+                                  }
+                               }),
+                               ...);
+                           }},
+                           ConsumeType::JOIN);
    }
 
    // -------------------------------------------------------------------------------------

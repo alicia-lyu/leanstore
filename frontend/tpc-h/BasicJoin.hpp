@@ -98,39 +98,6 @@ class BasicJoin
       logger.log(merged_t, "merged");
    }
 
-   template <typename JK, typename JoinedRec, typename TupleVecs, typename TupleFuncs, std::size_t... Is>
-   void joinAndClear(TupleVecs& cached_records_all,
-                     TupleFuncs& getJKs,
-                     const JK& current_jk,
-                     const HeapEntry<JK>& entry,
-                     long& joined_cnt,
-                     std::index_sequence<Is...>)
-   {
-      (..., ([&] {
-          auto& vec = std::get<Is>(cached_records_all);
-          auto getJK = std::get<Is>(getJKs);
-          if (entry.jk.match(getJK(current_jk)) != 0) {
-             LeanStoreMergedAdapter::joinCurrent<JK, JoinedRec>(cached_records_all, joined_cnt);
-             vec.clear();
-          }
-       }()));
-   }
-
-   template <typename JK, typename RecordType, typename JoinedRec, typename... Records>
-   auto getHeapConsumeToBeJoined(std::vector<RecordType>& cached_records,
-                                 JK& current_jk,
-                                 std::tuple<JK (*)(const JK&), JK (*)(const JK&), JK (*)(const JK&)>& getJKs,
-                                 long& joined_cnt,
-                                 std::tuple<std::vector<Records>...>& cached_records_all,
-                                 std::function<void(JoinedRec)> consume_joined = [](JoinedRec) {})
-   {
-      return [&cached_records, &current_jk, &joined_cnt, &cached_records_all, getJKs, consume_joined, this](HeapEntry<JK>& entry) {
-         joinAndClear<JK, JoinedRec>(cached_records_all, getJKs, current_jk, entry, joined_cnt, std::index_sequence_for<Records...>{}, consume_joined);
-         current_jk = entry.jk;
-         cached_records.push_back(RecordType::template fromBytes<RecordType>(entry.v));
-      };
-   }
-
    void queryByIndex()
    {
       logger.reset();
@@ -365,16 +332,6 @@ class BasicJoin
       return [&mergedAdapter](HeapEntry<JK>& entry) {
          typename Merged::Key k_new({entry.jk, Base::template fromBytes<typename Base::Key>(entry.k)});
          Merged v_new(Base::template fromBytes<Base>(entry.v));
-         mergedAdapter.insert(k_new, v_new);
-      };
-   }
-
-   template <typename JK, typename RecordType>
-   static std::function<void(HeapEntry<JK>&)> getHeapConsumeToMerged(MergedAdapterType& mergedAdapter)
-   {
-      return [&mergedAdapter](HeapEntry<JK>& entry) {
-         typename RecordType::Key k_new(RecordType::template fromBytes<typename RecordType::Key>(entry.k));
-         RecordType v_new(RecordType::template fromBytes<RecordType>(entry.v));
          mergedAdapter.insert(k_new, v_new);
       };
    }
