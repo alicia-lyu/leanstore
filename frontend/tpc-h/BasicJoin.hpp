@@ -121,10 +121,11 @@ class BasicJoin
                                  JK& current_jk,
                                  std::tuple<JK (*)(const JK&), JK (*)(const JK&), JK (*)(const JK&)>& getJKs,
                                  long& joined_cnt,
-                                 std::tuple<std::vector<Records>...>& cached_records_all)
+                                 std::tuple<std::vector<Records>...>& cached_records_all,
+                                 std::function<void(JoinedRec)> consume_joined = [](JoinedRec) {})
    {
-      return [&cached_records, &current_jk, &joined_cnt, &cached_records_all, getJKs, this](HeapEntry<JK>& entry) {
-         joinAndClear<JK, JoinedRec>(cached_records_all, getJKs, current_jk, entry, joined_cnt, std::index_sequence_for<Records...>{});
+      return [&cached_records, &current_jk, &joined_cnt, &cached_records_all, getJKs, consume_joined, this](HeapEntry<JK>& entry) {
+         joinAndClear<JK, JoinedRec>(cached_records_all, getJKs, current_jk, entry, joined_cnt, std::index_sequence_for<Records...>{}, consume_joined);
          current_jk = entry.jk;
          cached_records.push_back(RecordType::template fromBytes<RecordType>(entry.v));
       };
@@ -178,17 +179,17 @@ class BasicJoin
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
                        [this](const lineitem_t::Key& k, const lineitem_t& v) {
-                          merged_lineitem_t::Key k_new({PPsL_JK(k, v), k});
+                          merged_lineitem_t::Key k_new({JKBuilder<PPsL_JK>::create(k, v), k});
                           merged_lineitem_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
                        [this](const part_t::Key& k, const part_t& v) {
-                          merged_part_t::Key k_new({PPsL_JK(k, v), k});
+                          merged_part_t::Key k_new({JKBuilder<PPsL_JK>::create(k, v), k});
                           merged_part_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
                        [this](const partsupp_t::Key& k, const partsupp_t& v) {
-                          merged_partsupp_t::Key k_new({PPsL_JK(k, v), k});
+                          merged_partsupp_t::Key k_new({JKBuilder<PPsL_JK>::create(k, v), k});
                           merged_partsupp_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
@@ -217,6 +218,22 @@ class BasicJoin
                        "view");
       // Step 1 Join deltas
       // Step 2 delta join
+   }
+
+   void joinDeltas(std::vector<std::tuple<part_t::Key, part_t>>& new_parts,
+                   std::vector<std::tuple<partsupp_t::Key, partsupp_t>>& new_partsupps,
+                   std::vector<std::tuple<lineitem_t::Key, lineitem_t>>& new_lineitems)
+   {
+      {
+         // first join
+         auto part_it = new_parts.begin();
+         auto partsupp_it = new_partsupps.begin();
+         // Join<PPsL_JK, joinedPPs_t, part_t, partsupp_t> join1(
+         // );
+      }
+      
+
+
    }
 
    void maintainBase()
@@ -287,9 +304,7 @@ class BasicJoin
          std::cout << "Joining part and partsupp" << std::endl;
          this->part.resetIterator();
          this->partsupp.resetIterator();
-         Join<PPsL_JK, joinedPPs_t, part_t::Key, part_t, partsupp_t::Key, partsupp_t> join1(
-             [](part_t::Key& k, part_t&) { return PPsL_JK{k.p_partkey, 0}; },
-             [](partsupp_t::Key& k, partsupp_t&) { return PPsL_JK{k.ps_partkey, k.ps_suppkey}; },
+         Join<PPsL_JK, joinedPPs_t, part_t, partsupp_t> join1(
              [](u8* in, u16) {
                 part_t::Key k;
                 part_t::unfoldKey(in, k);
@@ -319,8 +334,7 @@ class BasicJoin
          assert(this->sortedLineitem.estimatePages() > 0);
          this->joinedPPs.resetIterator();
          this->sortedLineitem.resetIterator();
-         Join<PPsL_JK, joinedPPsL_t, joinedPPs_t::Key, joinedPPs_t, merged_lineitem_t::Key, merged_lineitem_t> join2(
-             [](joinedPPs_t::Key& k, joinedPPs_t&) { return k.jk; }, [](merged_lineitem_t::Key& k, merged_lineitem_t&) { return k.jk; },
+         Join<PPsL_JK, joinedPPsL_t, joinedPPs_t, merged_lineitem_t> join2(
              [](u8* in, u16) {
                 joinedPPs_t::Key k;
                 joinedPPs_t::unfoldKey(in, k);

@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include "Tables.hpp"
-#include <compare>
 
 template <int TID, typename JK, typename... Ts>
 class Joined {
@@ -145,16 +144,15 @@ struct merged {
     }
 };
 
+struct joinedPPs_t;
+
 struct PPsL_JK {
     Integer l_partkey;
     Integer l_partsuppkey;
 
     PPsL_JK() = default;
     PPsL_JK(Integer partkey, Integer partsuppkey): l_partkey(partkey), l_partsuppkey(partsuppkey) {}
-
-    PPsL_JK(const part_t::Key& pk, const part_t&): l_partkey(pk.p_partkey), l_partsuppkey(0) {}
-    PPsL_JK(const partsupp_t::Key& pk, const partsupp_t&): l_partkey(pk.ps_partkey), l_partsuppkey(pk.ps_suppkey) {}
-    PPsL_JK(const lineitem_t::Key&, const lineitem_t& v): l_partkey(v.l_partkey), l_partsuppkey(v.l_suppkey) {}
+    PPsL_JK(const PPsL_JK& jk): l_partkey(jk.l_partkey), l_partsuppkey(jk.l_partsuppkey) {}
 
     static PPsL_JK max() {
         return PPsL_JK({std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()});
@@ -240,4 +238,42 @@ struct joinedPPsL_t : public Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>
         Key(const Joined::Key& k): Joined::Key(k) {}
         Key(const joinedPPs_t::Key& j1k, const merged_lineitem_t::Key& lk): Joined::Key({j1k.jk, std::tuple_cat(j1k.keys, std::make_tuple(lk.pk))}) {}
     };
+};
+
+template <typename JK>
+struct JKBuilder;
+template <>
+struct JKBuilder<PPsL_JK> {
+
+    static PPsL_JK inline create(const part_t::Key& k, const part_t&){
+        return PPsL_JK(k.p_partkey, 0);
+    }
+
+    static PPsL_JK inline create(const partsupp_t::Key& k, const partsupp_t&) {
+        return PPsL_JK(k.ps_partkey, k.ps_suppkey);
+    }
+
+    static PPsL_JK inline create(const lineitem_t::Key&, const lineitem_t& v) {
+        return PPsL_JK(v.l_partkey, v.l_suppkey);
+    }
+
+    static PPsL_JK inline create(const joinedPPs_t::Key& k, const joinedPPs_t&) {
+        return PPsL_JK(k.jk);
+    }
+
+    static PPsL_JK inline create(const joinedPPsL_t::Key& k, const joinedPPsL_t&) {
+        return PPsL_JK(k.jk);
+    }
+
+    static PPsL_JK inline create(const merged_part_t::Key& k, const merged_part_t&) {
+        return PPsL_JK(k.jk);
+    }
+
+    static PPsL_JK inline create(const merged_partsupp_t::Key& k, const merged_partsupp_t&) {
+        return PPsL_JK(k.jk);
+    }
+
+    static PPsL_JK inline create(const merged_lineitem_t::Key& k, const merged_lineitem_t&) {
+        return PPsL_JK(k.jk);
+    }
 };
