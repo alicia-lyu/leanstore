@@ -276,4 +276,19 @@ struct JKBuilder<PPsL_JK> {
     static PPsL_JK inline create(const merged_lineitem_t::Key& k, const merged_lineitem_t&) {
         return PPsL_JK(k.jk);
     }
+
+    template <typename Record>
+    static PPsL_JK inline get(const PPsL_JK& k) {
+        return k;
+    }
 };
+
+template <>
+inline PPsL_JK JKBuilder<PPsL_JK>::get<part_t>(const PPsL_JK& jk) {
+    return {jk.l_partkey, 0};
+}
+
+template <>
+inline PPsL_JK JKBuilder<PPsL_JK>::get<merged_part_t>(const PPsL_JK& jk) {
+    return {jk.l_partkey, 0};
+}

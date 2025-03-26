@@ -102,7 +102,7 @@ class Join
             if (JKBuilder<Key>::create(lk, lr).match(JKBuilder<Key>::create(rk, rr)) != 0) {
                cachedRight.clear();
                return next();  // go to second if-else
-            } 
+            }
             // else {
             //    std::cout << lk << " matches " << rk << std::endl;
             //    throw std::runtime_error("Should not happen");
