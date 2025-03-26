@@ -8,11 +8,6 @@
 #include "Units.hpp"
 #include "Views.hpp"
 
-enum ConsumeType : u8 {
-   MERGE = 0,
-   JOIN = 1
-};
-
 template <typename JK, typename JoinedRec, typename... Records>
 struct MultiWayMerge {
    static constexpr size_t nways = sizeof...(Records);
@@ -30,27 +25,35 @@ struct MultiWayMerge {
    };
 
    std::vector<std::function<HeapEntry()>>& sources;
-   std::vector<std::function<void(HeapEntry&)>>& consumes;
-   std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records;
+   std::vector<std::function<void(HeapEntry&)>> consumes;
+   std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...> cached_records;
    long produced;
    JK current_jk;
    HeapEntry current_entry;
-   std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined;
+   std::optional<std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>> consume_joined;
    std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<HeapEntry>> heap;
 
-   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources,
-                  ConsumeType consumeType,
-                  std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined = [](const typename JoinedRec::Key&, const JoinedRec&) {})
+   template <template <typename> class AdapterType>
+   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources, std::optional<AdapterType<JoinedRec>>& joinedAdapter)
        : sources(sources),
-         consumes(consumeType == ConsumeType::JOIN ? getHeapConsumesToBeJoined(std::index_sequence_for<Records...>{}) : getHeapConsumesToMerged(consume_joined)),
-         cached_records(std::make_tuple(std::vector<std::tuple<typename Records::Key, Records>>{}...)),
+         consumes(getHeapConsumesToBeJoined()),
+         cached_records(),
          produced(0),
          current_jk(JK::max()),
          current_entry(),
-         consume_joined(consume_joined),
+         consume_joined([&joinedAdapter](const typename JoinedRec::Key& k, const JoinedRec& v) {
+            if (joinedAdapter.has_value()) {
+               joinedAdapter->insert(k, v);
+            }
+         }),
          heap()
    {
       assert(consumes.size() == nways);
+      fillHeap();
+   }
+
+   void fillHeap()
+   {
       for (auto& s : sources) {
          auto entry = s();
          if (entry.jk == JK::max()) {
@@ -59,6 +62,21 @@ struct MultiWayMerge {
          }
          heap.push(entry);
       }
+   }
+
+   template <typename MergedAdapterType>
+   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources, MergedAdapterType& mergedAdapter)
+       : sources(sources),
+         consumes(getHeapConsumesToMerged(mergedAdapter)),
+         cached_records({}),
+         produced(0),
+         current_jk(JK::max()),
+         current_entry(),
+         consume_joined(nullptr),
+         heap()
+   {
+      assert(consumes.size() == nways);
+      fillHeap();
    }
 
    void next()
@@ -101,6 +119,18 @@ struct MultiWayMerge {
       };
    }
 
+   template <template <typename> class AdapterType, size_t... Is>
+   static std::vector<std::function<HeapEntry()>> getHeapSources(AdapterType<Records>&... adapters, std::index_sequence<Is...>)
+   {
+      return {getHeapSource<AdapterType, Records>(adapters, Is)...};
+   }
+
+   template <template <typename> class AdapterType>
+   static std::vector<std::function<HeapEntry()>> getHeapSources(AdapterType<Records>&... adapters)
+   {
+      return getHeapSources(adapters..., std::index_sequence_for<Records...>{});
+   }
+
    template <typename Tuple, typename Func>
    static void forEach(Tuple& tup, Func func)
    {
@@ -131,18 +161,19 @@ struct MultiWayMerge {
          joinAndClear(std::index_sequence_for<Records...>{});
          current_jk = entry.jk;
          current_entry = entry;
-         cached_records.get<I>push_back(CurrRec::template fromBytes<CurrRec>(entry.v));
+         cached_records.get<I> push_back(CurrRec::template fromBytes<CurrRec>(entry.v));
       };
    }
 
    template <size_t... Is>
-   auto getHeapConsumesToBeJoined(std::index_sequence<Is...>)
+   std::vector<std::function<void(HeapEntry&)>> getHeapConsumesToBeJoined(std::index_sequence<Is...>)
    {
-      std::vector<std::function<void(HeapEntry&)>> consumes;
-      (([&]() {
-         consumes.push_back(getHeapConsumeToBeJoined<Records, Is>());
-      }), ...);
-      return consumes;
+      return {getHeapConsumeToBeJoined<Records, Is>()...};
+   }
+
+   std::vector<std::function<void(HeapEntry&)>> getHeapConsumesToBeJoined()
+   {
+      return getHeapConsumesToBeJoined(std::index_sequence_for<Records...>{});
    }
 
    void printProgress(std::string msg)
@@ -165,13 +196,9 @@ struct MultiWayMerge {
    }
 
    template <typename MergedAdapterType>
-   auto getHeapConsumesToMerged(MergedAdapterType& mergedAdapter)
+   std::vector<std::function<void(HeapEntry&)>> getHeapConsumesToMerged(MergedAdapterType& mergedAdapter)
    {
-      std::vector<std::function<void(HeapEntry&)>> consumes;
-      (([&]() {
-         consumes.push_back(getHeapConsumeToMerged<Records>(mergedAdapter));
-      }), ...);
-      return consumes;
+      return {getHeapConsumeToMerged<Records>(mergedAdapter)...};
    }
 
    // calculate cartesian produce of current cached records

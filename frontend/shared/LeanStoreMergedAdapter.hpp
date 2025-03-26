@@ -1,6 +1,5 @@
 #pragma once
 // #include <stdexcept>
-#include <tuple>
 #include "Exceptions.hpp"
 // #include "MergedAdapter.hpp"
 #include "../tpc-h/Merge.hpp"
@@ -253,7 +252,8 @@ struct LeanStoreMergedAdapter {
                                }),
                                ...);
                            }},
-                           ConsumeType::JOIN);
+                           this);
+      multiway_merge.run();
    }
 
    // -------------------------------------------------------------------------------------
