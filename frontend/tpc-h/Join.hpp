@@ -3,10 +3,11 @@
 #include <optional>
 #include <vector>
 #include "Units.hpp"
+#include "Views.hpp"
 
 // merge join
 // LATER: outer join
-template <typename Key, typename Rec, typename LeftKey, typename LeftRec, typename RightKey, typename RightRec>
+template <typename Key, typename Rec, typename LeftRec, typename RightRec>
 class Join
 {
    long produced;
@@ -16,27 +17,23 @@ class Join
    long right_match_cnt;
    bool left_matched;
    bool next_right_matched;
-   std::function<Key(LeftKey&, LeftRec&)> extractLeftJKFunc;
-   std::function<Key(RightKey&, RightRec&)> extractRightJKFunc;
-   std::function<LeftKey(u8*, u16)> unfoldLeftKeyFunc;
-   std::function<RightKey(u8*, u16)> unfoldRightKeyFunc;
+   std::function<typename LeftRec::Key(u8*, u16)> unfoldLeftKeyFunc;
+   std::function<typename RightRec::Key(u8*, u16)> unfoldRightKeyFunc;
 
-   std::vector<std::pair<RightKey, RightRec>> cachedRight;
+   std::vector<std::pair<typename RightRec::Key, RightRec>> cachedRight;
    u64 cachedRightPtr;
-   std::function<std::optional<std::pair<LeftKey, LeftRec>>()> nextLeftFunc;
-   std::function<std::optional<std::pair<RightKey, RightRec>>()> nextRightFunc;
+   std::function<std::optional<std::pair<typename LeftRec::Key, LeftRec>>()> nextLeftFunc;
+   std::function<std::optional<std::pair<typename RightRec::Key, RightRec>>()> nextRightFunc;
 
-   std::optional<std::pair<LeftKey, LeftRec>> curr_left;
+   std::optional<std::pair<typename LeftRec::Key, LeftRec>> curr_left;
 
-   std::optional<std::pair<RightKey, RightRec>> next_right;
+   std::optional<std::pair<typename RightRec::Key, RightRec>> next_right;
 
   public:
-   Join(std::function<Key(LeftKey&, LeftRec&)> extractLeftJKFunc,
-        std::function<Key(RightKey&, RightRec&)> extractRightJKFunc,
-        std::function<LeftKey(u8*, u16)> unfoldLeftKeyFunc,
-        std::function<RightKey(u8*, u16)> unfoldRightKeyFunc,
-        std::function<std::optional<std::pair<LeftKey, LeftRec>>()> nextLeftFunc,
-        std::function<std::optional<std::pair<RightKey, RightRec>>()> nextRightFunc)
+   Join(std::function<typename LeftRec::Key(u8*, u16)> unfoldLeftKeyFunc,
+        std::function<typename RightRec::Key(u8*, u16)> unfoldRightKeyFunc,
+        std::function<std::optional<std::pair<typename LeftRec::Key, LeftRec>>()> nextLeftFunc,
+        std::function<std::optional<std::pair<typename RightRec::Key, RightRec>>()> nextRightFunc)
        : produced(0),
          left_consumed(0),
          right_consumed(0),
@@ -44,8 +41,6 @@ class Join
          right_match_cnt(0),
          left_matched(false),
          next_right_matched(false),
-         extractLeftJKFunc(extractLeftJKFunc),
-         extractRightJKFunc(extractRightJKFunc),
          unfoldLeftKeyFunc(unfoldLeftKeyFunc),
          unfoldRightKeyFunc(unfoldRightKeyFunc),
          nextLeftFunc(nextLeftFunc),
@@ -66,7 +61,7 @@ class Join
       std::cout << "Produced: " << produced << std::endl;
    }
 
-   std::optional<std::pair<LeftKey, LeftRec>> nextLeft()
+   std::optional<std::pair<typename LeftRec::Key, LeftRec>> nextLeft()
    {
       left_consumed++;
       if (left_matched) {
@@ -76,7 +71,7 @@ class Join
       return nextLeftFunc();
    }
 
-   std::optional<std::pair<RightKey, RightRec>> nextRight()
+   std::optional<std::pair<typename RightRec::Key, RightRec>> nextRight()
    {
       right_consumed++;
       if (next_right_matched) {
@@ -104,7 +99,7 @@ class Join
                return next();  // eventually return nullopt
             }
             auto& [lk, lr] = *curr_left;
-            if (extractLeftJKFunc(lk, lr).match(extractRightJKFunc(rk, rr)) != 0) {
+            if (JKBuilder<Key>::create(lk, lr).match(JKBuilder<Key>::create(rk, rr)) != 0) {
                cachedRight.clear();
                return next();  // go to second if-else
             } 
@@ -121,14 +116,14 @@ class Join
          return std::nullopt;
       }
       auto& [rk, rr] = *next_right;
-      auto left_jk = extractLeftJKFunc(lk, lr);
-      auto right_jk = extractRightJKFunc(rk, rr);
+      auto left_jk = JKBuilder<Key>::create(lk, lr);
+      auto right_jk = JKBuilder<Key>::create(rk, rr);
       // std::cout << "left_jk: " << left_jk << ", right_jk: " << right_jk << std::endl;
       if (left_jk.match(right_jk) < 0) {
          curr_left = nextLeft();
          return next();  // go to second if-else
       } else if (left_jk.match(right_jk) == 0) {
-         while (extractRightJKFunc(rk, rr).match(left_jk) == 0) {
+         while (JKBuilder<Key>::create(rk, rr).match(left_jk) == 0) {
             next_right_matched = true;
             cachedRight.push_back(next_right.value());
             next_right = nextRight();
@@ -143,7 +138,7 @@ class Join
       }
    };
 
-   std::pair<typename Rec::Key, Rec> merge(LeftKey& lk, LeftRec& lr, RightKey& rk, RightRec& rr)
+   std::pair<typename Rec::Key, Rec> merge(typename LeftRec::Key& lk, LeftRec& lr, typename RightRec::Key& rk, RightRec& rr)
    {
       if ((++produced) % 1000 == 1) {
          std::cout << "\rJoined " << produced << " records------------------------------------";
