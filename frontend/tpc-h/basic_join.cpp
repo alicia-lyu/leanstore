@@ -72,8 +72,7 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(0, [&]() {
       tpch.prepare();
       cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-      tpchBasicJoin.maintainBase();
-      tpchBasicJoin.maintainMerged();
+      tpchBasicJoin.query();
       cr::Worker::my().commitTX();
       cr::Worker::my().shutdown();
    });

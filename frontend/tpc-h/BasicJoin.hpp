@@ -1,6 +1,7 @@
 #include <chrono>
+#include <optional>
 #include <vector>
-#include "../shared/LeanStoreMergedAdapter.hpp"
+#include "Merge.hpp"
 #include "Join.hpp"
 #include "Logger.hpp"
 #include "TPCHWorkload.hpp"
@@ -25,8 +26,6 @@ class BasicJoin
    AdapterType<lineitem_t>& lineitem;
    AdapterType<nation_t>& nation;
    AdapterType<region_t>& region;
-   template <typename JK>
-   using HeapEntry = typename TPCH::template HeapEntry<JK>;
 
   public:
    BasicJoin(TPCH& workload,
@@ -102,38 +101,19 @@ class BasicJoin
    {
       logger.reset();
       auto index_start = std::chrono::high_resolution_clock::now();
-      std::tuple<std::vector<part_t>, std::vector<partsupp_t>, std::vector<merged_lineitem_t>> cached_records;
-      auto& [cached_parts, cached_partsupps, cached_lineitems] = cached_records;
-      PPsL_JK current_jk{};
-
-      long joined_cnt = 0;
 
       part.resetIterator();
       partsupp.resetIterator();
       sortedLineitem.resetIterator();
 
-      auto part_src = TPCH::template getHeapSource<PPsL_JK, part_t>(
-          part, 0, std::function([](const part_t::Key& k, const part_t&) { return PPsL_JK{k.p_partkey, 0}; }));
-      auto partsupp_src = TPCH::template getHeapSource<PPsL_JK, partsupp_t>(
-          partsupp, 1, std::function([](const partsupp_t::Key& k, const partsupp_t&) { return PPsL_JK{k.ps_partkey, k.ps_suppkey}; }));
-      auto lineitem_src = TPCH::template getHeapSource<PPsL_JK, merged_lineitem_t>(
-          sortedLineitem, 2, std::function([](const merged_lineitem_t::Key& k, const merged_lineitem_t&) { return k.jk; }));
+      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
 
-      auto getJKs = std::make_tuple(merged_part_t::getJK, merged_partsupp_t::getJK, merged_lineitem_t::getJK);
-      auto part_consume = getHeapConsumeToBeJoined<PPsL_JK, part_t, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>(
-          cached_parts, current_jk, getJKs, joined_cnt, cached_records);
-      auto partsupp_consume = getHeapConsumeToBeJoined<PPsL_JK, partsupp_t, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>(
-          cached_partsupps, current_jk, getJKs, joined_cnt, cached_records);
-      auto lineitem_consume = getHeapConsumeToBeJoined<PPsL_JK, merged_lineitem_t, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>(
-          cached_lineitems, current_jk, getJKs, joined_cnt, cached_records);
-
-      TPCH::template heapMerge<PPsL_JK>({part_src, partsupp_src, lineitem_src}, {part_consume, partsupp_consume, lineitem_consume});
+      auto sources = Merge::getHeapSources(part, partsupp, sortedLineitem);
+      Merge multiway_merge(sources, std::nullopt);
+      multiway_merge.run();
 
       auto index_end = std::chrono::high_resolution_clock::now();
       auto index_t = std::chrono::duration_cast<std::chrono::microseconds>(index_end - index_start).count();
-      std::cout << std::endl
-                << "Scanned " << part.produced << " parts, " << partsupp.produced << " partsupps, " << sortedLineitem.produced
-                << " lineitems, joined " << joined_cnt << " records" << std::endl;
       logger.log(index_t, "index");
 
       part.resetIterator();
@@ -191,13 +171,6 @@ class BasicJoin
                    std::vector<std::tuple<partsupp_t::Key, partsupp_t>>& new_partsupps,
                    std::vector<std::tuple<lineitem_t::Key, lineitem_t>>& new_lineitems)
    {
-      {
-         // first join
-         auto part_it = new_parts.begin();
-         auto partsupp_it = new_partsupps.begin();
-         // Join<PPsL_JK, joinedPPs_t, part_t, partsupp_t> join1(
-         // );
-      }
       
 
 
@@ -326,35 +299,17 @@ class BasicJoin
       }
    };
 
-   template <typename JK, typename Base, typename Merged>
-   static std::function<void(HeapEntry<JK>&)> getHeapConsumeToMerged(MergedAdapterType& mergedAdapter)
-   {
-      return [&mergedAdapter](HeapEntry<JK>& entry) {
-         typename Merged::Key k_new({entry.jk, Base::template fromBytes<typename Base::Key>(entry.k)});
-         Merged v_new(Base::template fromBytes<Base>(entry.v));
-         mergedAdapter.insert(k_new, v_new);
-      };
-   }
-
    void loadMergedBasicJoin()
    {
       part.resetIterator();
       partsupp.resetIterator();
       sortedLineitem.resetIterator();
-      auto part_src = TPCH::template getHeapSource<PPsL_JK, part_t>(
-          part, 0, std::function([](const part_t::Key& k, const part_t&) { return PPsL_JK{k.p_partkey, 0}; }));
-      auto partsupp_src = TPCH::template getHeapSource<PPsL_JK, partsupp_t>(
-          partsupp, 1, std::function([](const partsupp_t::Key& k, const partsupp_t&) { return PPsL_JK{k.ps_partkey, k.ps_suppkey}; }));
-      auto lineitem_src = TPCH::template getHeapSource<PPsL_JK, merged_lineitem_t>(
-          sortedLineitem, 2, std::function([](const merged_lineitem_t::Key& k, const merged_lineitem_t&) { return k.jk; }));
+      
+      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
+      auto sources = Merge::getHeapSources(part, partsupp, sortedLineitem);
 
-      auto part_consume = getHeapConsumeToMerged<PPsL_JK, part_t, merged_part_t>(mergedPPsL);
-      auto partsupp_consume = getHeapConsumeToMerged<PPsL_JK, partsupp_t, merged_partsupp_t>(mergedPPsL);
-      auto lineitem_consume = getHeapConsumeToMerged<PPsL_JK, merged_lineitem_t>(mergedPPsL);
-
-      std::vector<std::function<HeapEntry<PPsL_JK>()>> sources = {part_src, partsupp_src, lineitem_src};
-      std::vector<std::function<void(HeapEntry<PPsL_JK>&)>> consumes = {part_consume, partsupp_consume, lineitem_consume};
-      TPCH::template heapMerge<PPsL_JK>(sources, consumes);
+      Merge multiway_merge(sources, mergedPPsL);
+      multiway_merge.run();
 
       part.resetIterator();
       partsupp.resetIterator();
