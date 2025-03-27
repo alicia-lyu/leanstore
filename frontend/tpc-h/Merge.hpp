@@ -99,6 +99,24 @@ struct MultiWayMerge {
       fillHeap();
    }
 
+   // explicit consume_joined
+
+   MultiWayMerge(std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>& consume_joined,
+                 std::vector<std::function<HeapEntry()>>& sources)
+       : sources(sources),
+         consumes(getHeapConsumesToBeJoined()),
+         cached_records(),
+         produced(0),
+         current_jk(JK::max()),
+         current_entry(),
+         consume_joined(consume_joined),
+         heap(),
+         msg("Joined")
+   {
+      assert(consumes.size() == nways);
+      fillHeap();
+   }
+
    // Explicit mergedAdapter
    template <typename MergedAdapterType, template <typename> class AdapterType, typename... SourceRecords>
    MultiWayMerge(MergedAdapterType& mergedAdapter, AdapterType<SourceRecords>&... adapters)
@@ -116,9 +134,7 @@ struct MultiWayMerge {
       fillHeap();
    }
 
-   ~MultiWayMerge() {
-      std::cout << "\r" << msg << " " << (double) produced / 1000 << "k records------------------------------------" << std::endl;
-   }
+   ~MultiWayMerge() { std::cout << "\r~MultiWayMerge: " << msg << " " << (double)produced / 1000 << "k records------------------------------------" << std::endl; }
 
    void fillHeap()
    {
@@ -235,7 +251,7 @@ struct MultiWayMerge {
    void printProgress()
    {
       if (produced % 1000 == 0) {
-         std::cout << "\r" << msg << " " << (double) produced / 1000 << "k records------------------------------------";
+         std::cout << "\r" << msg << " " << (double)produced / 1000 << "k records------------------------------------";
       }
    }
 
