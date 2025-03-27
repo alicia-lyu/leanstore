@@ -441,7 +441,7 @@ class BasicJoin
    {
       std::cout << "Logging size" << std::endl;
       std::ofstream size_csv;
-      size_csv.open(FLAGS_csv_path + "basic_join/size.csv", std::ios::app);
+      size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
       if (size_csv.tellp() == 0) {
          size_csv << "table,size (MiB)" << std::endl;
       }

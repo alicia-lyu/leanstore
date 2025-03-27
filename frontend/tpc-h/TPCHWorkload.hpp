@@ -154,6 +154,7 @@ class TPCHWorkload
          for (Integer j = 1; j <= lineitem_cnt; j++) {
             lineitem_keys.push_back(lineitem_t::Key({i, j}));
          }
+         printProgress("orders of lineitem keys", i, order_start, order_end);
       }
       std::random_shuffle(lineitem_keys.begin(), lineitem_keys.end());
       // Load partsupp and lineitem
