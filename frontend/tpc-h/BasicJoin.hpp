@@ -108,8 +108,7 @@ class BasicJoin
 
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
 
-      auto sources = Merge::getHeapSources(part, partsupp, sortedLineitem);
-      Merge multiway_merge(sources, std::nullopt);
+      Merge multiway_merge(part, partsupp, sortedLineitem);
       multiway_merge.run();
 
       auto index_end = std::chrono::high_resolution_clock::now();
@@ -126,17 +125,17 @@ class BasicJoin
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
                        [this](const lineitem_t::Key& k, const lineitem_t& v) {
-                          merged_lineitem_t::Key k_new({JKBuilder<PPsL_JK>::create(k, v), k});
+                          merged_lineitem_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
                           merged_lineitem_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
                        [this](const part_t::Key& k, const part_t& v) {
-                          merged_part_t::Key k_new({JKBuilder<PPsL_JK>::create(k, v), k});
+                          merged_part_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
                           merged_part_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
                        [this](const partsupp_t::Key& k, const partsupp_t& v) {
-                          merged_partsupp_t::Key k_new({JKBuilder<PPsL_JK>::create(k, v), k});
+                          merged_partsupp_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
                           merged_partsupp_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
@@ -229,7 +228,7 @@ class BasicJoin
             break;
          auto& [k, v] = *kv;
          PPsL_JK jk{v.l_partkey, v.l_suppkey};
-         merged_lineitem_t::Key k_new({jk, k});
+         merged_lineitem_t::Key k_new(jk, k);
          merged_lineitem_t v_new(v);
          this->sortedLineitem.insert(k_new, v_new);
       }
@@ -305,10 +304,9 @@ class BasicJoin
       partsupp.resetIterator();
       sortedLineitem.resetIterator();
       
-      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
-      auto sources = Merge::getHeapSources(part, partsupp, sortedLineitem);
+      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>;
 
-      Merge multiway_merge(sources, mergedPPsL);
+      Merge multiway_merge(mergedPPsL, part, partsupp, sortedLineitem);
       multiway_merge.run();
 
       part.resetIterator();

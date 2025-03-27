@@ -255,7 +255,7 @@ struct LeanStoreMergedAdapter {
           assert(matched);
           return result;
       }};
-      Merge multiway_merge(sources, *this);
+      Merge multiway_merge(sources);
       multiway_merge.run();
    }
 

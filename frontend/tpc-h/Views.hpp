@@ -85,6 +85,9 @@ struct merged {
     struct Key: public key_base {
         Key() = default;
         Key(const key_base& k) : key_base(k) {}
+        Key(const typename T::Key& pk, const T& v) : key_base({JK(pk, v), pk}) {}
+        Key(const JK& jk, const typename T::Key& pk) : key_base({jk, pk}) {}
+        Key(const JK&, const Key& k) : key_base(k) {}
 
         friend std::ostream& operator<<(std::ostream& os, const Key& key) {
             os << "mergedKey(" << key.jk;
