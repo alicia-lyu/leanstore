@@ -75,7 +75,7 @@ struct MultiWayMerge {
          produced(0),
          current_jk(JK::max()),
          current_entry(),
-         consume_joined([&joinedAdapter](const typename JoinedRec::Key& k, const JoinedRec& v) { joinedAdapter->insert(k, v); }),
+         consume_joined([&joinedAdapter](const typename JoinedRec::Key& k, const JoinedRec& v) { joinedAdapter.insert(k, v); }),
          heap(),
          msg("Joined")
    {
