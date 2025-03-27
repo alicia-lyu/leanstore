@@ -237,6 +237,10 @@ struct joinedPPsL_t : public Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>
         Key() = default;
         Key(const Joined::Key& k): Joined::Key(k) {}
         Key(const joinedPPs_t::Key& j1k, const merged_lineitem_t::Key& lk): Joined::Key({j1k.jk, std::tuple_cat(j1k.keys, std::make_tuple(lk.pk))}) {}
+        Key(const part_t::Key& pk, const partsupp_t::Key& psk, const lineitem_t::Key& lk): Joined::Key({PPsL_JK{pk.p_partkey, psk.ps_suppkey}, std::make_tuple(pk, psk, lk)}) {}
+        Key(const part_t::Key& pk, const partsupp_t::Key& psk, const merged_lineitem_t::Key& lk): Joined::Key({PPsL_JK{pk.p_partkey, psk.ps_suppkey}, std::make_tuple(pk, psk, lk.pk)}) {}
+        Key(const merged_part_t::Key& pk, const merged_partsupp_t::Key& psk, const merged_lineitem_t::Key& lk): Joined::Key({PPsL_JK{pk.jk.l_partkey, psk.jk.l_partsuppkey}, std::make_tuple(pk.pk, psk.pk, lk.pk)}) {}
+
     };
 };
 

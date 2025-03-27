@@ -230,29 +230,32 @@ struct LeanStoreMergedAdapter {
    void scanJoin()
    {
       using Merge = MultiWayMerge<JK, JoinedRec, Records...>;
-      using Merge::HeapEntry;
-      Merge multiway_merge({[&]() {
-                              auto kv = this->next();
-                              if (!kv.has_value()) {
-                                 return HeapEntry();
-                              }
 
-                              leanstore::Slice& k = kv->first;
-                              leanstore::Slice& v = kv->second;
-                              bool matched = false;
-                              int source = 0;
-                              (([&]() {
-                                  if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
-                                     typename Records::Key key;
-                                     Records::unfoldKey(k.data(), key);
-                                     const Records& rec = *reinterpret_cast<const Records*>(v.data());
-                                     matched = true;
-                                     return HeapEntry(key.jk, Records::toBytes(key), Records::toBytes(rec), ++source);
-                                  }
-                               }),
-                               ...);
-                           }},
-                           this);
+      std::vector<std::function<typename Merge::HeapEntry()>> sources = {[&]() {
+         auto kv = this->next();
+         if (!kv.has_value()) {
+            return typename Merge::HeapEntry();
+         }
+
+         leanstore::Slice& k = kv->first;
+         leanstore::Slice& v = kv->second;
+         bool matched = false;
+         typename Merge::HeapEntry result;
+
+         (([&]() {
+             if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
+                typename Records::Key key;
+                Records::unfoldKey(k.data(), key);
+                const Records& rec = *reinterpret_cast<const Records*>(v.data());
+                matched = true;
+                result = typename Merge::HeapEntry(key.jk, Records::toBytes(key), Records::toBytes(rec), 0);
+             }
+          })(),
+          ...);
+          assert(matched);
+          return result;
+      }};
+      Merge multiway_merge(sources, *this);
       multiway_merge.run();
    }
 
