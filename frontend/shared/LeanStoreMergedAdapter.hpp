@@ -242,14 +242,17 @@ struct LeanStoreMergedAdapter {
          bool matched = false;
          typename Merge::HeapEntry result;
 
+         int i = 0;
+
          (([&]() {
              if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
                 typename Records::Key key;
                 Records::unfoldKey(k.data(), key);
                 const Records& rec = *reinterpret_cast<const Records*>(v.data());
                 matched = true;
-                result = typename Merge::HeapEntry(key.jk, Records::toBytes(key), Records::toBytes(rec), 0);
+                result = typename Merge::HeapEntry(key.jk, Records::toBytes(key), Records::toBytes(rec), i);
              }
+             i++;
           })(),
           ...);
           assert(matched);

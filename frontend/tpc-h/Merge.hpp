@@ -32,6 +32,7 @@ struct MultiWayMerge {
    HeapEntry current_entry;
    std::optional<std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>> consume_joined;
    std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<HeapEntry>> heap;
+   std::string msg;
 
    // Default: To be joined
    template <template <typename> class AdapterType>
@@ -43,7 +44,8 @@ struct MultiWayMerge {
          current_jk(JK::max()),
          current_entry(),
          consume_joined([](const typename JoinedRec::Key&, const JoinedRec&) {}),
-         heap()
+         heap(),
+         msg("Joined")
    {
       assert(consumes.size() == nways);
       fillHeap();
@@ -57,7 +59,8 @@ struct MultiWayMerge {
          current_jk(JK::max()),
          current_entry(),
          consume_joined([](const typename JoinedRec::Key&, const JoinedRec&) {}),
-         heap()
+         heap(),
+         msg("Joined")
    {
       assert(consumes.size() == nways);
       fillHeap();
@@ -73,7 +76,8 @@ struct MultiWayMerge {
          current_jk(JK::max()),
          current_entry(),
          consume_joined([&joinedAdapter](const typename JoinedRec::Key& k, const JoinedRec& v) { joinedAdapter->insert(k, v); }),
-         heap()
+         heap(),
+         msg("Joined")
    {
       assert(consumes.size() == nways);
       fillHeap();
@@ -88,7 +92,8 @@ struct MultiWayMerge {
          current_jk(JK::max()),
          current_entry(),
          consume_joined([&joinedAdapter](const typename JoinedRec::Key& k, const JoinedRec& v) { joinedAdapter->insert(k, v); }),
-         heap()
+         heap(),
+         msg("Joined")
    {
       assert(consumes.size() == nways);
       fillHeap();
@@ -104,10 +109,15 @@ struct MultiWayMerge {
          current_jk(JK::max()),
          current_entry(),
          consume_joined(std::nullopt),
-         heap()
+         heap(),
+         msg("Merged")
    {
       assert(consumes.size() == nways);
       fillHeap();
+   }
+
+   ~MultiWayMerge() {
+      std::cout << "\r" << msg << " " << (double) produced / 1000 << "k records------------------------------------" << std::endl;
    }
 
    void fillHeap()
@@ -202,9 +212,9 @@ struct MultiWayMerge {
    auto getHeapConsumeToBeJoined()
    {
       return [this](HeapEntry& entry) {
+         current_entry = entry;
          joinAndClear(std::index_sequence_for<Records...>{});
          current_jk = entry.jk;
-         current_entry = entry;
          std::get<I>(cached_records)
              .push_back(std::make_tuple(typename CurrRec::Key(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k)),
                                         CurrRec(CurrRec::template fromBytes<CurrRec>(entry.v))));
@@ -222,10 +232,10 @@ struct MultiWayMerge {
       return getHeapConsumesToBeJoined(std::index_sequence_for<Records...>{});
    }
 
-   void printProgress(std::string msg)
+   void printProgress()
    {
       if (produced % 1000 == 0) {
-         std::cout << "\r" << msg << " " << produced / 1000 << "k records------------------------------------";
+         std::cout << "\r" << msg << " " << (double) produced / 1000 << "k records------------------------------------";
       }
    }
 
@@ -239,7 +249,7 @@ struct MultiWayMerge {
          RecordType v_new(SourceRecord::template fromBytes<SourceRecord>(entry.v));
          mergedAdapter.insert(k_new, v_new);
          produced++;
-         printProgress("Merged");
+         printProgress();
       };
    }
 
@@ -259,7 +269,7 @@ struct MultiWayMerge {
       });
       std::vector<std::tuple<std::tuple<typename Records::Key, Records>...>> matched_records(curr_joined_cnt);
       produced += curr_joined_cnt;
-      printProgress("Joined");
+      printProgress();
       if (curr_joined_cnt == 0) {
          return 0;
       }
