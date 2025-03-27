@@ -2,7 +2,6 @@
 #include <optional>
 #include <vector>
 #include "Merge.hpp"
-#include "Join.hpp"
 #include "Logger.hpp"
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
@@ -237,65 +236,16 @@ class BasicJoin
 
    void loadBasicJoin()
    {
-      std::cout << "Loading basic join" << std::endl;
-      // first join
-      {
-         std::cout << "Joining part and partsupp" << std::endl;
-         this->part.resetIterator();
-         this->partsupp.resetIterator();
-         Join<PPsL_JK, joinedPPs_t, part_t, partsupp_t> join1(
-             [](u8* in, u16) {
-                part_t::Key k;
-                part_t::unfoldKey(in, k);
-                return k;
-             },
-             [](u8* in, u16) {
-                partsupp_t::Key k;
-                partsupp_t::unfoldKey(in, k);
-                return k;
-             },
-             [this]() { return this->part.next(); }, [this]() { return this->partsupp.next(); });
-         while (true) {
-            auto kv = join1.next();
-            if (kv == std::nullopt) {
-               break;
-            }
-            auto& [k, v] = *kv;
-            joinedPPs.insert(k, v);
-         }
-         this->part.resetIterator();
-         this->partsupp.resetIterator();
-      }
+      part.resetIterator();
+      partsupp.resetIterator();
+      sortedLineitem.resetIterator();
 
-      // second join
-      {
-         std::cout << "Joining joinedPPs and lineitem" << std::endl;
-         assert(this->sortedLineitem.estimatePages() > 0);
-         this->joinedPPs.resetIterator();
-         this->sortedLineitem.resetIterator();
-         Join<PPsL_JK, joinedPPsL_t, joinedPPs_t, merged_lineitem_t> join2(
-             [](u8* in, u16) {
-                joinedPPs_t::Key k;
-                joinedPPs_t::unfoldKey(in, k);
-                return k;
-             },
-             [](u8* in, u16) {
-                merged_lineitem_t::Key k;
-                merged_lineitem_t::unfoldKey(in, k);
-                return k;
-             },
-             [this]() { return this->joinedPPs.next(); }, [this]() { return this->sortedLineitem.next(); });
-         while (true) {
-            auto kv = join2.next();
-            if (kv == std::nullopt) {
-               break;
-            }
-            auto& [k, v] = *kv;
-            joinedPPsL.insert(k, v);
-         }
-         this->joinedPPs.resetIterator();
-         this->sortedLineitem.resetIterator();
-      }
+      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
+      Merge multiway_merge(joinedPPsL, part, partsupp, sortedLineitem);
+      multiway_merge.run();
+      part.resetIterator();
+      partsupp.resetIterator();
+      sortedLineitem.resetIterator();
    };
 
    void loadMergedBasicJoin()
