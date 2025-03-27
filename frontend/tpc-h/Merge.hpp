@@ -24,7 +24,7 @@ struct MultiWayMerge {
       bool operator>(const HeapEntry& other) const { return jk > other.jk; }
    };
 
-   std::vector<std::function<HeapEntry()>>& sources;
+   std::vector<std::function<HeapEntry()>> sources;
    std::vector<std::function<void(HeapEntry&)>> consumes;
    std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...> cached_records;
    long produced;
@@ -33,7 +33,23 @@ struct MultiWayMerge {
    std::optional<std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>> consume_joined;
    std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<HeapEntry>> heap;
 
-   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources, std::nullopt_t)
+   // Default: To be joined
+   template <template <typename> class AdapterType>
+   MultiWayMerge(AdapterType<Records>&... adapters)
+       : sources(getHeapSources(adapters...)),
+         consumes(getHeapConsumesToBeJoined()),
+         cached_records(),
+         produced(0),
+         current_jk(JK::max()),
+         current_entry(),
+         consume_joined([](const typename JoinedRec::Key&, const JoinedRec&) {}),
+         heap()
+   {
+      assert(consumes.size() == nways);
+      fillHeap();
+   }
+
+   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources)
        : sources(sources),
          consumes(getHeapConsumesToBeJoined()),
          cached_records(),
@@ -47,8 +63,24 @@ struct MultiWayMerge {
       fillHeap();
    }
 
+   // Explicit joinedAdapter
    template <template <typename> class AdapterType>
-   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources, AdapterType<JoinedRec>& joinedAdapter)
+   MultiWayMerge(AdapterType<JoinedRec>& joinedAdapter, AdapterType<Records>&... adapters)
+       : sources(getHeapSources(adapters...)),
+         consumes(getHeapConsumesToBeJoined()),
+         cached_records(),
+         produced(0),
+         current_jk(JK::max()),
+         current_entry(),
+         consume_joined([&joinedAdapter](const typename JoinedRec::Key& k, const JoinedRec& v) { joinedAdapter->insert(k, v); }),
+         heap()
+   {
+      assert(consumes.size() == nways);
+      fillHeap();
+   }
+
+   template <template <typename> class AdapterType>
+   MultiWayMerge(AdapterType<JoinedRec>& joinedAdapter, std::vector<std::function<HeapEntry()>>& sources)
        : sources(sources),
          consumes(getHeapConsumesToBeJoined()),
          cached_records(),
@@ -62,10 +94,11 @@ struct MultiWayMerge {
       fillHeap();
    }
 
-   template <typename MergedAdapterType>
-   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources, MergedAdapterType& mergedAdapter)
-       : sources(sources),
-         consumes(getHeapConsumesToMerged(mergedAdapter)),
+   // Explicit mergedAdapter
+   template <typename MergedAdapterType, template <typename> class AdapterType, typename... SourceRecords>
+   MultiWayMerge(MergedAdapterType& mergedAdapter, AdapterType<SourceRecords>&... adapters)
+       : sources(getHeapSources(adapters...)),
+         consumes(getHeapConsumesToMerged<MergedAdapterType, SourceRecords...>(mergedAdapter)),
          cached_records({}),
          produced(0),
          current_jk(JK::max()),
@@ -97,7 +130,7 @@ struct MultiWayMerge {
       HeapEntry next;
       if (nways == sources.size()) {
          next = sources.at(entry.source)();
-      } else if (nways == 1) {
+      } else if (sources.size() == 1) {
          next = sources.at(0)();
       } else {
          UNREACHABLE();
@@ -129,16 +162,16 @@ struct MultiWayMerge {
       };
    }
 
-   template <template <typename> class AdapterType, size_t... Is>
-   static std::vector<std::function<HeapEntry()>> getHeapSources(AdapterType<Records>&... adapters, std::index_sequence<Is...>)
+   template <template <typename> class AdapterType, size_t... Is, typename... SourceRecords>
+   static std::vector<std::function<HeapEntry()>> getHeapSources(std::index_sequence<Is...>, AdapterType<SourceRecords>&... adapters)
    {
-      return {getHeapSource<AdapterType, Records>(adapters, Is)...};
+      return {getHeapSource<AdapterType, SourceRecords>(adapters, Is)...};
    }
 
-   template <template <typename> class AdapterType>
-   static std::vector<std::function<HeapEntry()>> getHeapSources(AdapterType<Records>&... adapters)
+   template <template <typename> class AdapterType, typename... SourceRecords>
+   static std::vector<std::function<HeapEntry()>> getHeapSources(AdapterType<SourceRecords>&... adapters)
    {
-      return getHeapSources(adapters..., std::index_sequence_for<Records...>{});
+      return getHeapSources(std::index_sequence_for<SourceRecords...>{}, adapters...);
    }
 
    template <typename Tuple, typename Func>
@@ -196,23 +229,24 @@ struct MultiWayMerge {
       }
    }
 
-   template <typename CurrRec, typename MergedAdapterType>
+   template <typename MergedAdapterType, typename RecordType, typename SourceRecord>
    auto getHeapConsumeToMerged(MergedAdapterType& mergedAdapter)
    {
       return [&mergedAdapter, this](HeapEntry& entry) {
-         // TODO: part_t -> merged_part_t
-         typename CurrRec::Key k_new(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k));
-         CurrRec v_new(CurrRec::template fromBytes<CurrRec>(entry.v));
+         current_jk = entry.jk;
+         current_entry = entry;
+         typename RecordType::Key k_new(current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k));
+         RecordType v_new(SourceRecord::template fromBytes<SourceRecord>(entry.v));
          mergedAdapter.insert(k_new, v_new);
          produced++;
          printProgress("Merged");
       };
    }
 
-   template <typename MergedAdapterType>
+   template <typename MergedAdapterType, typename... SourceRecords>
    std::vector<std::function<void(HeapEntry&)>> getHeapConsumesToMerged(MergedAdapterType& mergedAdapter)
    {
-      return {getHeapConsumeToMerged<Records>(mergedAdapter)...};
+      return {getHeapConsumeToMerged<MergedAdapterType, Records, SourceRecords>(mergedAdapter)...};
    }
 
    // calculate cartesian produce of current cached records
