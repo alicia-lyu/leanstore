@@ -1,17 +1,13 @@
 #pragma once
 #include <gflags/gflags.h>
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <functional>
-#include <limits>
-#include <optional>
-#include <queue>
 #include <set>
 #include <vector>
 
 #include "Tables.hpp"
-
-#include "Units.hpp"
 
 #include "Logger.hpp"
 #include "leanstore/Config.hpp"
@@ -101,7 +97,7 @@ class TPCHWorkload
 
    void printProgress(std::string msg, Integer i, Integer start, Integer end)
    {
-      if (i % 1000 == start || i == end) {
+      if (i % 1000 == start % 1000 || i == end) {
          auto scale = end - start + 1;
          double progress = (double)(i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
@@ -150,7 +146,7 @@ class TPCHWorkload
       // Generate and shuffle lineitem keys
       std::vector<lineitem_t::Key> lineitem_keys = {};
       for (Integer i = order_start; i <= order_end; i++) {
-         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
+         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
          for (Integer j = 1; j <= lineitem_cnt; j++) {
             lineitem_keys.push_back(lineitem_t::Key({i, j}));
          }
@@ -162,7 +158,7 @@ class TPCHWorkload
       const Integer partsupp_size = (PARTSUPP_SCALE / PART_SCALE) * (part_end - part_start + 1);
       for (Integer i = part_start; i <= part_end; i++) {
          // Randomly select suppliers for this part
-         Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2);
+         Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2 - 1);
          std::set<Integer> suppliers = {};
          while (suppliers.size() < supplier_cnt) {
             Integer supplier_id = urand(1, last_supplier_id);
@@ -209,7 +205,7 @@ class TPCHWorkload
    void loadLineitem(std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_func, Integer order_start, Integer order_end)
    {
       for (Integer i = order_start; i <= order_end; i++) {
-         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2);
+         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
          for (Integer j = 1; j <= lineitem_cnt; j++) {
             // look up partsupp
             auto p = urand(1, last_part_id);
@@ -300,6 +296,7 @@ class TPCHWorkload
    {
       std::cout << "Logging size" << std::endl;
       std::ofstream size_csv;
+      std::filesystem::create_directories(FLAGS_csv_path);
       size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
       if (size_csv.tellp() == 0) {
          size_csv << "table,size (MiB)" << std::endl;

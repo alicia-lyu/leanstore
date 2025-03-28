@@ -32,6 +32,7 @@ class LeanStoreLogger : public Logger
          t->next();
       }
    };
+   void writeOutAll();
    std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>>
    summarizeStats(long elapsed);
    void reset();

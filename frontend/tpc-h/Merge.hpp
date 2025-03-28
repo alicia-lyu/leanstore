@@ -264,8 +264,8 @@ struct MultiWayMerge {
          typename RecordType::Key k_new(current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k));
          RecordType v_new(SourceRecord::template fromBytes<SourceRecord>(entry.v));
          mergedAdapter.insert(k_new, v_new);
-         produced++;
          printProgress();
+         produced++;
       };
    }
 
@@ -284,8 +284,8 @@ struct MultiWayMerge {
          curr_joined_cnt *= vec.size();
       });
       std::vector<std::tuple<std::tuple<typename Records::Key, Records>...>> matched_records(curr_joined_cnt);
-      produced += curr_joined_cnt;
       printProgress();
+      produced += curr_joined_cnt;
       if (curr_joined_cnt == 0) {
          return 0;
       }

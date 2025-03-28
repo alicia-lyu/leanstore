@@ -1,11 +1,19 @@
 #include "LeanStoreLogger.hpp"
 #include <filesystem>
+#include "TPCHWorkload.hpp"
+#include <gflags/gflags.h>
 
 void LeanStoreLogger::reset()
 {
    for (auto& t : tables) {
       t->next();
    }
+}
+
+void LeanStoreLogger::writeOutAll()
+{
+   std::cout << "Writing out all buffer frames... This may take a while." << std::endl;
+   db.buffer_manager->writeAllBufferFrames();
 }
 
 std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>>
@@ -110,7 +118,7 @@ void LeanStoreLogger::log(long elapsed, std::string csv_dir)
 
    auto [tx_console_header, tx_console_data] = summarizeStats(elapsed);
    std::ofstream csv_sum;
-   csv_sum.open(csv_dir_abs + "sum.csv", std::ios::app);
+   csv_sum.open(csv_dir_abs + ".csv", std::ios::app);
    if (csv_sum.tellp() == 0) {  // no header
       for (auto& h : tx_console_header) {
          std::visit([&csv_sum](auto&& arg) { csv_sum << arg << ","; }, h);
@@ -135,4 +143,9 @@ void LeanStoreLogger::prepare()
    [[maybe_unused]] Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
    Integer h_id = 0;
    leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
+   auto w_mib = std::stod(bm_table.get("0", "w_mib"));
+   if (w_mib != 0) {
+      std::cout << "Out of memory workload, loading tables caused " << w_mib << " MiB write." << std::endl;
+      writeOutAll();
+   } 
 }
