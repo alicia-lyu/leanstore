@@ -168,7 +168,9 @@ struct MultiWayMerge {
       if (next.jk != JK::max()) {
          heap.push(next);
       } else if (consume_joined.has_value()) { // no records to be joined at all
-         heap.clear();
+         while (!heap.empty()) {
+            heap.pop();
+         }
       }
    }
 

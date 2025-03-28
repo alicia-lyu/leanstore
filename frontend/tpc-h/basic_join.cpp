@@ -60,11 +60,13 @@ int main(int argc, char** argv)
         std::cout << "Loading TPC-H" << std::endl;
         crm.scheduleJobSync(0, [&]() {
             cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+            logger.reset();
             tpchBasicJoin.loadBaseTables();
             tpchBasicJoin.loadSortedLineitem();
             tpchBasicJoin.loadBasicJoin();
             tpchBasicJoin.loadMergedBasicJoin();
             tpchBasicJoin.logSize();
+            logger.logLoading();
             cr::Worker::my().commitTX();
         });
    }

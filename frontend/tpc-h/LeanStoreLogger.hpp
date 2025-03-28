@@ -38,6 +38,7 @@ class LeanStoreLogger : public Logger
    void reset();
    void log(long elapsed, std::string csv_dir);
    void prepare();
+   void logLoading();
    static void printTable(tabulate::Table& table)
    {
       std::stringstream ss;

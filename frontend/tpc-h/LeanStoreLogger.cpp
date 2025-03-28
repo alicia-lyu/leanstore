@@ -17,15 +17,15 @@ void LeanStoreLogger::writeOutAll()
 }
 
 std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>>
-LeanStoreLogger::summarizeStats(long elapsed)
+LeanStoreLogger::summarizeStats(long elapsed = 0)
 {
    std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_header;
    std::vector<variant<std::string, const char*, tabulate::Table>> tx_console_data;
    tx_console_header.reserve(20);
    tx_console_data.reserve(20);
 
-   tx_console_header.push_back("Elapsed (us)");
-   tx_console_data.push_back(std::to_string(elapsed));
+   tx_console_header.push_back("Elapsed (ms)");
+   tx_console_data.push_back(std::to_string((double) elapsed / 1000));
 
    tx_console_header.push_back("W MiB");
    tx_console_data.push_back(bm_table.get("0", "w_mib"));
@@ -137,15 +137,22 @@ void LeanStoreLogger::log(long elapsed, std::string csv_dir)
    printTable(table);
 }
 
+void LeanStoreLogger::logLoading()
+{
+   log(0, "load");
+   auto w_mib = std::stod(bm_table.get("0", "w_mib"));
+   if (w_mib != 0) {
+      std::cout << "Out of memory workload, loading tables caused " << w_mib << " MiB write." << std::endl;
+      writeOutAll();
+   } else {
+      std::cout << "In memory workload, loading tables caused no write." << std::endl;
+   }
+}
+
 void LeanStoreLogger::prepare()
 {
    std::cout << "Preparing TPC-H" << std::endl;
    [[maybe_unused]] Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
    Integer h_id = 0;
    leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;
-   auto w_mib = std::stod(bm_table.get("0", "w_mib"));
-   if (w_mib != 0) {
-      std::cout << "Out of memory workload, loading tables caused " << w_mib << " MiB write." << std::endl;
-      writeOutAll();
-   } 
 }
