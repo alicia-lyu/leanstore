@@ -134,7 +134,10 @@ struct MultiWayMerge {
       fillHeap();
    }
 
-   ~MultiWayMerge() { std::cout << "\r~MultiWayMerge: " << msg << " " << (double)produced / 1000 << "k records------------------------------------" << std::endl; }
+   ~MultiWayMerge() { 
+      double progress = (double)produced / 1000;
+      std::cout << "\r~MultiWayMerge: " << msg << " " << progress << "k records------------------------------------" << std::endl; 
+   }
 
    void fillHeap()
    {
@@ -164,6 +167,8 @@ struct MultiWayMerge {
 
       if (next.jk != JK::max()) {
          heap.push(next);
+      } else if (consume_joined.has_value()) { // no records to be joined at all
+         heap.clear();
       }
    }
 
@@ -251,7 +256,8 @@ struct MultiWayMerge {
    void printProgress()
    {
       if (produced % 1000 == 0) {
-         std::cout << "\r" << msg << " " << (double)produced / 1000 << "k records------------------------------------";
+         double progress = (double)produced / 1000;
+         std::cout << "\r" << msg << " " << progress << "k records------------------------------------";
       }
    }
 

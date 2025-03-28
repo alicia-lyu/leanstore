@@ -173,7 +173,7 @@ class BasicJoin
                           this->partsupp.insert(k, v);
                           new_partupp.push_back({k, v});
                        },
-                       "view");
+                       "view-stage1");
       // sort deltas
       auto compare = [](const auto& a, const auto& b) {
          return JKBuilder<PPsL_JK>::create(std::get<0>(a), std::get<1>(a)) < JKBuilder<PPsL_JK>::create(std::get<0>(b), std::get<1>(b));
@@ -344,7 +344,7 @@ class BasicJoin
 
       auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-      logger.log(t, "view");
+      logger.log(t, "maintain-view");
    }
 
    void maintainBase()
