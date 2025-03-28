@@ -211,13 +211,16 @@ struct LeanStoreAdapter : Adapter<Record> {
       return std::make_pair(typed_key, typed_payload);
    };
 
-   void seek(const typename Record::Key& key) {
+   bool seek(const typename Record::Key& key) {
       u8 keyBuffer[Record::maxFoldLength()];
       Record::foldKey(keyBuffer, key);
       leanstore::Slice keySlice(keyBuffer, Record::maxFoldLength());
       leanstore::OP_RESULT res = it->seek(keySlice);
       if (res != leanstore::OP_RESULT::OK) {
-         std::cerr << "LeanStoreAdapter::seek failed" << std::endl;
+         it->seekForPrev(keySlice); // last key
+         return false;
+      } else {
+         return true;
       }
    }
 
