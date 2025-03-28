@@ -230,7 +230,7 @@ struct LeanStoreMergedAdapter {
    void scanJoin()
    {
       using Merge = MultiWayMerge<JK, JoinedRec, Records...>;
-
+      this->resetIterator();
       std::vector<std::function<typename Merge::HeapEntry()>> sources = {[&]() {
          auto kv = this->next();
          if (!kv.has_value()) {
@@ -260,6 +260,7 @@ struct LeanStoreMergedAdapter {
       }};
       Merge multiway_merge(sources);
       multiway_merge.run();
+      this->resetIterator();
    }
 
    // -------------------------------------------------------------------------------------

@@ -71,7 +71,7 @@ class BasicJoin
       std::cout << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "view");
+      logger.log(t, "query-view");
    }
 
    void query()
@@ -93,7 +93,7 @@ class BasicJoin
 
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
-      logger.log(merged_t, "merged");
+      logger.log(merged_t, "query-merged");
    }
 
    void queryByIndex()
@@ -112,7 +112,7 @@ class BasicJoin
 
       auto index_end = std::chrono::high_resolution_clock::now();
       auto index_t = std::chrono::duration_cast<std::chrono::microseconds>(index_end - index_start).count();
-      logger.log(index_t, "index");
+      logger.log(index_t, "query-base");
 
       part.resetIterator();
       partsupp.resetIterator();
@@ -441,6 +441,7 @@ class BasicJoin
    {
       std::cout << "Logging size" << std::endl;
       std::ofstream size_csv;
+      std::filesystem::create_directories(FLAGS_csv_path);
       size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
       if (size_csv.tellp() == 0) {
          size_csv << "table,size (MiB)" << std::endl;

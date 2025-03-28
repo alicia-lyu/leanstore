@@ -15,7 +15,6 @@ $(foreach dir, $(BUILD_DIRS), \
   $(foreach exec, $(EXECS), \
     $(eval $(dir)/frontend/$(exec): DIR := $(dir)) \
     $(eval $(dir)/frontend/$(exec): EXEC := $(exec)) \
-    $(eval $(dir)/frontend/$(exec): CSV := $(dir)/$(exec)) \
     $(eval $(dir)/frontend/$(exec): CMAKE := $(if $(findstring debug,$(dir)),$(CMAKE_DEBUG),$(CMAKE_RELWITHDEBINFO)) \
   ) \
 ))
@@ -44,7 +43,7 @@ $(foreach exec, $(EXECS), \
 ) # Variable match work well for an array of targets
 
 dram := 1
-scale := 1
+scale := 0.1
 
 leanstore_flags := --dram_gib=$(dram) --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --pp_threads=1 --csv_truncate=false --worker_threads=2 --trunc=true --ssd_path=$(IMAGE_FILE) --tpch_scale_factor=$(scale)
 
@@ -55,4 +54,4 @@ $(LLDB_TARGETS):
 
 $(EXECS):
 	$(MAKE) $(BUILD_DIR)/frontend/$(EXECS)
-	$(BUILD_DIR)/frontend/$(EXECS) $(leanstore_flags) --csv_path=$(CSV)
+	$(BUILD_DIR)/frontend/$(EXECS) $(leanstore_flags) --csv_path=$(BUILD_DIR)/$(EXECS)/$(scale)-in-$(dram)
