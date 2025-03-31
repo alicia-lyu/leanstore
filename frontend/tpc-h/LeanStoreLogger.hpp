@@ -1,4 +1,5 @@
 #pragma once
+#include <string>
 #include "Logger.hpp"
 #include "TPCHWorkload.hpp"
 #include "leanstore/LeanStore.hpp"
@@ -33,8 +34,7 @@ class LeanStoreLogger : public Logger
       }
    };
    void writeOutAll();
-   std::pair<std::vector<variant<std::string, const char*, tabulate::Table>>, std::vector<variant<std::string, const char*, tabulate::Table>>>
-   summarizeStats(long elapsed);
+   std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed);
    void reset();
    void log(long elapsed, std::string csv_dir);
    void prepare();
@@ -49,4 +49,28 @@ class LeanStoreLogger : public Logger
       }
       cout << std::endl;
    }
+
+   static void printTable(const std::vector<std::vector<std::string>>& rows)
+   {
+      tabulate::Table table;
+      for (auto& row : rows) {
+         std::vector<variant<std::string, const char *, tabulate::Table>> cells;
+         for (auto& cell : row) {
+            cells.push_back(cell);
+         }
+         table.add_row(cells);
+      }
+      table.format().width(10);
+      for (size_t c_id = 0; c_id < rows.at(0).size(); c_id++) {
+         auto header = rows.at(0).at(c_id);
+         table.column(c_id).format().width(header.length() + 2);
+      }
+      printTable(table);
+   }
+
+   inline std::string to_fixed(double value, int precision = 2) {
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(precision) << value;
+      return oss.str();
+  }
 };

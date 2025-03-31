@@ -4,25 +4,27 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
         {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
+            "name": "Debug basic_join",
+            "type": "lldb",
             "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal",
+            "program": "${workspaceFolder}/build-debug/frontend/basic_join",
             "args": [
-                "./build/frontend/join_tpcc",
-                "1",
-                "4",
-                "100",
-                "0",
-                "0",
-                "100",
-                "1",
-                "1",
-                "1"
+              "--dram_gib=1",
+              "--vi=false",
+              "--mv=false",
+              "--isolation_level=ser",
+              "--optimistic_scan=false",
+              "--pp_threads=1",
+              "--csv_truncate=false",
+              "--worker_threads=2",
+              "--trunc=true",
+              "--ssd_path=/mnt/hdd/tmp/test_image",
+              "--tpch_scale_factor=0.1",
+              "--csv_path=build-debug/basic_join"
             ],
-        }
+            "cwd": "${workspaceFolder}",
+            "stopOnEntry": false
+          }
     ]
 }

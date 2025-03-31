@@ -1,6 +1,7 @@
 #include "CPUTable.hpp"
 
 #include "leanstore/Config.hpp"
+#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/utils/ThreadLocalAggregator.hpp"
 // -------------------------------------------------------------------------------------
@@ -19,11 +20,19 @@ std::string CPUTable::getName()
 // -------------------------------------------------------------------------------------
 void CPUTable::open()
 {
-   PerfEvent e;
+   auto workers_count = CPUCounters::threads.size();
+   PerfEvent e; // Only for getting the names
    for (const auto& event_name : e.getEventsName()) {
       workers_agg_events[event_name] = 0;
       pp_agg_events[event_name] = 0;
       ww_agg_events[event_name] = 0;
+      for (u64 i = 0; i < workers_count; i++) {
+         // Initialize for each worker
+         if (workers_events.size() <= i) {
+            workers_events.emplace_back();
+         }
+         workers_events.at(i)[event_name] = 0;
+      }
       columns.emplace(event_name, [](Column&) {});
    }
    columns.emplace("key", [](Column&) {});
@@ -42,6 +51,11 @@ void CPUTable::next()
    for (auto& c : ww_agg_events) {
       c.second = 0;
    }
+   for (auto& w : workers_events) {
+      for (auto& c : w) {
+         c.second = 0;
+      }
+   }
    // -------------------------------------------------------------------------------------
    {
       std::unique_lock guard(CPUCounters::mutex);
@@ -58,6 +72,7 @@ void CPUTable::next()
             }
             if (thread.second.name.rfind("worker", 0) == 0) {
                workers_agg_events[event.first] += event_value;
+               workers_events.at(thread.first)[event.first] = event_value;
             } else if (thread.second.name.rfind("pp", 0) == 0) {
                pp_agg_events[event.first] += event_value;
             } else if (thread.second.name.rfind("ww") == 0) {

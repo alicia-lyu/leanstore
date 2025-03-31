@@ -42,8 +42,8 @@ $(foreach exec, $(EXECS), \
 	$(eval $(exec)_lldb: CSV := $(BUILD_DIR_DEBUG)/$(exec)) \
 ) # Variable match work well for an array of targets
 
-dram := 1
-scale := 0.1
+dram := 0.1
+scale := 0.03
 
 leanstore_flags := --dram_gib=$(dram) --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --pp_threads=1 --csv_truncate=false --worker_threads=2 --trunc=true --ssd_path=$(IMAGE_FILE) --tpch_scale_factor=$(scale)
 

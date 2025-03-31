@@ -53,6 +53,7 @@ class BasicJoin
    {
       // Enumrate materialized view
       logger.reset();
+      std::cout << "BasicJoin::queryByView()" << std::endl;
       [[maybe_unused]] long produced = 0;
       auto inspect_produced = [&](const std::string& msg) {
          if (produced % 100 == 0) {
@@ -87,6 +88,7 @@ class BasicJoin
    {
       // Scan merged index + join on the fly
       logger.reset();
+      std::cout << "BasicJoin::queryByMerged()" << std::endl;
       auto merged_start = std::chrono::high_resolution_clock::now();
 
       mergedPPsL.template scanJoin<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
@@ -99,6 +101,7 @@ class BasicJoin
    void queryByIndex()
    {
       logger.reset();
+      std::cout << "BasicJoin::queryByIndex()" << std::endl;
       auto index_start = std::chrono::high_resolution_clock::now();
 
       part.resetIterator();
@@ -128,6 +131,7 @@ class BasicJoin
 
    void maintainMerged()
    {
+      std::cout << "BasicJoin::maintainMerged()" << std::endl;
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
                        [this](const lineitem_t::Key& k, const lineitem_t& v) {
@@ -151,6 +155,7 @@ class BasicJoin
    void maintainView()
    {
       logger.reset();
+      std::cout << "BasicJoin::maintainView()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
 
       // sortedLineitem and all base tables cannot be replaced by this view
@@ -349,6 +354,7 @@ class BasicJoin
 
    void maintainBase()
    {
+      std::cout << "BasicJoin::maintainBase()" << std::endl;
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
                        [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
                        [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
@@ -393,7 +399,6 @@ class BasicJoin
    void loadSortedLineitem()
    {
       // sort lineitem
-      this->lineitem.resetIterator();
       while (true) {
          auto kv = this->lineitem.next();
          if (kv == std::nullopt)
@@ -403,16 +408,13 @@ class BasicJoin
          merged_lineitem_t::Key k_new(jk, k);
          merged_lineitem_t v_new(v);
          this->sortedLineitem.insert(k_new, v_new);
+         workload.printProgress("sortedLineitem", k.l_orderkey, 1, workload.last_order_id);
       }
       this->lineitem.resetIterator();
    }
 
    void loadBasicJoin()
    {
-      part.resetIterator();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
-
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
       Merge multiway_merge(joinedPPsL, part, partsupp, sortedLineitem);
       multiway_merge.run();
@@ -423,10 +425,6 @@ class BasicJoin
 
    void loadMergedBasicJoin()
    {
-      part.resetIterator();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
-
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>;
 
       Merge multiway_merge(mergedPPsL, part, partsupp, sortedLineitem);
