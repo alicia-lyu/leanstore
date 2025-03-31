@@ -186,6 +186,10 @@ struct PPsL_JK {
 
     auto operator<=>(const PPsL_JK&) const = default;
 
+    friend int operator%(const PPsL_JK& jk, const int& n) {
+        return (jk.l_partsuppkey + jk.l_partkey) % n;
+    }
+
     int match(const PPsL_JK& other) const {
         // {0, 0} cannot be used as wildcard
         if (*this == PPsL_JK{} && other == PPsL_JK{})

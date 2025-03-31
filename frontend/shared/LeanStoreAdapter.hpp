@@ -42,6 +42,7 @@ struct LeanStoreAdapter : Adapter<Record> {
       }
       btree_generic = static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree));
       it = std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(*btree_generic);
+      it->reset();
    }
    // -------------------------------------------------------------------------------------
    void printTreeHeight() { cout << name << " height = " << btree->getHeight() << endl; }

@@ -97,12 +97,12 @@ class TPCHWorkload
 
    void printProgress(std::string msg, Integer i, Integer start, Integer end)
    {
+      auto scale = end - start + 1;
       if (i % 1000 == start % 1000 || i == end) {
-         auto scale = end - start + 1;
          double progress = (double)(i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
       }
-      if (i == end) {
+      if (i == end && scale > 100) {
          std::cout << std::endl;
       }
    }
@@ -143,20 +143,22 @@ class TPCHWorkload
                              Integer order_start,
                              Integer order_end)
    {
-      // Generate and shuffle lineitem keys
-      std::vector<lineitem_t::Key> lineitem_keys = {};
-      for (Integer i = order_start; i <= order_end; i++) {
-         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
-         for (Integer j = 1; j <= lineitem_cnt; j++) {
-            lineitem_keys.push_back(lineitem_t::Key({i, j}));
-         }
-         printProgress("orders of lineitem keys", i, order_start, order_end);
-      }
-      std::random_shuffle(lineitem_keys.begin(), lineitem_keys.end());
+      // generate order keys from order_start to order_end
+      std::cout << "Generating and shuffling order keys..." << std::endl;
+      std::vector<Integer> order_keys(order_end - order_start + 1);
+      std::iota(order_keys.begin(), order_keys.end(), order_start);
+      std::random_shuffle(order_keys.begin(), order_keys.end());
+
       // Load partsupp and lineitem
-      long l_global_cnt = 0;
       const Integer partsupp_size = (PARTSUPP_SCALE / PART_SCALE) * (part_end - part_start + 1);
+      const Integer lineitem_size = (LINEITEM_SCALE / ORDERS_SCALE) * (order_end - order_start + 1);
+      auto current_order_key = order_keys.begin();
+      auto lineitem_cnt_in_order = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
+      int lineitem_number = 1;
+      // (part, supplier) and (order, lineitem) pairs are not perfectly independent,
+      // but (part, supplier) and (order) are.
       for (Integer i = part_start; i <= part_end; i++) {
+         printProgress("parts of partsupp and lineitem", i, part_start, part_end);
          // Randomly select suppliers for this part
          Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2 - 1);
          std::set<Integer> suppliers = {};
@@ -168,20 +170,27 @@ class TPCHWorkload
             // load 1 partsupp
             ps_insert_func(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
             // load lineitems
-            Integer lineitem_cnt = urand(0, lineitem_keys.size() / partsupp_size * 2);
+            Integer lineitem_cnt_ps = urand(0, lineitem_size / partsupp_size * 2);
             // No reference integrity but mostly matched
-            for (Integer l = 0; l < lineitem_cnt; l++) {
+            for (Integer l = 0; l < lineitem_cnt_ps; l++) {
                auto rec = lineitem_t::generateRandomRecord([i]() { return i; }, [s]() { return s; });
-               if (l_global_cnt >= lineitem_keys.size()) {
-                  std::cout << "Warning: lineitem table is not fully populated" << std::endl;
-                  break;
-               } else {
-                  l_insert_func(lineitem_keys[l_global_cnt], rec);
-                  l_global_cnt++;
+               l_insert_func(lineitem_t::Key({*current_order_key, lineitem_number}), rec);
+               lineitem_number++;
+               if (lineitem_number > lineitem_cnt_in_order) {
+                  lineitem_number = 1;
+                  current_order_key++;
+                  lineitem_cnt_in_order = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
+                  if (current_order_key == order_keys.end()) {
+                     current_order_key = order_keys.begin();
+                  }
                }
             }
          }
-         printProgress("parts of partsupp and lineitem", i, part_start, part_end);
+      }
+      // load remaining lineitems
+      std::cout << order_keys.end() - current_order_key << " orders left to fill out lineitems" << std::endl;
+      for (; current_order_key < order_keys.end(); current_order_key++) {
+         loadLineitem(l_insert_func, *current_order_key, *current_order_key);
       }
    }
 
