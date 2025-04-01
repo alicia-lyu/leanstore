@@ -1,8 +1,10 @@
 #pragma once
 // #include <stdexcept>
+#include <variant>
 #include "Exceptions.hpp"
 // #include "MergedAdapter.hpp"
 #include "../tpc-h/Merge.hpp"
+#include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 
@@ -219,10 +221,74 @@ struct LeanStoreMergedAdapter {
       if (res != leanstore::OP_RESULT::OK) {
          return std::nullopt;
       }
+      produced++;
+      return this->current();
+   }
+
+   template <typename RecordType>
+   bool seek(typename RecordType::Key k)
+   {
+      u8 keyBuffer[RecordType::maxFoldLength()];
+      unsigned pos = RecordType::foldKey(keyBuffer, k);
+      leanstore::Slice keySlice(keyBuffer, pos);
+      const OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) {
+         it->seekForPrev(keySlice);  // last key
+         return false;
+      } else {
+         return true;
+      }
+   }
+
+   template <typename JK>
+   bool seek(JK jk)
+   {
+      u8 keyBuffer[JK::maxFoldLength()];
+      unsigned pos = JK::keyfold(keyBuffer, jk);
+      leanstore::Slice keySlice(keyBuffer, pos);
+      const OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) {
+         it->seekForPrev(keySlice);  // last key
+         return false;
+      } else {
+         return true;
+      }
+   }
+
+   template <typename... Records>
+   std::pair<std::variant<typename Records::Key...>, std::variant<Records...>> toType(leanstore::Slice& k, leanstore::Slice& v)
+   {
+      bool matched = false;
+      std::variant<typename Records::Key...> result_key;
+      std::variant<Records...> result_rec;
+
+      (([&]() {
+          if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
+             typename Records::Key key;
+             Records::unfoldKey(k.data(), key);
+             const Records& rec = *reinterpret_cast<const Records*>(v.data());
+             matched = true;
+             result_key = key;
+             result_rec = rec;
+          }
+       })(),
+       ...);
+      assert(matched);
+      return std::make_pair(result_key, result_rec);
+   }
+
+   template <typename... Records>
+   std::variant<Records...> current()
+   {
+      auto [k, v] = current();
+      return toType<Records...>(k, v);
+   }
+
+   std::pair<leanstore::Slice, leanstore::Slice> current()
+   {
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();
-      produced++;
       return std::make_pair(key, payload);
    }
 
@@ -237,26 +303,18 @@ struct LeanStoreMergedAdapter {
             return typename Merge::HeapEntry();
          }
 
-         leanstore::Slice& k = kv->first;
-         leanstore::Slice& v = kv->second;
-         bool matched = false;
          typename Merge::HeapEntry result;
-
          int i = 0;
 
-         (([&]() {
-             if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
-                typename Records::Key key;
-                Records::unfoldKey(k.data(), key);
-                const Records& rec = *reinterpret_cast<const Records*>(v.data());
-                matched = true;
-                result = typename Merge::HeapEntry(key.jk, Records::toBytes(key), Records::toBytes(rec), i);
-             }
-             i++;
-          })(),
-          ...);
-          assert(matched);
-          return result;
+         auto [result_key, result_rec] = this->toType<Records...>(kv->first, kv->second);
+         std::visit(
+             [&](const auto& k, const auto& v) {
+                using T = std::decay_t<decltype(v)>;
+                result = typename Merge::HeapEntry(k.jk, T::toBytes(k), T::toBytes(v), i);
+                i++;
+             },
+             result_key, result_rec);
+         return result;
       }};
       Merge multiway_merge(sources);
       multiway_merge.run();
