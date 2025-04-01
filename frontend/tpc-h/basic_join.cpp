@@ -30,7 +30,7 @@ int main(int argc, char** argv)
    // Views
    LeanStoreAdapter<joinedPPsL_t> joinedPPsL;
    LeanStoreAdapter<joinedPPs_t> joinedPPs;
-   LeanStoreAdapter<merged_lineitem_t> sortedLineitem;
+   LeanStoreAdapter<sorted_lineitem_t> sortedLineitem;
    LeanStoreMergedAdapter mergedBasicJoin;
 
    auto& crm = db.getCRManager();
@@ -46,7 +46,7 @@ int main(int argc, char** argv)
       mergedBasicJoin = LeanStoreMergedAdapter(db, "mergedBasicJoin");
       joinedPPsL = LeanStoreAdapter<joinedPPsL_t>(db, "joinedPPsL");
       joinedPPs = LeanStoreAdapter<joinedPPs_t>(db, "joinedPPs");
-      sortedLineitem = LeanStoreAdapter<merged_lineitem_t>(db, "sortedLineitem");
+      sortedLineitem = LeanStoreAdapter<sorted_lineitem_t>(db, "sortedLineitem");
    });
 
    db.registerConfigEntry("tpch_scale_factor", FLAGS_tpch_scale_factor);
@@ -87,17 +87,18 @@ int main(int argc, char** argv)
             cr::Worker::my().commitTX();
          }
          jumpmuCatch() {
-            std::cerr << "#" << lookup_count.load() << "lookup failed." << std::endl;
+            std::cerr << "#" << lookup_count.load() << " pointLookupsForBase failed." << std::endl;
          }
-         cr::Worker::my().shutdown();
-         running_threads_counter--;
-         std::cout << "\r#" << lookup_count.load() << " lookups performed." << std::endl;
+         if (lookup_count.load() % 100 == 1)
+            std::cout << "\r#" << lookup_count.load() << " pointLookupsForBase performed.";
       }
+      cr::Worker::my().shutdown();
+      running_threads_counter--;
    });
 
    sleep(10);
 
-   crm.scheduleJobAsync(1, [&]() {
+   crm.scheduleJobSync(1, [&]() {
       running_threads_counter++;
       cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
       for (int i = 0; i < 2; ++i) {

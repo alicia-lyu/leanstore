@@ -119,7 +119,7 @@ class BufferManager
          COUNTERS_BLOCK() {
             WorkerCounters::myCounters().dt_resolve_swip_hot[bf.page.dt_id]++;
          }
-         return bf;
+         return bf; 
       } else {
          return resolveSwip(swip_guard, swip_value);
       }

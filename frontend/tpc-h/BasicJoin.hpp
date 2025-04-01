@@ -14,7 +14,7 @@ class BasicJoin
    TPCH& workload;
    AdapterType<joinedPPsL_t>& joinedPPsL;
    AdapterType<joinedPPs_t>& joinedPPs;
-   AdapterType<merged_lineitem_t>& sortedLineitem;
+   AdapterType<sorted_lineitem_t>& sortedLineitem;
    MergedAdapterType& mergedPPsL;
    Logger& logger;
    AdapterType<part_t>& part;
@@ -31,7 +31,7 @@ class BasicJoin
              MergedAdapterType& mbj,
              AdapterType<joinedPPsL_t>& jppsl,
              AdapterType<joinedPPs_t>& jpps,
-             AdapterType<merged_lineitem_t>& sl)
+             AdapterType<sorted_lineitem_t>& sl)
        : mergedPPsL(mbj),
          joinedPPsL(jppsl),
          joinedPPs(jpps),
@@ -53,7 +53,7 @@ class BasicJoin
    {
       Integer part_rnd = workload.getPartID();
       Integer supplier_rnd = workload.getSupplierID();
-      Integer part_id, supplier_id;
+      Integer part_id, supplier_id = 0;
       partsupp.scan(
           partsupp_t::Key({part_rnd, supplier_rnd}),
           [&](const partsupp_t::Key& k, const partsupp_t&) {
@@ -62,8 +62,20 @@ class BasicJoin
              return false;
           },
           []() {});
+      if (part_id == 0 || supplier_id == 0) {
+         partsupp.scanDesc(
+             partsupp_t::Key({part_rnd, supplier_rnd}),
+             [&](const partsupp_t::Key& k, const partsupp_t&) {
+                part_id = k.ps_partkey;
+                supplier_id = k.ps_suppkey;
+                return false;
+             },
+             []() {});
+      }
+      assert(part_id != 0 && supplier_id != 0);
+
       PPsL_JK jk(part_id, supplier_id);
-      sortedLineitem.seek(jk);
+      sortedLineitem.seek(jk); // TODO: replace iterator-related methods from pointLookups
       part.lookup1(part_t::Key({part_id}), [&](const part_t&) {});
 
       pointLookupsOfRest(part_id, supplier_id);
@@ -72,7 +84,7 @@ class BasicJoin
       return std::make_tuple(part_id, supplier_id);
    }
 
-   void pointLookupsOfRest(Integer part_id, Integer supplier_id)
+   void pointLookupsOfRest(Integer, Integer supplier_id)
    {
       Integer customer_id = workload.getCustomerID();
       Integer order_id = workload.getOrderID();
@@ -161,7 +173,7 @@ class BasicJoin
       std::cout << "BasicJoin::queryByBase()" << std::endl;
       auto index_start = std::chrono::high_resolution_clock::now();
 
-      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
+      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
 
       Merge multiway_merge(part, partsupp, sortedLineitem);
       multiway_merge.run();
@@ -214,12 +226,12 @@ class BasicJoin
       // sortedLineitem and all base tables cannot be replaced by this view
       std::vector<std::tuple<part_t::Key, part_t>> new_part;
       std::vector<std::tuple<partsupp_t::Key, partsupp_t>> new_partupp;
-      std::vector<std::tuple<merged_lineitem_t::Key, merged_lineitem_t>> new_lineitems;
+      std::vector<std::tuple<sorted_lineitem_t::Key, sorted_lineitem_t>> new_lineitems;
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
                        [&, this](const lineitem_t::Key& k, const lineitem_t& v) {
                           this->lineitem.insert(k, v);
-                          merged_lineitem_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
-                          merged_lineitem_t v_new(v);
+                          sorted_lineitem_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
+                          sorted_lineitem_t v_new(v);
                           this->sortedLineitem.insert(k_new, v_new);
                           new_lineitems.push_back({k_new, v_new});
                        },
@@ -239,7 +251,7 @@ class BasicJoin
       std::sort(new_part.begin(), new_part.end(), compare);
       std::sort(new_partupp.begin(), new_partupp.end(), compare);
       std::sort(new_lineitems.begin(), new_lineitems.end(), compare);
-      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
+      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
       auto part_it = new_part.begin();
       auto partsupp_it = new_partupp.begin();
       auto lineitems_it = new_lineitems.begin();
@@ -271,7 +283,7 @@ class BasicJoin
          auto& [k, v] = *lineitems_it;
          lineitems_it++;
          auto jk = JKBuilder<PPsL_JK>::create(k, v);
-         return typename Merge::HeapEntry(jk, merged_lineitem_t::toBytes(k), merged_lineitem_t::toBytes(v), 2);
+         return typename Merge::HeapEntry(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v), 2);
       };
 
       PPsL_JK last_accessed_jk = next_jk;
@@ -291,7 +303,7 @@ class BasicJoin
                continue;
             }
             last_accessed_jk = jk;
-            return typename Merge::HeapEntry(jk, merged_lineitem_t::toBytes(k), merged_lineitem_t::toBytes(v),
+            return typename Merge::HeapEntry(jk, part_t::toBytes(k), part_t::toBytes(v),
                                              0);  // not guaranteed to match the deltas but such waste is limited
          }
       };
@@ -312,7 +324,7 @@ class BasicJoin
                continue;
             }
             last_accessed_jk = jk;
-            return typename Merge::HeapEntry(jk, merged_lineitem_t::toBytes(k), merged_lineitem_t::toBytes(v),
+            return typename Merge::HeapEntry(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v),
                                              1);  // not guaranteed to match the deltas but such waste is limited
          }
       };
@@ -328,12 +340,12 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               sortedLineitem.seek(merged_lineitem_t::Key(next_jk, lineitem_t::Key({0, 0})));
+               sortedLineitem.seek(sorted_lineitem_t::Key(next_jk, lineitem_t::Key({0, 0})));
                last_accessed_jk = next_jk;
                continue;
             }
             last_accessed_jk = jk;
-            return typename Merge::HeapEntry(jk, merged_lineitem_t::toBytes(k), merged_lineitem_t::toBytes(v),
+            return typename Merge::HeapEntry(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v),
                                              2);  // not guaranteed to match the deltas but such waste is limited
          }
       };
@@ -459,8 +471,8 @@ class BasicJoin
             break;
          auto& [k, v] = *kv;
          PPsL_JK jk{v.l_partkey, v.l_suppkey};
-         merged_lineitem_t::Key k_new(jk, k);
-         merged_lineitem_t v_new(v);
+         sorted_lineitem_t::Key k_new(jk, k);
+         sorted_lineitem_t v_new(v);
          this->sortedLineitem.insert(k_new, v_new);
          if (k.l_linenumber == 1)
             workload.printProgress("sortedLineitem", k.l_orderkey, 1, workload.last_order_id);
@@ -470,7 +482,7 @@ class BasicJoin
 
    void loadBasicJoin()
    {
-      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
+      using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
       Merge multiway_merge(joinedPPsL, part, partsupp, sortedLineitem);
       multiway_merge.run();
       part.resetIterator();

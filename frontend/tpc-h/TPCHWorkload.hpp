@@ -188,6 +188,11 @@ class TPCHWorkload
          }
       }
       // load remaining lineitems
+      if (lineitem_number > 1 && current_order_key < order_keys.end()) {
+         lineitem_number = 1;
+         current_order_key++;
+         lineitem_cnt_in_order = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
+      }
       std::cout << order_keys.end() - current_order_key << " orders left to fill out lineitems" << std::endl;
       for (; current_order_key < order_keys.end(); current_order_key++) {
          loadLineitem(l_insert_func, *current_order_key, *current_order_key);
