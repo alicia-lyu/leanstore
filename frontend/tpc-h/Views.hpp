@@ -207,7 +207,7 @@ struct PPsL_JK {
     }
 };
 
-struct merged_part_t : public merged<12, part_t, PPsL_JK, false> {
+struct merged_part_t : public merged<13, part_t, PPsL_JK, false> {
     using merged::merged;
 
     static PPsL_JK getJK(const PPsL_JK& jk) {
@@ -215,14 +215,29 @@ struct merged_part_t : public merged<12, part_t, PPsL_JK, false> {
     }
 };
 
-using merged_partsupp_t = merged<12, partsupp_t, PPsL_JK, false>;
+using merged_partsupp_t = merged<13, partsupp_t, PPsL_JK, false>;
 
-using merged_lineitem_t = merged<12, lineitem_t, PPsL_JK, true>;
+using merged_lineitem_t = merged<13, lineitem_t, PPsL_JK, true>;
+
+struct sorted_lineitem_t : public merged<14, lineitem_t, PPsL_JK, true> {
+    using merged::merged;
+ 
+    operator merged_lineitem_t() const {
+        return merged_lineitem_t{this->payload};
+    }
+ 
+    struct Key: public merged::Key {
+        using merged::Key::Key;
+        operator merged_lineitem_t::Key() const {
+            return merged_lineitem_t::Key{this->jk, this->pk};
+        }
+    };
+ };
 
 struct joinedPPs_t : public Joined<11, PPsL_JK, part_t, partsupp_t> {
     using Joined::Joined;
 
-    joinedPPs_t(merged_part_t p, merged_partsupp_t ps): Joined<11, PPsL_JK, part_t, partsupp_t>(std::make_tuple(p.payload, ps.payload)) {}
+    joinedPPs_t(merged_part_t p, merged_partsupp_t ps): Joined(std::make_tuple(p.payload, ps.payload)) {}
 
     struct Key: public Joined::Key {
         Key() = default;
@@ -234,11 +249,11 @@ struct joinedPPs_t : public Joined<11, PPsL_JK, part_t, partsupp_t> {
 
 struct joinedPPsL_t : public Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t> {
     using Joined::Joined;
-    joinedPPsL_t(merged_part_t p, merged_partsupp_t ps, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::make_tuple(p.payload, ps.payload, l.payload)) {}
+    joinedPPsL_t(merged_part_t p, merged_partsupp_t ps, merged_lineitem_t l): Joined(std::make_tuple(p.payload, ps.payload, l.payload)) {}
 
-    joinedPPsL_t(part_t p, partsupp_t ps, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::make_tuple(p, ps, l.payload)) {}
+    joinedPPsL_t(part_t p, partsupp_t ps, merged_lineitem_t l): Joined(std::make_tuple(p, ps, l.payload)) {}
 
-    joinedPPsL_t(joinedPPs_t j, merged_lineitem_t l): Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>(std::tuple_cat(j.payloads, std::make_tuple(l.payload))) {}
+    joinedPPsL_t(joinedPPs_t j, merged_lineitem_t l): Joined(std::tuple_cat(j.payloads, std::make_tuple(l.payload))) {}
 
     struct Key: public Joined::Key {
         Key() = default;

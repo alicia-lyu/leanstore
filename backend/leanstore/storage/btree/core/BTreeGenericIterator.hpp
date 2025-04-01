@@ -48,7 +48,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
          leaf_pos_in_parent = -1;
          jumpmuTry()
          {
-            leaf.unlock();
+            target_guard.unlock();
             p_guard = HybridPageGuard<BTreeNode>(btree.meta_node_bf);
             target_guard = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
             // -------------------------------------------------------------------------------------
@@ -56,38 +56,33 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             // -------------------------------------------------------------------------------------
             while (!target_guard->is_leaf) {
                WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
-               target_guard.unlock();
                Swip<BTreeNode>* c_swip = nullptr;
-               leaf_pos_in_parent = target_guard->lowerBound<false>(key, key_length);
-               if (leaf_pos_in_parent == target_guard->count) {
+               leaf_pos_in_parent = leaf->lowerBound<false>(key, key_length);
+               if (leaf_pos_in_parent == leaf->count) {
                   c_swip = &target_guard->upper;
                } else {
                   c_swip = &target_guard->getChild(leaf_pos_in_parent);
                }
                p_guard = std::move(target_guard);
-               target_guard = HybridPageGuard(p_guard, *c_swip);
+               if (level == btree.height - 1) {
+                  target_guard = HybridPageGuard(p_guard, *c_swip, mode);
+               } else {
+                  target_guard = HybridPageGuard(p_guard, *c_swip);
+               }
                level = level + 1;
             }
             // -------------------------------------------------------------------------------------
-            target_guard.unlock();
+            p_guard.unlock();
             if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
                target_guard.toExclusive();
             } else {
                target_guard.toShared();
             }
+            // -------------------------------------------------------------------------------------
             prefix_copied = false;
             if (enter_leaf_cb) {
                enter_leaf_cb(target_guard);
             }
-            // -------------------------------------------------------------------------------------
-            Slice key_slice(key, key_length);
-            // There must be a leaf where the key is in the boundaries
-            // And target_guard must be that leaf
-            // If this->leaf is also that leaf, do not self-move
-            if (!keyInCurrentBoundaries(key_slice)) {
-               leaf.recheck();
-               leaf = std::move(target_guard);
-            } // else target_guard must be leaf
             // -------------------------------------------------------------------------------------
             jumpmu_return;
          }
