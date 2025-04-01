@@ -49,6 +49,63 @@ class BasicJoin
    {
    }
 
+   std::tuple<Integer, Integer> pointLookupsForBase()
+   {
+      Integer part_rnd = workload.getPartID();
+      Integer supplier_rnd = workload.getSupplierID();
+      Integer part_id, supplier_id;
+      partsupp.scan(
+          partsupp_t::Key({part_rnd, supplier_rnd}),
+          [&](const partsupp_t::Key& k, const partsupp_t&) {
+             part_id = k.ps_partkey;
+             supplier_id = k.ps_suppkey;
+             return false;
+          },
+          []() {});
+      PPsL_JK jk(part_id, supplier_id);
+      sortedLineitem.seek(jk);
+      part.lookup1(part_t::Key({part_id}), [&](const part_t&) {});
+
+      pointLookupsOfRest(part_id, supplier_id);
+      sortedLineitem.resetIterator();
+
+      return std::make_tuple(part_id, supplier_id);
+   }
+
+   void pointLookupsOfRest(Integer part_id, Integer supplier_id)
+   {
+      Integer customer_id = workload.getCustomerID();
+      Integer order_id = workload.getOrderID();
+      Integer nation_id = workload.getNationID();
+      Integer region_id = workload.getRegionID();
+      supplier.lookup1(supplier_t::Key({supplier_id}), [&](const supplier_t&) {});
+      customer.lookup1(customerh_t::Key({customer_id}), [&](const customerh_t&) {});
+      orders.lookup1(orders_t::Key({order_id}), [&](const orders_t&) {});
+      lineitem.lookup1(lineitem_t::Key({order_id, 1}), [&](const lineitem_t&) {});
+      nation.lookup1(nation_t::Key({nation_id}), [&](const nation_t&) {});
+      region.lookup1(region_t::Key({region_id}), [&](const region_t&) {});
+   }
+
+   void pointLookupsForMerged()
+   {
+      Integer part_rnd = workload.getPartID();
+      Integer supplier_rnd = workload.getSupplierID();
+      mergedPPsL.seek(PPsL_JK(part_rnd, supplier_rnd));
+      auto [k, v] = mergedPPsL.template current<merged_part_t, merged_partsupp_t, merged_lineitem_t>();
+      Integer part_id = k.jk.partkey;
+      Integer supplier_id = k.jk.suppkey;
+
+      pointLookupsOfRest(part_id, supplier_id);
+      mergedPPsL.resetIterator();
+   }
+
+   void pointLookupsForView()
+   {
+      auto [part_id, supplier_id] = pointLookupsForBase();
+      joinedPPsL.seek(PPsL_JK(part_id, supplier_id));
+      joinedPPsL.resetIterator();
+   }
+
    void queryByView()
    {
       // Enumrate materialized view
@@ -79,7 +136,7 @@ class BasicJoin
    {
       // TXs: Measure end-to-end time
       queryByMerged();
-      queryByIndex();
+      queryByBase();
       queryByView();
    }
 
@@ -98,15 +155,11 @@ class BasicJoin
       logger.log(merged_t, "query-merged");
    }
 
-   void queryByIndex()
+   void queryByBase()
    {
       logger.reset();
-      std::cout << "BasicJoin::queryByIndex()" << std::endl;
+      std::cout << "BasicJoin::queryByBase()" << std::endl;
       auto index_start = std::chrono::high_resolution_clock::now();
-
-      part.resetIterator();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
 
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, merged_lineitem_t>;
 
@@ -286,7 +339,8 @@ class BasicJoin
       };
 
       // Step 1 Join deltas
-      std::cout << "Size: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems" << std::endl;
+      std::cout << "Size: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems"
+                << std::endl;
       std::vector<std::function<typename Merge::HeapEntry()>> sources1 = {part_delta_src, partsupp_delta_src, lineitem_delta_src};
       Merge delta_join1(sources1);
       delta_join1.run();
@@ -408,7 +462,8 @@ class BasicJoin
          merged_lineitem_t::Key k_new(jk, k);
          merged_lineitem_t v_new(v);
          this->sortedLineitem.insert(k_new, v_new);
-         workload.printProgress("sortedLineitem", k.l_orderkey, 1, workload.last_order_id);
+         if (k.l_linenumber == 1)
+            workload.printProgress("sortedLineitem", k.l_orderkey, 1, workload.last_order_id);
       }
       this->lineitem.resetIterator();
    }

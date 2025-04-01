@@ -213,10 +213,31 @@ struct LeanStoreAdapter : Adapter<Record> {
    };
 
    bool seek(const typename Record::Key& key) {
-      u8 keyBuffer[Record::maxFoldLength()];
-      Record::foldKey(keyBuffer, key);
-      leanstore::Slice keySlice(keyBuffer, Record::maxFoldLength());
-      leanstore::OP_RESULT res = it->seek(keySlice);
+      return seek<Record>(key);
+   }
+
+   template <typename RecordType>
+   bool seek(typename RecordType::Key k)
+   {
+      u8 keyBuffer[RecordType::maxFoldLength()];
+      RecordType::foldKey(keyBuffer, k);
+      leanstore::Slice keySlice(keyBuffer, RecordType::maxFoldLength());
+      const OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) {
+         it->seekForPrev(keySlice); // last key
+         return false;
+      } else {
+         return true;
+      }
+   }
+
+   template <typename JK>
+   bool seek(JK jk)
+   {
+      u8 keyBuffer[JK::maxFoldLength()];
+      unsigned pos = JK::keyfold(keyBuffer, jk);
+      leanstore::Slice keySlice(keyBuffer, pos);
+      const OP_RESULT res = it->seek(keySlice);
       if (res != leanstore::OP_RESULT::OK) {
          it->seekForPrev(keySlice); // last key
          return false;

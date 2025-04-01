@@ -74,13 +74,13 @@ class TPCHWorkload
    Integer last_customer_id;
    Integer last_order_id;
 
-   inline Integer getPartID() { return urand(1, PART_SCALE * FLAGS_tpch_scale_factor); }
+   inline Integer getPartID() { return urand(1, last_part_id); }
 
-   inline Integer getSupplierID() { return urand(1, SUPPLIER_SCALE * FLAGS_tpch_scale_factor); }
+   inline Integer getSupplierID() { return urand(1, last_supplier_id); }
 
-   inline Integer getCustomerID() { return urand(1, CUSTOMER_SCALE * FLAGS_tpch_scale_factor); }
+   inline Integer getCustomerID() { return urand(1, last_customer_id); }
 
-   inline Integer getOrderID() { return urand(1, ORDERS_SCALE * FLAGS_tpch_scale_factor); }
+   inline Integer getOrderID() { return urand(1, last_order_id); }
 
    inline Integer getNationID() { return urand(1, NATION_COUNT); }
 

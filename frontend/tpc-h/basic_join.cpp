@@ -1,13 +1,13 @@
 #include <gflags/gflags.h>
 #include "../shared/LeanStoreAdapter.hpp"
 #include "../shared/LeanStoreMergedAdapter.hpp"
+#include "BasicJoin.hpp"
+#include "LeanStoreLogger.hpp"
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
 #include "Views.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
-#include "LeanStoreLogger.hpp"
-#include "BasicJoin.hpp"
 
 using namespace leanstore;
 
@@ -57,26 +57,59 @@ int main(int argc, char** argv)
    BasicJoin<LeanStoreAdapter, LeanStoreMergedAdapter> tpchBasicJoin(tpch, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem);
 
    if (!FLAGS_recover) {
-        std::cout << "Loading TPC-H" << std::endl;
-        crm.scheduleJobSync(0, [&]() {
-            cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-            logger.reset();
-            tpchBasicJoin.loadBaseTables();
-            tpchBasicJoin.loadSortedLineitem();
-            tpchBasicJoin.loadBasicJoin();
-            tpchBasicJoin.loadMergedBasicJoin();
-            tpchBasicJoin.logSize();
-            logger.logLoading();
-            cr::Worker::my().commitTX();
-        });
+      std::cout << "Loading TPC-H" << std::endl;
+      crm.scheduleJobSync(0, [&]() {
+         cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+         logger.reset();
+         tpchBasicJoin.loadBaseTables();
+         tpchBasicJoin.loadSortedLineitem();
+         tpchBasicJoin.loadBasicJoin();
+         tpchBasicJoin.loadMergedBasicJoin();
+         tpchBasicJoin.logSize();
+         logger.logLoading();
+         cr::Worker::my().commitTX();
+      });
    }
 
-   crm.scheduleJobSync(0, [&]() {
+   atomic<u64> keep_running = true;
+   atomic<u64> lookup_count = 0;
+   atomic<u64> running_threads_counter = 0;
+
+   crm.scheduleJobAsync(0, [&]() {
+      running_threads_counter++;
       tpch.prepare();
+      while (keep_running) {
+         jumpmuTry()
+         {
+            cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
+            tpchBasicJoin.pointLookupsForBase();
+            lookup_count++;
+            cr::Worker::my().commitTX();
+         }
+         jumpmuCatch() {
+            std::cerr << "#" << lookup_count.load() << "lookup failed." << std::endl;
+         }
+         cr::Worker::my().shutdown();
+         running_threads_counter--;
+         std::cout << "\r#" << lookup_count.load() << " lookups performed." << std::endl;
+      }
+   });
+
+   sleep(10);
+
+   crm.scheduleJobAsync(1, [&]() {
+      running_threads_counter++;
       cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
-      tpchBasicJoin.query();
-      tpchBasicJoin.maintain();
+      for (int i = 0; i < 2; ++i) {
+         tpchBasicJoin.queryByBase();
+         tpchBasicJoin.maintainBase();
+      }
       cr::Worker::my().commitTX();
       cr::Worker::my().shutdown();
+      running_threads_counter--;
    });
+
+   keep_running = false;
+   while (running_threads_counter) {}
+   crm.joinAll();
 }
