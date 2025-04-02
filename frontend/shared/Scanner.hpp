@@ -10,10 +10,7 @@ class Scanner
   public:
    uint64_t produced = 0;
 
-   struct pair_t {
-      typename Record::Key key;
-      PayloadType record;
-   };
+   using pair_t = std::pair<typename Record::Key, PayloadType>;
 
    std::function<std::optional<pair_t>()> assemble;
 
@@ -27,4 +24,6 @@ class Scanner
    virtual bool seek(typename Record::Key key) = 0;
 
    virtual std::optional<pair_t> next() = 0;
+
+   virtual std::optional<pair_t> current() = 0;
 };

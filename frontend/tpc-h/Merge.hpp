@@ -34,9 +34,9 @@ struct MultiWayMerge {
    std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<>> heap;
    std::string msg = "Joined";
    // Default: To be joined
-   template <template <typename> class AdapterType>
-   MultiWayMerge(AdapterType<Records>&... adapters)
-       : sources(getHeapSources(adapters...)),
+   template <template <typename> class Scanner>
+   MultiWayMerge(Scanner<Records>&... scanners)
+       : sources(getHeapSources(scanners...)),
          consumes(getHeapConsumesToBeJoined()),
          consume_joined([](const typename JoinedRec::Key&, const JoinedRec&) {})
    {
@@ -50,9 +50,9 @@ struct MultiWayMerge {
    }
 
    // Explicit joinedAdapter
-   template <template <typename> class AdapterType>
-   MultiWayMerge(AdapterType<JoinedRec>& joinedAdapter, AdapterType<Records>&... adapters)
-       : sources(getHeapSources(adapters...)),
+   template <template <typename> class AdapterType, template <typename> class Scanner>
+   MultiWayMerge(AdapterType<JoinedRec>& joinedAdapter, Scanner<Records>&... scanners)
+       : sources(getHeapSources(scanners...)),
          consumes(getHeapConsumesToBeJoined()),
          consume_joined([&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
@@ -66,9 +66,9 @@ struct MultiWayMerge {
       init();
    }
 
-   template <typename MergedAdapterType, template <typename> class AdapterType, typename... SourceRecords>
-   MultiWayMerge(MergedAdapterType& mergedAdapter, AdapterType<SourceRecords>&... adapters)
-       : sources(getHeapSources(adapters...)),
+   template <typename MergedAdapterType, template <typename> class Scanner, typename... SourceRecords>
+   MultiWayMerge(MergedAdapterType& mergedAdapter, Scanner<SourceRecords>&... scanners)
+       : sources(getHeapSources(scanners...)),
          consumes(getHeapConsumesToMerged<MergedAdapterType, SourceRecords...>(mergedAdapter)),
          consume_joined(std::nullopt),
          msg("Merged")
@@ -118,11 +118,11 @@ struct MultiWayMerge {
          heap = {};
    }
 
-   template <template <typename> class AdapterType, typename RecordType>
-   static std::function<HeapEntry()> getHeapSource(AdapterType<RecordType>& adapter, u8 source)
+   template <template <typename> class Scanner, typename RecordType>
+   static std::function<HeapEntry()> getHeapSource(Scanner<RecordType>& scanner, u8 source)
    {
-      return [source, &adapter]() {
-         auto kv = adapter.next();
+      return [source, &scanner]() {
+         auto kv = scanner.next();
          if (!kv)
             return HeapEntry();
          auto& [k, v] = *kv;
@@ -130,16 +130,16 @@ struct MultiWayMerge {
       };
    }
 
-   template <template <typename> class AdapterType, size_t... Is, typename... SourceRecords>
-   static std::vector<std::function<HeapEntry()>> getHeapSources(std::index_sequence<Is...>, AdapterType<SourceRecords>&... adapters)
+   template <template <typename> class Scanner, size_t... Is, typename... SourceRecords>
+   static std::vector<std::function<HeapEntry()>> getHeapSources(std::index_sequence<Is...>, Scanner<SourceRecords>&... scanners)
    {
-      return {getHeapSource(adapters, Is)...};
+      return {getHeapSource(scanners, Is)...};
    }
 
-   template <template <typename> class AdapterType, typename... SourceRecords>
-   static std::vector<std::function<HeapEntry()>> getHeapSources(AdapterType<SourceRecords>&... adapters)
+   template <template <typename> class Scanner, typename... SourceRecords>
+   static std::vector<std::function<HeapEntry()>> getHeapSources(Scanner<SourceRecords>&... scanners)
    {
-      return getHeapSources(std::index_sequence_for<SourceRecords...>{}, adapters...);
+      return getHeapSources(std::index_sequence_for<SourceRecords...>{}, scanners...);
    }
 
    template <typename Tuple, typename Func>
