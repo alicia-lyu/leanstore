@@ -6,6 +6,7 @@
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
 #include "Views.hpp"
+#include "../shared/Scanner.hpp"
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class BasicJoin
@@ -75,11 +76,12 @@ class BasicJoin
       assert(part_id != 0 && supplier_id != 0);
 
       PPsL_JK jk(part_id, supplier_id);
-      sortedLineitem.seek(jk); // TODO: replace iterator-related methods from pointLookups
+      sortedLineitem.tryLookup(jk, [&](const sorted_lineitem_t&) {
+         // std::cout << "found sorted lineitem" << std::endl;
+      });
       part.lookup1(part_t::Key({part_id}), [&](const part_t&) {});
 
       pointLookupsOfRest(part_id, supplier_id);
-      sortedLineitem.resetIterator();
 
       return std::make_tuple(part_id, supplier_id);
    }
@@ -102,20 +104,18 @@ class BasicJoin
    {
       Integer part_rnd = workload.getPartID();
       Integer supplier_rnd = workload.getSupplierID();
-      mergedPPsL.seek(PPsL_JK(part_rnd, supplier_rnd));
+      mergedPPsL.tryLookup(PPsL_JK(part_rnd, supplier_rnd), [&](const auto&) {});
       auto [k, v] = mergedPPsL.template current<merged_part_t, merged_partsupp_t, merged_lineitem_t>();
       Integer part_id = k.jk.partkey;
       Integer supplier_id = k.jk.suppkey;
 
       pointLookupsOfRest(part_id, supplier_id);
-      mergedPPsL.resetIterator();
    }
 
    void pointLookupsForView()
    {
       auto [part_id, supplier_id] = pointLookupsForBase();
-      joinedPPsL.seek(PPsL_JK(part_id, supplier_id));
-      joinedPPsL.resetIterator();
+      joinedPPsL.tryLookup(PPsL_JK(part_id, supplier_id), [&](const auto&) {});
    }
 
    void queryByView()
@@ -174,6 +174,8 @@ class BasicJoin
       auto index_start = std::chrono::high_resolution_clock::now();
 
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
+
+
 
       Merge multiway_merge(part, partsupp, sortedLineitem);
       multiway_merge.run();

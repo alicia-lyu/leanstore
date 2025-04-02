@@ -10,7 +10,6 @@
 #include <cassert>
 #include <cstring>
 #include <functional>
-#include <optional>
 #include <iomanip>
 
 using namespace leanstore;
@@ -18,7 +17,6 @@ template <class Record>
 struct LeanStoreAdapter : Adapter<Record> {
    leanstore::KVInterface* btree;
    leanstore::storage::btree::BTreeGeneric* btree_generic;
-   std::unique_ptr<leanstore::storage::btree::BTreeSharedIterator> it;
    u64 produced;
    string name;
    LeanStoreAdapter()
@@ -41,8 +39,6 @@ struct LeanStoreAdapter : Adapter<Record> {
          }
       }
       btree_generic = static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree));
-      it = std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(*btree_generic);
-      it->reset();
    }
    // -------------------------------------------------------------------------------------
    void printTreeHeight() { cout << name << " height = " << btree->getHeight() << endl; }
@@ -110,6 +106,26 @@ struct LeanStoreAdapter : Adapter<Record> {
       if (res != leanstore::OP_RESULT::OK) {
          std::cout << std::to_string((int) res) << key << std::endl;
          ensure(false);
+      }
+   }
+
+   template <typename JK>
+   bool tryLookup(const JK& key, const std::function<void(const Record&)>& cb)
+   {
+      u8 folded_jk[JK::maxFoldLength()];
+      u16 folded_jk_len = JK::keyfold(folded_jk, key);
+      const OP_RESULT res = btree->lookup(folded_jk, folded_jk_len, [&](const u8* payload, u16 payload_length) {
+         static_cast<void>(payload_length);
+         const Record& typed_payload = *reinterpret_cast<const Record*>(payload);
+         cb(typed_payload);
+      });
+      if (res == leanstore::OP_RESULT::ABORT_TX) {
+         cr::Worker::my().abortTX();
+      }
+      if (res != leanstore::OP_RESULT::OK) {
+         return false;
+      } else {
+         return true;
       }
    }
 
@@ -195,61 +211,6 @@ struct LeanStoreAdapter : Adapter<Record> {
          cr::Worker::my().abortTX();
       }
    }
-   
-   std::optional<std::pair<typename Record::Key, Record>> next() {
-      leanstore::OP_RESULT res = it->next();
-      if (res != leanstore::OP_RESULT::OK)
-         return std::nullopt;
-      it->assembleKey();
-      leanstore::Slice key = it->key();
-      leanstore::Slice payload = it->value();
-
-      Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
-
-      typename Record::Key typed_key;
-      Record::unfoldKey(key.data(), typed_key);
-      produced++;
-      return std::make_pair(typed_key, typed_payload);
-   };
-
-   bool seek(const typename Record::Key& key) {
-      return seek<Record>(key);
-   }
-
-   template <typename RecordType>
-   bool seek(typename RecordType::Key k)
-   {
-      u8 keyBuffer[RecordType::maxFoldLength()];
-      RecordType::foldKey(keyBuffer, k);
-      leanstore::Slice keySlice(keyBuffer, RecordType::maxFoldLength());
-      const OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) {
-         it->seekForPrev(keySlice); // last key
-         return false;
-      } else {
-         return true;
-      }
-   }
-
-   template <typename JK>
-   bool seek(JK jk)
-   {
-      u8 keyBuffer[JK::maxFoldLength()];
-      unsigned pos = JK::keyfold(keyBuffer, jk);
-      leanstore::Slice keySlice(keyBuffer, pos);
-      const OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) {
-         it->seekForPrev(keySlice); // last key
-         return false;
-      } else {
-         return true;
-      }
-   }
-
-   void resetIterator() {
-      it->reset();
-      produced = 0;
-   }
    // -------------------------------------------------------------------------------------
    template <class Field>
    Field lookupField(const typename Record::Key& key, Field Record::*f)
@@ -271,22 +232,22 @@ struct LeanStoreAdapter : Adapter<Record> {
    // -------------------------------------------------------------------------------------
    u64 count() { return btree->countEntries(); }
 
-   std::unique_ptr<Scanner<Record>> getScanner() {
+   Scanner<Record> getScanner() {
       if (FLAGS_vi) {
-         return std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+         return LeanStoreScanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
       } else {
-         return std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+         return LeanStoreScanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
    }
 
-   template <class PayloadProvider>
-   std::unique_ptr<Scanner<Record, PayloadProvider>> getScanner(Adapter<PayloadProvider>* payloadProvider) {
-      leanstore::KVInterface* payloadBtree = dynamic_cast<LeanStoreAdapter<PayloadProvider>*>(payloadProvider)->btree;
+   template <class PayloadRecord>
+   Scanner<Record, PayloadRecord> getScanner(Adapter<PayloadRecord>* payloadProvider) {
+      leanstore::KVInterface* payloadBtree = dynamic_cast<LeanStoreAdapter<PayloadRecord>*>(payloadProvider)->btree;
       if (FLAGS_vi) {
-         return std::make_unique<LeanStoreScanner<Record, PayloadProvider>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
+         return LeanStoreScanner<Record, PayloadRecord>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
          *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(payloadBtree)));
       } else {
-         return std::make_unique<LeanStoreScanner<Record, PayloadProvider>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
+         return LeanStoreScanner<Record, PayloadRecord>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
          *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(payloadBtree)));
       }
    }

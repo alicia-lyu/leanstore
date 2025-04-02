@@ -1,7 +1,8 @@
 #pragma once
 
-#include <optional>
 #include <concepts>
+#include <optional>
+#include "LeanStoreAdapter.hpp"
 #include "Scanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
@@ -17,72 +18,88 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
 
    using pair_t = typename Base::pair_t;
 
-   BTreeIt it;
-   std::optional<BTreeIt> payloadIt;
-   bool afterSeek = false;
+   std::unique_ptr<BTreeIt> it;
+   BTree* payloadTree;
+   std::function<std::optional<pair_t>()> assemble = [this]() -> std::optional<pair_t> {
+      it->assembleKey();
+      leanstore::Slice key = it->key();
+      leanstore::Slice payload = it->value();
+
+      Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
+
+      typename Record::Key typed_key;
+      Record::unfoldKey(key.data(), typed_key);
+      return std::make_optional<pair_t>({typed_key, typed_payload});
+   };
 
   public:
-   LeanStoreScanner(BTree& btree) requires std::same_as<PayloadType, Record>
-       : Base([this]() -> std::optional<pair_t> {
-            it.assembleKey();
-            leanstore::Slice key = it.key();
-            leanstore::Slice payload = it.value();
-
-            Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
-
-            typename Record::Key typed_key;
-            Record::unfoldKey(key.data(), typed_key);
-            return std::make_optional<pair_t>({typed_key, typed_payload});
-         }),
-         it(btree), payloadIt(std::nullopt)
-   {}
-
-   LeanStoreScanner(BTree& btree, BTree& payloadProvider) requires (!std::same_as<PayloadType, Record>)
-   : Base([this]() -> std::optional<pair_t> {
-         it.assembleKey();
-         leanstore::Slice key = it.key();
-         // Parse secondary key and get the primary key
-         typename Record::Key typed_key;
-         Record::unfoldKey(key.data(), typed_key);
-         u8 primaryKeyBuffer[PayloadType::maxFoldLength()];
-         Record::foldPKey(primaryKeyBuffer, typed_key);
-         leanstore::Slice primaryKey(primaryKeyBuffer, PayloadType::maxFoldLength());
-         // Search in primary index
-         auto res1 = payloadIt->seekExact(primaryKey);
-         if (res1 != leanstore::OP_RESULT::OK)
-            return std::nullopt;
-         payloadIt->assembleKey();
-         leanstore::Slice payload = payloadIt->value();
-         PayloadType typed_payload = *reinterpret_cast<const PayloadType*>(payload.data());
-
-         return std::optional<pair_t>({typed_key, typed_payload});
-     }),
-     it(btree), payloadIt(std::make_optional<BTreeIt>(payloadProvider))
-   {}
-
-   virtual bool seek(typename Record::Key key)
+   LeanStoreScanner(BTree& btree)
+      requires std::same_as<PayloadType, Record>
+       : Base(assemble), it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)), payloadTree(nullptr)
    {
-      u8 keyBuffer[Record::maxFoldLength()];
-      Record::foldKey(keyBuffer, key);
-      leanstore::Slice keySlice(keyBuffer, Record::maxFoldLength());
-      leanstore::OP_RESULT res = it.seek(keySlice);
-      if (res == leanstore::OP_RESULT::OK)
-         afterSeek = true;
-      else
-         std::cerr << "LeanStoreScanner::seek: seek failed" << std::endl;
-      return res == leanstore::OP_RESULT::OK;
+      reset();
    }
 
-   virtual std::optional<pair_t> next()
+   LeanStoreScanner(BTree& btree, BTree& payloadProvider)
+      requires(!std::same_as<PayloadType, Record>)
+       : Base(assemble), it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)), payloadTree(&payloadProvider)
    {
-      if (!afterSeek) {
-         leanstore::OP_RESULT res = it.next();
-         if (res != leanstore::OP_RESULT::OK)
-            return std::nullopt;
+      reset();
+   }
+
+   void reset()
+   {
+      it->reset();
+      this->produced = 0;
+   }
+
+   bool seek(const typename Record::Key& key) { return seek<Record>(key); }
+
+   template <typename RecordType>
+   bool seek(typename RecordType::Key k)
+   {
+      u8 keyBuffer[RecordType::maxFoldLength()];
+      RecordType::foldKey(keyBuffer, k);
+      leanstore::Slice keySlice(keyBuffer, RecordType::maxFoldLength());
+      const leanstore::OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) {
+         it->seekForPrev(keySlice);  // last key
+         return false;
       } else {
-         afterSeek = false;
+         return true;
       }
+   }
+
+   template <typename JK>
+   bool seek(JK jk)
+   {
+      u8 keyBuffer[JK::maxFoldLength()];
+      unsigned pos = JK::keyfold(keyBuffer, jk);
+      leanstore::Slice keySlice(keyBuffer, pos);
+      const leanstore::OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) {
+         it->seekForPrev(keySlice);  // last key
+         return false;
+      } else {
+         return true;
+      }
+   }
+
+   std::optional<pair_t> next()
+   {
+      leanstore::OP_RESULT res = it->next();
+      if (res != leanstore::OP_RESULT::OK)
+         return std::nullopt;
       this->produced++;
       return Base::assemble();
+   }
+
+   std::optional<pair_t> current()
+   {
+      if (it->cur == -1) {
+         return std::nullopt;
+      } else {
+         return Base::assemble();
+      }
    }
 };

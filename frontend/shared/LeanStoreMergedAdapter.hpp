@@ -2,19 +2,18 @@
 // #include <stdexcept>
 #include <variant>
 #include "Exceptions.hpp"
-// #include "MergedAdapter.hpp"
-#include "../tpc-h/Merge.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 
 using namespace leanstore;
 
+class LeanStoreMergedScanner;
+
 struct LeanStoreMergedAdapter {
    leanstore::KVInterface* btree;
    leanstore::storage::btree::BTreeGeneric* btree_generic;
    string name;
-   std::unique_ptr<leanstore::storage::btree::BTreeSharedIterator> it;
    u64 produced;
 
    LeanStoreMergedAdapter()
@@ -38,7 +37,6 @@ struct LeanStoreMergedAdapter {
          }
       }
       btree_generic = static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree));
-      it = std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(*btree_generic);
    }
 
    void printTreeHeight() { cout << name << " height = " << btree->getHeight() << endl; }
@@ -129,6 +127,48 @@ struct LeanStoreMergedAdapter {
          return true;
       }
    }
+
+   template <typename... Records>
+   static std::pair<std::variant<typename Records::Key...>, std::variant<Records...>> toType(leanstore::Slice& k, leanstore::Slice& v)
+   {
+      bool matched = false;
+      std::variant<typename Records::Key...> result_key;
+      std::variant<Records...> result_rec;
+
+      (([&]() {
+          if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
+             typename Records::Key key;
+             Records::unfoldKey(k.data(), key);
+             const Records& rec = *reinterpret_cast<const Records*>(v.data());
+             matched = true;
+             result_key = key;
+             result_rec = rec;
+          }
+       })(),
+       ...);
+      assert(matched);
+      return std::make_pair(result_key, result_rec);
+   }
+
+   template <typename JK, typename... Records>
+   bool tryLookup(const JK& jk, const std::function<void(const std::variant<Records...>&)>& cb)
+   {
+      u8 folded_jk[JK::maxFoldLength()];
+      u16 folded_jk_len = JK::keyfold(folded_jk, jk);
+      const OP_RESULT res = btree->tryLookup(folded_jk, folded_jk_len, [&](const u8* payload, u16 payload_length) {
+         static_cast<void>(payload_length);
+         auto [key, rec] = toType<Records...>(jk, payload);
+         cb(rec);
+      });
+      if (res == leanstore::OP_RESULT::ABORT_TX) {
+         cr::Worker::my().abortTX();
+      }
+      if (res != leanstore::OP_RESULT::OK) {
+         return false;
+      } else {
+         return true;
+      }
+   }
    // -------------------------------------------------------------------------------------
    template <class Record>
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb, UpdateSameSizeInPlaceDescriptor& update_descriptor)
@@ -208,119 +248,6 @@ struct LeanStoreMergedAdapter {
          cr::Worker::my().abortTX();
       }
    }
-
-   void resetIterator()
-   {
-      it->reset();
-      produced = 0;
-   }
-
-   std::optional<std::pair<leanstore::Slice, leanstore::Slice>> next()
-   {
-      const OP_RESULT res = it->next();
-      if (res != leanstore::OP_RESULT::OK) {
-         return std::nullopt;
-      }
-      produced++;
-      return this->current();
-   }
-
-   template <typename RecordType>
-   bool seek(typename RecordType::Key k)
-   {
-      u8 keyBuffer[RecordType::maxFoldLength()];
-      unsigned pos = RecordType::foldKey(keyBuffer, k);
-      leanstore::Slice keySlice(keyBuffer, pos);
-      const OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) {
-         it->seekForPrev(keySlice);  // last key
-         return false;
-      } else {
-         return true;
-      }
-   }
-
-   template <typename JK>
-   bool seek(JK jk)
-   {
-      u8 keyBuffer[JK::maxFoldLength()];
-      unsigned pos = JK::keyfold(keyBuffer, jk);
-      leanstore::Slice keySlice(keyBuffer, pos);
-      const OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) {
-         it->seekForPrev(keySlice);  // last key
-         return false;
-      } else {
-         return true;
-      }
-   }
-
-   template <typename... Records>
-   std::pair<std::variant<typename Records::Key...>, std::variant<Records...>> toType(leanstore::Slice& k, leanstore::Slice& v)
-   {
-      bool matched = false;
-      std::variant<typename Records::Key...> result_key;
-      std::variant<Records...> result_rec;
-
-      (([&]() {
-          if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
-             typename Records::Key key;
-             Records::unfoldKey(k.data(), key);
-             const Records& rec = *reinterpret_cast<const Records*>(v.data());
-             matched = true;
-             result_key = key;
-             result_rec = rec;
-          }
-       })(),
-       ...);
-      assert(matched);
-      return std::make_pair(result_key, result_rec);
-   }
-
-   template <typename... Records>
-   std::variant<Records...> current()
-   {
-      auto [k, v] = current();
-      return toType<Records...>(k, v);
-   }
-
-   std::pair<leanstore::Slice, leanstore::Slice> current()
-   {
-      it->assembleKey();
-      leanstore::Slice key = it->key();
-      leanstore::Slice payload = it->value();
-      return std::make_pair(key, payload);
-   }
-
-   template <typename JK, typename JoinedRec, typename... Records>
-   void scanJoin()
-   {
-      using Merge = MultiWayMerge<JK, JoinedRec, Records...>;
-      this->resetIterator();
-      std::vector<std::function<typename Merge::HeapEntry()>> sources = {[&]() {
-         auto kv = this->next();
-         if (!kv.has_value()) {
-            return typename Merge::HeapEntry();
-         }
-
-         typename Merge::HeapEntry result;
-         int i = 0;
-
-         auto [result_key, result_rec] = this->toType<Records...>(kv->first, kv->second);
-         std::visit(
-             [&](const auto& k, const auto& v) {
-                using T = std::decay_t<decltype(v)>;
-                result = typename Merge::HeapEntry(k.jk, T::toBytes(k), T::toBytes(v), i);
-                i++;
-             },
-             result_key, result_rec);
-         return result;
-      }};
-      Merge multiway_merge(sources);
-      multiway_merge.run();
-      this->resetIterator();
-   }
-
    // -------------------------------------------------------------------------------------
    template <class Field, class Record>
    Field lookupField(const typename Record::Key& key, Field Record::* f)
@@ -349,4 +276,6 @@ struct LeanStoreMergedAdapter {
       return s;
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
+
+   LeanStoreMergedScanner getScanner();
 };
