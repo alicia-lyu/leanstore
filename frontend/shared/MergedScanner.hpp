@@ -3,15 +3,15 @@
 #include <optional>
 #include <variant>
 
-template <typename JK, typename... Records>
-struct MergedScannerInterface {
-    virtual ~MergedScannerInterface() = default;
+template <typename JK, typename JoinedRec, typename... Records>
+struct MergedScanner {
+    virtual ~MergedScanner() = default;
 
     virtual void reset() = 0;
 
-    virtual std::optional<std::variant<Records...>> nextRecord() = 0;
+    virtual std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next() = 0;
+
+    virtual std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current() = 0;
 
     virtual bool seek(const JK& jk) = 0;
-
-    virtual void scanJoin() = 0;
 };

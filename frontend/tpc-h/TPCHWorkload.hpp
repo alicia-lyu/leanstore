@@ -213,7 +213,7 @@ class TPCHWorkload
                      Integer part_start = 1,
                      Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
    {
-      loadPartsuppLineitem(insert_func, [this](const lineitem_t::Key&, const lineitem_t&) {}, part_start, part_end, last_order_id, last_order_id - 1);
+      loadPartsuppLineitem(insert_func, [](const lineitem_t::Key&, const lineitem_t&) {}, part_start, part_end, last_order_id, last_order_id - 1);
    }
 
    void loadLineitem(std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_func, Integer order_start, Integer order_end)

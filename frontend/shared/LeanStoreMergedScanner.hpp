@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <variant>
-#include "LeanStoreMergedAdapter.hpp"
 #include "MergedScanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
@@ -10,14 +9,36 @@
 #include "../tpc-h/Merge.hpp"
 
 template <typename JK, typename JoinedRec, typename... Records>
-class LeanStoreScannerAdapter : public MergedScannerInterface<JK, Records...> {
-public:
+class LeanStoreMergedScanner : public MergedScanner<JK, Records...> {
+private:
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
+   std::unique_ptr<BTreeIt> it;
+
+   static std::pair<std::variant<typename Records::Key...>, std::variant<Records...>> toType(leanstore::Slice& k, leanstore::Slice& v)
+   {
+      bool matched = false;
+      std::variant<typename Records::Key...> result_key;
+      std::variant<Records...> result_rec;
+
+      (([&]() {
+          if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
+             typename Records::Key key;
+             Records::unfoldKey(k.data(), key);
+             const Records& rec = *reinterpret_cast<const Records*>(v.data());
+             matched = true;
+             result_key = key;
+             result_rec = rec;
+          }
+       })(),
+       ...);
+      assert(matched);
+      return std::make_pair(result_key, result_rec);
+   }
 
   public:
+
    uint64_t produced = 0;
-   std::unique_ptr<BTreeIt> it;
 
    LeanStoreMergedScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
@@ -27,7 +48,7 @@ public:
       produced = 0;
    }
 
-   std::optional<std::pair<leanstore::Slice, leanstore::Slice>> next()
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next()
    {
       const leanstore::OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK) {
@@ -38,7 +59,7 @@ public:
    }
 
    template <typename RecordType>
-   bool seek(typename RecordType::Key k)
+   bool seek(typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       unsigned pos = RecordType::foldKey(keyBuffer, k);
@@ -52,8 +73,7 @@ public:
       }
    }
 
-   template <typename JK>
-   bool seek(JK jk)
+   bool seek(JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
       unsigned pos = JK::keyfold(keyBuffer, jk);
@@ -67,22 +87,17 @@ public:
       }
    }
 
-   template <typename... Records>
-   std::variant<Records...> current()
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current()
    {
-      auto [k, v] = current();
-      return LeanStoreMergedAdapter::toType<Records...>(k, v);
-   }
-
-   std::pair<leanstore::Slice, leanstore::Slice> current()
-   {
+      if (it->cur == -1) {
+         return std::nullopt;
+      }
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();
-      return std::make_pair(key, payload);
+      return toType<Records...>(key, payload);
    }
 
-   template <typename JK, typename JoinedRec, typename... Records>
    void scanJoin()
    {
       using Merge = MultiWayMerge<JK, JoinedRec, Records...>;
@@ -96,7 +111,7 @@ public:
          typename Merge::HeapEntry result;
          int i = 0;
 
-         auto [result_key, result_rec] = LeanStoreMergedAdapter::toType<Records...>(kv->first, kv->second);
+         auto [result_key, result_rec] = toType<Records...>(kv->first, kv->second);
          std::visit(
              [&](const auto& k, const auto& v) {
                 using T = std::decay_t<decltype(v)>;

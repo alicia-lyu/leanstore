@@ -6,7 +6,6 @@
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
 #include "Views.hpp"
-#include "../shared/Scanner.hpp"
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class BasicJoin
@@ -175,18 +174,16 @@ class BasicJoin
 
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
 
+      auto part_scanner = part.getScanner();
+      auto partsupp_scanner = partsupp.getScanner();
+      auto lineitem_scanner = sortedLineitem.getScanner();
 
-
-      Merge multiway_merge(part, partsupp, sortedLineitem);
+      Merge multiway_merge(*part_scanner.get(), *partsupp_scanner.get(), *lineitem_scanner.get());
       multiway_merge.run();
 
       auto index_end = std::chrono::high_resolution_clock::now();
       auto index_t = std::chrono::duration_cast<std::chrono::microseconds>(index_end - index_start).count();
       logger.log(index_t, "query-base");
-
-      part.resetIterator();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
    }
 
    void maintain()
@@ -289,9 +286,13 @@ class BasicJoin
       };
 
       PPsL_JK last_accessed_jk = next_jk;
+      auto part_scanner = part.getScanner();
+      auto partsupp_scanner = partsupp.getScanner();
+      auto lineitem_scanner = sortedLineitem.getScanner();
+
       auto part_src = [&next_jk, &last_accessed_jk, this]() {
          while (true) {
-            auto kv = part.next();
+            auto kv = part_scanner->next();
             if (kv == std::nullopt) {
                return typename Merge::HeapEntry();
             }
@@ -300,7 +301,7 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               part.seek(part_t::Key({next_jk.l_partkey}));
+               part_scanner->seek(part_t::Key({next_jk.l_partkey}));
                last_accessed_jk = next_jk;
                continue;
             }
@@ -312,7 +313,7 @@ class BasicJoin
 
       auto partsupp_src = [&next_jk, &last_accessed_jk, this]() {
          while (true) {
-            auto kv = partsupp.next();
+            auto kv = partsupp_scanner->next();
             if (kv == std::nullopt) {
                return typename Merge::HeapEntry();
             }
@@ -321,7 +322,7 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               partsupp.seek(partsupp_t::Key({next_jk.l_partkey, next_jk.l_partsuppkey}));
+               partsupp_scanner->seek(partsupp_t::Key({next_jk.l_partkey, next_jk.l_partsuppkey}));
                last_accessed_jk = next_jk;
                continue;
             }
@@ -333,7 +334,7 @@ class BasicJoin
 
       auto lineitem_src = [&next_jk, &last_accessed_jk, this]() {
          while (true) {
-            auto kv = sortedLineitem.next();
+            auto kv = lineitem_scanner->next();
             if (kv == std::nullopt) {
                return typename Merge::HeapEntry();
             }
@@ -342,7 +343,7 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               sortedLineitem.seek(sorted_lineitem_t::Key(next_jk, lineitem_t::Key({0, 0})));
+               lineitem_scanner->seek(sorted_lineitem_t::Key(next_jk, lineitem_t::Key({0, 0})));
                last_accessed_jk = next_jk;
                continue;
             }
@@ -361,7 +362,7 @@ class BasicJoin
       // Step 2 join 2 deltas and search for matches in a base table
       part_it = new_part.begin();
       partsupp_it = new_partupp.begin();
-      sortedLineitem.resetIterator();
+      lineitem_scanner->reset();
       next_jk = JKBuilder<PPsL_JK>::create(std::get<0>(*part_it), std::get<1>(*part_it));
       std::vector<std::function<typename Merge::HeapEntry()>> sources2_1 = {part_delta_src, partsupp_delta_src, lineitem_src};
       Merge delta_join2_1(sources2_1);
@@ -370,7 +371,7 @@ class BasicJoin
       // TODO: change order of record types
       part_it = new_part.begin();
       lineitems_it = new_lineitems.begin();
-      partsupp.resetIterator();
+      partsupp_scanner->reset();
       next_jk = JKBuilder<PPsL_JK>::create(std::get<0>(*part_it), std::get<1>(*part_it));
       std::vector<std::function<typename Merge::HeapEntry()>> sources2_2 = {part_delta_src, lineitem_delta_src, partsupp_src};
       Merge delta_join2_2(sources2_2);
@@ -378,7 +379,7 @@ class BasicJoin
 
       partsupp_it = new_partupp.begin();
       lineitems_it = new_lineitems.begin();
-      part.resetIterator();
+      part_scanner->reset();
       next_jk = JKBuilder<PPsL_JK>::create(std::get<0>(*partsupp_it), std::get<1>(*partsupp_it));
       std::vector<std::function<typename Merge::HeapEntry()>> sources2_3 = {partsupp_delta_src, lineitem_delta_src, part_src};
       Merge delta_join2_3(sources2_3);
@@ -386,32 +387,28 @@ class BasicJoin
 
       // step 3 For 1 delta, search for matches in 2 base tables
       part_it = new_part.begin();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
+      partsupp_scanner->reset();
+      lineitem_scanner->reset();
       next_jk = JKBuilder<PPsL_JK>::create(std::get<0>(*part_it), std::get<1>(*part_it));
       std::vector<std::function<typename Merge::HeapEntry()>> sources3_1 = {part_delta_src, partsupp_src, lineitem_src};
       Merge delta_join3_1(sources3_1);
       delta_join3_1.run();
 
       partsupp_it = new_partupp.begin();
-      sortedLineitem.resetIterator();
-      part.resetIterator();
+      lineitem_scanner->reset();
+      part_scanner->reset();
       next_jk = JKBuilder<PPsL_JK>::create(std::get<0>(*partsupp_it), std::get<1>(*partsupp_it));
       std::vector<std::function<typename Merge::HeapEntry()>> sources3_2 = {partsupp_delta_src, lineitem_src, part_src};
       Merge delta_join3_2(sources3_2);
       delta_join3_2.run();
 
       lineitems_it = new_lineitems.begin();
-      part.resetIterator();
-      partsupp.resetIterator();
+      part_scanner->reset();
+      partsupp_scanner->reset();
       next_jk = JKBuilder<PPsL_JK>::create(std::get<0>(*lineitems_it), std::get<1>(*lineitems_it));
       std::vector<std::function<typename Merge::HeapEntry()>> sources3_3 = {lineitem_delta_src, partsupp_src, part_src};
       Merge delta_join3_3(sources3_3);
       delta_join3_3.run();
-
-      part.resetIterator();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
 
       auto end = std::chrono::high_resolution_clock::now();
 
@@ -467,8 +464,9 @@ class BasicJoin
    void loadSortedLineitem()
    {
       // sort lineitem
+      auto lineitem_scanner = lineitem.getScanner();
       while (true) {
-         auto kv = this->lineitem.next();
+         auto kv = lineitem_scanner->next();
          if (kv == std::nullopt)
             break;
          auto& [k, v] = *kv;
@@ -479,29 +477,26 @@ class BasicJoin
          if (k.l_linenumber == 1)
             workload.printProgress("sortedLineitem", k.l_orderkey, 1, workload.last_order_id);
       }
-      this->lineitem.resetIterator();
    }
 
    void loadBasicJoin()
    {
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
-      Merge multiway_merge(joinedPPsL, part, partsupp, sortedLineitem);
+      auto part_scanner = part.getScanner();
+      auto partsupp_scanner = partsupp.getScanner();
+      auto lineitem_scanner = sortedLineitem.getScanner();
+      Merge multiway_merge(joinedPPsL, *part_scanner.get(), *partsupp_scanner.get(), *lineitem_scanner.get());
       multiway_merge.run();
-      part.resetIterator();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
    };
 
    void loadMergedBasicJoin()
    {
       using Merge = MultiWayMerge<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>;
-
-      Merge multiway_merge(mergedPPsL, part, partsupp, sortedLineitem);
+      auto part_scanner = part.getScanner();
+      auto partsupp_scanner = partsupp.getScanner();
+      auto lineitem_scanner = sortedLineitem.getScanner();
+      Merge multiway_merge(mergedPPsL, *part_scanner.get(), *partsupp_scanner.get(), *lineitem_scanner.get());
       multiway_merge.run();
-
-      part.resetIterator();
-      partsupp.resetIterator();
-      sortedLineitem.resetIterator();
    }
 
    void logSize()
