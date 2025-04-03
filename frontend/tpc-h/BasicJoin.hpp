@@ -6,7 +6,7 @@
 #include "Merge.hpp"
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
-#include "Views.hpp"
+#include "BasicJoinViews.hpp"
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class BasicJoin
@@ -19,13 +19,7 @@ class BasicJoin
    MergedAdapterType& mergedPPsL;
    Logger& logger;
    AdapterType<part_t>& part;
-   AdapterType<supplier_t>& supplier;
    AdapterType<partsupp_t>& partsupp;
-   AdapterType<customerh_t>& customer;
-   AdapterType<orders_t>& orders;
-   AdapterType<lineitem_t>& lineitem;
-   AdapterType<nation_t>& nation;
-   AdapterType<region_t>& region;
 
   public:
    BasicJoin(TPCH& workload,
@@ -40,13 +34,7 @@ class BasicJoin
          sortedLineitem(sl),
          logger(workload.logger),
          part(workload.part),
-         supplier(workload.supplier),
-         partsupp(workload.partsupp),
-         customer(workload.customer),
-         orders(workload.orders),
-         lineitem(workload.lineitem),
-         nation(workload.nation),
-         region(workload.region)
+         partsupp(workload.partsupp)
    {
    }
 
@@ -92,12 +80,12 @@ class BasicJoin
       Integer order_id = workload.getOrderID();
       Integer nation_id = workload.getNationID();
       Integer region_id = workload.getRegionID();
-      supplier.lookup1(supplier_t::Key({supplier_id}), [&](const supplier_t&) {});
-      customer.lookup1(customerh_t::Key({customer_id}), [&](const customerh_t&) {});
-      orders.lookup1(orders_t::Key({order_id}), [&](const orders_t&) {});
-      lineitem.lookup1(lineitem_t::Key({order_id, 1}), [&](const lineitem_t&) {});
-      nation.lookup1(nation_t::Key({nation_id}), [&](const nation_t&) {});
-      region.lookup1(region_t::Key({region_id}), [&](const region_t&) {});
+      workload.supplier.lookup1(supplier_t::Key({supplier_id}), [&](const supplier_t&) {});
+      workload.customer.lookup1(customerh_t::Key({customer_id}), [&](const customerh_t&) {});
+      workload.orders.lookup1(orders_t::Key({order_id}), [&](const orders_t&) {});
+      workload.lineitem.lookup1(lineitem_t::Key({order_id, 1}), [&](const lineitem_t&) {});
+      workload.nation.lookup1(nation_t::Key({nation_id}), [&](const nation_t&) {});
+      workload.region.lookup1(region_t::Key({region_id}), [&](const region_t&) {});
    }
 
    void pointLookupsForMerged()
@@ -111,7 +99,7 @@ class BasicJoin
       while (part_id == 0 || supplier_id == 0) {
          auto [k, v] = merged_scanner->current().value();
          std::visit(
-             [&](auto& actual_key) { // if actual_key is merged_part_t, supplier_id = 0
+             [&](auto& actual_key) {  // if actual_key is merged_part_t, supplier_id = 0
                 PPsL_JK jk = actual_key.jk;
                 part_id = jk.l_partkey;
                 supplier_id = jk.suppkey;
@@ -211,9 +199,9 @@ class BasicJoin
    {
       std::cout << "BasicJoin::maintainMerged()" << std::endl;
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
-      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
                        [this](const lineitem_t::Key& k, const lineitem_t& v) {
-                          lineitem.insert(k, v);
+                          workload.lineitem.insert(k, v);
                           merged_lineitem_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
                           merged_lineitem_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
@@ -241,9 +229,9 @@ class BasicJoin
       std::vector<std::tuple<part_t::Key, part_t>> new_part;
       std::vector<std::tuple<partsupp_t::Key, partsupp_t>> new_partupp;
       std::vector<std::tuple<sorted_lineitem_t::Key, sorted_lineitem_t>> new_lineitems;
-      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
+      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
                        [&, this](const lineitem_t::Key& k, const lineitem_t& v) {
-                          this->lineitem.insert(k, v);
+                          workload.lineitem.insert(k, v);
                           sorted_lineitem_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
                           sorted_lineitem_t v_new(v);
                           this->sortedLineitem.insert(k_new, v_new);
@@ -435,8 +423,8 @@ class BasicJoin
    void maintainBase()
    {
       std::cout << "BasicJoin::maintainBase()" << std::endl;
-      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
-                       [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
+      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
+                       [this](const lineitem_t::Key& k, const lineitem_t& v) { workload.lineitem.insert(k, v); },
                        [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
                        [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); }, "base");
    }
@@ -479,7 +467,7 @@ class BasicJoin
    void loadSortedLineitem()
    {
       // sort lineitem
-      auto lineitem_scanner = lineitem.getScanner();
+      auto lineitem_scanner = workload.lineitem.getScanner();
       while (true) {
          auto kv = lineitem_scanner->next();
          if (kv == std::nullopt)

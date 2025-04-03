@@ -5,7 +5,7 @@
 #include "LeanStoreLogger.hpp"
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
-#include "Views.hpp"
+#include "BasicJoinViews.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 
