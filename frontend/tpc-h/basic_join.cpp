@@ -89,8 +89,8 @@ int main(int argc, char** argv)
          jumpmuCatch() {
             std::cerr << "#" << lookup_count.load() << " pointLookupsForBase failed." << std::endl;
          }
-         if (lookup_count.load() % 100 == 1)
-            std::cout << "\r#" << lookup_count.load() << " pointLookupsForBase performed.";
+         if (lookup_count.load() % 100 == 1 && running_threads_counter == 1)
+            std::cout << "\r#" << lookup_count.load() << " warm-up pointLookupsForBase performed.";
       }
       cr::Worker::my().shutdown();
       running_threads_counter--;
@@ -101,6 +101,7 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(1, [&]() {
       running_threads_counter++;
       cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
+      std::cout << std::endl;
       for (int i = 0; i < 2; ++i) {
          tpchBasicJoin.queryByBase();
          tpchBasicJoin.maintainBase();

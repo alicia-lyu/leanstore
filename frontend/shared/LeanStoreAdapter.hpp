@@ -104,7 +104,7 @@ struct LeanStoreAdapter : Adapter<Record> {
          cr::Worker::my().abortTX();
       }
       if (res != leanstore::OP_RESULT::OK) {
-         std::cout << std::to_string((int) res) << key << std::endl;
+         std::cout << (int) res << ":" << key << std::endl;
          ensure(false);
       }
    }

@@ -98,6 +98,7 @@ class TPCHWorkload
    void printProgress(std::string msg, Integer i, Integer start, Integer end)
    {
       auto scale = end - start + 1;
+      if (scale < 100) return;
       if (i % 1000 == start % 1000 || i == end) {
          double progress = (double)(i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
@@ -144,7 +145,8 @@ class TPCHWorkload
                              Integer order_end)
    {
       // generate order keys from order_start to order_end
-      std::cout << "Generating and shuffling order keys..." << std::endl;
+      if (order_end > order_start)
+         std::cout << "Generating and shuffling order keys..." << std::endl;
       std::vector<Integer> order_keys(order_end - order_start + 1);
       std::iota(order_keys.begin(), order_keys.end(), order_start);
       std::random_shuffle(order_keys.begin(), order_keys.end());
