@@ -33,6 +33,11 @@ class LeanStoreLogger : public Logger
          t->next();
       }
    };
+
+   ~LeanStoreLogger() {
+      std::cout << "Logs written to " << FLAGS_csv_path << std::endl;
+   }
+
    void writeOutAll();
    std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed);
    void reset();

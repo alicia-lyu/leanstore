@@ -437,8 +437,8 @@ class BasicJoin
       // 100 new orders
       auto order_start = workload.last_order_id + 1;
       auto order_end = workload.last_order_id + 100;
-      workload.loadOrders(order_insert_func, order_start, order_end);
       workload.loadLineitem(lineitem_insert_func, order_start, order_end);
+      workload.loadOrders(order_insert_func, order_start, order_end); // update last_order_id after lineitems are also loaded
       // 1 new part & several partsupp
       auto part_start = workload.last_part_id + 1;
       auto part_end = workload.last_part_id + 1;
