@@ -151,11 +151,11 @@ struct joinedPPs_t;
 
 struct PPsL_JK {
     Integer l_partkey;
-    Integer l_partsuppkey;
+    Integer suppkey;
 
     PPsL_JK() = default;
-    PPsL_JK(Integer partkey, Integer partsuppkey): l_partkey(partkey), l_partsuppkey(partsuppkey) {}
-    PPsL_JK(const PPsL_JK& jk): l_partkey(jk.l_partkey), l_partsuppkey(jk.l_partsuppkey) {}
+    PPsL_JK(Integer partkey, Integer partsuppkey): l_partkey(partkey), suppkey(partsuppkey) {}
+    PPsL_JK(const PPsL_JK& jk): l_partkey(jk.l_partkey), suppkey(jk.suppkey) {}
 
     static PPsL_JK max() {
         return PPsL_JK({std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()});
@@ -164,14 +164,14 @@ struct PPsL_JK {
     static unsigned keyfold(uint8_t* out, const PPsL_JK& key) {
         unsigned pos = 0;
         pos += fold(out + pos, key.l_partkey); // TODO: Only fold the first field for part_t
-        pos += fold(out + pos, key.l_partsuppkey);
+        pos += fold(out + pos, key.suppkey);
         return pos;
     };
 
     static unsigned keyunfold(const uint8_t* in, PPsL_JK& key) {
         unsigned pos = 0;
         pos += unfold(in + pos, key.l_partkey);
-        pos += unfold(in + pos, key.l_partsuppkey);
+        pos += unfold(in + pos, key.suppkey);
         return pos;
     };
 
@@ -180,14 +180,14 @@ struct PPsL_JK {
     }
 
     friend std::ostream& operator<<(std::ostream& os, const PPsL_JK& jk) {
-        os << "PPsL_JK(" << jk.l_partkey << ", " << jk.l_partsuppkey << ")";
+        os << "PPsL_JK(" << jk.l_partkey << ", " << jk.suppkey << ")";
         return os;
     }
 
     auto operator<=>(const PPsL_JK&) const = default;
 
     friend int operator%(const PPsL_JK& jk, const int& n) {
-        return (jk.l_partsuppkey + jk.l_partkey) % n;
+        return (jk.suppkey + jk.l_partkey) % n;
     }
 
     int match(const PPsL_JK& other) const {
@@ -201,8 +201,8 @@ struct PPsL_JK {
 
         if (l_partkey != 0 && other.l_partkey != 0 && l_partkey != other.l_partkey)
             return l_partkey - other.l_partkey;
-        if (l_partsuppkey != 0 && other.l_partsuppkey != 0)
-            return l_partsuppkey - other.l_partsuppkey;
+        if (suppkey != 0 && other.suppkey != 0)
+            return suppkey - other.suppkey;
         return 0;
     }
 };
@@ -261,7 +261,7 @@ struct joinedPPsL_t : public Joined<12, PPsL_JK, part_t, partsupp_t, lineitem_t>
         Key(const joinedPPs_t::Key& j1k, const merged_lineitem_t::Key& lk): Joined::Key({j1k.jk, std::tuple_cat(j1k.keys, std::make_tuple(lk.pk))}) {}
         Key(const part_t::Key& pk, const partsupp_t::Key& psk, const lineitem_t::Key& lk): Joined::Key({PPsL_JK{pk.p_partkey, psk.ps_suppkey}, std::make_tuple(pk, psk, lk)}) {}
         Key(const part_t::Key& pk, const partsupp_t::Key& psk, const merged_lineitem_t::Key& lk): Joined::Key({PPsL_JK{pk.p_partkey, psk.ps_suppkey}, std::make_tuple(pk, psk, lk.pk)}) {}
-        Key(const merged_part_t::Key& pk, const merged_partsupp_t::Key& psk, const merged_lineitem_t::Key& lk): Joined::Key({PPsL_JK{pk.jk.l_partkey, psk.jk.l_partsuppkey}, std::make_tuple(pk.pk, psk.pk, lk.pk)}) {}
+        Key(const merged_part_t::Key& pk, const merged_partsupp_t::Key& psk, const merged_lineitem_t::Key& lk): Joined::Key({PPsL_JK{pk.jk.l_partkey, psk.jk.suppkey}, std::make_tuple(pk.pk, psk.pk, lk.pk)}) {}
 
     };
 };

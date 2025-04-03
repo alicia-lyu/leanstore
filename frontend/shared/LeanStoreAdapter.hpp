@@ -23,7 +23,7 @@ struct LeanStoreAdapter : Adapter<Record> {
    {
       // hack
    }
-   LeanStoreAdapter(LeanStore& db, string name) : name(name), produced(0)
+   LeanStoreAdapter(LeanStore& db, string name) : produced(0), name(name)
    {
       if (FLAGS_vi) {
          if (FLAGS_recover) {

@@ -82,7 +82,7 @@ class RocksDBScanner : public Scanner<Record, PayloadType>
       payloadIt(map.db->NewIterator(map.iterator_ro))
    {}
 
-   virtual bool seek(typename Record::Key key)
+   virtual bool seek(const typename Record::Key key)
    {
       u8 folded_key[Record::maxFoldLength() + sizeof(SEP)];
       const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key + sizeof(SEP), key);

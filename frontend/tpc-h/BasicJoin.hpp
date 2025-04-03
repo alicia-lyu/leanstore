@@ -1,5 +1,6 @@
 #include <chrono>
 #include <optional>
+#include <variant>
 #include <vector>
 #include "Logger.hpp"
 #include "Merge.hpp"
@@ -32,11 +33,11 @@ class BasicJoin
              AdapterType<joinedPPsL_t>& jppsl,
              AdapterType<joinedPPs_t>& jpps,
              AdapterType<sorted_lineitem_t>& sl)
-       : mergedPPsL(mbj),
+       : workload(workload),
+         mergedPPsL(mbj),
          joinedPPsL(jppsl),
          joinedPPs(jpps),
          sortedLineitem(sl),
-         workload(workload),
          logger(workload.logger),
          part(workload.part),
          supplier(workload.supplier),
@@ -103,10 +104,24 @@ class BasicJoin
    {
       Integer part_rnd = workload.getPartID();
       Integer supplier_rnd = workload.getSupplierID();
-      mergedPPsL.tryLookup(PPsL_JK(part_rnd, supplier_rnd), [&](const auto&) {});
-      auto [k, v] = mergedPPsL.template current<merged_part_t, merged_partsupp_t, merged_lineitem_t>();
-      Integer part_id = k.jk.partkey;
-      Integer supplier_id = k.jk.suppkey;
+      auto merged_scanner = mergedPPsL.template getScanner<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
+      merged_scanner->seek(PPsL_JK(part_rnd, supplier_rnd));
+      bool is_part = true;
+      Integer part_id;
+      Integer supplier_id;
+      while (is_part) {
+         auto [k, v] = merged_scanner->current().value();
+         std::visit(
+             [&](auto& actual_key) {
+                using T = std::decay_t<decltype(actual_key)>;
+                if constexpr (std::is_same_v<T, merged_part_t::Key>) {
+                   merged_scanner->next();
+                } else {
+                  is_part = false;
+                }
+             },
+             k);
+      }
 
       pointLookupsOfRest(part_id, supplier_id);
    }
@@ -159,7 +174,9 @@ class BasicJoin
       std::cout << "BasicJoin::queryByMerged()" << std::endl;
       auto merged_start = std::chrono::high_resolution_clock::now();
 
-      mergedPPsL.template scanJoin<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
+      auto merged_scanner = mergedPPsL.template getScanner<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
+
+      merged_scanner->scanJoin();
 
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
@@ -290,7 +307,7 @@ class BasicJoin
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
 
-      auto part_src = [&next_jk, &last_accessed_jk, this]() {
+      auto part_src = [&next_jk, &last_accessed_jk, &part_scanner]() {
          while (true) {
             auto kv = part_scanner->next();
             if (kv == std::nullopt) {
@@ -311,7 +328,7 @@ class BasicJoin
          }
       };
 
-      auto partsupp_src = [&next_jk, &last_accessed_jk, this]() {
+      auto partsupp_src = [&next_jk, &last_accessed_jk, &partsupp_scanner]() {
          while (true) {
             auto kv = partsupp_scanner->next();
             if (kv == std::nullopt) {
@@ -322,7 +339,7 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               partsupp_scanner->seek(partsupp_t::Key({next_jk.l_partkey, next_jk.l_partsuppkey}));
+               partsupp_scanner->seek(partsupp_t::Key({next_jk.l_partkey, next_jk.suppkey}));
                last_accessed_jk = next_jk;
                continue;
             }
@@ -332,7 +349,7 @@ class BasicJoin
          }
       };
 
-      auto lineitem_src = [&next_jk, &last_accessed_jk, this]() {
+      auto lineitem_src = [&next_jk, &last_accessed_jk, &lineitem_scanner]() {
          while (true) {
             auto kv = lineitem_scanner->next();
             if (kv == std::nullopt) {
@@ -438,7 +455,7 @@ class BasicJoin
       auto order_start = workload.last_order_id + 1;
       auto order_end = workload.last_order_id + 100;
       workload.loadLineitem(lineitem_insert_func, order_start, order_end);
-      workload.loadOrders(order_insert_func, order_start, order_end); // update last_order_id after lineitems are also loaded
+      workload.loadOrders(order_insert_func, order_start, order_end);  // update last_order_id after lineitems are also loaded
       // 1 new part & several partsupp
       auto part_start = workload.last_part_id + 1;
       auto part_end = workload.last_part_id + 1;

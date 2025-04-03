@@ -14,5 +14,5 @@ class Scanner
 
   virtual std::optional<std::pair<typename Record::Key, Record>> current() = 0;
 
-  virtual bool seek(typename Record::Key& key) = 0;
+  virtual bool seek(const typename Record::Key& key) = 0;
 };
