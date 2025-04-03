@@ -106,21 +106,18 @@ class BasicJoin
       Integer supplier_rnd = workload.getSupplierID();
       auto merged_scanner = mergedPPsL.template getScanner<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
       merged_scanner->seek(PPsL_JK(part_rnd, supplier_rnd));
-      bool is_part = true;
-      Integer part_id;
-      Integer supplier_id;
-      while (is_part) {
+      Integer part_id = 0;
+      Integer supplier_id = 0;
+      while (part_id == 0 || supplier_id == 0) {
          auto [k, v] = merged_scanner->current().value();
          std::visit(
-             [&](auto& actual_key) {
-                using T = std::decay_t<decltype(actual_key)>;
-                if constexpr (std::is_same_v<T, merged_part_t::Key>) {
-                   merged_scanner->next();
-                } else {
-                  is_part = false;
-                }
+             [&](auto& actual_key) { // if actual_key is merged_part_t, supplier_id = 0
+                PPsL_JK jk = actual_key.jk;
+                part_id = jk.l_partkey;
+                supplier_id = jk.suppkey;
              },
              k);
+         merged_scanner->next();
       }
 
       pointLookupsOfRest(part_id, supplier_id);
@@ -216,6 +213,7 @@ class BasicJoin
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { this->orders.insert(k, v); },
                        [this](const lineitem_t::Key& k, const lineitem_t& v) {
+                          lineitem.insert(k, v);
                           merged_lineitem_t::Key k_new(JKBuilder<PPsL_JK>::create(k, v), k);
                           merged_lineitem_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
