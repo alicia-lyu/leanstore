@@ -2,13 +2,13 @@
 // #include <stdexcept>
 #include <variant>
 #include "Exceptions.hpp"
+#include "LeanStoreMergedScanner.hpp"
+#include "MergedScanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 
 using namespace leanstore;
-
-class LeanStoreMergedScanner;
 
 struct LeanStoreMergedAdapter {
    leanstore::KVInterface* btree;
@@ -212,43 +212,6 @@ struct LeanStoreMergedAdapter {
       return (res == leanstore::OP_RESULT::OK);
    }
    // -------------------------------------------------------------------------------------
-   template <class Record, class OtherRec>
-   void scan(const typename Record::Key& key,
-             const std::function<bool(const typename Record::Key&, const Record&)>& cb,
-             const std::function<bool(const typename OtherRec::Key&, const OtherRec&)>& other_cb,
-             std::function<void()> undo)
-   {
-      u8 folded_joinkey[Record::joinKeyLength()];
-      u16 folded_joinkey_len = Record::foldJKey(folded_joinkey, key);
-
-      u16 folded_key_len = Record::maxFoldLength();
-      u16 other_folded_key_len = OtherRec::maxFoldLength();
-
-      OP_RESULT ret = btree->scanAsc(
-          folded_joinkey, folded_joinkey_len,
-          [&](const u8* key, u16 key_length, const u8* payload, u16 payload_length) {
-             if (key_length == folded_key_len && payload_length == sizeof(Record)) {
-                static_cast<void>(payload_length);
-                typename Record::Key typed_key;
-                Record::unfoldKey(key, typed_key);
-                const Record& typed_payload = *reinterpret_cast<const Record*>(payload);
-                return cb(typed_key, typed_payload);
-             } else if (key_length == other_folded_key_len && payload_length == sizeof(OtherRec)) {
-                static_cast<void>(key_length);
-                typename OtherRec::Key typed_key;
-                OtherRec::unfoldKey(key, typed_key);
-                const OtherRec& typed_payload = *reinterpret_cast<const OtherRec*>(payload);
-                return other_cb(typed_key, typed_payload);
-             } else {
-                UNREACHABLE();
-             }
-          },
-          undo);
-      if (ret == leanstore::OP_RESULT::ABORT_TX) {
-         cr::Worker::my().abortTX();
-      }
-   }
-   // -------------------------------------------------------------------------------------
    template <class Field, class Record>
    Field lookupField(const typename Record::Key& key, Field Record::* f)
    {
@@ -277,5 +240,12 @@ struct LeanStoreMergedAdapter {
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
 
-   LeanStoreMergedScanner getScanner();
+   template <typename JK, typename JoinedRec, typename... Records>
+   std::unique_ptr<LeanStoreMergedScanner<JK, JoinedRec, Records...>> getScanner() {
+      if (FLAGS_vi) {
+         return std::make_unique<LeanStoreMergedScanner<JK, JoinedRec, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+      } else {
+         return std::make_unique<LeanStoreMergedScanner<JK, JoinedRec, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+      }
+   }
 };

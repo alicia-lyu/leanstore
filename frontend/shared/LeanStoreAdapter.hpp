@@ -232,24 +232,14 @@ struct LeanStoreAdapter : Adapter<Record> {
    // -------------------------------------------------------------------------------------
    u64 count() { return btree->countEntries(); }
 
-   Scanner<Record> getScanner() {
+   std::unique_ptr<LeanStoreScanner<Record>> getScanner() {
+      std::unique_ptr<LeanStoreScanner<Record>> scanner;
       if (FLAGS_vi) {
-         return LeanStoreScanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+         scanner = std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
       } else {
-         return LeanStoreScanner<Record>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+         scanner = std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
-   }
-
-   template <class PayloadRecord>
-   Scanner<Record, PayloadRecord> getScanner(Adapter<PayloadRecord>* payloadProvider) {
-      leanstore::KVInterface* payloadBtree = dynamic_cast<LeanStoreAdapter<PayloadRecord>*>(payloadProvider)->btree;
-      if (FLAGS_vi) {
-         return LeanStoreScanner<Record, PayloadRecord>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)),
-         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(payloadBtree)));
-      } else {
-         return LeanStoreScanner<Record, PayloadRecord>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)), 
-         *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(payloadBtree)));
-      }
+      return scanner;
    }
 
    u64 estimatePages() final { return btree->estimatePages(); }

@@ -1,51 +1,25 @@
 #pragma once
 
+#include <sys/types.h>
 #include <concepts>
 #include <optional>
-#include "LeanStoreAdapter.hpp"
 #include "Scanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
-template <class Record, class PayloadType = Record>
-class LeanStoreScanner : public Scanner<Record, PayloadType>
+template <class Record>
+class LeanStoreScanner : public Scanner<Record>
 {
   protected:
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
-   using Base = Scanner<Record, PayloadType>;
-
-   using pair_t = typename Base::pair_t;
 
    std::unique_ptr<BTreeIt> it;
-   BTree* payloadTree;
-   std::function<std::optional<pair_t>()> assemble = [this]() -> std::optional<pair_t> {
-      it->assembleKey();
-      leanstore::Slice key = it->key();
-      leanstore::Slice payload = it->value();
-
-      Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
-
-      typename Record::Key typed_key;
-      Record::unfoldKey(key.data(), typed_key);
-      return std::make_optional<pair_t>({typed_key, typed_payload});
-   };
+   uint64_t produced = 0;
 
   public:
-   LeanStoreScanner(BTree& btree)
-      requires std::same_as<PayloadType, Record>
-       : Base(assemble), it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)), payloadTree(nullptr)
-   {
-      reset();
-   }
-
-   LeanStoreScanner(BTree& btree, BTree& payloadProvider)
-      requires(!std::same_as<PayloadType, Record>)
-       : Base(assemble), it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)), payloadTree(&payloadProvider)
-   {
-      reset();
-   }
+   LeanStoreScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
    void reset()
    {
@@ -53,10 +27,10 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
       this->produced = 0;
    }
 
-   bool seek(const typename Record::Key& key) { return seek<Record>(key); }
+   bool seek(typename Record::Key& key) { return seek<Record>(key); }
 
    template <typename RecordType>
-   bool seek(typename RecordType::Key k)
+   bool seek(typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       RecordType::foldKey(keyBuffer, k);
@@ -71,7 +45,7 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
    }
 
    template <typename JK>
-   bool seek(JK jk)
+   bool seek(JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
       unsigned pos = JK::keyfold(keyBuffer, jk);
@@ -85,21 +59,27 @@ class LeanStoreScanner : public Scanner<Record, PayloadType>
       }
    }
 
-   std::optional<pair_t> next()
+   std::optional<std::pair<typename Record::Key, Record>> next()
    {
       leanstore::OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK)
          return std::nullopt;
       this->produced++;
-      return Base::assemble();
+      return this->current();
    }
 
-   std::optional<pair_t> current()
+   std::optional<std::pair<typename Record::Key, Record>> current()
    {
-      if (it->cur == -1) {
+      if (it->cur == -1)
          return std::nullopt;
-      } else {
-         return Base::assemble();
-      }
+      it->assembleKey();
+      leanstore::Slice key = it->key();
+      leanstore::Slice payload = it->value();
+
+      Record typed_payload = *reinterpret_cast<const Record*>(payload.data());
+
+      typename Record::Key typed_key;
+      Record::unfoldKey(key.data(), typed_key);
+      return std::make_pair(typed_key, typed_payload);
    }
 };

@@ -4,26 +4,15 @@
 #include <iostream>
 #include <optional>
 
-template <class Record, class PayloadType = Record>
+template <class Record>
 class Scanner
 {
   public:
-   uint64_t produced = 0;
+  virtual void reset() = 0;
 
-   using pair_t = std::pair<typename Record::Key, PayloadType>;
+  virtual std::optional<std::pair<typename Record::Key, Record>> next() = 0;
 
-   std::function<std::optional<pair_t>()> assemble;
+  virtual std::optional<std::pair<typename Record::Key, Record>> current() = 0;
 
-   Scanner(std::function<std::optional<pair_t>()> assemble) : assemble(assemble) {}
-
-   virtual ~Scanner() { 
-      if (produced > 99999)
-         std::cout << "Scanner::~Scanner: produced " << produced << " records" << std::endl;
-   }
-
-   virtual bool seek(typename Record::Key key) = 0;
-
-   virtual std::optional<pair_t> next() = 0;
-
-   virtual std::optional<pair_t> current() = 0;
+  virtual bool seek(typename Record::Key& key) = 0;
 };
