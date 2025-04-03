@@ -2,15 +2,16 @@
 
 #include <cstdint>
 #include <variant>
+#include "../tpc-h/Merge.hpp"
 #include "MergedScanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
-#include "../tpc-h/Merge.hpp"
 
 template <typename JK, typename JoinedRec, typename... Records>
-class LeanStoreMergedScanner : public MergedScanner<JK, Records...> {
-private:
+class LeanStoreMergedScanner : public MergedScanner<JK, JoinedRec, Records...>
+{
+  private:
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
    std::unique_ptr<BTreeIt> it;
@@ -37,7 +38,6 @@ private:
    }
 
   public:
-
    uint64_t produced = 0;
 
    LeanStoreMergedScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
@@ -59,7 +59,7 @@ private:
    }
 
    template <typename RecordType>
-   bool seek(typename RecordType::Key& k)
+   bool seek(const typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       unsigned pos = RecordType::foldKey(keyBuffer, k);
@@ -73,7 +73,7 @@ private:
       }
    }
 
-   bool seek(JK& jk)
+   bool seek(const JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
       unsigned pos = JK::keyfold(keyBuffer, jk);
@@ -95,7 +95,7 @@ private:
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();
-      return toType<Records...>(key, payload);
+      return toType(key, payload);
    }
 
    void scanJoin()
@@ -109,14 +109,23 @@ private:
          }
 
          typename Merge::HeapEntry result;
-         int i = 0;
 
-         auto [result_key, result_rec] = toType<Records...>(kv->first, kv->second);
+         auto& [result_key, result_rec] = *kv;
+
          std::visit(
              [&](const auto& k, const auto& v) {
                 using T = std::decay_t<decltype(v)>;
-                result = typename Merge::HeapEntry(k.jk, T::toBytes(k), T::toBytes(v), i);
-                i++;
+                int idx = 0;
+                bool found = false;
+                (([&]() {
+                    if constexpr (std::is_same_v<T, Records>) {
+                       found = true;
+                    } else if (!found) {
+                       idx++;
+                    }
+                 }()),
+                 ...);
+                result = typename Merge::HeapEntry(k.jk, T::toBytes(k), T::toBytes(v), idx);
              },
              result_key, result_rec);
          return result;

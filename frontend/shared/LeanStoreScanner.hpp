@@ -1,7 +1,6 @@
 #pragma once
 
 #include <sys/types.h>
-#include <concepts>
 #include <optional>
 #include "Scanner.hpp"
 #include "leanstore/KVInterface.hpp"
@@ -27,10 +26,10 @@ class LeanStoreScanner : public Scanner<Record>
       this->produced = 0;
    }
 
-   bool seek(typename Record::Key& key) { return seek<Record>(key); }
+   bool seek(const typename Record::Key& key) { return seek<Record>(key); }
 
    template <typename RecordType>
-   bool seek(typename RecordType::Key& k)
+   bool seek(const typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       RecordType::foldKey(keyBuffer, k);
@@ -45,7 +44,7 @@ class LeanStoreScanner : public Scanner<Record>
    }
 
    template <typename JK>
-   bool seek(JK& jk)
+   bool seek(const JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
       unsigned pos = JK::keyfold(keyBuffer, jk);
