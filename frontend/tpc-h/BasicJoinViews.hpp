@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ViewsTemplate.hpp"
+#include "ViewTemplates.hpp"
 
 struct PPsL_JK {
     Integer l_partkey;
