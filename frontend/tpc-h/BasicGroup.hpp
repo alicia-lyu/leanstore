@@ -15,5 +15,6 @@ class BasicJoin
 {
    using TPCH = TPCHWorkload<AdapterType, MergedAdapterType>;
    TPCH& workload;
+   
 
 };
