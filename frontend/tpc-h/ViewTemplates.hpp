@@ -1,7 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include "Tables.hpp"
+#include <cstring>
+#include <ostream>
+#include <tuple>
+#include <vector>
+#include "TableTemplates.hpp"
 
 template <int TID, typename JK, typename... Ts>
 struct joined_t {
@@ -146,5 +150,5 @@ struct merged_t {
     }
 };
 
-template <typename JK>
-struct JKBuilder {};
+template <typename SK>
+struct SKBuilder {}; // sort key builder

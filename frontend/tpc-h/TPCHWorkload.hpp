@@ -14,13 +14,16 @@
 
 DECLARE_double(tpch_scale_factor);
 
+namespace basic_join
+{
 template <template <typename> class AdapterType, class MergedAdapterType>
 class BasicJoin;
+}
 
 template <template <typename> class AdapterType, class MergedAdapterType>
 class TPCHWorkload
 {
-   friend class BasicJoin<AdapterType, MergedAdapterType>;
+   friend class basic_join::BasicJoin<AdapterType, MergedAdapterType>;
 
   private:
    Logger& logger;
@@ -98,7 +101,8 @@ class TPCHWorkload
    void printProgress(std::string msg, Integer i, Integer start, Integer end)
    {
       auto scale = end - start + 1;
-      if (scale < 100) return;
+      if (scale < 100)
+         return;
       if (i % 1000 == start % 1000 || i == end) {
          double progress = (double)(i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";

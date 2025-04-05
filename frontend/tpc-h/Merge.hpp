@@ -126,7 +126,7 @@ struct MultiWayMerge {
          if (!kv)
             return HeapEntry();
          auto& [k, v] = *kv;
-         return HeapEntry(JKBuilder<JK>::create(k, v), RecordType::toBytes(k), RecordType::toBytes(v), source);
+         return HeapEntry(SKBuilder<JK>::create(k, v), RecordType::toBytes(k), RecordType::toBytes(v), source);
       };
    }
 
@@ -155,7 +155,7 @@ struct MultiWayMerge {
           auto& vec = std::get<Is>(cached_records);
           using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
           using RecordType = std::tuple_element_t<1, VecElem>;
-          if (current_entry.jk.match(JKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
+          if (current_entry.jk.match(SKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
              joinCurrent();
              vec.clear();
           }
