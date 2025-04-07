@@ -59,7 +59,7 @@ class LeanStoreMergedScanner : public MergedScanner<JK, JoinedRec, Records...>
    }
 
    template <typename RecordType>
-   bool seek(const typename RecordType::Key& k)
+   bool seek(const typename RecordType::Key& k) // not guaranteed to land on RecordType
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       unsigned pos = RecordType::foldKey(keyBuffer, k);
@@ -70,6 +70,28 @@ class LeanStoreMergedScanner : public MergedScanner<JK, JoinedRec, Records...>
          return false;
       } else {
          return true;
+      }
+   }
+
+   template <typename RecordType>
+   bool seekTyped(const typename RecordType::Key& k)
+   {
+      auto result = seek(k);
+      while (true) {
+         leanstore::OP_RESULT ret;
+         if (!result) {
+            ret = it->prev();
+         } else {
+            ret = it->next();
+         }
+         if (ret != leanstore::OP_RESULT::OK) {
+            reset();
+            return false;
+         }
+         auto kv = current();
+         if (std::holds_alternative<RecordType>(kv.second)) {
+            return true;
+         }
       }
    }
 
