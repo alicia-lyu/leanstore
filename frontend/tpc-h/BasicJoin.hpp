@@ -456,14 +456,7 @@ class BasicJoin
 
    void loadBaseTables()
    {
-      workload.loadPart();
-      workload.loadSupplier();
-      workload.loadCustomer();
-      workload.loadOrders();
-      workload.loadPartsuppLineitem();
-      workload.loadNation();
-      workload.loadRegion();
-      workload.logSize();
+      workload.load();
    }
 
    void loadSortedLineitem()

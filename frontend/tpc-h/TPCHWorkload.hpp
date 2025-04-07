@@ -62,6 +62,19 @@ class TPCHWorkload
    {
    }
 
+   void load()
+   {
+      loadPart();
+      loadSupplier();
+      loadPartsuppLineitem();
+      loadCustomer();
+      loadOrders();
+      loadLineitem();
+      loadNation();
+      loadRegion();
+      logSize();
+   }
+
   private:
    static constexpr Integer PART_SCALE = 200000;
    static constexpr Integer SUPPLIER_SCALE = 10000;
@@ -90,9 +103,6 @@ class TPCHWorkload
    inline Integer getRegionID() { return urand(1, REGION_COUNT); }
 
   public:
-   void basicGroup();
-
-   void basicJoinGroup();
 
    // ------------------------------------LOAD-------------------------------------------------
 
