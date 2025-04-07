@@ -3,6 +3,7 @@
 // #include "Logger.hpp"
 // #include "Merge.hpp"
 #include <optional>
+#include <variant>
 #include "../shared/Adapter.hpp"
 #include "BasicGroupViews.hpp"
 #include "Logger.hpp"
@@ -37,7 +38,91 @@ class BasicGroup
    {
    }
 
-   // point lookups
+   // point lookups: one on partsupp, one per aggregate
+   // one per other base tables
+   void pointLookupsTemplate(std::function<void(const Integer&, const Integer&)> lookup_partsupp_find_valid_key,
+                             std::function<void(const Integer)> lookup_count_partsupp,
+                             std::function<void(const Integer)> lookup_sum_supplycost,
+                             std::string name)
+   {
+      std::cout << "BasicGroup::pointLookupsTemplate for " << name << std::endl;
+      logger.reset();
+      auto start = std::chrono::high_resolution_clock::now();
+      Integer part_id = workload.getPartID();
+      Integer supplier_id = workload.getSupplierID();
+      lookup_partsupp_find_valid_key(part_id, supplier_id);
+      lookup_count_partsupp(part_id);
+      lookup_sum_supplycost(part_id);
+
+      workload.part.lookup1(part_t::Key({part_id}), [&](const part_t&) {});
+      workload.supplier.lookup1(supplier_t::Key({supplier_id}), [&](const supplier_t&) {});
+
+      Integer customer_id = workload.getCustomerID();
+      Integer order_id = workload.getOrderID();
+      Integer nation_id = workload.getNationID();
+      Integer region_id = workload.getRegionID();
+      workload.customer.lookup1(customerh_t::Key({customer_id}), [&](const customerh_t&) {});
+      workload.orders.lookup1(orders_t::Key({order_id}), [&](const orders_t&) {});
+      workload.lineitem.lookup1(lineitem_t::Key({order_id, 1}), [&](const lineitem_t&) {});
+      workload.nation.lookup1(nation_t::Key({nation_id}), [&](const nation_t&) {});
+      workload.region.lookup1(region_t::Key({region_id}), [&](const region_t&) {});
+
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "point-lookup-" + name);
+   }
+
+   void pointLookupsForIndex()
+   {
+      pointLookupsTemplate(
+          [this](const Integer& part_id, const Integer& supplier_id) {
+             auto partsupp_scanner = workload.partsupp.getScanner();
+             partsupp_scanner->seek(partsupp_t::Key({part_id, supplier_id}));
+             auto kv = partsupp_scanner->current();
+             assert(kv.has_value());
+             auto& [k, v] = *kv;
+             part_id = k.ps_partkey;
+             supplier_id = k.ps_suppkey;
+          },
+          [this](const Integer part_id) { count_partsupp.lookup1(count_partsupp_t::Key({part_id}), [&](const count_partsupp_t&) {}); },
+          [this](const Integer part_id) { sum_supplycost.lookup1(sum_supplycost_t::Key({part_id}), [&](const sum_supplycost_t&) {}); }, "base");
+   }
+
+   void pointLookupsForMerged()
+   {
+      pointLookupsTemplate(
+          [this](const Integer& part_id, const Integer& supplier_id) {
+             auto partsupp_scanner = mergedBasicGroup.getScanner();
+             auto ret = partsupp_scanner->seekTyped(partsupp_t::Key({part_id, supplier_id}));
+             assert(ret);
+             auto kv = partsupp_scanner->current();
+             auto& [k, v] = *kv;
+             std::visit(
+                 [&](auto& actual_key) {  // if actual_key is merged_part_t, supplier_id = 0
+                    part_id = actual_key.ps_partkey;
+                    supplier_id = actual_key.ps_suppkey;
+                 },
+                 k);
+          },
+          [this](const Integer part_id) { mergedBasicGroup.lookup1(count_partsupp_t::Key({part_id}), [&](const count_partsupp_t&) {}); },
+          [this](const Integer part_id) { mergedBasicGroup.lookup1(sum_supplycost_t::Key({part_id}), [&](const sum_supplycost_t&) {}); }, "merged");
+   }
+
+   void pointLookupsForView()
+   {
+      pointLookupsTemplate(
+          [this](const Integer& part_id, const Integer& supplier_id) {
+             auto partsupp_scanner = workload.partsupp.getScanner();
+             partsupp_scanner->seek(partsupp_t::Key({part_id, supplier_id}));
+             auto kv = partsupp_scanner->current();
+             assert(kv.has_value());
+             auto& [k, v] = *kv;
+             part_id = k.ps_partkey;
+             supplier_id = k.ps_suppkey;
+          },
+          [this](const Integer part_id) { view.lookup1(view_t::Key({part_id}), [&](const view_t&) {}); },
+          [this](const Integer part_id) { view.lookup1(view_t::Key({part_id}), [&](const view_t&) {}); }, "view");
+   }
 
    // queries
 
@@ -47,7 +132,7 @@ class BasicGroup
                          std::function<void(const Integer, const Numeric, const leanstore::UpdateSameSizeInPlaceDescriptor)> sum_update_func,
                          std::string name)
    {
-      std::cout << "BasicGroup::maintain " << name << std::endl;
+      std::cout << "BasicGroup::maintainTemplate for " << name << std::endl;
       logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
       // add one supplier (preexisting) for an existing part
