@@ -36,8 +36,8 @@ class BasicGroup
    Logger& logger;
 
   public:
-   BasicGroup(TPCH& workload, MergedAdapterType& mbg, AdapterType<view_t>& v, AdapterType<partsupp_t>& ps)
-       : workload(workload), mergedBasicGroup(mbg), view(v), partsupp(ps), logger(workload.logger)
+   BasicGroup(TPCH& workload, MergedAdapterType& mbg, AdapterType<view_t>& v, AdapterType<count_partsupp_t>& count, AdapterType<sum_supplycost_t>& sum)
+       : workload(workload), mergedBasicGroup(mbg), view(v), partsupp(workload.partsupp), logger(workload.logger), count_partsupp(count), sum_supplycost(sum)
    {
    }
 
