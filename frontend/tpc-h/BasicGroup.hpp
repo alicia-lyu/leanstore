@@ -17,6 +17,9 @@
 // FROM PartSupp
 // GROUP BY partkey;
 
+template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
+template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
+
 namespace basic_group
 {
 template <template <typename> class AdapterType, class MergedAdapterType>
@@ -125,6 +128,85 @@ class BasicGroup
    }
 
    // queries
+   static void inspectIncrementProduced(const std::string& msg, long& produced)
+   {
+      if (produced % 1000 == 0) {
+         std::cout << "\r" << msg << (double)produced / 1000 << "k------------------------------------";
+      }
+      produced++;
+   }
+
+   void queryByView()
+   {
+      // enumerate view
+      logger.reset();
+      std::cout << "BasicGroup::queryByView()" << std::endl;
+      auto start = std::chrono::high_resolution_clock::now();
+      [[maybe_unused]] long produced = 0;
+      view.scan(
+          {},
+          [&](const auto&, const auto&) {
+             inspectIncrementProduced("Enumerating materialized view: ", produced);
+             return true;
+          },
+          [&]() {});
+      std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "query-view");
+   }
+
+   void queryByIndex()
+   {
+      // enumerate index
+      logger.reset();
+      std::cout << "BasicGroup::queryByIndex()" << std::endl;
+      auto start = std::chrono::high_resolution_clock::now();
+      [[maybe_unused]] long produced = 0;
+      auto count_scanner = count_partsupp.getScanner();
+      auto sum_scanner = sum_supplycost.getScanner();
+      while (true) {
+         auto count_kv = count_scanner->next();
+         auto sum_kv = sum_scanner->next();
+         if (count_kv == std::nullopt || sum_kv == std::nullopt)
+            break;
+         auto& [count_partkey, count_v] = *count_kv;
+         auto& [sum_partkey, sum_v] = *sum_kv;
+         assert(count_partkey == sum_partkey);
+         [[maybe_unused]] auto avg_supplycost = sum_v.sum_supplycost / count_v.count;
+         inspectIncrementProduced("Enumerating index: ", produced);
+      }
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "query-index");
+   }
+
+   void queryByMerged()
+   {
+      logger.reset();
+      std::cout << "BasicGroup::queryByMerged()" << std::endl;
+      auto start = std::chrono::high_resolution_clock::now();
+      [[maybe_unused]] long produced = 0;
+      auto scanner = mergedBasicGroup.getScanner();
+      Integer count = 0;
+      while (true) {
+         auto kv = scanner->next();
+         if (kv == std::nullopt)
+            break;
+         auto& [k, v] = *kv;
+         std::visit(overloaded{[](const partsupp_t&) {
+                                  // do nothing
+                               },
+                               [&](const count_partsupp_t& count_rec) { count = count_rec.count; },
+                               [&](const sum_supplycost_t& sum) { [[maybe_unused]] auto avg_supplycost = sum.sum_supplycost / count; }},
+                    v);
+         inspectIncrementProduced("Enumerating merged: ", produced);
+      }
+      std::cout << "\rEnumerating merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "query-merged");
+   }
 
    // maintenance
    void maintainTemplate(std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
