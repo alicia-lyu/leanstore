@@ -63,11 +63,11 @@ namespace basic_group {
             Key(const key_base& k): key_base(k) {}
         };
     
-        Integer count;
+        Integer count_partsupp;
         Numeric sum_supplycost;
     };
 
-    struct view_t: public view_base, public RecordPrototype<view_base, &view_base::count, &view_base::sum_supplycost> {
+    struct view_t: public view_base, public RecordPrototype<view_base, &view_base::count_partsupp, &view_base::sum_supplycost> {
         explicit view_t(view_base base): view_base(base) {}
         view_t() = default;
     };
