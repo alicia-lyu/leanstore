@@ -8,8 +8,8 @@
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
-template <typename JK, typename JoinedRec, typename... Records>
-class LeanStoreMergedScanner : public MergedScanner<JK, JoinedRec, Records...>
+template <typename... Records>
+class LeanStoreMergedScanner : public MergedScanner<Records...>
 {
   private:
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
@@ -76,7 +76,7 @@ class LeanStoreMergedScanner : public MergedScanner<JK, JoinedRec, Records...>
    template <typename RecordType>
    bool seekTyped(const typename RecordType::Key& k)
    {
-      auto result = seek(k);
+      auto result = seek<RecordType>(k);
       while (true) {
          leanstore::OP_RESULT ret;
          if (!result) {
@@ -88,14 +88,15 @@ class LeanStoreMergedScanner : public MergedScanner<JK, JoinedRec, Records...>
             reset();
             return false;
          }
-         auto kv = current();
+         auto kv = current().value();
          if (std::holds_alternative<RecordType>(kv.second)) {
             return true;
          }
       }
    }
 
-   bool seek(const JK& jk)
+   template <typename JK>
+   bool seekJK(const JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
       unsigned pos = JK::keyfold(keyBuffer, jk);
@@ -120,6 +121,7 @@ class LeanStoreMergedScanner : public MergedScanner<JK, JoinedRec, Records...>
       return toType(key, payload);
    }
 
+   template <typename JK, typename JoinedRec>
    void scanJoin()
    {
       using Merge = MultiWayMerge<JK, JoinedRec, Records...>;

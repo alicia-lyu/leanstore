@@ -1,3 +1,4 @@
+#pragma once
 #include "leanstore/utils/RandomGenerator.hpp"
 #include "../shared/Types.hpp"
 

@@ -6,6 +6,7 @@
 #include <variant>
 #include "../shared/Adapter.hpp"
 #include "BasicGroupViews.hpp"
+#include "Exceptions.hpp"
 #include "Logger.hpp"
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
@@ -43,7 +44,7 @@ class BasicGroup
 
    // point lookups: one on partsupp, one per aggregate
    // one per other base tables
-   void pointLookupsTemplate(std::function<void(const Integer&, const Integer&)> lookup_partsupp_find_valid_key,
+   void pointLookupsTemplate(std::function<void(Integer&, Integer&)> lookup_partsupp_find_valid_key,
                              std::function<void(const Integer)> lookup_count_partsupp,
                              std::function<void(const Integer)> lookup_sum_supplycost,
                              std::string name)
@@ -78,7 +79,7 @@ class BasicGroup
    void pointLookupsForIndex()
    {
       pointLookupsTemplate(
-          [this](const Integer& part_id, const Integer& supplier_id) {
+          [this](Integer& part_id, Integer& supplier_id) {
              auto partsupp_scanner = workload.partsupp.getScanner();
              partsupp_scanner->seek(partsupp_t::Key({part_id, supplier_id}));
              auto kv = partsupp_scanner->current();
@@ -94,27 +95,32 @@ class BasicGroup
    void pointLookupsForMerged()
    {
       pointLookupsTemplate(
-          [this](const Integer& part_id, const Integer& supplier_id) {
-             auto partsupp_scanner = mergedBasicGroup.getScanner();
-             auto ret = partsupp_scanner->seekTyped(partsupp_t::Key({part_id, supplier_id}));
+          [this](Integer& part_id, Integer& supplier_id) {
+             auto partsupp_scanner = mergedBasicGroup.template getScanner<partsupp_t, count_partsupp_t, sum_supplycost_t>();
+             auto ret = partsupp_scanner->template seekTyped<partsupp_t>(partsupp_t::Key({part_id, supplier_id}));
              assert(ret);
              auto kv = partsupp_scanner->current();
              auto& [k, v] = *kv;
              std::visit(
-                 [&](auto& actual_key) {  // if actual_key is merged_part_t, supplier_id = 0
-                    part_id = actual_key.ps_partkey;
-                    supplier_id = actual_key.ps_suppkey;
-                 },
-                 k);
+               overloaded{[&](const partsupp_t::Key& actual_key) {
+                  part_id = actual_key.ps_partkey;
+                  supplier_id = actual_key.ps_suppkey;
+               },
+               [&](const count_partsupp_t::Key&) {
+                  UNREACHABLE();
+               },
+               [&](const sum_supplycost_t::Key&) {
+                  UNREACHABLE();
+               }}, k);
           },
-          [this](const Integer part_id) { mergedBasicGroup.lookup1(count_partsupp_t::Key({part_id}), [&](const count_partsupp_t&) {}); },
-          [this](const Integer part_id) { mergedBasicGroup.lookup1(sum_supplycost_t::Key({part_id}), [&](const sum_supplycost_t&) {}); }, "merged");
+          [this](const Integer part_id) { mergedBasicGroup.template lookup1<count_partsupp_t>(count_partsupp_t::Key({part_id}), [&](const count_partsupp_t&) {}); },
+          [this](const Integer part_id) { mergedBasicGroup.template lookup1<sum_supplycost_t>(sum_supplycost_t::Key({part_id}), [&](const sum_supplycost_t&) {}); }, "merged");
    }
 
    void pointLookupsForView()
    {
       pointLookupsTemplate(
-          [this](const Integer& part_id, const Integer& supplier_id) {
+          [this](Integer& part_id, Integer& supplier_id) {
              auto partsupp_scanner = workload.partsupp.getScanner();
              partsupp_scanner->seek(partsupp_t::Key({part_id, supplier_id}));
              auto kv = partsupp_scanner->current();
@@ -170,9 +176,9 @@ class BasicGroup
          auto sum_kv = sum_scanner->next();
          if (count_kv == std::nullopt || sum_kv == std::nullopt)
             break;
-         auto& [count_partkey, count_v] = *count_kv;
-         auto& [sum_partkey, sum_v] = *sum_kv;
-         assert(count_partkey == sum_partkey);
+         auto& [count_k, count_v] = *count_kv;
+         auto& [sum_k, sum_v] = *sum_kv;
+         assert(count_k.p_partkey == sum_k.p_partkey);
          [[maybe_unused]] auto avg_supplycost = sum_v.sum_supplycost / count_v.count;
          inspectIncrementProduced("Enumerating index: ", produced);
       }
@@ -210,8 +216,8 @@ class BasicGroup
 
    // maintenance
    void maintainTemplate(std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
-                         std::function<void(const Integer, const leanstore::UpdateSameSizeInPlaceDescriptor)> count_increment_func,
-                         std::function<void(const Integer, const Numeric, const leanstore::UpdateSameSizeInPlaceDescriptor)> sum_update_func,
+                         std::function<void(const Integer,  leanstore::UpdateSameSizeInPlaceDescriptor&)> count_increment_func,
+                         std::function<void(const Integer, const Numeric,  leanstore::UpdateSameSizeInPlaceDescriptor&)> sum_update_func,
                          std::string name)
    {
       std::cout << "BasicGroup::maintainTemplate for " << name << std::endl;
@@ -249,12 +255,12 @@ class BasicGroup
    void maintainIndex()
    {
       maintainTemplate([this](const partsupp_t::Key& k, const partsupp_t& v) { workload.partsupp.insert(k, v); },
-                       [this](const Integer part_id, const leanstore::UpdateSameSizeInPlaceDescriptor update_descriptor) {
-                          count_partsupp.update1(count_partsupp_t::Key({part_id}), [&](count_partsupp_t& rec) { rec.count++; }, update_descriptor);
+                       [this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+                          count_partsupp.update1(count_partsupp_t::Key({part_id}), [](count_partsupp_t& rec) { rec.count++; }, update_descriptor);
                        },
-                       [this](const Integer part_id, const Numeric supplycost, const leanstore::UpdateSameSizeInPlaceDescriptor update_descriptor) {
+                       [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
                           sum_supplycost.update1(
-                              sum_supplycost_t::Key({part_id}), [&](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
+                              sum_supplycost_t::Key({part_id}), [supplycost](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
                        },
                        "index");
    }
@@ -263,12 +269,12 @@ class BasicGroup
    {
       // Refer only to merged for partsupp. Partsupp is discarded.
       maintainTemplate([this](const partsupp_t::Key& k, const partsupp_t& v) { mergedBasicGroup.insert(k, v); },
-                       [this](const Integer part_id, const leanstore::UpdateSameSizeInPlaceDescriptor update_descriptor) {
-                          mergedBasicGroup.update1(count_partsupp_t::Key({part_id}), [&](count_partsupp_t& rec) { rec.count++; }, update_descriptor);
+                       [this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+                          mergedBasicGroup.template update1<count_partsupp_t>(count_partsupp_t::Key({part_id}), [](count_partsupp_t& rec) { rec.count++; }, update_descriptor);
                        },
-                       [this](const Integer part_id, const Numeric supplycost, const leanstore::UpdateSameSizeInPlaceDescriptor update_descriptor) {
-                          mergedBasicGroup.update1(
-                              sum_supplycost_t::Key({part_id}), [&](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
+                       [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+                          mergedBasicGroup.template update1<sum_supplycost_t>(
+                              sum_supplycost_t::Key({part_id}), [supplycost](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
                        },
                        "merged");
    }
@@ -277,11 +283,11 @@ class BasicGroup
    {
       // partsupp is kept as a base table
       maintainTemplate([this](const partsupp_t::Key& k, const partsupp_t& v) { workload.partsupp.insert(k, v); },
-                       [this](const Integer part_id, const leanstore::UpdateSameSizeInPlaceDescriptor update_descriptor) {
-                          view.update1(view_t::Key({part_id}), [&](view_t& rec) { rec.count_partsupp++; }, update_descriptor);
+                       [this](const Integer part_id,  leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+                          view.update1(view_t::Key({part_id}), [](view_t& rec) { rec.count_partsupp++; }, update_descriptor);
                        },
-                       [this](const Integer part_id, const Numeric supplycost, const leanstore::UpdateSameSizeInPlaceDescriptor update_descriptor) {
-                          view.update1(view_t::Key({part_id}), [&](view_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
+                       [this](const Integer part_id, const Numeric supplycost,  leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+                          view.update1(view_t::Key({part_id}), [supplycost](view_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
                        },
                        "view");
    }
@@ -300,7 +306,7 @@ class BasicGroup
          if (kv == std::nullopt)
             break;
          auto& [k, v] = *kv;
-         if (k.partkey == curr_partkey) {
+         if (k.ps_partkey == curr_partkey) {
             count++;
             supplycost_sum += v.ps_supplycost;
          } else {
@@ -311,7 +317,7 @@ class BasicGroup
                count_partsupp.insert(count_partsupp_t::Key({curr_partkey}), count_partsupp_t({count}));
                sum_supplycost.insert(sum_supplycost_t::Key({curr_partkey}), sum_supplycost_t({supplycost_sum}));
             }
-            curr_partkey = k.partkey;
+            curr_partkey = k.ps_partkey;
             count = 1;
             supplycost_sum = v.ps_supplycost;
          }

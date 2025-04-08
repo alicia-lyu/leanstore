@@ -14,18 +14,9 @@
 
 DECLARE_double(tpch_scale_factor);
 
-namespace basic_join
-{
 template <template <typename> class AdapterType, class MergedAdapterType>
-class BasicJoin;
-}
-
-template <template <typename> class AdapterType, class MergedAdapterType>
-class TPCHWorkload
+struct TPCHWorkload
 {
-   friend class basic_join::BasicJoin<AdapterType, MergedAdapterType>;
-
-  private:
    Logger& logger;
    AdapterType<part_t>& part;
    AdapterType<supplier_t>& supplier;
@@ -36,7 +27,6 @@ class TPCHWorkload
    AdapterType<nation_t>& nation;
    AdapterType<region_t>& region;
 
-  public:
    TPCHWorkload(AdapterType<part_t>& p,
                 AdapterType<supplier_t>& s,
                 AdapterType<partsupp_t>& ps,
@@ -75,7 +65,6 @@ class TPCHWorkload
       logSize();
    }
 
-  private:
    static constexpr Integer PART_SCALE = 200000;
    static constexpr Integer SUPPLIER_SCALE = 10000;
    static constexpr Integer CUSTOMER_SCALE = 150000;
@@ -101,8 +90,6 @@ class TPCHWorkload
    inline Integer getNationID() { return urand(1, NATION_COUNT); }
 
    inline Integer getRegionID() { return urand(1, REGION_COUNT); }
-
-  public:
 
    // ------------------------------------LOAD-------------------------------------------------
 
@@ -256,7 +243,7 @@ class TPCHWorkload
       }
    }
 
-   void loadLineitem(Integer order_start, Integer order_end)
+   void loadLineitem(Integer order_start = 1, Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
    {
       loadLineitem([&](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); }, order_start, order_end);
    }
