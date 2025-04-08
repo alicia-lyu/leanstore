@@ -94,8 +94,8 @@ class BasicJoin
    {
       Integer part_rnd = workload.getPartID();
       Integer supplier_rnd = workload.getSupplierID();
-      auto merged_scanner = mergedPPsL.template getScanner<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
-      merged_scanner->seek(PPsL_JK(part_rnd, supplier_rnd));
+      auto merged_scanner = mergedPPsL.template getScanner<merged_part_t, merged_partsupp_t, merged_lineitem_t>();
+      merged_scanner->seekJK(PPsL_JK(part_rnd, supplier_rnd));
       Integer part_id = 0;
       Integer supplier_id = 0;
       while (part_id == 0 || supplier_id == 0) {
@@ -161,9 +161,9 @@ class BasicJoin
       std::cout << "BasicJoin::queryByMerged()" << std::endl;
       auto merged_start = std::chrono::high_resolution_clock::now();
 
-      auto merged_scanner = mergedPPsL.template getScanner<PPsL_JK, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>();
+      auto merged_scanner = mergedPPsL.template getScanner<merged_part_t, merged_partsupp_t, merged_lineitem_t>();
 
-      merged_scanner->scanJoin();
+      merged_scanner->template scanJoin<PPsL_JK, joinedPPsL_t>();
 
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();

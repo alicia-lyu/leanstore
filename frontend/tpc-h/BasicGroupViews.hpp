@@ -9,6 +9,7 @@
 // id range: (20s)
 
 #include "TableTemplates.hpp"
+#include "randutils.hpp"
 
 namespace basic_group {
     struct count_partsupp_base {
@@ -29,6 +30,27 @@ namespace basic_group {
     struct count_partsupp_t: public count_partsupp_base, public RecordPrototype<count_partsupp_base, &count_partsupp_base::count> {
         explicit count_partsupp_t(count_partsupp_base base): count_partsupp_base(base) {}
         count_partsupp_t() = default;
+
+        using count_partsupp_base::Key;
+
+        template <typename K>
+        static unsigned foldKey(uint8_t* out, const K& key)
+        {
+            return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
+        }
+
+        template <typename K>
+        static unsigned unfoldKey(const uint8_t* in, K& key)
+        {
+            return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
+        }
+
+        static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+        static count_partsupp_t generateRandomRecord()
+        {
+            return count_partsupp_t({randutils::urand(1, 10000)});
+        }
     };
     
     struct sum_supplycost_base {
@@ -49,6 +71,27 @@ namespace basic_group {
     struct sum_supplycost_t: public sum_supplycost_base, public RecordPrototype<sum_supplycost_base, &sum_supplycost_base::sum_supplycost> {
         explicit sum_supplycost_t(sum_supplycost_base base): sum_supplycost_base(base) {}
         sum_supplycost_t() = default;
+
+        using sum_supplycost_base::Key;
+
+        template <typename K>
+        static unsigned foldKey(uint8_t* out, const K& key)
+        {
+            return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
+        }
+
+        template <typename K>
+        static unsigned unfoldKey(const uint8_t* in, K& key)
+        {
+            return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
+        }
+
+        static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+        static sum_supplycost_t generateRandomRecord()
+        {
+            return sum_supplycost_t({randutils::randomNumeric(0.0000, 100.0000)});
+        }
     };
 
     struct view_base {
@@ -70,5 +113,26 @@ namespace basic_group {
     struct view_t: public view_base, public RecordPrototype<view_base, &view_base::count_partsupp, &view_base::sum_supplycost> {
         explicit view_t(view_base base): view_base(base) {}
         view_t() = default;
+
+        using view_base::Key;
+
+        template <typename K>
+        static unsigned foldKey(uint8_t* out, const K& key)
+        {
+            return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
+        }
+
+        template <typename K>
+        static unsigned unfoldKey(const uint8_t* in, K& key)
+        {
+            return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
+        }
+
+        static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+        static view_t generateRandomRecord()
+        {
+            return view_t({randutils::urand(1, 10000), randutils::randomNumeric(0.0000, 100.0000)});
+        }
     };
 }

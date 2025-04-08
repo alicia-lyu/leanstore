@@ -3,7 +3,6 @@
 #include <variant>
 #include "Exceptions.hpp"
 #include "LeanStoreMergedScanner.hpp"
-#include "MergedScanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
@@ -240,12 +239,12 @@ struct LeanStoreMergedAdapter {
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
 
-   template <typename JK, typename JoinedRec, typename... Records>
-   std::unique_ptr<LeanStoreMergedScanner<JK, JoinedRec, Records...>> getScanner() {
+   template <typename... Records>
+   std::unique_ptr<LeanStoreMergedScanner<Records...>> getScanner() {
       if (FLAGS_vi) {
-         return std::make_unique<LeanStoreMergedScanner<JK, JoinedRec, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+         return std::make_unique<LeanStoreMergedScanner<Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
       } else {
-         return std::make_unique<LeanStoreMergedScanner<JK, JoinedRec, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+         return std::make_unique<LeanStoreMergedScanner<Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
    }
 };
