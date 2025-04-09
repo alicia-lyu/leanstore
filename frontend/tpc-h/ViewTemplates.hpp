@@ -104,9 +104,9 @@ struct merged_t {
       {
          os << "mergedKey(" << key.jk;
          if (extra_id == ExtraID::PK) {
-            os << ", " << key.pk;
+            os << ", PK " << key.pk;
          } else if (extra_id == ExtraID::PKID) {
-            os << ", " << key.pk.id;
+            os << ", PKID " << key.pk.id;
          }
          os << ")";
          return os;
@@ -123,13 +123,13 @@ struct merged_t {
    {
       unsigned pos = 0;
       pos += JK::keyfold(out + pos, key.jk);
-      if (extra_id == ExtraID::PK)
+      if constexpr (extra_id == ExtraID::PK)
          pos += T::foldKey(out + pos, key.pk);
-      else if (extra_id == ExtraID::PKID) {
+      else if constexpr (extra_id == ExtraID::PKID) {
          if (key.pk.id < 0 || key.pk.id > std::numeric_limits<u8>::max())
             throw std::runtime_error("pk.id out of range");
          u8 id = static_cast<u8>(key.pk.id);
-         pos += unfold(out + pos, id);
+         pos += fold(out + pos, id);
       }
       return pos;
    }
