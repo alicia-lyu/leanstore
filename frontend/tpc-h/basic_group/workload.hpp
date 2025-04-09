@@ -110,11 +110,11 @@ class BasicGroup
                  k);
           },
           [this](const Integer part_id) {
-             mergedBasicGroup.template lookup1<merged_count_partsupp_t>(merged_count_partsupp_t::Key({part_id}, count_partsupp_t::Key({part_id})),
+             mergedBasicGroup.template lookup1<merged_count_partsupp_t>(merged_count_partsupp_t::Key(count_partsupp_t::Key({part_id})),
                                                                         [&](const merged_count_partsupp_t&) {});
           },
           [this](const Integer part_id) {
-             mergedBasicGroup.template lookup1<merged_sum_supplycost_t>(merged_sum_supplycost_t::Key({part_id}, sum_supplycost_t::Key({part_id})),
+             mergedBasicGroup.template lookup1<merged_sum_supplycost_t>(merged_sum_supplycost_t::Key(sum_supplycost_t::Key({part_id})),
                                                                         [&](const merged_sum_supplycost_t&) {});
           });
    }
@@ -280,12 +280,12 @@ class BasicGroup
           [this](const partsupp_t::Key& k, const partsupp_t& v) { mergedBasicGroup.insert(merged_partsupp_t::Key(k), merged_partsupp_t(v)); },
           [&countsupp_update_descriptor, this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor&) {
              mergedBasicGroup.template update1<merged_count_partsupp_t>(
-                 merged_count_partsupp_t::Key({part_id}, count_partsupp_t::Key({part_id})), [](merged_count_partsupp_t& rec) { rec.payload.count++; },
+                 merged_count_partsupp_t::Key(count_partsupp_t::Key({part_id})), [](merged_count_partsupp_t& rec) { rec.payload.count++; },
                  countsupp_update_descriptor);
           },
           [&sum_supplycost_update_descriptor, this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor&) {
              mergedBasicGroup.template update1<merged_sum_supplycost_t>(
-                 merged_sum_supplycost_t::Key({part_id}, sum_supplycost_t::Key({part_id})),
+                 merged_sum_supplycost_t::Key(sum_supplycost_t::Key({part_id})),
                  [supplycost](merged_sum_supplycost_t& rec) { rec.payload.sum_supplycost += supplycost; }, sum_supplycost_update_descriptor);
           },
           "merged");
@@ -343,8 +343,8 @@ class BasicGroup
       auto sum_pk = sum_supplycost_t::Key({curr_partkey});
       auto sum_pv = sum_supplycost_t({supplycost_sum});
 
-      mergedBasicGroup.insert(merged_count_partsupp_t::Key({curr_partkey}, count_pk), merged_count_partsupp_t(count_pv));
-      mergedBasicGroup.insert(merged_sum_supplycost_t::Key({curr_partkey}, sum_pk), merged_sum_supplycost_t(sum_pv));
+      mergedBasicGroup.insert(merged_count_partsupp_t::Key(count_pk), merged_count_partsupp_t(count_pv));
+      mergedBasicGroup.insert(merged_sum_supplycost_t::Key(sum_pk), merged_sum_supplycost_t(sum_pv));
 
       count_partsupp.insert(count_pk, count_pv);
       sum_supplycost.insert(sum_pk, sum_pv);
