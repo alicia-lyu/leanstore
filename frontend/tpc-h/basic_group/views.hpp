@@ -24,6 +24,17 @@ struct sort_key_t : public sort_key_base, public KeyPrototype<sort_key_base, &so
    sort_key_t(Integer partkey) : sort_key_base{partkey} {}
 };
 
+struct sort_key_variant_base {
+   u8 id;
+   Integer partkey;
+};
+
+struct sort_key_variant_t : public sort_key_variant_base,
+                            public KeyPrototype<sort_key_variant_base, &sort_key_variant_base::id, &sort_key_variant_base::partkey> {
+   sort_key_variant_t() = default;
+   sort_key_variant_t(u8 id, Integer partkey) : sort_key_variant_base{id, partkey} {}
+};
+
 struct count_partsupp_base {
    static constexpr int id = 20;
    struct key_base {
@@ -103,11 +114,47 @@ struct view_t : public view_base, public RecordPrototype<view_base, &view_base::
    static view_t generateRandomRecord() { return view_t({randutils::urand(1, 10000), randutils::randomNumeric(0.0000, 100.0000)}); }
 };
 
-using merged_sum_supplycost_t = merged_t<23, sum_supplycost_t, sort_key_t, ExtraID::PKID>;
-using merged_count_partsupp_t = merged_t<23, count_partsupp_t, sort_key_t, ExtraID::PKID>;
+struct merged_sum_supplycost_t : public merged_t<23, sum_supplycost_t, sort_key_t, ExtraID::PKID> {
+   using merged_t::merged_t;
+   struct Key: public merged_t::Key {
+      using merged_t::Key::Key;
+      Key(const sum_supplycost_t::Key& pk) : merged_t::Key(sort_key_t{pk.p_partkey}, pk) {}
+   };
+};
+
+struct merged_count_partsupp_t: public merged_t<23, count_partsupp_t, sort_key_t, ExtraID::PKID> {
+   using merged_t::merged_t;
+   struct Key: public merged_t::Key {
+      using merged_t::Key::Key;
+      Key(const count_partsupp_t::Key& pk) : merged_t::Key(sort_key_t{pk.p_partkey}, pk) {}
+   };
+};
+
 struct merged_partsupp_t : public partsupp_t {
    using partsupp_t::Key;
    using partsupp_t::partsupp_t;
    static constexpr int id = 23;
+};
+
+struct merged_count_variant_t: public merged_t<23, count_partsupp_t, sort_key_variant_t, ExtraID::NONE> {
+   using merged_t::merged_t;
+   struct Key: public merged_t::Key {
+      using merged_t::Key::Key;
+      Key(const count_partsupp_t::Key& pk) : merged_t::Key(sort_key_variant_t{count_partsupp_t::id, pk.p_partkey}, pk) {}
+   };
+};
+struct merged_sum_variant_t: public merged_t<23, sum_supplycost_t, sort_key_variant_t, ExtraID::NONE> {
+   using merged_t::merged_t;
+   struct Key: public merged_t::Key {
+      using merged_t::Key::Key;
+      Key(const sum_supplycost_t::Key& pk) : merged_t::Key(sort_key_variant_t{sum_supplycost_t::id, pk.p_partkey}, pk) {}
+   };
+};
+struct merged_partsupp_variant_t: public merged_t<23, partsupp_t, sort_key_variant_t, ExtraID::PK> {
+   using merged_t::merged_t;
+   struct Key: public merged_t::Key {
+      using merged_t::Key::Key;
+      Key(const partsupp_t::Key& pk) : merged_t::Key(sort_key_variant_t{partsupp_t::id, pk.ps_partkey}, pk) {}
+   };
 };
 }  // namespace basic_group

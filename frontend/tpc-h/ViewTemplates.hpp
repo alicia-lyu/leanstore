@@ -179,4 +179,9 @@ struct merged_t {
 
 template <typename SK>
 struct SKBuilder {
+   // template <typename K, typename V>
+   // static SK inline create(const K&, const V&)
+   // {
+   //    UNREACHABLE();
+   // }
 };  // sort key builder

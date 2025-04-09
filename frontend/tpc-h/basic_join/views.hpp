@@ -19,6 +19,9 @@ struct join_key_t : public join_key_base, public KeyPrototype<join_key_base, &jo
    join_key_t(Integer partkey, Integer partsuppkey) : join_key_base{partkey, partsuppkey} {}
    join_key_t(const join_key_t& jk) : join_key_base{jk.l_partkey, jk.suppkey} {}
 
+   // template <typename K, typename V>
+   // join_key_t(const K& k, const V& v) : join_key_base(SKBuilder<join_key_t>::create(k, v)) {}
+
    static join_key_t max() { return join_key_t({std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()}); }
 
    auto operator<=>(const join_key_t& other) const { return join_key_base::operator<=>(static_cast<const join_key_base&>(other)); }
