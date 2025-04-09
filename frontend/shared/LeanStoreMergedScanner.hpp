@@ -66,9 +66,25 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
       u8 keyBuffer[RecordType::maxFoldLength()];
       unsigned pos = RecordType::foldKey(keyBuffer, k);
       leanstore::Slice keySlice(keyBuffer, pos);
-      const leanstore::OP_RESULT res = it->seek(keySlice);
+      const leanstore::OP_RESULT res = it->seek(keySlice); // keySlice as lowerbound
       if (res != leanstore::OP_RESULT::OK) {
          it->seekForPrev(keySlice);  // last key
+         return false;
+      } else {
+         return true;
+      }
+   }
+
+   template <typename RecordType>
+   bool seekForPrev(const typename RecordType::Key& k)
+      requires std::disjunction_v<std::is_same<RecordType, Records>...>
+   {
+      u8 keyBuffer[RecordType::maxFoldLength()];
+      unsigned pos = RecordType::foldKey(keyBuffer, k);
+      leanstore::Slice keySlice(keyBuffer, pos);
+      const leanstore::OP_RESULT res = it->seekForPrev(keySlice);
+      if (res != leanstore::OP_RESULT::OK) {
+         it->seek(keySlice);  // first key
          return false;
       } else {
          return true;
@@ -79,7 +95,7 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
    bool seekTyped(const typename RecordType::Key& k)
       requires std::disjunction_v<std::is_same<RecordType, Records>...>
    {
-      auto result = seek<RecordType>(k);
+      auto result = seekForPrev<RecordType>(k);
       while (true) {
          auto kv = current().value();
          if (std::holds_alternative<RecordType>(kv.second)) {

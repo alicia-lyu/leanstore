@@ -44,10 +44,10 @@ inline void runLookupPhase(std::function<void()> lookupCallback,
       }
       jumpmuCatch()
       {
-         std::cerr << "#" << lookup_count.load() << " pointLookupsForBase failed." << std::endl;
+         std::cerr << "#" << lookup_count.load() << " pointLookups failed." << std::endl;
       }
       if (lookup_count.load() % 100 == 1 && running_threads_counter == 1)
-         std::cout << "\r#" << lookup_count.load() << " warm-up pointLookupsForBase performed.";
+         std::cout << "\r#" << lookup_count.load() << " warm-up pointLookups performed.";
    }
    cr::Worker::my().shutdown();
    running_threads_counter--;

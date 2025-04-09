@@ -130,10 +130,12 @@ struct merged_count_partsupp_t: public merged_t<23, count_partsupp_t, sort_key_t
    };
 };
 
-struct merged_partsupp_t : public partsupp_t {
-   using partsupp_t::Key;
-   using partsupp_t::partsupp_t;
-   static constexpr int id = 23;
+struct merged_partsupp_t : public merged_t<23, partsupp_t, sort_key_t, ExtraID::PK> {
+   using merged_t::merged_t;
+   struct Key: public merged_t::Key {
+      using merged_t::Key::Key;
+      Key(const partsupp_t::Key& pk) : merged_t::Key(sort_key_t{pk.ps_partkey}, pk) {}
+   };
 };
 
 struct merged_count_variant_t: public merged_t<23, count_partsupp_t, sort_key_variant_t, ExtraID::NONE> {
