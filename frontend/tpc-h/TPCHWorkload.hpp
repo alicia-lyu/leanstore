@@ -15,8 +15,7 @@
 DECLARE_double(tpch_scale_factor);
 
 template <template <typename> class AdapterType>
-struct TPCHWorkload
-{
+struct TPCHWorkload {
    Logger& logger;
    AdapterType<part_t>& part;
    AdapterType<supplier_t>& supplier;

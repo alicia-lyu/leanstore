@@ -25,11 +25,11 @@
    }
 
 inline void runLookupPhase(std::function<void()> lookupCallback,
-                    atomic<u64>& lookup_count,
-                    atomic<u64>& running_threads_counter,
-                    atomic<u64>& keep_running,
-                    TPCHWorkload<LeanStoreAdapter>& tpch,
-                    leanstore::TX_ISOLATION_LEVEL isolation_level)
+                           atomic<u64>& lookup_count,
+                           atomic<u64>& running_threads_counter,
+                           atomic<u64>& keep_running,
+                           TPCHWorkload<LeanStoreAdapter>& tpch,
+                           leanstore::TX_ISOLATION_LEVEL isolation_level)
 {
    running_threads_counter++;
    tpch.prepare();

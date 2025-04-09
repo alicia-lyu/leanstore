@@ -2,11 +2,11 @@
 #include <optional>
 #include <variant>
 #include <vector>
+#include "BasicJoinViews.hpp"
 #include "Logger.hpp"
 #include "Merge.hpp"
 #include "TPCHWorkload.hpp"
 #include "Tables.hpp"
-#include "BasicJoinViews.hpp"
 
 namespace basic_join
 {
@@ -25,11 +25,7 @@ class BasicJoin
    AdapterType<partsupp_t>& partsupp;
 
   public:
-   BasicJoin(TPCH& workload,
-             merged_t& mbj,
-             AdapterType<joinedPPsL_t>& jppsl,
-             AdapterType<joinedPPs_t>& jpps,
-             AdapterType<sorted_lineitem_t>& sl)
+   BasicJoin(TPCH& workload, merged_t& mbj, AdapterType<joinedPPsL_t>& jppsl, AdapterType<joinedPPs_t>& jpps, AdapterType<sorted_lineitem_t>& sl)
        : workload(workload),
          mergedPPsL(mbj),
          joinedPPsL(jppsl),
@@ -455,10 +451,7 @@ class BasicJoin
       logger.log(t, "maintain-" + name);
    }
 
-   void loadBaseTables()
-   {
-      workload.load();
-   }
+   void loadBaseTables() { workload.load(); }
 
    void loadSortedLineitem()
    {

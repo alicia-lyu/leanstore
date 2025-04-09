@@ -34,9 +34,7 @@ class LeanStoreLogger : public Logger
       }
    };
 
-   ~LeanStoreLogger() {
-      std::cout << "Logs written to " << FLAGS_csv_path << std::endl;
-   }
+   ~LeanStoreLogger() { std::cout << "Logs written to " << FLAGS_csv_path << std::endl; }
 
    void writeOutAll();
    std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed);
@@ -59,7 +57,7 @@ class LeanStoreLogger : public Logger
    {
       tabulate::Table table;
       for (auto& row : rows) {
-         std::vector<variant<std::string, const char *, tabulate::Table>> cells;
+         std::vector<variant<std::string, const char*, tabulate::Table>> cells;
          for (auto& cell : row) {
             cells.push_back(cell);
          }
@@ -73,9 +71,10 @@ class LeanStoreLogger : public Logger
       printTable(table);
    }
 
-   inline std::string to_fixed(double value, int precision = 2) {
+   inline std::string to_fixed(double value, int precision = 2)
+   {
       std::ostringstream oss;
       oss << std::fixed << std::setprecision(precision) << value;
       return oss.str();
-  }
+   }
 };
