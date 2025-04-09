@@ -23,12 +23,12 @@ overloaded(Ts...) -> overloaded<Ts...>;
 
 namespace basic_group
 {
-template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>
+template <template <typename> class AdapterType, template <typename...> class MergedAdapterType, typename merged_count_option_t, typename merged_sum_option_t, typename merged_partsupp_option_t>
 class BasicGroup
 {
    using TPCH = TPCHWorkload<AdapterType>;
    TPCH& workload;
-   using merged_t = MergedAdapterType<merged_count_partsupp_t, merged_sum_supplycost_t, merged_partsupp_t>;
+   using merged_t = MergedAdapterType<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t>;
    AdapterType<view_t>& view;
    AdapterType<count_partsupp_t>& count_partsupp;
    AdapterType<sum_supplycost_t>& sum_supplycost;
@@ -97,25 +97,25 @@ class BasicGroup
       pointLookupsTemplate(
           [this](Integer& part_id, Integer& supplier_id) {
              auto partsupp_scanner = mergedBasicGroup.getScanner();
-             auto ret = partsupp_scanner->template seekTyped<merged_partsupp_t>(merged_partsupp_t::Key({part_id, supplier_id}));
+             auto ret = partsupp_scanner->template seekTyped<merged_partsupp_option_t>(typename merged_partsupp_option_t::Key(partsupp_t::Key({part_id, supplier_id})));
              assert(ret);
              auto kv = partsupp_scanner->current();
              auto& [k, v] = *kv;
              std::visit(
-                 overloaded{[&](const merged_partsupp_t::Key& actual_key) {
-                               part_id = actual_key.ps_partkey;
-                               supplier_id = actual_key.ps_suppkey;
+                 overloaded{[&](const typename merged_partsupp_option_t::Key& actual_key) {
+                               part_id = actual_key.pk.ps_partkey;
+                               supplier_id = actual_key.pk.ps_suppkey;
                             },
-                            [&](const merged_count_partsupp_t::Key&) { UNREACHABLE(); }, [&](const merged_sum_supplycost_t::Key&) { UNREACHABLE(); }},
+                            [&](const typename merged_count_option_t::Key&) { UNREACHABLE(); }, [&](const typename merged_sum_option_t::Key&) { UNREACHABLE(); }},
                  k);
           },
           [this](const Integer part_id) {
-             mergedBasicGroup.template lookup1<merged_count_partsupp_t>(merged_count_partsupp_t::Key(count_partsupp_t::Key({part_id})),
-                                                                        [&](const merged_count_partsupp_t&) {});
+             mergedBasicGroup.template lookup1<merged_count_option_t>(typename merged_count_option_t::Key(count_partsupp_t::Key({part_id})),
+                                                                        [&](const merged_count_option_t&) {});
           },
           [this](const Integer part_id) {
-             mergedBasicGroup.template lookup1<merged_sum_supplycost_t>(merged_sum_supplycost_t::Key(sum_supplycost_t::Key({part_id})),
-                                                                        [&](const merged_sum_supplycost_t&) {});
+             mergedBasicGroup.template lookup1<merged_sum_option_t>(typename merged_sum_option_t::Key(sum_supplycost_t::Key({part_id})),
+                                                                        [&](const merged_sum_option_t&) {});
           });
    }
 
@@ -196,6 +196,7 @@ class BasicGroup
       auto start = std::chrono::high_resolution_clock::now();
       [[maybe_unused]] long produced = 0;
       auto scanner = mergedBasicGroup.getScanner();
+      scanner->template seekForPrev<merged_count_option_t>(typename merged_count_option_t::Key(count_partsupp_t::Key({0})));
       Integer count = 0;
       while (true) {
          auto kv = scanner->next();
@@ -203,11 +204,11 @@ class BasicGroup
             break;
          auto& [k, v] = *kv;
          std::visit(
-             overloaded{[](const merged_partsupp_t&) {
+             overloaded{[](const merged_partsupp_option_t&) {
                            // do nothing
                         },
-                        [&](const merged_count_partsupp_t& count_rec) { count = count_rec.payload.count; },
-                        [&](const merged_sum_supplycost_t& sum) { [[maybe_unused]] auto avg_supplycost = sum.payload.sum_supplycost / count; }},
+                        [&](const merged_count_option_t& count_rec) { count = count_rec.payload.count; },
+                        [&](const merged_sum_option_t& sum) { [[maybe_unused]] auto avg_supplycost = sum.payload.sum_supplycost / count; }},
              v);
          inspectIncrementProduced("Enumerating merged: ", produced);
       }
@@ -272,21 +273,21 @@ class BasicGroup
    void maintainMerged()
    {
       // Refer only to merged for partsupp. Partsupp is discarded.
-      UpdateDescriptorGenerator1(countsupp_update_descriptor, merged_count_partsupp_t, payload.count);
+      UpdateDescriptorGenerator1(countsupp_update_descriptor, merged_count_option_t, payload.count);
 
-      UpdateDescriptorGenerator1(sum_supplycost_update_descriptor, merged_sum_supplycost_t, payload.sum_supplycost);
+      UpdateDescriptorGenerator1(sum_supplycost_update_descriptor, merged_sum_option_t, payload.sum_supplycost);
 
       maintainTemplate(
-          [this](const partsupp_t::Key& k, const partsupp_t& v) { mergedBasicGroup.insert(merged_partsupp_t::Key(k), merged_partsupp_t(v)); },
+          [this](const partsupp_t::Key& k, const partsupp_t& v) { mergedBasicGroup.insert(typename merged_partsupp_option_t::Key(k), merged_partsupp_option_t(v)); },
           [&countsupp_update_descriptor, this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor&) {
-             mergedBasicGroup.template update1<merged_count_partsupp_t>(
-                 merged_count_partsupp_t::Key(count_partsupp_t::Key({part_id})), [](merged_count_partsupp_t& rec) { rec.payload.count++; },
+             mergedBasicGroup.template update1<merged_count_option_t>(
+                 typename merged_count_option_t::Key(count_partsupp_t::Key({part_id})), [](merged_count_option_t& rec) { rec.payload.count++; },
                  countsupp_update_descriptor);
           },
           [&sum_supplycost_update_descriptor, this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor&) {
-             mergedBasicGroup.template update1<merged_sum_supplycost_t>(
-                 merged_sum_supplycost_t::Key(sum_supplycost_t::Key({part_id})),
-                 [supplycost](merged_sum_supplycost_t& rec) { rec.payload.sum_supplycost += supplycost; }, sum_supplycost_update_descriptor);
+             mergedBasicGroup.template update1<merged_sum_option_t>(
+                 typename merged_sum_option_t::Key(sum_supplycost_t::Key({part_id})),
+                 [supplycost](merged_sum_option_t& rec) { rec.payload.sum_supplycost += supplycost; }, sum_supplycost_update_descriptor);
           },
           "merged");
    }
@@ -320,7 +321,7 @@ class BasicGroup
             break;
          }
          auto& [k, v] = *kv;
-         mergedBasicGroup.insert(merged_partsupp_t::Key(k), merged_partsupp_t(v));
+         mergedBasicGroup.insert(typename merged_partsupp_option_t::Key(k), merged_partsupp_option_t(v));
          if (k.ps_partkey == curr_partkey) {
             count++;
             supplycost_sum += v.ps_supplycost;
@@ -343,8 +344,8 @@ class BasicGroup
       auto sum_pk = sum_supplycost_t::Key({curr_partkey});
       auto sum_pv = sum_supplycost_t({supplycost_sum});
 
-      mergedBasicGroup.insert(merged_count_partsupp_t::Key(count_pk), merged_count_partsupp_t(count_pv));
-      mergedBasicGroup.insert(merged_sum_supplycost_t::Key(sum_pk), merged_sum_supplycost_t(sum_pv));
+      mergedBasicGroup.insert(typename merged_count_option_t::Key(count_pk), merged_count_option_t(count_pv));
+      mergedBasicGroup.insert(typename merged_sum_option_t::Key(sum_pk), merged_sum_option_t(sum_pv));
 
       count_partsupp.insert(count_pk, count_pv);
       sum_supplycost.insert(sum_pk, sum_pv);
