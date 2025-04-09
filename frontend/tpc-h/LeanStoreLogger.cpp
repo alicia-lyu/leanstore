@@ -1,7 +1,7 @@
 #include "LeanStoreLogger.hpp"
+#include <gflags/gflags.h>
 #include <filesystem>
 #include <tabulate/table.hpp>
-#include <gflags/gflags.h>
 
 void LeanStoreLogger::reset()
 {
@@ -16,8 +16,7 @@ void LeanStoreLogger::writeOutAll()
    db.buffer_manager->writeAllBufferFrames();
 }
 
-std::pair<std::vector<std::string>, std::vector<std::string>>
-LeanStoreLogger::summarizeStats(long elapsed = 0)
+std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::summarizeStats(long elapsed = 0)
 {
    std::vector<std::string> tx_console_header;
    std::vector<std::string> tx_console_data;
@@ -25,18 +24,19 @@ LeanStoreLogger::summarizeStats(long elapsed = 0)
    tx_console_data.reserve(20);
 
    tx_console_header.push_back("Elapsed (ms)");
-   tx_console_data.push_back(to_fixed((double) elapsed / 1000));
+   tx_console_data.push_back(to_fixed((double)elapsed / 1000));
 
    tx_console_header.push_back("W MiB");
    tx_console_data.push_back(bm_table.get("0", "w_mib"));
 
    tx_console_header.push_back("R MiB");
    tx_console_data.push_back(bm_table.get("0", "r_mib"));
-   
+
    int worker_id = 0;
-   for (auto& t: cpu_table.workers_events) {
+   for (auto& t : cpu_table.workers_events) {
       long long cycles = static_cast<long long>(t.at("cycle"));
-      if (cycles == 0) continue;
+      if (cycles == 0)
+         continue;
       tx_console_header.push_back("Worker " + std::to_string(worker_id) + " Cycles");
       tx_console_data.push_back(std::to_string(cycles));
       double cpu_utilization = t.at("CPU");
