@@ -1,18 +1,14 @@
 #pragma once
 
-// #include "Logger.hpp"
-// #include "Merge.hpp"
 #include <optional>
 #include <variant>
-#include "../shared/Adapter.hpp"
-#include "BasicGroupViews.hpp"
+#include "../../shared/Adapter.hpp"
+#include "views.hpp"
 #include "Exceptions.hpp"
-#include "Logger.hpp"
-#include "TPCHWorkload.hpp"
-#include "Tables.hpp"
+#include "../Logger.hpp"
+#include "../TPCHWorkload.hpp"
+#include "../Tables.hpp"
 #include "leanstore/KVInterface.hpp"
-// #include "Tables.hpp"
-// #include "BasicJoinViews.hpp"
 
 // SELECT partkey, COUNT(*), AVG(supplycost)
 // FROM PartSupp

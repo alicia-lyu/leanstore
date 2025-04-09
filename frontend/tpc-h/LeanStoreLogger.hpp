@@ -42,6 +42,7 @@ class LeanStoreLogger : public Logger
    void log(long elapsed, std::string csv_dir);
    void prepare();
    void logLoading();
+
    static void printTable(tabulate::Table& table)
    {
       std::stringstream ss;
@@ -71,7 +72,7 @@ class LeanStoreLogger : public Logger
       printTable(table);
    }
 
-   inline std::string to_fixed(double value, int precision = 2)
+   static inline std::string to_fixed(double value, int precision = 2)
    {
       std::ostringstream oss;
       oss << std::fixed << std::setprecision(precision) << value;

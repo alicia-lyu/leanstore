@@ -2,11 +2,11 @@
 #include <optional>
 #include <variant>
 #include <vector>
-#include "BasicJoinViews.hpp"
-#include "Logger.hpp"
-#include "Merge.hpp"
-#include "TPCHWorkload.hpp"
-#include "Tables.hpp"
+#include "views.hpp"
+#include "../Logger.hpp"
+#include "../Merge.hpp"
+#include "../TPCHWorkload.hpp"
+#include "../Tables.hpp"
 
 namespace basic_join
 {

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "Tables.hpp"
-#include "ViewTemplates.hpp"
+#include "../Tables.hpp"
+#include "../ViewTemplates.hpp"
 
 // id range: (10s) 11-14
 
