@@ -1,5 +1,5 @@
 #include "../shared/LeanStoreAdapter.hpp"
-#include "TPCHWorkload.hpp"
+#include "tpch_workload.hpp"
 
 #define warmupAndTX(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                         \
    {                                                                                                                                    \

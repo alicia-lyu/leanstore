@@ -1,4 +1,4 @@
-#include "LeanStoreLogger.hpp"
+#include "leanstore_logger.hpp"
 #include <gflags/gflags.h>
 #include <filesystem>
 #include <tabulate/table.hpp>

@@ -8,9 +8,9 @@
 
 // id range: (20s)
 
-#include "../TableTemplates.hpp"
-#include "../Tables.hpp"
-#include "../ViewTemplates.hpp"
+#include "../table_templates.hpp"
+#include "../tables.hpp"
+#include "../view_templates.hpp"
 #include "../randutils.hpp"
 
 namespace basic_group

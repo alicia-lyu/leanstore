@@ -1,7 +1,7 @@
 #include <gflags/gflags.h>
 #include "workload.hpp"
-#include "../LeanStoreLogger.hpp"
-#include "../Tables.hpp"
+#include "../leanstore_logger.hpp"
+#include "../tables.hpp"
 #include "views.hpp"
 #include "../../shared/LeanStoreMergedAdapter.hpp"
 #include "leanstore/LeanStore.hpp"

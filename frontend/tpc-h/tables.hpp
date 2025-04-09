@@ -1,6 +1,6 @@
 #pragma once
 #include <functional>
-#include "TableTemplates.hpp"
+#include "table_templates.hpp"
 #include "randutils.hpp"
 
 using namespace randutils;

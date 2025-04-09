@@ -7,9 +7,9 @@
 #include <set>
 #include <vector>
 
-#include "Tables.hpp"
+#include "tables.hpp"
 
-#include "Logger.hpp"
+#include "logger.hpp"
 #include "leanstore/Config.hpp"
 
 DECLARE_double(tpch_scale_factor);

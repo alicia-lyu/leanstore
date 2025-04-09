@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <variant>
-#include "../tpc-h/Merge.hpp"
+#include "../tpc-h/merge.hpp"
 #include "MergedScanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"

@@ -6,7 +6,7 @@
 #include <ostream>
 #include <tuple>
 #include <vector>
-#include "TableTemplates.hpp"
+#include "table_templates.hpp"
 
 template <int TID, typename JK, typename... Ts>
 struct joined_t {
