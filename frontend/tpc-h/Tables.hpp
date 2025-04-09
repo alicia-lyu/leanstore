@@ -45,19 +45,9 @@ struct part_t : public part_base, public RecordPrototype<part_base,
 
     part_t() = default;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static part_t generateRandomRecord()
     {
@@ -93,19 +83,9 @@ struct supplier_t : public supplier_base, public RecordPrototype<supplier_base, 
 
     using supplier_base::Key;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::s_suppkey>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::s_suppkey>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static supplier_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
@@ -139,19 +119,9 @@ struct partsupp_t : public partsupp_base, public RecordPrototype<partsupp_base, 
 
     using partsupp_base::Key;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::ps_partkey, &K::key_base::ps_suppkey>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::ps_partkey, &K::key_base::ps_suppkey>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static partsupp_t generateRandomRecord()
     {
@@ -187,19 +157,9 @@ struct customerh_t : public customer_base, public RecordPrototype<customer_base,
 
     using customer_base::Key;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::c_custkey>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::c_custkey>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static customerh_t generateRandomRecord(std::function<int()> generate_nationkey)
     {
@@ -238,19 +198,9 @@ struct orders_t : public orders_base, public RecordPrototype<orders_base, &order
 
     using orders_base::Key;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::o_orderkey>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::o_orderkey>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static orders_t generateRandomRecord(std::function<int()> generate_custkey)
     {
@@ -297,19 +247,9 @@ struct lineitem_t : public lineitem_base, public RecordPrototype<lineitem_base, 
 
     using lineitem_base::Key;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::l_orderkey, &K::key_base::l_linenumber>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::l_orderkey, &K::key_base::l_linenumber>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static lineitem_t generateRandomRecord(std::function<int()> generate_partkey, std::function<int()> generate_suppkey)
     {
@@ -343,19 +283,9 @@ struct nation_t : public nation_base, public RecordPrototype<nation_base, &natio
 
     using nation_base::Key;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::n_nationkey>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::n_nationkey>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static nation_t generateRandomRecord(std::function<int()> generate_regionkey)
     {
@@ -386,19 +316,9 @@ struct region_t : public region_base, public RecordPrototype<region_base, &regio
 
     using region_base::Key;
 
-    template <typename K>
-    static unsigned foldKey(uint8_t* out, const K& key)
-    {
-        return RecordPrototype::foldKey<typename K::key_base, &K::key_base::r_regionkey>(out, key);
+    static constexpr unsigned maxFoldLength() {
+        return Key::maxFoldLength();
     }
-
-    template <typename K>
-    static unsigned unfoldKey(const uint8_t* in, K& key)
-    {
-        return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::r_regionkey>(in, key);
-    }
-
-    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
     static region_t generateRandomRecord()
     {

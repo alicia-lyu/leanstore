@@ -18,27 +18,38 @@
 // FROM PartSupp
 // GROUP BY partkey;
 
-template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
-template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
+template <class... Ts>
+struct overloaded : Ts... {
+   using Ts::operator()...;
+};
+template <class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
 
 namespace basic_group
 {
-template <template <typename> class AdapterType, class MergedAdapterType>
+template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>
 class BasicGroup
 {
-   using TPCH = TPCHWorkload<AdapterType, MergedAdapterType>;
+   using TPCH = TPCHWorkload<AdapterType>;
    TPCH& workload;
+   using merged_t = MergedAdapterType<merged_count_partsupp_t, merged_sum_supplycost_t, merged_partsupp_t>;
    AdapterType<view_t>& view;
    AdapterType<count_partsupp_t>& count_partsupp;
    AdapterType<sum_supplycost_t>& sum_supplycost;
    AdapterType<partsupp_t>& partsupp;
-   MergedAdapterType& mergedBasicGroup;
+   merged_t& mergedBasicGroup;
 
    Logger& logger;
 
   public:
-   BasicGroup(TPCH& workload, MergedAdapterType& mbg, AdapterType<view_t>& v, AdapterType<count_partsupp_t>& count, AdapterType<sum_supplycost_t>& sum)
-       : workload(workload), mergedBasicGroup(mbg), view(v), partsupp(workload.partsupp), logger(workload.logger), count_partsupp(count), sum_supplycost(sum)
+   BasicGroup(TPCH& workload, merged_t& mbg, AdapterType<view_t>& v, AdapterType<count_partsupp_t>& count, AdapterType<sum_supplycost_t>& sum)
+       : workload(workload),
+         mergedBasicGroup(mbg),
+         view(v),
+         partsupp(workload.partsupp),
+         logger(workload.logger),
+         count_partsupp(count),
+         sum_supplycost(sum)
    {
    }
 
@@ -96,25 +107,26 @@ class BasicGroup
    {
       pointLookupsTemplate(
           [this](Integer& part_id, Integer& supplier_id) {
-             auto partsupp_scanner = mergedBasicGroup.template getScanner<partsupp_t, count_partsupp_t, sum_supplycost_t>();
-             auto ret = partsupp_scanner->template seekTyped<partsupp_t>(partsupp_t::Key({part_id, supplier_id}));
+             auto partsupp_scanner = mergedBasicGroup.getScanner();
+             auto ret = partsupp_scanner->template seekTyped<merged_partsupp_t>(partsupp_t::Key({part_id, supplier_id}));
              assert(ret);
              auto kv = partsupp_scanner->current();
              auto& [k, v] = *kv;
              std::visit(
-               overloaded{[&](const partsupp_t::Key& actual_key) {
-                  part_id = actual_key.ps_partkey;
-                  supplier_id = actual_key.ps_suppkey;
-               },
-               [&](const count_partsupp_t::Key&) {
-                  UNREACHABLE();
-               },
-               [&](const sum_supplycost_t::Key&) {
-                  UNREACHABLE();
-               }}, k);
+                 overloaded{[&](const merged_partsupp_t::Key& actual_key) {
+                               part_id = actual_key.ps_partkey;
+                               supplier_id = actual_key.ps_suppkey;
+                            },
+                            [&](const merged_count_partsupp_t::Key&) { UNREACHABLE(); }, [&](const merged_sum_supplycost_t::Key&) { UNREACHABLE(); }},
+                 k);
           },
-          [this](const Integer part_id) { mergedBasicGroup.template lookup1<count_partsupp_t>(count_partsupp_t::Key({part_id}), [&](const count_partsupp_t&) {}); },
-          [this](const Integer part_id) { mergedBasicGroup.template lookup1<sum_supplycost_t>(sum_supplycost_t::Key({part_id}), [&](const sum_supplycost_t&) {}); }, "merged");
+          [this](const Integer part_id) {
+             mergedBasicGroup.template lookup1<merged_count_partsupp_t>(merged_count_partsupp_t::Key({part_id}), [&](const merged_count_partsupp_t&) {});
+          },
+          [this](const Integer part_id) {
+             mergedBasicGroup.template lookup1<merged_sum_supplycost_t>(merged_sum_supplycost_t::Key({part_id}), [&](const merged_sum_supplycost_t&) {});
+          },
+          "merged");
    }
 
    void pointLookupsForView()
@@ -216,8 +228,8 @@ class BasicGroup
 
    // maintenance
    void maintainTemplate(std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
-                         std::function<void(const Integer,  leanstore::UpdateSameSizeInPlaceDescriptor&)> count_increment_func,
-                         std::function<void(const Integer, const Numeric,  leanstore::UpdateSameSizeInPlaceDescriptor&)> sum_update_func,
+                         std::function<void(const Integer, leanstore::UpdateSameSizeInPlaceDescriptor&)> count_increment_func,
+                         std::function<void(const Integer, const Numeric, leanstore::UpdateSameSizeInPlaceDescriptor&)> sum_update_func,
                          std::string name)
    {
       std::cout << "BasicGroup::maintainTemplate for " << name << std::endl;
@@ -260,7 +272,8 @@ class BasicGroup
                        },
                        [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
                           sum_supplycost.update1(
-                              sum_supplycost_t::Key({part_id}), [supplycost](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
+                              sum_supplycost_t::Key({part_id}), [supplycost](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; },
+                              update_descriptor);
                        },
                        "index");
    }
@@ -268,25 +281,32 @@ class BasicGroup
    void maintainMerged()
    {
       // Refer only to merged for partsupp. Partsupp is discarded.
-      maintainTemplate([this](const partsupp_t::Key& k, const partsupp_t& v) { mergedBasicGroup.insert(k, v); },
-                       [this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
-                          mergedBasicGroup.template update1<count_partsupp_t>(count_partsupp_t::Key({part_id}), [](count_partsupp_t& rec) { rec.count++; }, update_descriptor);
-                       },
-                       [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
-                          mergedBasicGroup.template update1<sum_supplycost_t>(
-                              sum_supplycost_t::Key({part_id}), [supplycost](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
-                       },
-                       "merged");
+      UpdateDescriptorGenerator1(countsupp_update_descriptor, merged_count_partsupp_t, payload.count);
+
+      UpdateDescriptorGenerator1(sum_supplycost_update_descriptor, merged_sum_supplycost_t, payload.sum_supplycost);
+
+      maintainTemplate(
+          [this](const partsupp_t::Key& k, const partsupp_t& v) { mergedBasicGroup.insert(k, v); },
+          [&countsupp_update_descriptor, this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor&) {
+             mergedBasicGroup.template update1<merged_count_partsupp_t>(
+                 merged_count_partsupp_t::Key({part_id}), [](merged_count_partsupp_t& rec) { rec.payload.count++; }, countsupp_update_descriptor);
+          },
+          [&sum_supplycost_update_descriptor, this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor&) {
+             mergedBasicGroup.template update1<merged_sum_supplycost_t>(
+                 merged_sum_supplycost_t::Key({part_id}), [supplycost](merged_sum_supplycost_t& rec) { rec.payload.sum_supplycost += supplycost; },
+                 sum_supplycost_update_descriptor);
+          },
+          "merged");
    }
 
    void maintainView()
    {
       // partsupp is kept as a base table
       maintainTemplate([this](const partsupp_t::Key& k, const partsupp_t& v) { workload.partsupp.insert(k, v); },
-                       [this](const Integer part_id,  leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+                       [this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
                           view.update1(view_t::Key({part_id}), [](view_t& rec) { rec.count_partsupp++; }, update_descriptor);
                        },
-                       [this](const Integer part_id, const Numeric supplycost,  leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+                       [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
                           view.update1(view_t::Key({part_id}), [supplycost](view_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
                        },
                        "view");

@@ -3,6 +3,7 @@
 #include "LeanStoreLogger.hpp"
 #include "Tables.hpp"
 #include "BasicJoinViews.hpp"
+#include "../shared/LeanStoreMergedAdapter.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore_executable_helper.hpp"
@@ -29,7 +30,7 @@ int main(int argc, char** argv)
    LeanStoreAdapter<joinedPPsL_t> joinedPPsL;
    LeanStoreAdapter<joinedPPs_t> joinedPPs;
    LeanStoreAdapter<sorted_lineitem_t> sortedLineitem;
-   LeanStoreMergedAdapter mergedBasicJoin;
+   LeanStoreMergedAdapter<merged_part_t, merged_partsupp_t, merged_lineitem_t> mergedBasicJoin;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -41,7 +42,7 @@ int main(int argc, char** argv)
       orders = LeanStoreAdapter<orders_t>(db, "orders");
       nation = LeanStoreAdapter<nation_t>(db, "nation");
       region = LeanStoreAdapter<region_t>(db, "region");
-      mergedBasicJoin = LeanStoreMergedAdapter(db, "mergedBasicJoin");
+      mergedBasicJoin = LeanStoreMergedAdapter<merged_part_t, merged_partsupp_t, merged_lineitem_t>(db, "mergedBasicJoin");
       joinedPPsL = LeanStoreAdapter<joinedPPsL_t>(db, "joinedPPsL");
       joinedPPs = LeanStoreAdapter<joinedPPs_t>(db, "joinedPPs");
       sortedLineitem = LeanStoreAdapter<sorted_lineitem_t>(db, "sortedLineitem");
@@ -51,7 +52,7 @@ int main(int argc, char** argv)
    leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE;
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
-   TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
+   TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    basic_join::BasicJoin<LeanStoreAdapter, LeanStoreMergedAdapter> tpchBasicJoin(tpch, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem);
 
    if (!FLAGS_recover) {

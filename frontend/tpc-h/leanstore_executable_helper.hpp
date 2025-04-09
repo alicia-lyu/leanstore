@@ -1,5 +1,4 @@
 #include "../shared/LeanStoreAdapter.hpp"
-#include "../shared/LeanStoreMergedAdapter.hpp"
 #include "TPCHWorkload.hpp"
 
 #define warmupAndTX(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                         \
@@ -29,7 +28,7 @@ inline void runLookupPhase(std::function<void()> lookupCallback,
                     atomic<u64>& lookup_count,
                     atomic<u64>& running_threads_counter,
                     atomic<u64>& keep_running,
-                    TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter>& tpch,
+                    TPCHWorkload<LeanStoreAdapter>& tpch,
                     leanstore::TX_ISOLATION_LEVEL isolation_level)
 {
    running_threads_counter++;

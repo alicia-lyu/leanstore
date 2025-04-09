@@ -92,6 +92,11 @@ inline unsigned fold(u8* writer, const u32& x)
    *reinterpret_cast<u32*>(writer) = __builtin_bswap32(x);
    return sizeof(x);
 }
+inline unsigned fold(u8* writer, const u8& x)
+{
+   *reinterpret_cast<u8*>(writer) = x;
+   return sizeof(x);
+}
 // -------------------------------------------------------------------------------------
 inline unsigned fold(u8* writer, const u64& x)
 {
@@ -122,6 +127,12 @@ inline unsigned unfold(const u8* input, Timestamp& x)
 inline unsigned unfold(const u8* input, u32& x)
 {
    x = __builtin_bswap32(*reinterpret_cast<const u32*>(input));
+   return sizeof(x);
+}
+
+inline unsigned unfold(const u8* input, u8& x)
+{
+   x = *reinterpret_cast<const u8*>(input);
    return sizeof(x);
 }
 // -------------------------------------------------------------------------------------
