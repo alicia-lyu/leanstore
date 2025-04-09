@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
-#include "Logger.hpp"
-#include "TPCHWorkload.hpp"
+#include "logger.hpp"
+#include "tpch_workload.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"

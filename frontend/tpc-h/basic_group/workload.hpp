@@ -5,9 +5,9 @@
 #include "../../shared/Adapter.hpp"
 #include "views.hpp"
 #include "Exceptions.hpp"
-#include "../Logger.hpp"
-#include "../TPCHWorkload.hpp"
-#include "../Tables.hpp"
+#include "../logger.hpp"
+#include "../tpch_workload.hpp"
+#include "../tables.hpp"
 #include "leanstore/KVInterface.hpp"
 
 // SELECT partkey, COUNT(*), AVG(supplycost)

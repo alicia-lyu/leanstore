@@ -6,7 +6,7 @@
 #include <vector>
 #include "Exceptions.hpp"
 #include "Units.hpp"
-#include "ViewTemplates.hpp"
+#include "view_templates.hpp"
 
 // MultiWayMerge performs a multi-way merge-join or merge-insert from multiple sorted sources
 // Each source yields key-value pairs, merged by JK, into JoinedRec or MergedAdapterType

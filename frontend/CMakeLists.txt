@@ -1,4 +1,4 @@
-add_library(LeanStoreLogger OBJECT tpc-h/LeanStoreLogger.cpp tpc-h/LeanStoreLogger.hpp)
+add_library(LeanStoreLogger OBJECT tpc-h/leanstore_logger.cpp tpc-h/leanstore_logger.hpp)
 target_link_libraries(LeanStoreLogger leanstore Threads::Threads)
 target_include_directories(LeanStoreLogger PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 

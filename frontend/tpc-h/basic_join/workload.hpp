@@ -3,10 +3,10 @@
 #include <variant>
 #include <vector>
 #include "views.hpp"
-#include "../Logger.hpp"
-#include "../Merge.hpp"
-#include "../TPCHWorkload.hpp"
-#include "../Tables.hpp"
+#include "../logger.hpp"
+#include "../merge.hpp"
+#include "../tpch_workload.hpp"
+#include "../tables.hpp"
 
 namespace basic_join
 {
