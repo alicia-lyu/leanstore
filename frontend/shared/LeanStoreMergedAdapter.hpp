@@ -9,6 +9,7 @@
 
 using namespace leanstore;
 
+template <typename... Records>
 struct LeanStoreMergedAdapter {
    leanstore::KVInterface* btree;
    leanstore::storage::btree::BTreeGeneric* btree_generic;
@@ -127,7 +128,6 @@ struct LeanStoreMergedAdapter {
       }
    }
 
-   template <typename... Records>
    static std::pair<std::variant<typename Records::Key...>, std::variant<Records...>> toType(leanstore::Slice& k, leanstore::Slice& v)
    {
       bool matched = false;
@@ -149,7 +149,7 @@ struct LeanStoreMergedAdapter {
       return std::make_pair(result_key, result_rec);
    }
 
-   template <typename JK, typename... Records>
+   template <typename JK>
    bool tryLookup(const JK& jk, const std::function<void(const std::variant<Records...>&)>& cb)
    {
       u8 folded_jk[JK::maxFoldLength()];
@@ -239,7 +239,6 @@ struct LeanStoreMergedAdapter {
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
 
-   template <typename... Records>
    std::unique_ptr<LeanStoreMergedScanner<Records...>> getScanner() {
       if (FLAGS_vi) {
          return std::make_unique<LeanStoreMergedScanner<Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));

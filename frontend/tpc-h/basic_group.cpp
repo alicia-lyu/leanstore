@@ -1,6 +1,7 @@
 #include <gflags/gflags.h>
 #include "BasicGroup.hpp"
 #include "BasicGroupViews.hpp"
+#include "../shared/LeanStoreMergedAdapter.hpp"
 #include "LeanStoreLogger.hpp"
 #include "Tables.hpp"
 #include "leanstore/LeanStore.hpp"
@@ -30,7 +31,7 @@ int main(int argc, char** argv)
    LeanStoreAdapter<view_t> view;
    LeanStoreAdapter<count_partsupp_t> count_partsupp;
    LeanStoreAdapter<sum_supplycost_t> sum_supplycost;
-   LeanStoreMergedAdapter mergedBasicGroup;
+   LeanStoreMergedAdapter<merged_count_partsupp_t, merged_sum_supplycost_t, merged_partsupp_t> mergedBasicGroup;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -42,7 +43,7 @@ int main(int argc, char** argv)
       orders = LeanStoreAdapter<orders_t>(db, "orders");
       nation = LeanStoreAdapter<nation_t>(db, "nation");
       region = LeanStoreAdapter<region_t>(db, "region");
-      mergedBasicGroup = LeanStoreMergedAdapter(db, "mergedBasicGroup");
+      mergedBasicGroup = LeanStoreMergedAdapter<merged_count_partsupp_t, merged_sum_supplycost_t, merged_partsupp_t>(db, "mergedBasicGroup");
       view = LeanStoreAdapter<view_t>(db, "view");
       count_partsupp = LeanStoreAdapter<count_partsupp_t>(db, "count_partsupp");
       sum_supplycost = LeanStoreAdapter<sum_supplycost_t>(db, "sum_supplycost");
@@ -54,7 +55,7 @@ int main(int argc, char** argv)
 
    LeanStoreLogger logger(db);
 
-   TPCHWorkload<LeanStoreAdapter, LeanStoreMergedAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
+   TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter> tpchBasicGroup(tpch, mergedBasicGroup, view, count_partsupp, sum_supplycost);
 
    if (!FLAGS_recover) {

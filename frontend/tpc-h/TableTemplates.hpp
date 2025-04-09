@@ -26,25 +26,35 @@ struct KeyPrototype {
     }
 
     static constexpr unsigned maxFoldLength() { return (0 + ... + sizeof(std::declval<K>().*Members)); }
+
+    static unsigned keyfold(uint8_t* out, const K& key)
+    {
+        unsigned pos = 0;
+        ((pos += fold(out + pos, key.*Members)), ...);
+        return pos;
+    }
+
+    static unsigned keyunfold(const uint8_t* in, K& key)
+    {
+        unsigned pos = 0;
+        ((pos += unfold(in + pos, key.*Members)), ...);
+        return pos;
+    }
 };
 
 template <typename T, auto T::* ...Members>
 struct RecordPrototype {
     
-    template <class K, auto K::* ...KMembers>
+    template <typename K>
     static unsigned foldKey(uint8_t* out, const K& key)
     {
-        unsigned pos = 0;
-        ((pos += fold(out + pos, key.*KMembers)), ...);
-        return pos;
+        return K::keyfold(out, key);
     }
 
-    template <class K, auto K::* ...KMembers>
+    template <typename K>
     static unsigned unfoldKey(const uint8_t* in, K& key)
     {
-        unsigned pos = 0;
-        ((pos += unfold(in + pos, key.*KMembers)), ...);
-        return pos;
+        return K::keyunfold(in, key);
     }
 
     template <typename Type>

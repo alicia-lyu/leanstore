@@ -9,9 +9,20 @@
 // id range: (20s)
 
 #include "TableTemplates.hpp"
+#include "Tables.hpp"
+#include "ViewTemplates.hpp"
 #include "randutils.hpp"
 
 namespace basic_group {
+    struct sort_key_base {
+        Integer partkey;
+    };
+
+    struct sort_key_t : public sort_key_base, public KeyPrototype<sort_key_base, &sort_key_base::partkey> {
+        sort_key_t() = default;
+        sort_key_t(Integer partkey): sort_key_base{partkey} {}
+    };
+    
     struct count_partsupp_base {
         static constexpr int id = 20;
         struct key_base {
@@ -32,18 +43,6 @@ namespace basic_group {
         count_partsupp_t() = default;
 
         using count_partsupp_base::Key;
-
-        template <typename K>
-        static unsigned foldKey(uint8_t* out, const K& key)
-        {
-            return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
-        }
-
-        template <typename K>
-        static unsigned unfoldKey(const uint8_t* in, K& key)
-        {
-            return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
-        }
 
         static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
@@ -73,18 +72,6 @@ namespace basic_group {
         sum_supplycost_t() = default;
 
         using sum_supplycost_base::Key;
-
-        template <typename K>
-        static unsigned foldKey(uint8_t* out, const K& key)
-        {
-            return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
-        }
-
-        template <typename K>
-        static unsigned unfoldKey(const uint8_t* in, K& key)
-        {
-            return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
-        }
 
         static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
@@ -116,23 +103,19 @@ namespace basic_group {
 
         using view_base::Key;
 
-        template <typename K>
-        static unsigned foldKey(uint8_t* out, const K& key)
-        {
-            return RecordPrototype::foldKey<typename K::key_base, &K::key_base::p_partkey>(out, key);
-        }
-
-        template <typename K>
-        static unsigned unfoldKey(const uint8_t* in, K& key)
-        {
-            return RecordPrototype::unfoldKey<typename K::key_base, &K::key_base::p_partkey>(in, key);
-        }
-
         static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
         static view_t generateRandomRecord()
         {
             return view_t({randutils::urand(1, 10000), randutils::randomNumeric(0.0000, 100.0000)});
         }
+    };
+
+    using merged_sum_supplycost_t = merged_t<23, sum_supplycost_t, sort_key_t, ExtraID::PKID>;
+    using merged_count_partsupp_t = merged_t<23, count_partsupp_t, sort_key_t, ExtraID::PKID>;
+    struct merged_partsupp_t: public partsupp_t {
+        using partsupp_t::partsupp_t;
+        using partsupp_t::Key;
+        static constexpr int id = 23;
     };
 }

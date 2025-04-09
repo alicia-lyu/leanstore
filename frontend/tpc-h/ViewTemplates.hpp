@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <ostream>
 #include <tuple>
 #include <vector>
@@ -77,7 +78,13 @@ struct joined_t {
     }
 };
 
-template <int TID, typename T, typename JK, bool foldPK>
+enum class ExtraID {
+    NONE, // When the sort key is a superset of the primary key, and the sort key can distinguish different sources
+    PK, // When the sort key is a subset of the primary key
+    PKID // When the sort key is a superset ofto the primary key, but the sort key cannot distinguish different sources
+};
+
+template <int TID, typename T, typename JK, ExtraID extra_id>
 struct merged_t {
     static constexpr int id = TID;
     struct key_base {
@@ -94,8 +101,10 @@ struct merged_t {
 
         friend std::ostream& operator<<(std::ostream& os, const Key& key) {
             os << "mergedKey(" << key.jk;
-            if (foldPK) {
+            if (extra_id == ExtraID::PK) {
                 os << ", " << key.pk;
+            } else if (extra_id == ExtraID::PKID) {
+                os << ", " << key.pk.id;
             }
             os << ")";
             return os;
@@ -111,20 +120,34 @@ struct merged_t {
     static unsigned foldKey(uint8_t* out, const Key& key) {
         unsigned pos = 0;
         pos += JK::keyfold(out + pos, key.jk);
-        if (foldPK)
+        if (extra_id == ExtraID::PK)
             pos += T::foldKey(out + pos, key.pk);
+        else if (extra_id == ExtraID::PKID)
+        {
+            if (key.pk.id < 0 || key.pk.id > std::numeric_limits<u8>::max())
+                throw std::runtime_error("pk.id out of range");
+            u8 id = static_cast<u8>(key.pk.id);
+            pos += unfold(out + pos, id);
+        }
         return pos;
     }
 
     static unsigned unfoldKey(const uint8_t* in, Key& key) {
         unsigned pos = 0;
         pos += JK::keyunfold(in + pos, key.jk);
-        if (foldPK)
+        if (extra_id == ExtraID::PK)
             pos += T::unfoldKey(in + pos, key.pk);
+        else if (extra_id == ExtraID::PKID)
+        {
+            u8 id;
+            pos += unfold(in + pos, id);
+            assert(key.pk.id == id);
+        }
+            
         return pos;
     }
 
-    static constexpr unsigned maxFoldLength() { return 0 + JK::maxFoldLength() + (foldPK ? T::maxFoldLength() : 0); }
+    static constexpr unsigned maxFoldLength() { return 0 + JK::maxFoldLength() + (extra_id == ExtraID::PK ? T::maxFoldLength() : 0) + (extra_id == ExtraID::PKID ? sizeof(u8) : 0); }
 
     template <typename Type>
     static std::vector<std::byte> toBytes(const Type& keyOrRec)

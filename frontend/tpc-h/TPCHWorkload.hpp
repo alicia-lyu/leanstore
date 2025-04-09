@@ -14,7 +14,7 @@
 
 DECLARE_double(tpch_scale_factor);
 
-template <template <typename> class AdapterType, class MergedAdapterType>
+template <template <typename> class AdapterType>
 struct TPCHWorkload
 {
    Logger& logger;
@@ -59,7 +59,6 @@ struct TPCHWorkload
       loadPartsuppLineitem();
       loadCustomer();
       loadOrders();
-      loadLineitem();
       loadNation();
       loadRegion();
       logSize();
