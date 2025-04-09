@@ -64,13 +64,14 @@ int main(int argc, char** argv)
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          tpchBasicGroup.loadBaseTables();
          tpchBasicGroup.loadAllOptions();
+         tpchBasicGroup.logSize();
          cr::Worker::my().commitTX();
       });
    }
 
    warmupAndTX(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForIndex, queryByIndex, maintainIndex);
 
-   warmupAndTX(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByView, maintainMerged);
+   warmupAndTX(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, maintainMerged);
 
    warmupAndTX(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, maintainView);
 }

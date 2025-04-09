@@ -65,8 +65,9 @@ struct LeanStoreMergedAdapter {
       }
    }
    // -------------------------------------------------------------------------------------
+   // Record must be one of the Records
    template <class Record>
-   void insert(const typename Record::Key& key, const Record& record)
+   void insert(const typename Record::Key& key, const Record& record) requires(std::disjunction_v<std::is_same<Record, Records>...>)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
@@ -91,7 +92,7 @@ struct LeanStoreMergedAdapter {
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
-   void lookup1(const typename Record::Key& key, const std::function<void(const Record&)>& cb)
+   void lookup1(const typename Record::Key& key, const std::function<void(const Record&)>& cb) requires(std::disjunction_v<std::is_same<Record, Records>...>)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
@@ -108,7 +109,7 @@ struct LeanStoreMergedAdapter {
    }
 
    template <class Record>
-   bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& cb)
+   bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& cb) requires(std::disjunction_v<std::is_same<Record, Records>...>)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
@@ -170,7 +171,7 @@ struct LeanStoreMergedAdapter {
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
-   void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb, UpdateSameSizeInPlaceDescriptor& update_descriptor)
+   void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb, UpdateSameSizeInPlaceDescriptor& update_descriptor) requires(std::disjunction_v<std::is_same<Record, Records>...>)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
@@ -200,7 +201,7 @@ struct LeanStoreMergedAdapter {
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
-   bool erase(const typename Record::Key& key)
+   bool erase(const typename Record::Key& key) requires(std::disjunction_v<std::is_same<Record, Records>...>)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
@@ -212,7 +213,7 @@ struct LeanStoreMergedAdapter {
    }
    // -------------------------------------------------------------------------------------
    template <class Field, class Record>
-   Field lookupField(const typename Record::Key& key, Field Record::* f)
+   Field lookupField(const typename Record::Key& key, Field Record::* f) requires(std::disjunction_v<std::is_same<Record, Records>...>)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
