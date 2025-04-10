@@ -6,7 +6,7 @@
 #include <ostream>
 #include <tuple>
 #include <vector>
-#include "table_templates.hpp"
+#include "table_traits.hpp"
 
 template <int TID, typename JK, typename... Ts>
 struct joined_t {
@@ -19,7 +19,9 @@ struct joined_t {
 
    struct Key : public key_base {
       Key() = default;
-      Key(const key_base& k) : key_base(k) {}
+
+      template <typename... Args>
+      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...} {}
 
       friend std::ostream& operator<<(std::ostream& os, const Key& key)
       {
@@ -31,6 +33,8 @@ struct joined_t {
    };
 
    std::tuple<Ts...> payloads;
+
+   joined_t() = default;
 
    explicit joined_t(std::tuple<Ts...> tuple) : payloads(std::move(tuple)) {}
 
@@ -95,10 +99,9 @@ struct merged_t {
    };
    struct Key : public key_base {
       Key() = default;
-      Key(const key_base& k) : key_base(k) {}
-      Key(const typename T::Key& pk, const T& v) : key_base({JK(pk, v), pk}) {}
-      Key(const JK& jk, const typename T::Key& pk) : key_base({jk, pk}) {}
-      Key(const JK&, const Key& k) : key_base(k) {}
+
+      template <typename... Args>
+      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...} {}
 
       friend std::ostream& operator<<(std::ostream& os, const Key& key)
       {
@@ -115,9 +118,9 @@ struct merged_t {
 
    T payload;
 
-   merged_t(T payload) : payload(std::move(payload)) {}
-
    merged_t() = default;
+
+   explicit merged_t(const T& t) : payload(t) {}
 
    static unsigned foldKey(uint8_t* out, const Key& key)
    {
@@ -157,15 +160,13 @@ struct merged_t {
    template <typename Type>
    static std::vector<std::byte> toBytes(const Type& keyOrRec)
    {
-      std::vector<std::byte> bytes(sizeof(keyOrRec));
-      std::memcpy(bytes.data(), &keyOrRec, sizeof(keyOrRec));
-      return bytes;
+      return struct_to_bytes(&keyOrRec, sizeof(Type));
    }
 
    template <typename Type>
    static Type fromBytes(const std::vector<std::byte>& s)
    {
-      return bytes_to_struct<Type>(s);
+      return struct_from_bytes<Type>(s);
    }
 
    friend std::ostream& operator<<(std::ostream& os, const merged_t& m)

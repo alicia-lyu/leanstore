@@ -43,7 +43,7 @@ class BasicJoin
       Integer supplier_rnd = workload.getSupplierID();
       Integer part_id, supplier_id = 0;
       partsupp.scan(
-          partsupp_t::Key({part_rnd, supplier_rnd}),
+          partsupp_t::Key{part_rnd, supplier_rnd},
           [&](const partsupp_t::Key& k, const partsupp_t&) {
              part_id = k.ps_partkey;
              supplier_id = k.ps_suppkey;
@@ -52,7 +52,7 @@ class BasicJoin
           []() {});
       if (part_id == 0 || supplier_id == 0) {
          partsupp.scanDesc(
-             partsupp_t::Key({part_rnd, supplier_rnd}),
+             partsupp_t::Key{part_rnd, supplier_rnd},
              [&](const partsupp_t::Key& k, const partsupp_t&) {
                 part_id = k.ps_partkey;
                 supplier_id = k.ps_suppkey;
@@ -66,7 +66,7 @@ class BasicJoin
       sortedLineitem.tryLookup(jk, [&](const sorted_lineitem_t&) {
          // std::cout << "found sorted lineitem" << std::endl;
       });
-      part.lookup1(part_t::Key({part_id}), [&](const part_t&) {});
+      part.lookup1(part_t::Key{part_id}, [&](const part_t&) {});
 
       pointLookupsOfRest(part_id, supplier_id);
 
@@ -79,12 +79,12 @@ class BasicJoin
       Integer order_id = workload.getOrderID();
       Integer nation_id = workload.getNationID();
       Integer region_id = workload.getRegionID();
-      workload.supplier.lookup1(supplier_t::Key({supplier_id}), [&](const supplier_t&) {});
-      workload.customer.lookup1(customerh_t::Key({customer_id}), [&](const customerh_t&) {});
-      workload.orders.lookup1(orders_t::Key({order_id}), [&](const orders_t&) {});
-      workload.lineitem.lookup1(lineitem_t::Key({order_id, 1}), [&](const lineitem_t&) {});
-      workload.nation.lookup1(nation_t::Key({nation_id}), [&](const nation_t&) {});
-      workload.region.lookup1(region_t::Key({region_id}), [&](const region_t&) {});
+      workload.supplier.lookup1(supplier_t::Key{supplier_id}, [&](const supplier_t&) {});
+      workload.customer.lookup1(customerh_t::Key{customer_id}, [&](const customerh_t&) {});
+      workload.orders.lookup1(orders_t::Key{order_id}, [&](const orders_t&) {});
+      workload.lineitem.lookup1(lineitem_t::Key{order_id, 1}, [&](const lineitem_t&) {});
+      workload.nation.lookup1(nation_t::Key{nation_id}, [&](const nation_t&) {});
+      workload.region.lookup1(region_t::Key{region_id}, [&](const region_t&) {});
    }
 
    void pointLookupsForMerged()
@@ -201,17 +201,17 @@ class BasicJoin
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
                        [this](const lineitem_t::Key& k, const lineitem_t& v) {
                           workload.lineitem.insert(k, v);
-                          merged_lineitem_t::Key k_new(SKBuilder<join_key_t>::create(k, v), k);
+                          merged_lineitem_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
                           merged_lineitem_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
                        [this](const part_t::Key& k, const part_t& v) {
-                          merged_part_t::Key k_new(SKBuilder<join_key_t>::create(k, v), k);
-                          merged_part_t v_new(v);
+                          merged_part_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
+                          merged_part_t v_new{v};
                           mergedPPsL.insert(k_new, v_new);
                        },
                        [this](const partsupp_t::Key& k, const partsupp_t& v) {
-                          merged_partsupp_t::Key k_new(SKBuilder<join_key_t>::create(k, v), k);
+                          merged_partsupp_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
                           merged_partsupp_t v_new(v);
                           mergedPPsL.insert(k_new, v_new);
                        },
@@ -231,7 +231,7 @@ class BasicJoin
       maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
                        [&, this](const lineitem_t::Key& k, const lineitem_t& v) {
                           workload.lineitem.insert(k, v);
-                          sorted_lineitem_t::Key k_new(SKBuilder<join_key_t>::create(k, v), k);
+                          sorted_lineitem_t::Key k_new{k, v};
                           sorted_lineitem_t v_new(v);
                           this->sortedLineitem.insert(k_new, v_new);
                           new_lineitems.push_back({k_new, v_new});
@@ -303,7 +303,7 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               part_scanner->seek(part_t::Key({next_jk.l_partkey}));
+               part_scanner->seek(part_t::Key{next_jk.l_partkey});
                last_accessed_jk = next_jk;
                continue;
             }
@@ -324,7 +324,7 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               partsupp_scanner->seek(partsupp_t::Key({next_jk.l_partkey, next_jk.suppkey}));
+               partsupp_scanner->seek(partsupp_t::Key{next_jk.l_partkey, next_jk.suppkey});
                last_accessed_jk = next_jk;
                continue;
             }
@@ -345,7 +345,7 @@ class BasicJoin
             if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
                 && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
             {
-               lineitem_scanner->seek(sorted_lineitem_t::Key(next_jk, lineitem_t::Key({0, 0})));
+               lineitem_scanner->seek(sorted_lineitem_t::Key{next_jk, lineitem_t::Key{0, 0}});
                last_accessed_jk = next_jk;
                continue;
             }

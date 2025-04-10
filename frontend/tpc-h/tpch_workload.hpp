@@ -111,7 +111,7 @@ struct TPCHWorkload {
    {
       for (Integer i = start; i <= end; i++) {
          // std::cout << "partkey: " << i << std::endl;
-         insert_func(part_t::Key({i}), part_t::generateRandomRecord());
+         insert_func(part_t::Key{i}, part_t::generateRandomRecord());
          printProgress("part", i, start, end);
       }
       last_part_id = end;
@@ -125,7 +125,7 @@ struct TPCHWorkload {
    void loadSupplier(std::function<void(const supplier_t::Key&, const supplier_t&)> insert_func, Integer start, Integer end)
    {
       for (Integer i = start; i <= end; i++) {
-         insert_func(supplier_t::Key({i}), supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
+         insert_func(supplier_t::Key{i}, supplier_t::generateRandomRecord([this]() { return this->getNationID(); }));
          printProgress("supplier", i, start, end);
       }
       last_supplier_id = end;
@@ -169,13 +169,13 @@ struct TPCHWorkload {
          }
          for (auto& s : suppliers) {
             // load 1 partsupp
-            ps_insert_func(partsupp_t::Key({i, s}), partsupp_t::generateRandomRecord());
+            ps_insert_func(partsupp_t::Key{i, s}, partsupp_t::generateRandomRecord());
             // load lineitems
             Integer lineitem_cnt_ps = urand(0, lineitem_size / partsupp_size * 2);
             // No reference integrity but mostly matched
             for (Integer l = 0; l < lineitem_cnt_ps; l++) {
                auto rec = lineitem_t::generateRandomRecord([i]() { return i; }, [s]() { return s; });
-               l_insert_func(lineitem_t::Key({*current_order_key, lineitem_number}), rec);
+               l_insert_func(lineitem_t::Key{*current_order_key, lineitem_number}, rec);
                lineitem_number++;
                if (lineitem_number > lineitem_cnt_in_order) {
                   lineitem_number = 1;
@@ -225,7 +225,7 @@ struct TPCHWorkload {
             // look up partsupp
             auto p = urand(1, last_part_id);
             auto s = urand(1, last_supplier_id);
-            auto start_key = partsupp_t::Key({p, s});
+            auto start_key = partsupp_t::Key{p, s};
             partsupp.scan(
                 start_key,
                 [&](const partsupp_t::Key& k, const partsupp_t&) {
@@ -235,7 +235,7 @@ struct TPCHWorkload {
                    return false;
                 },
                 []() {});
-            insert_func(lineitem_t::Key({i, j}), lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
+            insert_func(lineitem_t::Key{i, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
          }
          printProgress("orders of lineitem", i, order_start, order_end);
       }
@@ -249,7 +249,7 @@ struct TPCHWorkload {
    void loadCustomer(std::function<void(const customerh_t::Key&, const customerh_t&)> insert_func, Integer start, Integer end)
    {
       for (Integer i = start; i <= end; i++) {
-         insert_func(customerh_t::Key({i}), customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
+         insert_func(customerh_t::Key{i}, customerh_t::generateRandomRecord([this]() { return this->getNationID(); }));
          printProgress("customer", i, start, end);
       }
       last_customer_id = end;
@@ -263,7 +263,7 @@ struct TPCHWorkload {
    void loadOrders(std::function<void(const orders_t::Key&, const orders_t&)> insert_func, Integer start, Integer end)
    {
       for (Integer i = start; i <= end; i++) {
-         insert_func(orders_t::Key({i}), orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
+         insert_func(orders_t::Key{i}, orders_t::generateRandomRecord([this]() { return this->getCustomerID(); }));
          printProgress("orders", i, start, end);
       }
       last_order_id = end;
@@ -277,7 +277,7 @@ struct TPCHWorkload {
    void loadNation(std::function<void(const nation_t::Key&, const nation_t&)> insert_func)
    {
       for (Integer i = 1; i <= NATION_COUNT; i++) {
-         insert_func(nation_t::Key({i}), nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
+         insert_func(nation_t::Key{i}, nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
          printProgress("nation", i, 1, NATION_COUNT);
       }
    }
@@ -290,7 +290,7 @@ struct TPCHWorkload {
    void loadRegion(std::function<void(const region_t::Key&, const region_t&)> insert_func)
    {
       for (Integer i = 1; i <= REGION_COUNT; i++) {
-         insert_func(region_t::Key({i}), region_t::generateRandomRecord());
+         insert_func(region_t::Key{i}, region_t::generateRandomRecord());
          printProgress("region", i, 1, REGION_COUNT);
       }
    }

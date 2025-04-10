@@ -200,8 +200,8 @@ struct MultiWayMerge {
       return [&mergedAdapter, this](HeapEntry& entry) {
          current_entry = entry;
          current_jk = entry.jk;
-         mergedAdapter.insert(typename RecordType::Key(current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)),
-                              RecordType(SourceRecord::template fromBytes<SourceRecord>(entry.v)));
+         mergedAdapter.insert(typename RecordType::Key{current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)},
+                              RecordType{SourceRecord::template fromBytes<SourceRecord>(entry.v)});
          produced++;
          printProgress();
       };
@@ -224,7 +224,7 @@ struct MultiWayMerge {
       assignRecords(output, &batch_size, count, std::index_sequence_for<Records...>{});
 
       for (auto& rec : output) {
-         std::apply([&](auto&... pairs) { (*consume_joined)(typename JoinedRec::Key(std::get<0>(pairs)...), JoinedRec(std::get<1>(pairs)...)); },
+         std::apply([&](auto&... pairs) { (*consume_joined)(typename JoinedRec::Key{std::get<0>(pairs)...}, JoinedRec{std::get<1>(pairs)...}); },
                     rec);
       }
       produced += count;
