@@ -62,18 +62,18 @@ class BasicGroup
       lookup_count_partsupp(part_id);
       lookup_sum_supplycost(part_id);
 
-      workload.part.lookup1(part_t::Key({part_id}), [&](const part_t&) {});
-      workload.supplier.lookup1(supplier_t::Key({supplier_id}), [&](const supplier_t&) {});
+      workload.part.lookup1(part_t::Key{part_id}, [&](const part_t&) {});
+      workload.supplier.lookup1(supplier_t::Key{supplier_id}, [&](const supplier_t&) {});
 
       Integer customer_id = workload.getCustomerID();
       Integer order_id = workload.getOrderID();
       Integer nation_id = workload.getNationID();
       Integer region_id = workload.getRegionID();
-      workload.customer.lookup1(customerh_t::Key({customer_id}), [&](const customerh_t&) {});
-      workload.orders.lookup1(orders_t::Key({order_id}), [&](const orders_t&) {});
-      workload.lineitem.lookup1(lineitem_t::Key({order_id, 1}), [&](const lineitem_t&) {});
-      workload.nation.lookup1(nation_t::Key({nation_id}), [&](const nation_t&) {});
-      workload.region.lookup1(region_t::Key({region_id}), [&](const region_t&) {});
+      workload.customer.lookup1(customerh_t::Key{customer_id}, [&](const customerh_t&) {});
+      workload.orders.lookup1(orders_t::Key{order_id}, [&](const orders_t&) {});
+      workload.lineitem.lookup1(lineitem_t::Key{order_id, 1}, [&](const lineitem_t&) {});
+      workload.nation.lookup1(nation_t::Key{nation_id}, [&](const nation_t&) {});
+      workload.region.lookup1(region_t::Key{region_id}, [&](const region_t&) {});
    }
 
    void pointLookupsForIndex()
@@ -81,7 +81,7 @@ class BasicGroup
       pointLookupsTemplate(
           [this](Integer& part_id, Integer& supplier_id) {
              auto partsupp_scanner = partsupp.getScanner();
-             partsupp_scanner->seek(partsupp_t::Key({part_id, supplier_id}));
+             partsupp_scanner->seek(partsupp_t::Key{part_id, supplier_id});
              auto kv = partsupp_scanner->current();
              assert(kv.has_value());
              auto& [k, v] = *kv;
@@ -97,7 +97,7 @@ class BasicGroup
       pointLookupsTemplate(
           [this](Integer& part_id, Integer& supplier_id) {
              auto partsupp_scanner = mergedBasicGroup.getScanner();
-             auto ret = partsupp_scanner->template seekTyped<merged_partsupp_option_t>(typename merged_partsupp_option_t::Key(partsupp_t::Key({part_id, supplier_id})));
+             auto ret = partsupp_scanner->template seekTyped<merged_partsupp_option_t>(typename merged_partsupp_option_t::Key(partsupp_t::Key{part_id, supplier_id}));
              assert(ret);
              auto kv = partsupp_scanner->current();
              auto& [k, v] = *kv;
@@ -124,7 +124,7 @@ class BasicGroup
       pointLookupsTemplate(
           [this](Integer& part_id, Integer& supplier_id) {
              auto partsupp_scanner = workload.partsupp.getScanner();
-             partsupp_scanner->seek(partsupp_t::Key({part_id, supplier_id}));
+             partsupp_scanner->seek(partsupp_t::Key{part_id, supplier_id});
              auto kv = partsupp_scanner->current();
              assert(kv.has_value());
              auto& [k, v] = *kv;

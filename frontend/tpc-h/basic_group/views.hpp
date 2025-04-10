@@ -8,10 +8,10 @@
 
 // id range: (20s)
 
-#include "../table_templates.hpp"
+#include "../randutils.hpp"
+#include "../table_traits.hpp"
 #include "../tables.hpp"
 #include "../view_templates.hpp"
-#include "../randutils.hpp"
 
 namespace basic_group
 {
@@ -19,7 +19,7 @@ struct sort_key_base {
    Integer partkey;
 };
 
-struct sort_key_t : public sort_key_base, public KeyPrototype<sort_key_base, &sort_key_base::partkey> {
+struct sort_key_t : public sort_key_base, public key_traits<sort_key_base, &sort_key_base::partkey> {
    sort_key_t() = default;
    sort_key_t(Integer partkey) : sort_key_base{partkey} {}
 };
@@ -30,7 +30,7 @@ struct sort_key_variant_base {
 };
 
 struct sort_key_variant_t : public sort_key_variant_base,
-                            public KeyPrototype<sort_key_variant_base, &sort_key_variant_base::id, &sort_key_variant_base::partkey> {
+                            public key_traits<sort_key_variant_base, &sort_key_variant_base::id, &sort_key_variant_base::partkey> {
    sort_key_variant_t() = default;
    sort_key_variant_t(u8 id, Integer partkey) : sort_key_variant_base{id, partkey} {}
 };
@@ -42,7 +42,7 @@ struct count_partsupp_base {
       Integer p_partkey;
    };
 
-   struct Key : public key_base, public KeyPrototype<key_base, &key_base::p_partkey> {
+   struct Key : public key_base, public key_traits<key_base, &key_base::p_partkey> {
       Key() = default;
       Key(const key_base& k) : key_base(k) {}
    };
@@ -50,7 +50,7 @@ struct count_partsupp_base {
    Integer count;
 };
 
-struct count_partsupp_t : public count_partsupp_base, public RecordPrototype<count_partsupp_base, &count_partsupp_base::count> {
+struct count_partsupp_t : public count_partsupp_base, public record_traits<count_partsupp_base> {
    explicit count_partsupp_t(count_partsupp_base base) : count_partsupp_base(base) {}
    count_partsupp_t() = default;
 
@@ -68,7 +68,7 @@ struct sum_supplycost_base {
       Integer p_partkey;
    };
 
-   struct Key : public key_base, public KeyPrototype<key_base, &key_base::p_partkey> {
+   struct Key : public key_base, public key_traits<key_base, &key_base::p_partkey> {
       Key() = default;
       Key(const key_base& k) : key_base(k) {}
    };
@@ -76,7 +76,7 @@ struct sum_supplycost_base {
    Numeric sum_supplycost;
 };
 
-struct sum_supplycost_t : public sum_supplycost_base, public RecordPrototype<sum_supplycost_base, &sum_supplycost_base::sum_supplycost> {
+struct sum_supplycost_t : public sum_supplycost_base, public record_traits<sum_supplycost_base> {
    explicit sum_supplycost_t(sum_supplycost_base base) : sum_supplycost_base(base) {}
    sum_supplycost_t() = default;
 
@@ -94,7 +94,7 @@ struct view_base {
       Integer p_partkey;
    };
 
-   struct Key : public key_base, public KeyPrototype<key_base, &key_base::p_partkey> {
+   struct Key : public key_base, public key_traits<key_base, &key_base::p_partkey> {
       Key() = default;
       Key(const key_base& k) : key_base(k) {}
    };
@@ -103,7 +103,7 @@ struct view_base {
    Numeric sum_supplycost;
 };
 
-struct view_t : public view_base, public RecordPrototype<view_base, &view_base::count_partsupp, &view_base::sum_supplycost> {
+struct view_t : public view_base, public record_traits<view_base> {
    explicit view_t(view_base base) : view_base(base) {}
    view_t() = default;
 
@@ -115,48 +115,84 @@ struct view_t : public view_base, public RecordPrototype<view_base, &view_base::
 };
 
 struct merged_sum_supplycost_t : public merged_t<23, sum_supplycost_t, sort_key_t, ExtraID::PKID> {
-   using merged_t::merged_t;
-   struct Key: public merged_t::Key {
-      using merged_t::Key::Key;
-      Key(const sum_supplycost_t::Key& pk) : merged_t::Key(sort_key_t{pk.p_partkey}, pk) {}
+   template <typename... Args>
+   explicit merged_sum_supplycost_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
+   {
+   }
+   struct Key : public merged_t::Key {
+      Key(const sum_supplycost_t::Key& pk) : merged_t::Key{sort_key_t{pk.p_partkey}, pk} {}
+      template <typename... Args>
+      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
+      {
+      }
    };
 };
 
-struct merged_count_partsupp_t: public merged_t<23, count_partsupp_t, sort_key_t, ExtraID::PKID> {
-   using merged_t::merged_t;
-   struct Key: public merged_t::Key {
-      using merged_t::Key::Key;
-      Key(const count_partsupp_t::Key& pk) : merged_t::Key(sort_key_t{pk.p_partkey}, pk) {}
+struct merged_count_partsupp_t : public merged_t<23, count_partsupp_t, sort_key_t, ExtraID::PKID> {
+   template <typename... Args>
+   explicit merged_count_partsupp_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
+   {
+   }
+   struct Key : public merged_t::Key {
+      Key(const count_partsupp_t::Key& pk) : merged_t::Key{sort_key_t{pk.p_partkey}, pk} {}
+      template <typename... Args>
+      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
+      {
+      }
    };
 };
 
 struct merged_partsupp_t : public merged_t<23, partsupp_t, sort_key_t, ExtraID::PK> {
-   using merged_t::merged_t;
-   struct Key: public merged_t::Key {
-      using merged_t::Key::Key;
-      Key(const partsupp_t::Key& pk) : merged_t::Key(sort_key_t{pk.ps_partkey}, pk) {}
+   template <typename... Args>
+   explicit merged_partsupp_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
+   {
+   }
+   struct Key : public merged_t::Key {
+      Key(const partsupp_t::Key& pk) : merged_t::Key{sort_key_t{pk.ps_partkey}, pk} {}
+      template <typename... Args>
+      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
+      {
+      }
    };
 };
 
-struct merged_count_variant_t: public merged_t<23, count_partsupp_t, sort_key_variant_t, ExtraID::NONE> {
-   using merged_t::merged_t;
-   struct Key: public merged_t::Key {
-      using merged_t::Key::Key;
-      Key(const count_partsupp_t::Key& pk) : merged_t::Key(sort_key_variant_t{count_partsupp_t::id, pk.p_partkey}, pk) {}
+struct merged_count_variant_t : public merged_t<23, count_partsupp_t, sort_key_variant_t, ExtraID::NONE> {
+   template <typename... Args>
+   explicit merged_count_variant_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
+   {
+   }
+   struct Key : public merged_t::Key {
+      Key(const count_partsupp_t::Key& pk) : merged_t::Key{sort_key_variant_t{count_partsupp_t::id, pk.p_partkey}, pk} {}
+      template <typename... Args>
+      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
+      {
+      }
    };
 };
-struct merged_sum_variant_t: public merged_t<23, sum_supplycost_t, sort_key_variant_t, ExtraID::NONE> {
-   using merged_t::merged_t;
-   struct Key: public merged_t::Key {
-      using merged_t::Key::Key;
-      Key(const sum_supplycost_t::Key& pk) : merged_t::Key(sort_key_variant_t{sum_supplycost_t::id, pk.p_partkey}, pk) {}
+struct merged_sum_variant_t : public merged_t<23, sum_supplycost_t, sort_key_variant_t, ExtraID::NONE> {
+   template <typename... Args>
+   explicit merged_sum_variant_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
+   {
+   }
+   struct Key : public merged_t::Key {
+      Key(const sum_supplycost_t::Key& pk) : merged_t::Key{sort_key_variant_t{sum_supplycost_t::id, pk.p_partkey}, pk} {}
+      template <typename... Args>
+      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
+      {
+      }
    };
 };
-struct merged_partsupp_variant_t: public merged_t<23, partsupp_t, sort_key_variant_t, ExtraID::PK> {
-   using merged_t::merged_t;
-   struct Key: public merged_t::Key {
-      using merged_t::Key::Key;
-      Key(const partsupp_t::Key& pk) : merged_t::Key(sort_key_variant_t{partsupp_t::id, pk.ps_partkey}, pk) {}
+struct merged_partsupp_variant_t : public merged_t<23, partsupp_t, sort_key_variant_t, ExtraID::PK> {
+   template <typename... Args>
+   explicit merged_partsupp_variant_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
+   {
+   }
+   struct Key : public merged_t::Key {
+      Key(const partsupp_t::Key& pk) : merged_t::Key{sort_key_variant_t{partsupp_t::id, pk.ps_partkey}, pk} {}
+      template <typename... Args>
+      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
+      {
+      }
    };
 };
 }  // namespace basic_group
