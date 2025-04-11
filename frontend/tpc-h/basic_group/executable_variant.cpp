@@ -11,5 +11,5 @@ int main(int argc, char** argv)
    gflags::SetUsageMessage("Leanstore Join TPC-H");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-   return run<merged_count_partsupp_t, merged_sum_supplycost_t, merged_partsupp_t>();
+   return run<merged_count_variant_t, merged_sum_variant_t, merged_partsupp_variant_t>();
 }

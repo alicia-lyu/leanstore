@@ -20,6 +20,8 @@ class LeanStoreScanner : public Scanner<Record>
   public:
    LeanStoreScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
+   ~LeanStoreScanner() = default;
+
    void reset()
    {
       it->reset();

@@ -1,7 +1,7 @@
 #include "../shared/LeanStoreAdapter.hpp"
 #include "tpch_workload.hpp"
 
-#define warmupAndTX(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                         \
+#define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                         \
    {                                                                                                                                    \
       atomic<u64> keep_running = true;                                                                                                  \
       atomic<u64> lookup_count = 0;                                                                                                     \
@@ -59,8 +59,6 @@ inline void runTXPhase(std::function<void()> TXCallback, atomic<u64>& running_th
    cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
    std::cout << std::endl;
    for (int i = 0; i < 2; ++i) {
-      // tpchBasicJoin.queryByBase();
-      // tpchBasicJoin.maintainBase();
       TXCallback();
    }
    cr::Worker::my().commitTX();

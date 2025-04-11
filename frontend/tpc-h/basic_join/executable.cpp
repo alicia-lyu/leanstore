@@ -70,9 +70,9 @@ int main(int argc, char** argv)
       });
    }
 
-   warmupAndTX(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForBase, queryByBase, maintainBase);
+   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForBase, queryByBase, maintainBase);
 
-   warmupAndTX(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, maintainMerged);
+   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, maintainMerged);
 
-   warmupAndTX(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForView, queryByView, maintainView);
+   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForView, queryByView, maintainView);
 }

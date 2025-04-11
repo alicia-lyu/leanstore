@@ -7,7 +7,7 @@ BUILD_DIR := build
 BUILD_DIR_DEBUG := $(BUILD_DIR)-debug
 BUILD_DIRS := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 
-EXECS := basic_join basic_group
+EXECS := basic_join basic_group basic_group_variant
 
 TARGETS := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)/frontend/$(exec)))
 
