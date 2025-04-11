@@ -5,6 +5,7 @@ template <class Record>
 class Scanner
 {
   public:
+  virtual ~Scanner() = default;
   virtual void reset() = 0;
 
   virtual std::optional<std::pair<typename Record::Key, Record>> next() = 0;

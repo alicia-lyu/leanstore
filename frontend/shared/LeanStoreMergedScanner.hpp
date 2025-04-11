@@ -42,6 +42,8 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
 
    LeanStoreMergedScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
+   ~LeanStoreMergedScanner() = default;
+
    void reset()
    {
       it->reset();

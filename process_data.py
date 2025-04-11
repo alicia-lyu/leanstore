@@ -26,26 +26,28 @@ def collect_data(exec):
             if tx == "maintain":
                 with open(os.path.join(p, exp, d), "r") as f:
                     if maintenance_f.tell() == 0:
-                        maintenance_f.write("scale,dram,method,")
+                        maintenance_f.write("method,dram,scale,")
                         header = f.readline()
                         maintenance_f.write(header)
                     # add the last line
                     lines = f.readlines()
-                    maintenance_f.write(f"{scale},{dram},{method}," + lines[-1])
+                    maintenance_f.write(f"{method},{dram},{scale}," + lines[-1])
             elif tx == "query":
                 with open(os.path.join(p, exp, d), "r") as f:
                     if query_f.tell() == 0:
-                        query_f.write("scale,dram,method,")
+                        query_f.write("method,dram,scale,")
                         header = f.readline()
                         query_f.write(header)
                     # add the last line
                     lines = f.readlines()
-                    query_f.write(f"{scale},{dram},{method}," + lines[-1])
+                    query_f.write(f"{method},{dram},{scale}," + lines[-1])
     maintenance_f.close()
     query_f.close()
     
 if __name__ == "__main__":
     collect_data("basic_join")
+    collect_data("basic_group")
+    collect_data("basic_group_variant")
                     
                     
                 

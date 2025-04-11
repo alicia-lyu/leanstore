@@ -35,7 +35,8 @@ struct TPCHWorkload {
                 AdapterType<nation_t>& n,
                 AdapterType<region_t>& r,
                 Logger& logger)
-       : part(p),
+       : logger(logger),
+         part(p),
          supplier(s),
          partsupp(ps),
          customer(c),
@@ -43,7 +44,6 @@ struct TPCHWorkload {
          lineitem(l),
          nation(n),
          region(r),
-         logger(logger),
          last_part_id(0),
          last_supplier_id(0),
          last_customer_id(0),
@@ -161,7 +161,7 @@ struct TPCHWorkload {
       for (Integer i = part_start; i <= part_end; i++) {
          printProgress("parts of partsupp and lineitem", i, part_start, part_end);
          // Randomly select suppliers for this part
-         Integer supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2 - 1);
+         size_t supplier_cnt = urand(1, PARTSUPP_SCALE / PART_SCALE * 2 - 1);
          std::set<Integer> suppliers = {};
          while (suppliers.size() < supplier_cnt) {
             Integer supplier_id = urand(1, last_supplier_id);
