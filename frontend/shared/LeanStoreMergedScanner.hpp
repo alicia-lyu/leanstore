@@ -68,7 +68,7 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
       u8 keyBuffer[RecordType::maxFoldLength()];
       unsigned pos = RecordType::foldKey(keyBuffer, k);
       leanstore::Slice keySlice(keyBuffer, pos);
-      const leanstore::OP_RESULT res = it->seek(keySlice); // keySlice as lowerbound
+      const leanstore::OP_RESULT res = it->seek(keySlice);  // keySlice as lowerbound
       if (res != leanstore::OP_RESULT::OK) {
          it->seekForPrev(keySlice);  // last key
          return false;
@@ -147,36 +147,48 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
    {
       using Merge = MultiWayMerge<JK, JoinedRec, Records...>;
       reset();
-      std::vector<std::function<typename Merge::HeapEntry()>> sources = {[&]() {
-         auto kv = this->next();
-         if (!kv.has_value()) {
-            return typename Merge::HeapEntry();
+      std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...> cached_records;
+      [[maybe_unused]] long long joined = 0;
+      std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined = [&](const typename JoinedRec::Key&, const JoinedRec&) {
+         joined++;
+         if (joined % 1000 == 0) {
+            std::cout << "\rJoined " << (double)joined / 1000 << "k records------------------------------------";
          }
+      };
+      JK current_jk = JK();
+      while (true) {
+         auto kv = next();
+         if (!kv) {
+            break;
+         }
+         auto& k = kv->first;
+         auto& v = kv->second;
+         JK jk;
+         match_emplace_tuple(cached_records, k, v, std::index_sequence_for<Records...>{});
+         Merge::joinAndClear(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Records...>{});
+      }
+      std::cout << "\rJoined " << (double)joined / 1000 << "k records------------------------------------";
+   }
 
-         typename Merge::HeapEntry result;
+   template <typename Record, size_t I>
+   void emplace_tuple(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
+                      const typename Record::Key& key,
+                      const Record& rec)
+   {
+      std::get<I>(cached_records).emplace_back(key, rec);
+   }
 
-         auto& [result_key, result_rec] = *kv;
-
-         std::visit(
-             [&](const auto& k, const auto& v) {
-                using T = std::decay_t<decltype(v)>;
-                int idx = 0;
-                bool found = false;
-                (([&]() {
-                    if constexpr (std::is_same_v<T, Records>) {
-                       found = true;
-                    } else if (!found) {
-                       idx++;
-                    }
-                 }()),
-                 ...);
-                result = typename Merge::HeapEntry(k.jk, T::toBytes(k), T::toBytes(v), idx);
-             },
-             result_key, result_rec);
-         return result;
-      }};
-      Merge multiway_merge(sources);
-      multiway_merge.run();
-      reset();
+   template <size_t... Is>
+   void match_emplace_tuple(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
+                          const std::variant<typename Records::Key...>& key,
+                          const std::variant<Records...>& rec,
+                          std::index_sequence<Is...>)
+   {
+      (([&]() {
+          if (std::holds_alternative<typename Records::Key>(key) && std::holds_alternative<Records>(rec)) {
+             emplace_tuple<Records, Is>(cached_records, std::get<typename Records::Key>(key), std::get<Records>(rec));
+          }
+       })(),
+       ...);
    }
 };

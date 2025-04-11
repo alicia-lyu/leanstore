@@ -1,7 +1,11 @@
+#pragma once
+
+#include <gflags/gflags.h>
+#include <cmath>
 #include "../shared/LeanStoreAdapter.hpp"
 #include "tpch_workload.hpp"
 
-#define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                         \
+#define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                     \
    {                                                                                                                                    \
       atomic<u64> keep_running = true;                                                                                                  \
       atomic<u64> lookup_count = 0;                                                                                                     \
@@ -9,7 +13,7 @@
       crm.scheduleJobAsync(0, [&]() {                                                                                                   \
          runLookupPhase([&]() { tpchQuery.lookupFunc(); }, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); \
       });                                                                                                                               \
-      sleep(10);                                                                                                                        \
+      sleep(pow(FLAGS_tpch_scale_factor * 100 / FLAGS_dram_gib,2));                                                                            \
       crm.scheduleJobSync(1, [&]() {                                                                                                    \
          runTXPhase(                                                                                                                    \
              [&]() {                                                                                                                    \
@@ -58,9 +62,7 @@ inline void runTXPhase(std::function<void()> TXCallback, atomic<u64>& running_th
    running_threads_counter++;
    cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
    std::cout << std::endl;
-   for (int i = 0; i < 2; ++i) {
-      TXCallback();
-   }
+   TXCallback();
    cr::Worker::my().commitTX();
    cr::Worker::my().shutdown();
    running_threads_counter--;

@@ -15,7 +15,8 @@ def collect_data(exec):
             continue
         scale = m.group(1)
         dram = m.group(2)
-        for d in os.listdir(os.path.join(p, exp)):
+        data_files = sorted(os.listdir(os.path.join(p, exp)))
+        for d in data_files:
             d_pattern = r"(maintain|query)-(\w+)\.csv"
             match = re.match(d_pattern, d)
             if not match:
@@ -40,7 +41,7 @@ def collect_data(exec):
                         query_f.write(header)
                     # add the last line
                     lines = f.readlines()
-                    query_f.write(f"{method},{dram},{scale}," + lines[-1])
+                    query_f.write(f"{method},{dram},{scale}," + lines[-1].strip(','))
     maintenance_f.close()
     query_f.close()
     
@@ -48,12 +49,3 @@ if __name__ == "__main__":
     collect_data("basic_join")
     collect_data("basic_group")
     collect_data("basic_group_variant")
-                    
-                    
-                
-                
-            
-        
-            
-        
-    
