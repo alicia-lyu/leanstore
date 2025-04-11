@@ -200,7 +200,7 @@ struct MultiWayMerge {
       return [&mergedAdapter, this](HeapEntry& entry) {
          current_entry = entry;
          current_jk = entry.jk;
-         mergedAdapter.insert(typename RecordType::Key{current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)},
+         mergedAdapter.insert(typename RecordType::Key(current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)),
                               RecordType{SourceRecord::template fromBytes<SourceRecord>(entry.v)});
          produced++;
          printProgress();

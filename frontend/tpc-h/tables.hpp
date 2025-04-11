@@ -7,13 +7,71 @@ using namespace randutils;
 
 // id range: (0s) 0--7
 
-struct part_base {
-   static constexpr int id = 0;
-   struct key_base {
-      static constexpr int id = 0;
-      Integer p_partkey;
-   };
+// With part_base (aggregate) and part_t (with traits) defined separately
+// The only way to inherit aggregate initialization (either with braces or parentheses) without restating all the members
+// is to use parameter forwarding: using part_base::part_base directive does not inherit aggregate initialization
+// But with user-defined constructors, parameter forwarding becomes a universal fallback and shadows useful compiling info.
+// Then, we must restate all the members
 
+// So, for base tables and their keys, do not have a saparate part_base and use composition for traits
+// for derived classes of joined_t and merged_t, use parameter forwarding
+// for derived classes of joined_t::Key and merged_t::Key, restate all the members
+
+// With inheritance, keeping aggregate-like structure is possible in C++ 20 but still awkward
+// It indeed becomes impossible with user-defined constructors
+
+#define ADD_KEY_TRAITS(...)                                          \
+   using traits = key_traits<Key, __VA_ARGS__>;                      \
+   static unsigned keyfold(uint8_t* out, const Key& key)             \
+   {                                                                 \
+      return traits::keyfold(out, key);                              \
+   }                                                                 \
+   static unsigned keyunfold(const uint8_t* in, Key& key)            \
+   {                                                                 \
+      return traits::keyunfold(in, key);                             \
+   }                                                                 \
+   static constexpr unsigned maxFoldLength()                         \
+   {                                                                 \
+      return traits::maxFoldLength();                                \
+   }                                                                 \
+   friend std::ostream& operator<<(std::ostream& os, const Key& key) \
+   {                                                                 \
+      return traits::print(os, key);                                 \
+   }
+
+#define ADD_RECORD_TRAITS(RECORD_TYPE)                                       \
+   using traits = record_traits<Key, RECORD_TYPE>;                           \
+   static unsigned foldKey(uint8_t* out, const Key& key)                     \
+   {                                                                         \
+      return traits::foldKey(out, key);                                      \
+   }                                                                         \
+   static unsigned unfoldKey(const uint8_t* in, Key& key)                    \
+   {                                                                         \
+      return traits::unfoldKey(in, key);                                     \
+   }                                                                         \
+   template <typename Type>                                                  \
+   static Type fromBytes(const std::vector<std::byte>& s)                    \
+   {                                                                         \
+      return traits::fromBytes<Type>(s);                                     \
+   }                                                                         \
+   static std::vector<std::byte> toBytes(const RECORD_TYPE& rec)             \
+   {                                                                         \
+      return traits::toBytes(rec);                                           \
+   }                                                                         \
+   static std::vector<std::byte> toBytes(const Key& key)                     \
+   {                                                                         \
+      return traits::toBytes(key);                                           \
+   }                                                                         \
+   static constexpr unsigned maxFoldLength()                                 \
+   {                                                                         \
+      return Key::maxFoldLength();                                           \
+   }                                                                         \
+   friend std::ostream& operator<<(std::ostream& os, const RECORD_TYPE& rec) \
+   {                                                                         \
+      return traits::print(os, rec);                                         \
+   }
+
+struct part_t {
    Varchar<55> p_name;
    Varchar<25> p_mfgr;
    Varchar<10> p_brand;
@@ -22,27 +80,14 @@ struct part_base {
    Varchar<10> p_container;
    Numeric p_retailprice;
    Varchar<23> p_comment;
-};
 
-struct part_t : public part_base, public record_traits<part_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-
-   struct Key : public key_base, public key_traits<key_base, &key_base::p_partkey> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
+   struct Key {
+      static constexpr int id = 0;
+      Integer p_partkey;
+      ADD_KEY_TRAITS(&Key::p_partkey)
    };
 
-   part_t() = default;  // Defining a custom constructor (below) prevents the compiler from generating a default constructor
-
-   template <typename... Args>
-   explicit part_t(Args&&... args) : part_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(part_t)
 
    static part_t generateRandomRecord()
    {
@@ -51,11 +96,12 @@ struct part_t : public part_base, public record_traits<part_base> {
    }
 };
 
-struct supplier_base {
+struct supplier_t {
    static constexpr int id = 1;
-   struct key_base {
+   struct Key {
       static constexpr int id = 1;
       Integer s_suppkey;
+      ADD_KEY_TRAITS(&Key::s_suppkey)
    };
 
    Varchar<25> s_name;
@@ -64,26 +110,8 @@ struct supplier_base {
    Varchar<15> s_phone;
    Numeric s_acctbal;
    Varchar<101> s_comment;
-};
 
-struct supplier_t : public supplier_base, public record_traits<supplier_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-   struct Key : public key_base, public key_traits<key_base, &key_base::s_suppkey> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
-   };
-
-   supplier_t() = default;
-
-   template <typename... Args>
-   explicit supplier_t(Args&&... args) : supplier_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(supplier_t)
 
    static supplier_t generateRandomRecord(std::function<int()> generate_nationkey)
    {
@@ -92,46 +120,30 @@ struct supplier_t : public supplier_base, public record_traits<supplier_base> {
    }
 };
 
-struct partsupp_base {
+struct partsupp_t {
    static constexpr int id = 2;
-   struct key_base {
+   struct Key {
       static constexpr int id = 2;
       Integer ps_partkey;
       Integer ps_suppkey;
+      ADD_KEY_TRAITS(&Key::ps_partkey, &Key::ps_suppkey)
    };
 
    Integer ps_availqty;
    Numeric ps_supplycost;
    Varchar<199> ps_comment;
-};
 
-struct partsupp_t : public partsupp_base, public record_traits<partsupp_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-   struct Key : public key_base, public key_traits<key_base, &key_base::ps_partkey, &key_base::ps_suppkey> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
-   };
-
-   partsupp_t() = default;
-
-   template <typename... Args>
-   explicit partsupp_t(Args&&... args) : partsupp_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(partsupp_t)
 
    static partsupp_t generateRandomRecord() { return partsupp_t{urand(1, 100000), randomNumeric(0.0000, 100.0000), randomastring<199>(0, 199)}; }
 };
 
-struct customer_base {
+struct customerh_t {
    static constexpr int id = 3;
-   struct key_base {
+   struct Key {
       static constexpr int id = 3;
       Integer c_custkey;
+      ADD_KEY_TRAITS(&Key::c_custkey)
    };
 
    Varchar<25> c_name;
@@ -141,26 +153,8 @@ struct customer_base {
    Numeric c_acctbal;
    Varchar<10> c_mktsegment;
    Varchar<117> c_comment;
-};
 
-struct customerh_t : public customer_base, public record_traits<customer_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-   struct Key : public key_base, public key_traits<key_base, &key_base::c_custkey> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
-   };
-
-   customerh_t() = default;
-
-   template <typename... Args>
-   explicit customerh_t(Args&&... args) : customer_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(customerh_t)
 
    static customerh_t generateRandomRecord(std::function<int()> generate_nationkey)
    {
@@ -169,11 +163,12 @@ struct customerh_t : public customer_base, public record_traits<customer_base> {
    }
 };
 
-struct orders_base {
+struct orders_t {
    static constexpr int id = 4;
-   struct key_base {
+   struct Key {
       static constexpr int id = 4;
       Integer o_orderkey;
+      ADD_KEY_TRAITS(&Key::o_orderkey)
    };
 
    Integer o_custkey;
@@ -184,26 +179,8 @@ struct orders_base {
    Varchar<15> o_clerk;
    Integer o_shippriority;
    Varchar<79> o_comment;
-};
 
-struct orders_t : public orders_base, public record_traits<orders_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-   struct Key : public key_base, public key_traits<key_base, &key_base::o_orderkey> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
-   };
-
-   orders_t() = default;
-
-   template <typename... Args>
-   explicit orders_t(Args&&... args) : orders_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(orders_t)
 
    static orders_t generateRandomRecord(std::function<int()> generate_custkey)
    {
@@ -213,12 +190,13 @@ struct orders_t : public orders_base, public record_traits<orders_base> {
    }
 };
 
-struct lineitem_base {
+struct lineitem_t {
    static constexpr int id = 5;
-   struct key_base {
+   struct Key {
       static constexpr int id = 5;
       Integer l_orderkey;
       Integer l_linenumber;
+      ADD_KEY_TRAITS(&Key::l_orderkey, &Key::l_linenumber)
    };
 
    Integer l_partkey;
@@ -236,26 +214,8 @@ struct lineitem_base {
    Varchar<25> l_shipinstruct;
    Varchar<10> l_shipmode;
    Varchar<44> l_comment;
-};
 
-struct lineitem_t : public lineitem_base, public record_traits<lineitem_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-   struct Key : public key_base, public key_traits<key_base, &key_base::l_orderkey, &key_base::l_linenumber> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
-   };
-
-   lineitem_t() = default;
-
-   template <typename... Args>
-   explicit lineitem_t(Args&&... args) : lineitem_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(lineitem_t)
 
    static lineitem_t generateRandomRecord(std::function<int()> generate_partkey, std::function<int()> generate_suppkey)
    {
@@ -276,36 +236,19 @@ struct lineitem_t : public lineitem_base, public record_traits<lineitem_base> {
    }
 };
 
-struct nation_base {
+struct nation_t {
    static constexpr int id = 6;
-   struct key_base {
+   struct Key {
       static constexpr int id = 6;
       Integer n_nationkey;
+      ADD_KEY_TRAITS(&Key::n_nationkey)
    };
 
    Varchar<25> n_name;
    Integer n_regionkey;
    Varchar<152> n_comment;
-};
 
-struct nation_t : public nation_base, public record_traits<nation_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-   struct Key : public key_base, public key_traits<key_base, &key_base::n_nationkey> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
-   };
-
-   nation_t() = default;
-
-   template <typename... Args>
-   explicit nation_t(Args&&... args) : nation_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(nation_t)
 
    static nation_t generateRandomRecord(std::function<int()> generate_regionkey)
    {
@@ -313,35 +256,18 @@ struct nation_t : public nation_base, public record_traits<nation_base> {
    }
 };
 
-struct region_base {
+struct region_t {
    static constexpr int id = 7;
-   struct key_base {
+   struct Key {
       static constexpr int id = 7;
       Integer r_regionkey;
+      ADD_KEY_TRAITS(&Key::r_regionkey)
    };
 
    Varchar<25> r_name;
    Varchar<152> r_comment;
-};
 
-struct region_t : public region_base, public record_traits<region_base> {
-   using record_traits::fromBytes;
-   using record_traits::toBytes;
-   struct Key : public key_base, public key_traits<key_base, &key_base::r_regionkey> {
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...}
-      {
-      }
-   };
-
-   region_t() = default;
-
-   template <typename... Args>
-   explicit region_t(Args&&... args) : region_base{std::forward<Args>(args)...}
-   {
-   }
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(region_t)
 
    static region_t generateRandomRecord() { return region_t{randomastring<25>(0, 25), randomastring<152>(0, 152)}; }
 };

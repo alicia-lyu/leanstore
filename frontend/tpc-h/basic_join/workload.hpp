@@ -62,7 +62,7 @@ class BasicJoin
       }
       assert(part_id != 0 && supplier_id != 0);
 
-      join_key_t jk(part_id, supplier_id);
+      join_key_t jk{part_id, supplier_id};
       sortedLineitem.tryLookup(jk, [&](const sorted_lineitem_t&) {
          // std::cout << "found sorted lineitem" << std::endl;
       });
@@ -92,7 +92,7 @@ class BasicJoin
       Integer part_rnd = workload.getPartID();
       Integer supplier_rnd = workload.getSupplierID();
       auto merged_scanner = mergedPPsL.getScanner();
-      merged_scanner->seekJK(join_key_t(part_rnd, supplier_rnd));
+      merged_scanner->seekJK(join_key_t{part_rnd, supplier_rnd});
       Integer part_id = 0;
       Integer supplier_id = 0;
       while (part_id == 0 || supplier_id == 0) {
@@ -113,7 +113,7 @@ class BasicJoin
    void pointLookupsForView()
    {
       auto [part_id, supplier_id] = pointLookupsForBase();
-      joinedPPsL.tryLookup(join_key_t(part_id, supplier_id), [&](const auto&) {});
+      joinedPPsL.tryLookup(join_key_t{part_id, supplier_id}, [&](const auto&) {});
    }
 
    void queryByView()

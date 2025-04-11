@@ -9,107 +9,68 @@
 // id range: (20s)
 
 #include "../randutils.hpp"
-#include "../table_traits.hpp"
 #include "../tables.hpp"
 #include "../view_templates.hpp"
 
 namespace basic_group
 {
-struct sort_key_base {
+
+struct sort_key_t {
    Integer partkey;
+   using Key = sort_key_t;
+   ADD_KEY_TRAITS(&sort_key_t::partkey)
 };
 
-struct sort_key_t : public sort_key_base, public key_traits<sort_key_base, &sort_key_base::partkey> {
-   sort_key_t() = default;
-   sort_key_t(Integer partkey) : sort_key_base{partkey} {}
-};
-
-struct sort_key_variant_base {
+struct sort_key_variant_t {
    u8 id;
    Integer partkey;
+   using Key = sort_key_variant_t;
+   ADD_KEY_TRAITS(&sort_key_variant_t::id, &sort_key_variant_t::partkey)
 };
 
-struct sort_key_variant_t : public sort_key_variant_base,
-                            public key_traits<sort_key_variant_base, &sort_key_variant_base::id, &sort_key_variant_base::partkey> {
-   sort_key_variant_t() = default;
-   sort_key_variant_t(u8 id, Integer partkey) : sort_key_variant_base{id, partkey} {}
-};
-
-struct count_partsupp_base {
+struct count_partsupp_t {
    static constexpr int id = 20;
-   struct key_base {
+   struct Key {
       static constexpr int id = 20;
       Integer p_partkey;
-   };
-
-   struct Key : public key_base, public key_traits<key_base, &key_base::p_partkey> {
-      Key() = default;
-      Key(const key_base& k) : key_base(k) {}
+      ADD_KEY_TRAITS(&Key::p_partkey)
    };
 
    Integer count;
-};
 
-struct count_partsupp_t : public count_partsupp_base, public record_traits<count_partsupp_base> {
-   explicit count_partsupp_t(count_partsupp_base base) : count_partsupp_base(base) {}
-   count_partsupp_t() = default;
-
-   using count_partsupp_base::Key;
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(count_partsupp_t)
 
    static count_partsupp_t generateRandomRecord() { return count_partsupp_t({randutils::urand(1, 10000)}); }
 };
 
-struct sum_supplycost_base {
+struct sum_supplycost_t {
    static constexpr int id = 21;
-   struct key_base {
+   struct Key {
       static constexpr int id = 21;
       Integer p_partkey;
-   };
-
-   struct Key : public key_base, public key_traits<key_base, &key_base::p_partkey> {
-      Key() = default;
-      Key(const key_base& k) : key_base(k) {}
+      ADD_KEY_TRAITS(&Key::p_partkey)
    };
 
    Numeric sum_supplycost;
-};
 
-struct sum_supplycost_t : public sum_supplycost_base, public record_traits<sum_supplycost_base> {
-   explicit sum_supplycost_t(sum_supplycost_base base) : sum_supplycost_base(base) {}
-   sum_supplycost_t() = default;
-
-   using sum_supplycost_base::Key;
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(sum_supplycost_t)
 
    static sum_supplycost_t generateRandomRecord() { return sum_supplycost_t({randutils::randomNumeric(0.0000, 100.0000)}); }
 };
 
-struct view_base {
+struct view_t {
    static constexpr int id = 22;
-   struct key_base {
+   struct Key {
       static constexpr int id = 22;
       Integer p_partkey;
-   };
+      ADD_KEY_TRAITS(&Key::p_partkey)
 
-   struct Key : public key_base, public key_traits<key_base, &key_base::p_partkey> {
-      Key() = default;
-      Key(const key_base& k) : key_base(k) {}
    };
 
    Integer count_partsupp;
    Numeric sum_supplycost;
-};
 
-struct view_t : public view_base, public record_traits<view_base> {
-   explicit view_t(view_base base) : view_base(base) {}
-   view_t() = default;
-
-   using view_base::Key;
-
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+   ADD_RECORD_TRAITS(view_t)
 
    static view_t generateRandomRecord() { return view_t({randutils::urand(1, 10000), randutils::randomNumeric(0.0000, 100.0000)}); }
 };
@@ -120,11 +81,10 @@ struct merged_sum_supplycost_t : public merged_t<23, sum_supplycost_t, sort_key_
    {
    }
    struct Key : public merged_t::Key {
+      Key() = default;
       Key(const sum_supplycost_t::Key& pk) : merged_t::Key{sort_key_t{pk.p_partkey}, pk} {}
       template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const sort_key_t& sk, sum_supplycost_t::Key&& pk) : merged_t::Key{sk, pk} {}
    };
 };
 
@@ -134,11 +94,9 @@ struct merged_count_partsupp_t : public merged_t<23, count_partsupp_t, sort_key_
    {
    }
    struct Key : public merged_t::Key {
+      Key() = default;
       Key(const count_partsupp_t::Key& pk) : merged_t::Key{sort_key_t{pk.p_partkey}, pk} {}
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const sort_key_t& sk, count_partsupp_t::Key&& pk) : merged_t::Key{sk, pk} {}
    };
 };
 
@@ -148,11 +106,9 @@ struct merged_partsupp_t : public merged_t<23, partsupp_t, sort_key_t, ExtraID::
    {
    }
    struct Key : public merged_t::Key {
+      Key() = default;
       Key(const partsupp_t::Key& pk) : merged_t::Key{sort_key_t{pk.ps_partkey}, pk} {}
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const sort_key_t& sk, partsupp_t::Key&& pk) : merged_t::Key{sk, pk} {}
    };
 };
 
@@ -162,11 +118,9 @@ struct merged_count_variant_t : public merged_t<23, count_partsupp_t, sort_key_v
    {
    }
    struct Key : public merged_t::Key {
+      Key() = default;
       Key(const count_partsupp_t::Key& pk) : merged_t::Key{sort_key_variant_t{count_partsupp_t::id, pk.p_partkey}, pk} {}
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const sort_key_variant_t& sk, count_partsupp_t::Key&& pk) : merged_t::Key{sk, pk} {}
    };
 };
 struct merged_sum_variant_t : public merged_t<23, sum_supplycost_t, sort_key_variant_t, ExtraID::NONE> {
@@ -175,11 +129,9 @@ struct merged_sum_variant_t : public merged_t<23, sum_supplycost_t, sort_key_var
    {
    }
    struct Key : public merged_t::Key {
+      Key() = default;
       Key(const sum_supplycost_t::Key& pk) : merged_t::Key{sort_key_variant_t{sum_supplycost_t::id, pk.p_partkey}, pk} {}
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const sort_key_variant_t& sk, sum_supplycost_t::Key&& pk) : merged_t::Key{sk, pk} {}
    };
 };
 struct merged_partsupp_variant_t : public merged_t<23, partsupp_t, sort_key_variant_t, ExtraID::PK> {
@@ -188,11 +140,9 @@ struct merged_partsupp_variant_t : public merged_t<23, partsupp_t, sort_key_vari
    {
    }
    struct Key : public merged_t::Key {
+      Key() = default;
       Key(const partsupp_t::Key& pk) : merged_t::Key{sort_key_variant_t{partsupp_t::id, pk.ps_partkey}, pk} {}
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const sort_key_variant_t& sk, partsupp_t::Key&& pk) : merged_t::Key{sk, pk} {}
    };
 };
 }  // namespace basic_group
