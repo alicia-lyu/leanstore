@@ -87,7 +87,6 @@ struct MultiWayMerge {
          next();
    }
 
-  private:
    void init()
    {
       assert(consumes.size() == nways);
@@ -149,25 +148,31 @@ struct MultiWayMerge {
    }
 
    template <std::size_t... Is>
-   void joinAndClear(std::index_sequence<Is...>)
+   static void joinAndClear(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
+                            JK current_jk,
+                            JK current_entry_jk,
+                            std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>& consume_joined,
+                            std::index_sequence<Is...>)
    {
       (..., ([&] {
           auto& vec = std::get<Is>(cached_records);
           using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
           using RecordType = std::tuple_element_t<1, VecElem>;
-          if (current_entry.jk.match(SKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
-             joinCurrent();
+          if (current_entry_jk.match(SKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
+             join_current(cached_records, consume_joined);
              vec.clear();
           }
        }()));
    }
+
+   void joinAndClear() { joinAndClear(cached_records, current_jk, current_entry.jk, consume_joined.value(), std::index_sequence_for<Records...>{}); }
 
    template <typename CurrRec, size_t I>
    auto getHeapConsumeToBeJoined()
    {
       return [this](HeapEntry& entry) {
          current_entry = entry;
-         joinAndClear(std::index_sequence_for<Records...>{});
+         joinAndClear();
          current_jk = entry.jk;
          std::get<I>(cached_records)
              .emplace_back(typename CurrRec::Key(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k)),
@@ -212,7 +217,17 @@ struct MultiWayMerge {
    {
       return {getHeapConsumeToMerged<MergedAdapterType, Records, SourceRecords>(mergedAdapter)...};
    }
+
    int joinCurrent()
+   {
+      int count = join_current(cached_records, consume_joined);
+      produced += count;
+      printProgress();
+      return count;
+   }
+
+   static int join_current(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
+                           std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>& consume_joined)
    {
       int count = 1;
       forEach(cached_records, [&](const auto& v) { count *= v.size(); });
@@ -221,14 +236,11 @@ struct MultiWayMerge {
 
       std::vector<std::tuple<std::tuple<typename Records::Key, Records>...>> output(count);
       unsigned long batch_size = count;
-      assignRecords(output, &batch_size, count, std::index_sequence_for<Records...>{});
+      assignRecords(cached_records, output, &batch_size, count, std::index_sequence_for<Records...>{});
 
       for (auto& rec : output) {
-         std::apply([&](auto&... pairs) { (*consume_joined)(typename JoinedRec::Key{std::get<0>(pairs)...}, JoinedRec{std::get<1>(pairs)...}); },
-                    rec);
+         std::apply([&](auto&... pairs) { consume_joined(typename JoinedRec::Key{std::get<0>(pairs)...}, JoinedRec{std::get<1>(pairs)...}); }, rec);
       }
-      produced += count;
-      printProgress();
       return count;
    }
 
@@ -237,6 +249,16 @@ struct MultiWayMerge {
                       unsigned long* batch_size,
                       int total,
                       std::index_sequence<Is...>)
+   {
+      return assignRecords(cached_records, output, batch_size, total, std::index_sequence<Is...>{});
+   }
+
+   template <size_t... Is>
+   static void assignRecords(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
+                             std::vector<std::tuple<std::tuple<typename Records::Key, Records>...>>& output,
+                             unsigned long* batch_size,
+                             int total,
+                             std::index_sequence<Is...>)
    {
       (..., ([&] {
           auto& vec = std::get<Is>(cached_records);
