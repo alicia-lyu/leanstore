@@ -5,26 +5,22 @@
 
 // id range: (10s) 11-14
 
+// for derived classes of joined_t and merged_t, use parameter forwarding
+// for derived classes of joined_t::Key and merged_t::Key, restate all the members
+
 namespace basic_join
 {
-struct join_key_base {
+
+struct join_key_t {
    Integer l_partkey;
    Integer suppkey;
 
-   auto operator<=>(const join_key_base&) const = default;
-};
+   using Key = join_key_t;
+   ADD_KEY_TRAITS(&join_key_t::l_partkey, &join_key_t::suppkey)
 
-struct join_key_t : public join_key_base, public key_traits<join_key_base, &join_key_base::l_partkey, &join_key_base::suppkey> {
-   join_key_t() = default;
-
-   template <typename... Args>
-   explicit join_key_t(Args&&... args) : join_key_base{std::forward<Args>(args)...}
-   {
-   }
+   auto operator<=>(const join_key_t&) const = default;
 
    static join_key_t max() { return join_key_t{std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()}; }
-
-   auto operator<=>(const join_key_t& other) const { return join_key_base::operator<=>(static_cast<const join_key_base&>(other)); }
 
    friend int operator%(const join_key_t& jk, const int& n) { return (jk.suppkey + jk.l_partkey) % n; }
 
@@ -47,8 +43,6 @@ struct join_key_t : public join_key_base, public key_traits<join_key_base, &join
 };
 
 struct merged_part_t : public merged_t<13, part_t, join_key_t, ExtraID::NONE> {
-   using merged_t::merged_t;
-
    static join_key_t getJK(const join_key_t& jk) { return join_key_t{jk.l_partkey, 0}; }
 
    merged_part_t() = default;
@@ -61,16 +55,11 @@ struct merged_part_t : public merged_t<13, part_t, join_key_t, ExtraID::NONE> {
    struct Key : public merged_t::Key {
       Key() = default;
       Key(const typename part_t::Key& pk, const part_t&) : merged_t::Key{join_key_t{pk.p_partkey, 0}, pk} {}
-
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const join_key_t& jk, const typename part_t::Key& pk) : merged_t::Key{jk, pk} {}
    };
 };
 
 struct merged_partsupp_t : public merged_t<13, partsupp_t, join_key_t, ExtraID::NONE> {
-   using merged_t::merged_t;
 
    merged_partsupp_t() = default;
 
@@ -80,41 +69,13 @@ struct merged_partsupp_t : public merged_t<13, partsupp_t, join_key_t, ExtraID::
    }
 
    struct Key : public merged_t::Key {
-      using merged_t::Key::Key;
-
+      Key() = default;
       Key(const typename partsupp_t::Key& pk, const partsupp_t&) : merged_t::Key{join_key_t{pk.ps_partkey, pk.ps_suppkey}, pk} {}
-
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
-   };
-};
-
-struct merged_lineitem_t : public merged_t<13, lineitem_t, join_key_t, ExtraID::PK> {
-   using merged_t::merged_t;
-
-   merged_lineitem_t() = default;
-
-   template <typename... Args>
-   explicit merged_lineitem_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
-   {
-   }
-
-   struct Key : public merged_t::Key {
-      using merged_t::Key::Key;
-
-      Key(const typename lineitem_t::Key& pk, const lineitem_t& pv) : merged_t::Key{join_key_t{pv.l_partkey, pv.l_suppkey}, pk} {}
-
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const join_key_t& jk, const typename partsupp_t::Key& pk) : merged_t::Key{jk, pk} {}
    };
 };
 
 struct sorted_lineitem_t : public merged_t<14, lineitem_t, join_key_t, ExtraID::PK> {
-   using merged_t::merged_t;
 
    sorted_lineitem_t() = default;
 
@@ -123,17 +84,30 @@ struct sorted_lineitem_t : public merged_t<14, lineitem_t, join_key_t, ExtraID::
    {
    }
 
-   operator merged_lineitem_t() const { return merged_lineitem_t{this->payload}; }
+   operator lineitem_t() const { return payload; }
 
    struct Key : public merged_t::Key {
+      Key() = default;
       Key(const typename lineitem_t::Key& pk, const lineitem_t& pv) : merged_t::Key{join_key_t{pv.l_partkey, pv.l_suppkey}, pk} {}
+      Key(const join_key_t& jk, const typename lineitem_t::Key& pk) : merged_t::Key{jk, pk} {}
+   };
+};
 
-      template <typename... Args>
-      explicit Key(Args&&... args) : merged_t::Key{std::forward<Args>(args)...}
-      {
-      }
+struct merged_lineitem_t : public merged_t<13, lineitem_t, join_key_t, ExtraID::PK> {
+   merged_lineitem_t() = default;
 
-      operator merged_lineitem_t::Key() const { return merged_lineitem_t::Key{this->jk, this->pk}; }
+   merged_lineitem_t(const sorted_lineitem_t& sl) : merged_t{sl.payload} {}
+
+   template <typename... Args>
+   explicit merged_lineitem_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
+   {
+   }
+
+   struct Key : public merged_t::Key {
+      Key() = default;
+      Key(const typename lineitem_t::Key& pk, const lineitem_t& pv) : merged_t::Key{join_key_t{pv.l_partkey, pv.l_suppkey}, pk} {}
+      Key(const join_key_t& jk, const typename lineitem_t::Key& pk) : merged_t::Key{jk, pk} {}
+      Key(const join_key_t&, const typename sorted_lineitem_t::Key& sk) : merged_t::Key{sk.jk, sk.pk} {}
    };
 };
 
@@ -151,7 +125,6 @@ struct joinedPPs_t : public joined_t<11, join_key_t, part_t, partsupp_t> {
 
    struct Key : public joined_t::Key {
       Key() = default;
-
       // From all possible join inputs
       Key(const merged_part_t::Key& pk, const merged_partsupp_t::Key& psk)
           : joined_t::Key{psk.jk, std::tuple_cat(std::make_tuple(pk.pk), std::make_tuple(psk.pk))}
@@ -160,10 +133,7 @@ struct joinedPPs_t : public joined_t<11, join_key_t, part_t, partsupp_t> {
 
       Key(const part_t::Key& pk, const partsupp_t::Key& psk) : joined_t::Key{join_key_t{pk.p_partkey, psk.ps_suppkey}, std::make_tuple(pk, psk)} {}
 
-      template <typename... Args>
-      explicit Key(Args&&... args) : joined_t::Key{std::forward<Args>(args)...}
-      {
-      }
+      Key(const join_key_t& jk, const part_t::Key& pk, const partsupp_t::Key& psk) : joined_t::Key{jk, std::make_tuple(pk, psk)} {}
    };
 };
 
@@ -196,8 +166,8 @@ struct joinedPPsL_t : public joined_t<12, join_key_t, part_t, partsupp_t, lineit
       {
       }
 
-      template <typename... Args>
-      explicit Key(Args&&... args) : joined_t::Key{std::forward<Args>(args)...}
+      Key(const join_key_t& jk, const part_t::Key& pk, const partsupp_t::Key& psk, const sorted_lineitem_t::Key& lk)
+          : joined_t::Key{jk, std::make_tuple(pk, psk, lk.pk)}
       {
       }
    };
@@ -208,21 +178,23 @@ using namespace basic_join;
 
 template <>
 struct SKBuilder<join_key_t> {
-   static join_key_t inline create(const part_t::Key& k, const part_t&) { return join_key_t(k.p_partkey, 0); }
+   static join_key_t inline create(const part_t::Key& k, const part_t&) { return join_key_t{k.p_partkey, 0}; }
 
-   static join_key_t inline create(const partsupp_t::Key& k, const partsupp_t&) { return join_key_t(k.ps_partkey, k.ps_suppkey); }
+   static join_key_t inline create(const partsupp_t::Key& k, const partsupp_t&) { return join_key_t{k.ps_partkey, k.ps_suppkey}; }
 
-   static join_key_t inline create(const lineitem_t::Key&, const lineitem_t& v) { return join_key_t(v.l_partkey, v.l_suppkey); }
+   static join_key_t inline create(const lineitem_t::Key&, const lineitem_t& v) { return join_key_t{v.l_partkey, v.l_suppkey}; }
 
-   static join_key_t inline create(const joinedPPs_t::Key& k, const joinedPPs_t&) { return join_key_t(k.jk); }
+   static join_key_t inline create(const joinedPPs_t::Key& k, const joinedPPs_t&) { return k.jk; }
 
-   static join_key_t inline create(const joinedPPsL_t::Key& k, const joinedPPsL_t&) { return join_key_t(k.jk); }
+   static join_key_t inline create(const joinedPPsL_t::Key& k, const joinedPPsL_t&) { return k.jk; }
 
-   static join_key_t inline create(const merged_part_t::Key& k, const merged_part_t&) { return join_key_t(k.jk); }
+   static join_key_t inline create(const merged_part_t::Key& k, const merged_part_t&) { return k.jk; }
 
-   static join_key_t inline create(const merged_partsupp_t::Key& k, const merged_partsupp_t&) { return join_key_t(k.jk); }
+   static join_key_t inline create(const merged_partsupp_t::Key& k, const merged_partsupp_t&) { return k.jk; }
 
-   static join_key_t inline create(const merged_lineitem_t::Key& k, const merged_lineitem_t&) { return join_key_t(k.jk); }
+   static join_key_t inline create(const merged_lineitem_t::Key& k, const merged_lineitem_t&) { return k.jk; }
+
+   static join_key_t inline create(const sorted_lineitem_t::Key& k, const sorted_lineitem_t&) { return k.jk; }
 
    template <typename Record>
    static join_key_t inline get(const join_key_t& k)

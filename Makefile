@@ -29,7 +29,9 @@ check_perf_event_paranoid:
 	fi
 
 $(TARGETS): check_perf_event_paranoid
-	mkdir -p $(DIR) && cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS) && $(MAKE) $(EXEC) -j$(NUMJOBS)
+	mkdir -p $(DIR)
+	cd $(DIR) && $(CMAKE) $(CMAKE_OPTIONS)
+	cd $(DIR) && $(MAKE) $(EXEC) -j$(NUMJOBS)
 
 IMAGE_FILE := /mnt/hdd/tmp/test_image
 
@@ -53,5 +55,8 @@ $(LLDB_TARGETS):
 	lldb -- $(BUILD_DIR_DEBUG)/frontend/$(EXEC) $(leanstore_flags) --csv_path=$(CSV)
 
 $(EXECS):
-	$(MAKE) $(BUILD_DIR)/frontend/$(EXECS)
-	script -q -c '$(BUILD_DIR)/frontend/$(EXECS) $(leanstore_flags) --csv_path=$(BUILD_DIR)/$(EXECS)/$(scale)-in-$(dram)' $(BUILD_DIR)/$(EXECS)/$(scale)-in-$(dram)/log
+	$(MAKE) $(BUILD_DIR)/frontend/$@
+	mkdir -p $(BUILD_DIR)/$@/$(scale)-in-$(dram)
+	script -q -c '$(BUILD_DIR)/frontend/$(EXECS) $(leanstore_flags) --csv_path=$(BUILD_DIR)/$@/$(scale)-in-$(dram)' $(BUILD_DIR)/$@/$(scale)-in-$(dram)/log
+
+.PHONY: check_perf_event_paranoid build build_debug $(LLDB_TARGETS)

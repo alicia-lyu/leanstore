@@ -7,8 +7,7 @@
 
 template <typename K, auto K::*... Members>
 struct key_traits {
-   friend std::ostream& operator<<(std::ostream& os, const K& k)
-   {
+   static std::ostream& print(std::ostream& os, const K& k) {
       ((os << k.*Members << ", "), ...);
       return os;
    }
@@ -49,32 +48,28 @@ inline T struct_from_bytes(const std::vector<std::byte>& s)
    return t;
 }
 
-template <typename TBase>
+template <typename K, typename T>
 struct record_traits {
 
-   template <typename K>
    static unsigned foldKey(uint8_t* out, const K& key) { return K::keyfold(out, key); }
 
-   template <typename K>
    static unsigned unfoldKey(const uint8_t* in, K& key) { return K::keyunfold(in, key); }
 
-   using KBase = typename TBase::key_base;
-
    template <typename Type>
-   static std::vector<std::byte> toBytes(Type s) requires std::disjunction_v<std::is_base_of<TBase, Type>, std::is_base_of<KBase, Type>>
+   static std::vector<std::byte> toBytes(Type s)
    {
       return struct_to_bytes(&s, sizeof(Type));
    }
 
    template <typename Type>
-   static Type fromBytes(const std::vector<std::byte>& s) requires std::disjunction_v<std::is_base_of<TBase, Type>, std::is_base_of<KBase, Type>>
+   static Type fromBytes(const std::vector<std::byte>& s)
    {
       return struct_from_bytes<Type>(s);
    }
 
-   friend std::ostream& operator<<(std::ostream& os, const TBase&)
+   static std::ostream& print(std::ostream& os, const T&)
    {
-      os << "Record(size " << sizeof(TBase) << "): ";
+      os << "Record(size " << sizeof(T) << "): ";
       return os;
    }
 };

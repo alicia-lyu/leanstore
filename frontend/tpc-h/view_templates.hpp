@@ -11,17 +11,11 @@
 template <int TID, typename JK, typename... Ts>
 struct joined_t {
    static constexpr int id = TID;
-   struct key_base {
+
+   struct Key {
       static constexpr int id = TID;
       JK jk;
       std::tuple<typename Ts::Key...> keys;  // LATER: use a boolean array to indicate which keys should be folded
-   };
-
-   struct Key : public key_base {
-      Key() = default;
-
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...} {}
 
       friend std::ostream& operator<<(std::ostream& os, const Key& key)
       {
@@ -92,16 +86,10 @@ enum class ExtraID {
 template <int TID, typename T, typename JK, ExtraID extra_id>
 struct merged_t {
    static constexpr int id = TID;
-   struct key_base {
+   struct Key {
       static constexpr int id = TID;
       JK jk;
       typename T::Key pk;
-   };
-   struct Key : public key_base {
-      Key() = default;
-
-      template <typename... Args>
-      explicit Key(Args&&... args) : key_base{std::forward<Args>(args)...} {}
 
       friend std::ostream& operator<<(std::ostream& os, const Key& key)
       {
