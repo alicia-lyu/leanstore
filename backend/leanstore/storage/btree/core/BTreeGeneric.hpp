@@ -72,7 +72,6 @@ class BTreeGeneric
    XMergeReturnCode XMerge(HybridPageGuard<BTreeNode>& p_guard, HybridPageGuard<BTreeNode>& c_guard, ParentSwipHandler&);
    // -------------------------------------------------------------------------------------
    static SpaceCheckResult checkSpaceUtilization(void* btree_object, BufferFrame&);
-   static ParentSwipHandler findParent(BTreeGeneric& btree_object, BufferFrame& to_find);
    static void iterateChildrenSwips(void* btree_object, BufferFrame& bf, std::function<bool(Swip<BufferFrame>&)> callback);
    static void checkpoint(BTreeGeneric&, BufferFrame& bf, u8* dest);
    static std::unordered_map<std::string, std::string> serialize(BTreeGeneric&);
