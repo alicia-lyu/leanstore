@@ -8,6 +8,10 @@
 #include "../tpch_workload.hpp"
 #include "../tables.hpp"
 
+// SELECT *
+// FROM Lineitem l, PartSupp ps, Part p
+// WHERE l.partkey = ps.partkey AND l.partkey = p.partkey AND l.suppkey = ps.suppkey;
+
 namespace basic_join
 {
 template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>

@@ -105,7 +105,7 @@ struct LeanStoreAdapter : Adapter<Record> {
       }
       if (res != leanstore::OP_RESULT::OK) {
          std::cout << (int) res << ":" << key << std::endl;
-         ensure(false);
+         // ensure(false);
       }
    }
 

@@ -63,7 +63,7 @@ struct TPCHWorkload {
       logSize();
    }
 
-   static constexpr Integer PART_SCALE = 200000;
+   static constexpr Integer PART_SCALE = 200*1000;
    static constexpr Integer SUPPLIER_SCALE = 10000;
    static constexpr Integer CUSTOMER_SCALE = 150000;
    static constexpr Integer ORDERS_SCALE = 1500000;
