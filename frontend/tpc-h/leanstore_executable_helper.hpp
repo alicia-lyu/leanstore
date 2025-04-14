@@ -13,7 +13,7 @@
       crm.scheduleJobAsync(0, [&]() {                                                                                                   \
          runLookupPhase([&]() { tpchQuery.lookupFunc(); }, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); \
       });                                                                                                                               \
-      sleep(pow(FLAGS_tpch_scale_factor * 100 / FLAGS_dram_gib,2));                                                                            \
+      sleep(10);                                                                            \
       crm.scheduleJobSync(1, [&]() {                                                                                                    \
          runTXPhase(                                                                                                                    \
              [&]() {                                                                                                                    \

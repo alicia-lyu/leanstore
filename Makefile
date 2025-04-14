@@ -49,6 +49,8 @@ scale := 0.1
 
 leanstore_flags := --dram_gib=$(dram) --vi=false --mv=false --isolation_level=ser --optimistic_scan=false --pp_threads=1 --csv_truncate=false --worker_threads=2 --trunc=true --ssd_path=$(IMAGE_FILE) --tpch_scale_factor=$(scale)
 
+# TODO: persist and recover
+
 $(LLDB_TARGETS):
 # Depedency match does not work well for an array of targets
 	$(MAKE) $(BUILD_DIR_DEBUG)/frontend/$(EXEC)
@@ -61,8 +63,8 @@ $(EXECS):
 
 temp:
 	$(MAKE) $(EXECS) dram=4
-	$(MAKE) basic_join dram=2
-	$(MAKE) basic_group dram=0.5
-	$(MAKE) basic_group_variant dram=0.5
+	$(MAKE) basic_join
+	$(MAKE) basic_group dram=0.2
+	$(MAKE) basic_group_variant dram=0.2
 
 .PHONY: check_perf_event_paranoid build build_debug $(LLDB_TARGETS)
