@@ -39,51 +39,44 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    bool is_using_upper_fence;
    // -------------------------------------------------------------------------------------
    virtual ~BTreePessimisticIterator() = default;
+
   protected:
-   // We need a custom findLeafAndLatch to track the position in parent node
    template <LATCH_FALLBACK_MODE mode = LATCH_FALLBACK_MODE::SHARED>
-   void findLeafAndLatch(HybridPageGuard<BTreeNode>& target_guard, const u8* key, u16 key_length)
+   void TraceLeafAndLatch(const u8* key, u16 key_length)
    {
       while (true) {
          leaf_pos_in_parent = -1;
          jumpmuTry()
          {
-            target_guard.unlock();
+            leaf.unlock();
             p_guard = HybridPageGuard<BTreeNode>(btree.meta_node_bf);
-            target_guard = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
+            leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
             // -------------------------------------------------------------------------------------
             u16 volatile level = 0;
             // -------------------------------------------------------------------------------------
-            while (!target_guard->is_leaf) {
+            while (!leaf->is_leaf) {
                WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
                Swip<BTreeNode>* c_swip = nullptr;
-               leaf_pos_in_parent = leaf->lowerBound<false>(key, key_length);
-               if (leaf_pos_in_parent == leaf->count) {
-                  c_swip = &target_guard->upper;
+               p_guard = std::move(leaf);
+               leaf_pos_in_parent = p_guard->lowerBound<false>(key, key_length);
+               if (leaf_pos_in_parent == p_guard->count) {
+                  c_swip = &p_guard->upper;
                } else {
-                  c_swip = &target_guard->getChild(leaf_pos_in_parent);
+                  c_swip = &p_guard->getChild(leaf_pos_in_parent);
                }
-               p_guard = std::move(target_guard);
-               if (level == btree.height - 1) {
-                  target_guard = HybridPageGuard(p_guard, *c_swip, mode);
-               } else {
-                  target_guard = HybridPageGuard(p_guard, *c_swip);
-               }
+               leaf = HybridPageGuard(p_guard, *c_swip);
                level = level + 1;
             }
             // -------------------------------------------------------------------------------------
-            p_guard.unlock();
             if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-               target_guard.toExclusive();
+               leaf.toExclusive();
             } else {
-               target_guard.toShared();
+               leaf.toShared();
             }
-            // -------------------------------------------------------------------------------------
             prefix_copied = false;
             if (enter_leaf_cb) {
-               enter_leaf_cb(target_guard);
+               enter_leaf_cb(leaf);
             }
-            // -------------------------------------------------------------------------------------
             jumpmu_return;
          }
          jumpmuCatch() {}
@@ -103,13 +96,58 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       // -------------------------------------------------------------------------------------
       // TODO: refactor when we get ride of serializability tests
       if (mode == LATCH_FALLBACK_MODE::SHARED) {
-         this->findLeafAndLatch<LATCH_FALLBACK_MODE::SHARED>(leaf, key.data(), key.length());
+         this->TraceLeafAndLatch<LATCH_FALLBACK_MODE::SHARED>(key.data(), key.length());
       } else if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-         this->findLeafAndLatch<LATCH_FALLBACK_MODE::EXCLUSIVE>(leaf, key.data(), key.length());
+         this->TraceLeafAndLatch<LATCH_FALLBACK_MODE::EXCLUSIVE>(key.data(), key.length());
       } else {
          UNREACHABLE();
       }
    }
+
+   void turnPage(int diff) // +1 next page, -1 prev page
+   {
+      assert(diff == -1 || diff == 1);
+      leaf.unlock();
+      auto* start_page = &leaf;
+      while (true) {
+         auto parent_swip_handler = BTreeGeneric::findParent<true>(btree, *start_page->bf);
+         auto pos_in_parent = parent_swip_handler.pos;
+         if (pos_in_parent == -2) {
+            // We are at the root, keep the original page, cur == leaf->count
+            break;
+         }
+         auto next_pos_in_parent = pos_in_parent + diff;
+         p_guard = parent_swip_handler.getParentReadPageGuard<BTreeNode>();
+         WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
+         if (next_pos_in_parent > p_guard->count) {
+            start_page = &p_guard;
+         } else if (next_pos_in_parent == p_guard->count) {
+            leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
+            break;
+         } else {
+            leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->getChild(pos_in_parent + 1));
+            break;
+         }
+      }
+
+      while (!leaf->is_leaf) { // go to the smallest page in this subtree
+         WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
+         p_guard = std::move(leaf);
+         assert(p_guard->count > 0);
+         leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->getChild(0));
+      }
+
+      if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+         leaf.toExclusive();
+      } else {
+         leaf.toShared();
+      }
+      prefix_copied = false;
+      if (enter_leaf_cb) {
+         enter_leaf_cb(leaf);
+      }
+   }
+
    // -------------------------------------------------------------------------------------
   public:
    BTreePessimisticIterator(BTreeGeneric& btree, const LATCH_FALLBACK_MODE mode = LATCH_FALLBACK_MODE::SHARED) : btree(btree), mode(mode) {}
@@ -180,68 +218,29 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       }
    }
    // -------------------------------------------------------------------------------------
-   void findMinLeafAndLatch(HybridPageGuard<BTreeNode>& target_guard)
-   {
-      while (true) {
-         leaf_pos_in_parent = -1;
-         jumpmuTry()
-         {
-            target_guard.unlock();
-            p_guard = HybridPageGuard<BTreeNode>(btree.meta_node_bf);
-            target_guard = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
-            // -------------------------------------------------------------------------------------
-            u16 volatile level = 0;
-            // -------------------------------------------------------------------------------------
-            while (!target_guard->is_leaf) {
-               WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
-               Swip<BTreeNode>* c_swip = nullptr;
-               assert(leaf->count > 0);
-               c_swip = &target_guard->getChild(0);
-               p_guard = std::move(target_guard);
-               if (level == btree.height - 1) {
-                  target_guard = HybridPageGuard(p_guard, *c_swip, mode);
-               } else {
-                  target_guard = HybridPageGuard(p_guard, *c_swip);
-               }
-               level = level + 1;
-            }
-            // -------------------------------------------------------------------------------------
-            p_guard.unlock();
-            if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-               target_guard.toExclusive();
-            } else {
-               target_guard.toShared();
-            }
-            // -------------------------------------------------------------------------------------
-            prefix_copied = false;
-            if (enter_leaf_cb) {
-               enter_leaf_cb(target_guard);
-            }
-            // -------------------------------------------------------------------------------------
-            jumpmu_return;
-         }
-         jumpmuCatch() {}
-      }
-   }
 
    void gotoMinPage()
    {
       COUNTERS_BLOCK()
       {
          if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-               WorkerCounters::myCounters().dt_goto_page_exec[btree.dt_id]++;
+            WorkerCounters::myCounters().dt_goto_page_exec[btree.dt_id]++;
          } else {
-               WorkerCounters::myCounters().dt_goto_page_shared[btree.dt_id]++;
+            WorkerCounters::myCounters().dt_goto_page_shared[btree.dt_id]++;
          }
       }
-      this->findMinLeafAndLatch(leaf);
-      cur = 0; // Set to the first position
+      u8 const zero_char[] = { u8'\0' };
+      auto min_key = Slice(zero_char, 1);
+      gotoPage(min_key);
    }
 
    virtual OP_RESULT next() override
    {
-      COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_next_tuple[btree.dt_id]++; }
-   // Check if the iterator is at its initial state
+      COUNTERS_BLOCK()
+      {
+         WorkerCounters::myCounters().dt_next_tuple[btree.dt_id]++;
+      }
+      // Check if the iterator is at its initial state
       if (cur == -1) {
          gotoMinPage();
          return OP_RESULT::OK;
@@ -272,47 +271,54 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                cleanup_cb = nullptr;
             }
             // -------------------------------------------------------------------------------------
-            if (FLAGS_optimistic_scan && leaf_pos_in_parent != -1) {
+            if (leaf_pos_in_parent != -1 && leaf_pos_in_parent + 1 <= p_guard->count) {
                jumpmuTry()
                {
-                  if ((leaf_pos_in_parent + 1) <= p_guard->count) {
-                     s32 next_leaf_pos = leaf_pos_in_parent + 1;
-                     Swip<BTreeNode>& c_swip = (next_leaf_pos < p_guard->count) ? p_guard->getChild(next_leaf_pos) : p_guard->upper;
-                     HybridPageGuard next_leaf(p_guard, c_swip, LATCH_FALLBACK_MODE::JUMP);
-                     if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-                        next_leaf.tryToExclusive();
-                     } else {
-                        next_leaf.tryToShared();
-                     }
-                     leaf.recheck();
-                     leaf = std::move(next_leaf);
-                     leaf_pos_in_parent = next_leaf_pos;
-                     cur = 0;
-                     prefix_copied = false;
-                     // -------------------------------------------------------------------------------------
-                     if (enter_leaf_cb) {
-                        enter_leaf_cb(leaf);
-                     }
-                     // -------------------------------------------------------------------------------------
-                     if (leaf->count == 0) {
-                        jumpmu_continue;
-                     }
-                     ensure(cur < leaf->count);
-                     COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_next_tuple_opt[btree.dt_id]++; }
-                     jumpmu_return OP_RESULT::OK;
+                  s32 next_leaf_pos = leaf_pos_in_parent + 1;
+                  Swip<BTreeNode>& c_swip = (next_leaf_pos < p_guard->count) ? p_guard->getChild(next_leaf_pos) : p_guard->upper;
+                  HybridPageGuard next_leaf(p_guard, c_swip, LATCH_FALLBACK_MODE::JUMP);
+                  if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+                     next_leaf.tryToExclusive();
+                  } else {
+                     next_leaf.tryToShared();
                   }
+                  leaf.recheck();
+                  leaf = std::move(next_leaf);
+                  leaf_pos_in_parent = next_leaf_pos;
+                  cur = 0;
+                  prefix_copied = false;
+                  // -------------------------------------------------------------------------------------
+                  if (enter_leaf_cb) {
+                     enter_leaf_cb(leaf);
+                  }
+                  // -------------------------------------------------------------------------------------
+                  if (leaf->count == 0) {
+                     jumpmu_continue;
+                  }
+                  ensure(cur < leaf->count);
+                  COUNTERS_BLOCK()
+                  {
+                     WorkerCounters::myCounters().dt_next_tuple_opt[btree.dt_id]++;
+                  }
+                  jumpmu_return OP_RESULT::OK;
                }
                jumpmuCatch() {}
             }
             // Construct the next key (lower bound)
-            gotoPage(Slice(buffer, fence_length));
+            turnPage(1);
             // -------------------------------------------------------------------------------------
             if (leaf->count == 0) {
                cleanUpCallback([&, to_find = leaf.bf]() {
-                  jumpmuTry() { btree.tryMerge(*to_find, true); }
+                  jumpmuTry()
+                  {
+                     btree.tryMerge(*to_find, true);
+                  }
                   jumpmuCatch() {}
                });
-               COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_empty_leaf[btree.dt_id]++; }
+               COUNTERS_BLOCK()
+               {
+                  WorkerCounters::myCounters().dt_empty_leaf[btree.dt_id]++;
+               }
                continue;
             }
             cur = leaf->lowerBound<false>(buffer, fence_length);
@@ -326,8 +332,16 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    // -------------------------------------------------------------------------------------
    virtual OP_RESULT prev() override
    {
-      COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_prev_tuple[btree.dt_id]++; }
+      COUNTERS_BLOCK()
+      {
+         WorkerCounters::myCounters().dt_prev_tuple[btree.dt_id]++;
+      }
       // -------------------------------------------------------------------------------------
+      // Check if the iterator is at its initial state
+      if (cur == -1) {
+         gotoMinPage();
+         return OP_RESULT::OK;
+      }
       while (true) {
          ensure(leaf.guard.state != GUARD_STATE::OPTIMISTIC);
          if ((cur - 1) >= 0) {
@@ -353,42 +367,46 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                cleanup_cb = nullptr;
             }
             // -------------------------------------------------------------------------------------
-            if (FLAGS_optimistic_scan && leaf_pos_in_parent != -1) {
+            if (leaf_pos_in_parent != -1 && leaf_pos_in_parent - 1 >= 0) {
                jumpmuTry()
                {
-                  if ((leaf_pos_in_parent - 1) >= 0) {
-                     s32 next_leaf_pos = leaf_pos_in_parent - 1;
-                     Swip<BTreeNode>& c_swip = p_guard->getChild(next_leaf_pos);
-                     HybridPageGuard next_leaf(p_guard, c_swip, LATCH_FALLBACK_MODE::JUMP);
-                     if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-                        next_leaf.tryToExclusive();
-                     } else {
-                        next_leaf.tryToShared();
-                     }
-                     leaf.recheck();
-                     leaf = std::move(next_leaf);
-                     leaf_pos_in_parent = next_leaf_pos;
-                     cur = leaf->count - 1;
-                     prefix_copied = false;
-                     // -------------------------------------------------------------------------------------
-                     if (enter_leaf_cb) {
-                        enter_leaf_cb(leaf);
-                     }
-                     // -------------------------------------------------------------------------------------
-                     if (leaf->count == 0) {
-                        jumpmu_continue;
-                     }
-                     COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_prev_tuple_opt[btree.dt_id]++; }
-                     jumpmu_return OP_RESULT::OK;
+                  s32 next_leaf_pos = leaf_pos_in_parent - 1;
+                  Swip<BTreeNode>& c_swip = p_guard->getChild(next_leaf_pos);
+                  HybridPageGuard next_leaf(p_guard, c_swip, LATCH_FALLBACK_MODE::JUMP);
+                  if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+                     next_leaf.tryToExclusive();
+                  } else {
+                     next_leaf.tryToShared();
                   }
+                  leaf.recheck();
+                  leaf = std::move(next_leaf);
+                  leaf_pos_in_parent = next_leaf_pos;
+                  cur = leaf->count - 1;
+                  prefix_copied = false;
+                  // -------------------------------------------------------------------------------------
+                  if (enter_leaf_cb) {
+                     enter_leaf_cb(leaf);
+                  }
+                  // -------------------------------------------------------------------------------------
+                  if (leaf->count == 0) {
+                     jumpmu_continue;
+                  }
+                  COUNTERS_BLOCK()
+                  {
+                     WorkerCounters::myCounters().dt_prev_tuple_opt[btree.dt_id]++;
+                  }
+                  jumpmu_return OP_RESULT::OK;
                }
                jumpmuCatch() {}
             }
             // Construct the next key (lower bound)
-            gotoPage(Slice(buffer, fence_length));
+            turnPage(-1);
             // -------------------------------------------------------------------------------------
             if (leaf->count == 0) {
-               COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_empty_leaf[btree.dt_id]++; }
+               COUNTERS_BLOCK()
+               {
+                  WorkerCounters::myCounters().dt_empty_leaf[btree.dt_id]++;
+               }
                continue;
             }
             bool is_equal = false;
@@ -535,7 +553,7 @@ class BTreeExclusiveIterator : public BTreePessimisticIterator
    virtual OP_RESULT insertKV(Slice key, Slice value)
    {
       OP_RESULT ret;
-   restart : {
+   restart: {
       ret = seekToInsert(key);
       if (ret != OP_RESULT::OK) {
          return ret;
@@ -614,7 +632,10 @@ class BTreeExclusiveIterator : public BTreePessimisticIterator
                   btree.trySplit(*leaf.bf, split_pos);
                   WorkerCounters::myCounters().contention_split_succ_counter[btree.dt_id]++;
                }
-               jumpmuCatch() { WorkerCounters::myCounters().contention_split_fail_counter[btree.dt_id]++; }
+               jumpmuCatch()
+               {
+                  WorkerCounters::myCounters().contention_split_fail_counter[btree.dt_id]++;
+               }
             }
          }
       }
@@ -647,7 +668,10 @@ class BTreeExclusiveIterator : public BTreePessimisticIterator
       if (leaf->freeSpaceAfterCompaction() >= BTreeNodeHeader::underFullSize) {
          leaf.unlock();
          cur = -1;
-         jumpmuTry() { btree.tryMerge(*leaf.bf); }
+         jumpmuTry()
+         {
+            btree.tryMerge(*leaf.bf);
+         }
          jumpmuCatch()
          {
             // nothing, it is fine not to merge
