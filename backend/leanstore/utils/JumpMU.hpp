@@ -48,8 +48,14 @@ inline void clearLastDestructor()
   assert(jumpmu::de_stack_counter >= 0); jumpmu::checkpoint_stacks_counter[jumpmu::checkpoint_counter] = jumpmu::de_stack_counter; int _lval = setjmp(jumpmu::env[jumpmu::checkpoint_counter++]); if (_lval == 0) {
 
 #define jumpmuCatch()           \
-  jumpmu::checkpoint_counter--; } else
+  jumpmu::checkpoint_counter--; \
+  std::cout << "JUMP in " << __FILE__ << ":" << __LINE__ << std::endl;\
+} else
    // clang-format on
+
+#define jumpmuCatchNoPrint() \
+   jumpmu::checkpoint_counter--; \
+} else
 
 template <typename T>
 class JMUW

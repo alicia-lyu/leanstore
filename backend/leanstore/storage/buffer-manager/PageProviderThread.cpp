@@ -9,6 +9,7 @@
 #include "leanstore/profiling/counters/PPCounters.hpp"
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/utils/FVector.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 #include "leanstore/utils/Misc.hpp"
 #include "leanstore/utils/Parallelize.hpp"
 #include "leanstore/utils/RandomGenerator.hpp"
@@ -157,7 +158,7 @@ void BufferManager::pageProviderThread(u64 p_begin, u64 p_end)  // [p_begin, p_e
                }
                failed_attempts = 0;
             }
-            jumpmuCatch() {}
+            jumpmuCatchNoPrint() {}
          }
       }
       COUNTERS_BLOCK()
@@ -262,7 +263,7 @@ void BufferManager::pageProviderThread(u64 p_begin, u64 p_end)  // [p_begin, p_e
                evict_bf(*cooled_bf, o_guard);
             }
          }
-         jumpmuCatch() {}
+         jumpmuCatchNoPrint() {}
       }
       evict_candidate_bfs.clear();
       // -------------------------------------------------------------------------------------
@@ -291,7 +292,7 @@ void BufferManager::pageProviderThread(u64 p_begin, u64 p_end)  // [p_begin, p_e
                       PPCounters::myCounters().flushed_pages_counter++;
                    }
                 }
-                jumpmuCatch()
+                jumpmuCatchNoPrint()
                 {
                    written_bf.header.crc = 0;
                    written_bf.header.is_being_written_back.store(false, std::memory_order_release);
@@ -305,7 +306,7 @@ void BufferManager::pageProviderThread(u64 p_begin, u64 p_end)  // [p_begin, p_e
                          evict_bf(written_bf, o_guard);
                       }
                    }
-                   jumpmuCatch() {}
+                   jumpmuCatchNoPrint() {}
                 }
              },
              polled_events);
