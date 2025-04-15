@@ -16,7 +16,6 @@ using namespace leanstore;
 template <class Record>
 struct LeanStoreAdapter : Adapter<Record> {
    leanstore::KVInterface* btree;
-   leanstore::storage::btree::BTreeGeneric* btree_generic;
    u64 produced;
    string name;
    LeanStoreAdapter()
@@ -38,7 +37,6 @@ struct LeanStoreAdapter : Adapter<Record> {
             btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
          }
       }
-      btree_generic = static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree));
    }
    // -------------------------------------------------------------------------------------
    void printTreeHeight() { cout << name << " height = " << btree->getHeight() << endl; }

@@ -221,6 +221,7 @@ struct TPCHWorkload {
    {
       for (Integer i = order_start; i <= order_end; i++) {
          Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
+         printProgress("orders of lineitem", i, order_start, order_end);
          for (Integer j = 1; j <= lineitem_cnt; j++) {
             // look up partsupp
             auto p = urand(1, last_part_id);
@@ -237,7 +238,6 @@ struct TPCHWorkload {
                 []() {});
             insert_func(lineitem_t::Key{i, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
          }
-         printProgress("orders of lineitem", i, order_start, order_end);
       }
    }
 

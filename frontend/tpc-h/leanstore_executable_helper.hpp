@@ -3,6 +3,7 @@
 #include <gflags/gflags.h>
 #include <cmath>
 #include "../shared/LeanStoreAdapter.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 #include "tpch_workload.hpp"
 
 #define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                     \
@@ -46,7 +47,7 @@ inline void runLookupPhase(std::function<void()> lookupCallback,
          lookup_count++;
          cr::Worker::my().commitTX();
       }
-      jumpmuCatch()
+      jumpmuCatchNoPrint()
       {
          std::cerr << "#" << lookup_count.load() << " pointLookups failed." << std::endl;
       }
