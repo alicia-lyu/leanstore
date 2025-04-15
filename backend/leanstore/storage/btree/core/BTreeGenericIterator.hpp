@@ -1,6 +1,9 @@
 #pragma once
+#include <cstdlib>
 #include "BTreeGeneric.hpp"
 #include "BTreeIteratorInterface.hpp"
+#include "Exceptions.hpp"
+#include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -45,12 +48,13 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    void TraceLeafAndLatch(const u8* key, u16 key_length)
    {
       while (true) {
-         leaf_pos_in_parent = -1;
          jumpmuTry()
          {
+            // exit_leaf_cb(leaf);
             leaf.unlock();
             p_guard = HybridPageGuard<BTreeNode>(btree.meta_node_bf);
             leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
+            leaf_pos_in_parent = 0;
             // -------------------------------------------------------------------------------------
             u16 volatile level = 0;
             // -------------------------------------------------------------------------------------
@@ -93,6 +97,10 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             WorkerCounters::myCounters().dt_goto_page_shared[btree.dt_id]++;
          }
       }
+      // std::cout << std::hex << std::setw(2) << std::setfill('0') << "gotoPage: ";
+      // for (int i = 0; i < key.length(); i++) {
+      //    std::cout << (int)key.data()[i] << " ";
+      // }
       // -------------------------------------------------------------------------------------
       // TODO: refactor when we get ride of serializability tests
       if (mode == LATCH_FALLBACK_MODE::SHARED) {
@@ -104,48 +112,64 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       }
    }
 
-   void turnPage(int diff) // +1 next page, -1 prev page
+   void turnPage(int diff)  // +1 next page, -1 prev page
    {
-      assert(diff == -1 || diff == 1);
-      leaf.unlock();
-      auto* start_page = &leaf;
-      while (true) {
-         auto parent_swip_handler = BTreeGeneric::findParent<true>(btree, *start_page->bf);
-         auto pos_in_parent = parent_swip_handler.pos;
-         if (pos_in_parent == -2) {
-            // We are at the root, keep the original page, cur == leaf->count
-            break;
+      jumpmuTry()
+      {
+         std::cout << "turnPage by " << diff << ".";
+         assert(diff == -1 || diff == 1);
+         // exit_leaf_cb(leaf);
+         leaf.unlock();
+         auto* start_page = &leaf;
+         while (true) {
+            auto parent_swip_handler = BTreeGeneric::findParent<true>(btree, *start_page->bf);
+            auto pos_in_parent = parent_swip_handler.pos;
+            if (pos_in_parent == -2) {
+               // We are at the root, keep the original page, cur == leaf->count
+               break;
+            }
+            auto next_pos_in_parent = pos_in_parent + diff;
+            p_guard = parent_swip_handler.getParentReadPageGuard<BTreeNode>();
+            COUNTERS_BLOCK()
+            {
+               WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
+            }
+            if (next_pos_in_parent > p_guard->count) {
+               start_page = &p_guard;
+            } else if (next_pos_in_parent == p_guard->count) {
+               leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
+               leaf_pos_in_parent = pos_in_parent;
+               break;
+            } else {
+               leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->getChild(pos_in_parent + 1));
+               leaf_pos_in_parent = pos_in_parent;
+               break;
+            }
          }
-         auto next_pos_in_parent = pos_in_parent + diff;
-         p_guard = parent_swip_handler.getParentReadPageGuard<BTreeNode>();
-         WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
-         if (next_pos_in_parent > p_guard->count) {
-            start_page = &p_guard;
-         } else if (next_pos_in_parent == p_guard->count) {
-            leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
-            break;
+
+         while (!leaf->is_leaf) {  // go to the smallest page in this subtree
+            COUNTERS_BLOCK()
+            {
+               WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
+            }
+            p_guard = std::move(leaf);
+            assert(p_guard->count > 0);
+            leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->getChild(0));
+            leaf_pos_in_parent = 0;
+         }
+
+         if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+            leaf.toExclusive();
          } else {
-            leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->getChild(pos_in_parent + 1));
-            break;
+            leaf.toShared();
          }
+         prefix_copied = false;
+         if (enter_leaf_cb) {
+            enter_leaf_cb(leaf);
+         }
+         jumpmu_return;
       }
-
-      while (!leaf->is_leaf) { // go to the smallest page in this subtree
-         WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
-         p_guard = std::move(leaf);
-         assert(p_guard->count > 0);
-         leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->getChild(0));
-      }
-
-      if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-         leaf.toExclusive();
-      } else {
-         leaf.toShared();
-      }
-      prefix_copied = false;
-      if (enter_leaf_cb) {
-         enter_leaf_cb(leaf);
-      }
+      jumpmuCatch() {}
    }
 
    // -------------------------------------------------------------------------------------
@@ -221,17 +245,16 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
 
    void gotoMinPage()
    {
-      COUNTERS_BLOCK()
-      {
-         if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
-            WorkerCounters::myCounters().dt_goto_page_exec[btree.dt_id]++;
-         } else {
-            WorkerCounters::myCounters().dt_goto_page_shared[btree.dt_id]++;
-         }
-      }
-      u8 const zero_char[] = { u8'\0' };
+      u8 const zero_char[] = {u8'\0'};
       auto min_key = Slice(zero_char, 1);
       gotoPage(min_key);
+   }
+
+   void gotoMaxPage()
+   {
+      u8 const max_chars[EFFECTIVE_PAGE_SIZE - 1] = {u8'\0'};
+      auto max_key = Slice(max_chars, EFFECTIVE_PAGE_SIZE - 1);
+      gotoPage(max_key);
    }
 
    virtual OP_RESULT next() override
@@ -243,14 +266,17 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       // Check if the iterator is at its initial state
       if (cur == -1) {
          gotoMinPage();
+         cur = 0;
          return OP_RESULT::OK;
       }
       while (true) {
          ensure(leaf.guard.state != GUARD_STATE::OPTIMISTIC);
          if ((cur + 1) < leaf->count) {
             cur += 1;
+            std::cout << "Inner-page next()" << std::endl;
             return OP_RESULT::OK;
          } else if (leaf->upper_fence.length == 0) {
+            std::cout << "end next()" << std::endl;
             return OP_RESULT::NOT_FOUND;
          } else {
             fence_length = leaf->upper_fence.length + 1;
@@ -274,6 +300,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             if (leaf_pos_in_parent != -1 && leaf_pos_in_parent + 1 <= p_guard->count) {
                jumpmuTry()
                {
+                  std::cout << "next leaf" << std::endl;
                   s32 next_leaf_pos = leaf_pos_in_parent + 1;
                   Swip<BTreeNode>& c_swip = (next_leaf_pos < p_guard->count) ? p_guard->getChild(next_leaf_pos) : p_guard->upper;
                   HybridPageGuard next_leaf(p_guard, c_swip, LATCH_FALLBACK_MODE::JUMP);
@@ -339,7 +366,8 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       // -------------------------------------------------------------------------------------
       // Check if the iterator is at its initial state
       if (cur == -1) {
-         gotoMinPage();
+         gotoMaxPage();
+         cur = leaf->count;
          return OP_RESULT::OK;
       }
       while (true) {

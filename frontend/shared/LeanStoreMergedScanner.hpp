@@ -104,13 +104,14 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
             return true;
          }
          leanstore::OP_RESULT ret;
-         if (!result) {
-            ret = it->prev();
-         } else {
+         if (!result) { // first key
             ret = it->next();
+         } else { // last key
+            ret = it->prev();
          }
          if (ret != leanstore::OP_RESULT::OK) {
             reset();
+            std::cout << "seekTyped: " << k << " returns " << (int) ret << std::endl;
             return false;
          }
       }
