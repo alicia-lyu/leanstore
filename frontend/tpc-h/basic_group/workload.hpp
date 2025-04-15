@@ -321,6 +321,7 @@ class BasicGroup
       Integer count = 0;
       Numeric supplycost_sum = 0;
       Integer curr_partkey = 0;
+      int num_part_keys = 0;
       while (true) {
          auto kv = partsupp_scanner->next();
          if (kv == std::nullopt) {
@@ -334,7 +335,11 @@ class BasicGroup
             supplycost_sum += v.ps_supplycost;
          } else {
             if (curr_partkey != 0)
+            {
                insertAll(curr_partkey, count, supplycost_sum);
+               std::cout << "\rLoading views and indexes for " << num_part_keys++ << " part keys------------------------------------";
+            }
+               
             curr_partkey = k.ps_partkey;
             count = 1;
             supplycost_sum = v.ps_supplycost;

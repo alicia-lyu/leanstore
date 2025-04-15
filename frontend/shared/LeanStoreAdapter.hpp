@@ -196,11 +196,10 @@ struct LeanStoreAdapter : Adapter<Record> {
       u16 folded_key_len = Record::foldKey(folded_key, key);
       OP_RESULT ret = btree->scanAsc(
           folded_key, folded_key_len,
-          [&](const u8* key, u16 key_length, const u8* payload, u16 payload_length) {
+          [&](const u8* key, u16 key_length, const u8* payload, u16) {
              if (key_length != folded_key_len) {
                 return false;
              }
-             static_cast<void>(payload_length);
              typename Record::Key typed_key;
              Record::unfoldKey(key, typed_key);
              const Record& typed_payload = *reinterpret_cast<const Record*>(payload);
