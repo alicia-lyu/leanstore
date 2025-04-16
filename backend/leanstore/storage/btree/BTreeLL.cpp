@@ -126,9 +126,10 @@ OP_RESULT BTreeLL::scanAsc(u8* start_key,
       WorkerCounters::myCounters().dt_scan_asc[dt_id]++;
    }
    Slice key(start_key, key_length);
-   jumpmuTry()
-   {
+   // jumpmuTry()
+   // {
       BTreeSharedIterator iterator(*static_cast<BTreeGeneric*>(this));
+      if (iterator.cur != -1) assert(false);
       OP_RESULT ret = iterator.seek(key);
       while (ret == OP_RESULT::OK) {
          iterator.assembleKey();
@@ -139,11 +140,11 @@ OP_RESULT BTreeLL::scanAsc(u8* start_key,
          }
          ret = iterator.next();
       }
-      jumpmu_return OP_RESULT::OK;
-   }
-   jumpmuCatch() {}
-   UNREACHABLE();
-   return OP_RESULT::OTHER;
+      return OP_RESULT::OK;
+   // }
+   // jumpmuCatch() {}
+   // UNREACHABLE();
+   // return OP_RESULT::OTHER;
 }
 // -------------------------------------------------------------------------------------
 OP_RESULT BTreeLL::scanDesc(u8* start_key, u16 key_length, std::function<bool(const u8*, u16, const u8*, u16)> callback, function<void()>)
