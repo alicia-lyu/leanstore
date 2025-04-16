@@ -1,6 +1,7 @@
 #pragma once
 #include "BTreeGeneric.hpp"
 #include "BTreeIteratorInterface.hpp"
+#include "leanstore/sync-primitives/Latch.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -112,9 +113,9 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    }
    void turnPage(int diff)  // +1 next page, -1 prev page
    {
-      jumpmuTry()
-      {
-         // std::cout << "turnPage by " << diff << ".";
+      // jumpmuTry()
+      // {
+         std::cout << "turnPage by " << diff << ".";
          assert(diff == -1 || diff == 1);
          // exit_leaf_cb(leaf);
          auto pos_in_parent = leaf_pos_in_parent;
@@ -131,7 +132,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                leaf_pos_in_parent = pos_in_parent;
                break;
             } else if (pos_in_parent < p_guard->count && pos_in_parent >= 0) {
-               leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->getChild(pos_in_parent));
+               leaf = HybridPageGuard<BTreeNode>( p_guard, p_guard->getChild(pos_in_parent)); // TODO: out of memory - error at some point
                leaf_pos_in_parent = pos_in_parent;
                break;
             }
@@ -171,9 +172,9 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
          if (enter_leaf_cb) {
             enter_leaf_cb(leaf);
          }
-         jumpmu_return;
-      }
-      jumpmuCatch() {}
+         // jumpmu_return;
+      // }
+      // jumpmuCatch() {}
    }
    // -------------------------------------------------------------------------------------
   public:
@@ -271,7 +272,14 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
          return OP_RESULT::OK;
       }
       while (true) {
-         ensure(leaf.guard.state != GUARD_STATE::OPTIMISTIC);
+         if (leaf.guard.state == GUARD_STATE::OPTIMISTIC) {
+            std::cout << "WARNING: Leaf is optimistic" << std::endl;
+            if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
+               leaf.toExclusive();
+            } else {
+               leaf.toShared();
+            }
+         }
          if (cur + 1 < leaf->count) {
             cur += 1;
             return OP_RESULT::OK;
@@ -330,6 +338,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             }
             // Construct the next key (lower bound)
             turnPage(1);
+            // gotoPage(buffer);
             // -------------------------------------------------------------------------------------
             if (leaf->count == 0) {
                cleanUpCallback([&, to_find = leaf.bf]() {
@@ -416,6 +425,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             }
             // Construct the next key (lower bound)
             turnPage(-1);
+            // gotoPage(buffer);
             // -------------------------------------------------------------------------------------
             if (leaf->count == 0) {
                COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_empty_leaf[btree.dt_id]++; }
