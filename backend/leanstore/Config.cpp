@@ -75,7 +75,7 @@ DEFINE_bool(out_of_place, false, "Out of place writes");
 DEFINE_uint64(replacement_chunk_size, 64, "Replacement strategy chunk size");
 DEFINE_bool(recycle_pages, true, "");
 // -------------------------------------------------------------------------------------
-DEFINE_bool(wal, true, "");
+DEFINE_bool(wal, false, "");
 DEFINE_bool(wal_rfa, true, "Remote Flush Avoidance (RFA)");
 DEFINE_bool(wal_tuple_rfa, true, "tuple-wise tracking");
 DEFINE_uint64(wal_offset_gib, 10, "");
