@@ -77,6 +77,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
          } else {
             leaf.toShared();
          }
+         assert(leaf->is_leaf);
          prefix_copied = false;
          if (enter_leaf_cb) {
             enter_leaf_cb(leaf);
@@ -292,6 +293,8 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                exit_leaf_cb(leaf);
                exit_leaf_cb = nullptr;
             }
+            p_guard.unlock();
+            leaf.unlock();
             // -------------------------------------------------------------------------------------
             if (cleanup_cb) {
                cleanup_cb();
@@ -314,7 +317,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                   } else {
                      leaf.toShared();
                   }
-                  std::cout << "next leaf: leaf_pos_in_parent = " << leaf_pos_in_parent << "/" << p_guard->count << std::endl;
+                  std::cout << "\rnext leaf: leaf_pos_in_parent = " << leaf_pos_in_parent << "/" << p_guard->count;
                   prefix_copied = false;
                   // -------------------------------------------------------------------------------------
                   if (enter_leaf_cb) {
@@ -390,6 +393,8 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                exit_leaf_cb(leaf);
                exit_leaf_cb = nullptr;
             }
+            p_guard.unlock();
+            leaf.unlock();
             // -------------------------------------------------------------------------------------
             if (cleanup_cb) {
                cleanup_cb();
