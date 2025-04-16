@@ -27,10 +27,16 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g3") # because we h
 
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" AND CMAKE_BUILD_TYPE MATCHES Debug)
     message("Clang Debug")
-    set(SANITIZER_FLAGS "-fsanitize=address -fno-omit-frame-pointer")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SANITIZER_FLAGS}")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${SANITIZER_FLAGS}")
+    set(SANITIZER_FLAGS "-fno-omit-frame-pointer")
+elseif()
+    message("Clang not debug")
+    set(SANITIZER_FLAGS "-fno-omit-frame-pointer -fsanitize=address")
+else()
+    set(SANITIZER_FLAGS "")
 endif ()
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${SANITIZER_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${SANITIZER_FLAGS}")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
