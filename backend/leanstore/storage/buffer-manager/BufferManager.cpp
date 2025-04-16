@@ -313,7 +313,9 @@ BufferFrame& BufferManager::resolveSwip(Guard& swip_guard, Swip<BufferFrame>& sw
    // -------------------------------------------------------------------------------------
    auto frame_handler = partition.io_ht.lookup(pid);
    if (!frame_handler) {
-      BufferFrame& bf = randomPartition().dram_free_list.tryPop();
+      auto& random_partition = randomPartition();
+      auto& random_free_list = random_partition.dram_free_list;
+      BufferFrame& bf = random_free_list.tryPop();
       IOFrame& io_frame = partition.io_ht.insert(pid);
       bf.header.latch.assertNotExclusivelyLatched();
       // -------------------------------------------------------------------------------------

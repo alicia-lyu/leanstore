@@ -195,7 +195,9 @@ struct TPCHWorkload {
          lineitem_cnt_in_order = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
       }
       std::cout << order_keys.end() - current_order_key << " orders left to fill out lineitems" << std::endl;
+      auto orders_rem_start = current_order_key;
       for (; current_order_key < order_keys.end(); current_order_key++) {
+         printProgress("orders of lineitems", current_order_key - orders_rem_start, 0, order_keys.end() - orders_rem_start);
          loadLineitem(l_insert_func, *current_order_key, *current_order_key);
       }
    }
@@ -221,7 +223,6 @@ struct TPCHWorkload {
    {
       for (Integer i = order_start; i <= order_end; i++) {
          Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
-         printProgress("orders of lineitem", i, order_start, order_end);
          for (Integer j = 1; j <= lineitem_cnt; j++) {
             // look up partsupp
             auto p = urand(1, last_part_id);
