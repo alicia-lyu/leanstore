@@ -97,18 +97,13 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
    bool seekTyped(const typename RecordType::Key& k)
       requires std::disjunction_v<std::is_same<RecordType, Records>...>
    {
-      auto result = seekForPrev<RecordType>(k);
+      [[maybe_unused]] auto result = seekForPrev<RecordType>(k);
       while (true) {
          auto kv = current().value();
          if (std::holds_alternative<RecordType>(kv.second)) {
             return true;
          }
-         leanstore::OP_RESULT ret;
-         if (!result) { // first key
-            ret = it->next();
-         } else { // last key
-            ret = it->prev();
-         }
+         leanstore::OP_RESULT ret = it->next();
          if (ret != leanstore::OP_RESULT::OK) {
             reset();
             std::cout << "seekTyped: " << k << " returns " << (int) ret << std::endl;
