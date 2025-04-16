@@ -167,7 +167,10 @@ class HybridPageGuard
    inline T& ref() { return *reinterpret_cast<T*>(bf->page.dt); }
    inline T* ptr() { return reinterpret_cast<T*>(bf->page.dt); }
    inline Swip<T> swip() { return Swip<T>(bf); }
-   inline T* operator->() { return reinterpret_cast<T*>(bf->page.dt); }
+   inline T* operator->() { 
+      assert(guard.state != GUARD_STATE::UNINITIALIZED && guard.state != GUARD_STATE::MOVED);
+      return reinterpret_cast<T*>(bf->page.dt);
+   }
    // -------------------------------------------------------------------------------------
    // Use with caution!
    void toShared() { guard.toShared(); }
@@ -254,7 +257,9 @@ class SharedPageGuard
    inline T& ref() { return *reinterpret_cast<T*>(ref_guard.bf->page.dt); }
    inline T* ptr() { return reinterpret_cast<T*>(ref_guard.bf->page.dt); }
    inline Swip<T> swip() { return Swip<T>(ref_guard.bf); }
-   inline T* operator->() { return reinterpret_cast<T*>(ref_guard.bf->page.dt); }
+   inline T* operator->() { 
+      return reinterpret_cast<T*>(ref_guard.bf->page.dt); 
+   }
 };
 // -------------------------------------------------------------------------------------
 }  // namespace storage

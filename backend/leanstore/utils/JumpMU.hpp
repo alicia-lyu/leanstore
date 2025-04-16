@@ -49,7 +49,7 @@ inline void clearLastDestructor()
 
 #define jumpmuCatch()           \
   jumpmu::checkpoint_counter--; \
-  std::cout << "JUMP in " << __FILE__ << ":" << __LINE__ << std::endl;\
+  std::cerr << "JUMP in " << __FILE__ << ":" << __LINE__ << std::endl;\
 } else
    // clang-format on
 

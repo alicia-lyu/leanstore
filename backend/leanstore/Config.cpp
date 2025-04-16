@@ -70,7 +70,7 @@ DEFINE_bool(pid_tracing, false, "");
 // -------------------------------------------------------------------------------------
 DEFINE_string(tag, "", "Unique identifier for this, will be appended to each line csv");
 // -------------------------------------------------------------------------------------
-DEFINE_bool(optimistic_parent_pointer, false, "");
+DEFINE_bool(optimistic_parent_pointer, true, "");
 DEFINE_bool(out_of_place, false, "Out of place writes");
 DEFINE_uint64(replacement_chunk_size, 64, "Replacement strategy chunk size");
 DEFINE_bool(recycle_pages, true, "");

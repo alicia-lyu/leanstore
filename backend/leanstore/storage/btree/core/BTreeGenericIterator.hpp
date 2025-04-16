@@ -89,14 +89,13 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             }
             // -------------------------------------------------------------------------------------
             if (tries > 0) {
-               std::cout << "findLeafAndLatch done after " << tries << " tries." << std::endl;
+               std::cerr << "\rfindLeafAndLatch done after " << tries << " tries." << std::endl;
             }
             jumpmu_return;
          }
          jumpmuCatch()
          {
             tries += 1;
-            std::cout << "findLeafAndLatch failed...";
          }
       }
    }
@@ -123,9 +122,9 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
    }
    void turnPage(int diff, const Slice& key)  // +1 next page, -1 prev page
    {
-      int tries = 0;
+      // int tries = 0;
 
-      while (true) {
+      // while (true) {
          jumpmuTry()
          {
             assert(diff == -1 || diff == 1);
@@ -136,7 +135,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                pos_in_parent += diff;
                auto pos_check = p_guard->lowerBound<false>(key.data(), key.length());
                if (pos_in_parent != pos_check) {
-                  std::cout << "WARNING: pos_in_parent != pos_check" << std::endl;
+                  std::cerr << "WARNING: pos_in_parent != pos_check" << std::endl;
                }
                COUNTERS_BLOCK()
                {
@@ -153,7 +152,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                   break;
                }
 
-               auto parent_swip_handler = BTreeGeneric::findParent<true>(btree, *p_guard.bf);
+               auto parent_swip_handler = BTreeGeneric::findParent<false>(btree, *p_guard.bf);
                pos_in_parent = parent_swip_handler.pos;
                if (pos_in_parent == -2) {
                   // We are at the root, keep the original page, cur == leaf->count - 1
@@ -188,16 +187,19 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             if (enter_leaf_cb) {
                enter_leaf_cb(leaf);
             }
-            if (tries > 0)
-               std::cout << "turnPage by " << diff << " done after " << tries << " tries." << std::endl;
+            // if (tries > 0)
+               std::cerr << "turnPage by " << diff << std::endl;
             jumpmu_return;
          }
          jumpmuCatch()
          {
-            tries += 1;
-            std::cout << "turnPage by " << diff << " failed...";
+            // tries += 1;
+            // std::cout << "\rturnPage by " << diff << " failed...";
+            std::cerr << "turnPage failed, try gotoPage instead." << std::endl;
+            gotoPage(key);
          }
-      }
+         
+      // }
    }
    // -------------------------------------------------------------------------------------
   public:
@@ -298,7 +300,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
       }
       while (true) {
          if (leaf.guard.state == GUARD_STATE::OPTIMISTIC) {
-            std::cout << "WARNING: Leaf is optimistic" << std::endl;
+            std::cerr << "WARNING: Leaf is optimistic" << std::endl;
             if (mode == LATCH_FALLBACK_MODE::EXCLUSIVE) {
                leaf.toExclusive();
             } else {
