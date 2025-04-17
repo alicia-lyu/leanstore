@@ -141,7 +141,7 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
    template <typename JK, typename JoinedRec>
    void scanJoin()
    {
-      using Merge = MultiWayMerge<JK, JoinedRec, Records...>;
+      using Merge = MergeJoin<JK, JoinedRec, Records...>;
       reset();
       std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...> cached_records;
       [[maybe_unused]] long long joined = 0;

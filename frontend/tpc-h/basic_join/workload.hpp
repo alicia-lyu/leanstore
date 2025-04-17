@@ -21,7 +21,6 @@ class BasicJoin
    using merged_t = MergedAdapterType<merged_part_t, merged_partsupp_t, merged_lineitem_t>;
    TPCH& workload;
    AdapterType<joinedPPsL_t>& joinedPPsL;
-   AdapterType<joinedPPs_t>& joinedPPs;
    AdapterType<sorted_lineitem_t>& sortedLineitem;
    merged_t& mergedPPsL;
    Logger& logger;
@@ -29,11 +28,10 @@ class BasicJoin
    AdapterType<partsupp_t>& partsupp;
 
   public:
-   BasicJoin(TPCH& workload, merged_t& mbj, AdapterType<joinedPPsL_t>& jppsl, AdapterType<joinedPPs_t>& jpps, AdapterType<sorted_lineitem_t>& sl)
+   BasicJoin(TPCH& workload, merged_t& mbj, AdapterType<joinedPPsL_t>& jppsl, AdapterType<sorted_lineitem_t>& sl)
        : workload(workload),
          mergedPPsL(mbj),
          joinedPPsL(jppsl),
-         joinedPPs(jpps),
          sortedLineitem(sl),
          logger(workload.logger),
          part(workload.part),
@@ -177,7 +175,7 @@ class BasicJoin
       std::cout << "BasicJoin::queryByBase()" << std::endl;
       auto index_start = std::chrono::high_resolution_clock::now();
 
-      using Merge = MultiWayMerge<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
+      using Merge = MergeJoin<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
 
       auto part_scanner = part.getScanner();
       auto partsupp_scanner = partsupp.getScanner();
@@ -256,39 +254,39 @@ class BasicJoin
       std::sort(new_part.begin(), new_part.end(), compare);
       std::sort(new_partupp.begin(), new_partupp.end(), compare);
       std::sort(new_lineitems.begin(), new_lineitems.end(), compare);
-      using Merge = MultiWayMerge<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
+      using Merge = MergeJoin<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
       auto part_it = new_part.begin();
       auto partsupp_it = new_partupp.begin();
       auto lineitems_it = new_lineitems.begin();
       join_key_t next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
       auto part_delta_src = [&]() {
          if (part_it == new_part.end()) {
-            return typename Merge::HeapEntry();
+            return HeapEntry<join_key_t>();
          }
          auto& [k, v] = *part_it;
          part_it++;
          auto jk = SKBuilder<join_key_t>::create(k, v);
          next_jk = jk;
-         return typename Merge::HeapEntry(jk, part_t::toBytes(k), part_t::toBytes(v), 0);
+         return HeapEntry<join_key_t>(jk, part_t::toBytes(k), part_t::toBytes(v), 0);
       };
       auto partsupp_delta_src = [&]() {
          if (partsupp_it == new_partupp.end()) {
-            return typename Merge::HeapEntry();
+            return HeapEntry<join_key_t>();
          }
          auto& [k, v] = *partsupp_it;
          partsupp_it++;
          auto jk = SKBuilder<join_key_t>::create(k, v);
          next_jk = jk;
-         return typename Merge::HeapEntry(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v), 1);
+         return HeapEntry<join_key_t>(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v), 1);
       };
       auto lineitem_delta_src = [&]() {
          if (lineitems_it == new_lineitems.end()) {
-            return typename Merge::HeapEntry();
+            return HeapEntry<join_key_t>();
          }
          auto& [k, v] = *lineitems_it;
          lineitems_it++;
          auto jk = SKBuilder<join_key_t>::create(k, v);
-         return typename Merge::HeapEntry(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v), 2);
+         return HeapEntry<join_key_t>(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v), 2);
       };
 
       join_key_t last_accessed_jk = next_jk;
@@ -300,7 +298,7 @@ class BasicJoin
          while (true) {
             auto kv = part_scanner->next();
             if (kv == std::nullopt) {
-               return typename Merge::HeapEntry();
+               return HeapEntry<join_key_t>();
             }
             auto& [k, v] = *kv;
             auto jk = SKBuilder<join_key_t>::create(k, v);
@@ -312,7 +310,7 @@ class BasicJoin
                continue;
             }
             last_accessed_jk = jk;
-            return typename Merge::HeapEntry(jk, part_t::toBytes(k), part_t::toBytes(v),
+            return HeapEntry<join_key_t>(jk, part_t::toBytes(k), part_t::toBytes(v),
                                              0);  // not guaranteed to match the deltas but such waste is limited
          }
       };
@@ -321,7 +319,7 @@ class BasicJoin
          while (true) {
             auto kv = partsupp_scanner->next();
             if (kv == std::nullopt) {
-               return typename Merge::HeapEntry();
+               return HeapEntry<join_key_t>();
             }
             auto& [k, v] = *kv;
             auto jk = SKBuilder<join_key_t>::create(k, v);
@@ -333,7 +331,7 @@ class BasicJoin
                continue;
             }
             last_accessed_jk = jk;
-            return typename Merge::HeapEntry(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v),
+            return HeapEntry<join_key_t>(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v),
                                              1);  // not guaranteed to match the deltas but such waste is limited
          }
       };
@@ -342,7 +340,7 @@ class BasicJoin
          while (true) {
             auto kv = lineitem_scanner->next();
             if (kv == std::nullopt) {
-               return typename Merge::HeapEntry();
+               return HeapEntry<join_key_t>();
             }
             auto& [k, v] = *kv;
             auto jk = SKBuilder<join_key_t>::create(k, v);
@@ -354,7 +352,7 @@ class BasicJoin
                continue;
             }
             last_accessed_jk = jk;
-            return typename Merge::HeapEntry(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v),
+            return HeapEntry<join_key_t>(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v),
                                              2);  // not guaranteed to match the deltas but such waste is limited
          }
       };
@@ -362,7 +360,7 @@ class BasicJoin
       // Step 1 Join deltas
       std::cout << "Size: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems"
                 << std::endl;
-      std::vector<std::function<typename Merge::HeapEntry()>> sources1 = {part_delta_src, partsupp_delta_src, lineitem_delta_src};
+      std::vector<std::function<HeapEntry<join_key_t>()>> sources1 = {part_delta_src, partsupp_delta_src, lineitem_delta_src};
       Merge delta_join1(sources1);
       delta_join1.run();
       // Step 2 join 2 deltas and search for matches in a base table
@@ -370,7 +368,7 @@ class BasicJoin
       partsupp_it = new_partupp.begin();
       lineitem_scanner->reset();
       next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
-      std::vector<std::function<typename Merge::HeapEntry()>> sources2_1 = {part_delta_src, partsupp_delta_src, lineitem_src};
+      std::vector<std::function<HeapEntry<join_key_t>()>> sources2_1 = {part_delta_src, partsupp_delta_src, lineitem_src};
       Merge delta_join2_1(sources2_1);
       delta_join2_1.run();
 
@@ -379,7 +377,7 @@ class BasicJoin
       lineitems_it = new_lineitems.begin();
       partsupp_scanner->reset();
       next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
-      std::vector<std::function<typename Merge::HeapEntry()>> sources2_2 = {part_delta_src, lineitem_delta_src, partsupp_src};
+      std::vector<std::function<HeapEntry<join_key_t>()>> sources2_2 = {part_delta_src, lineitem_delta_src, partsupp_src};
       Merge delta_join2_2(sources2_2);
       delta_join2_2.run();
 
@@ -387,7 +385,7 @@ class BasicJoin
       lineitems_it = new_lineitems.begin();
       part_scanner->reset();
       next_jk = SKBuilder<join_key_t>::create(std::get<0>(*partsupp_it), std::get<1>(*partsupp_it));
-      std::vector<std::function<typename Merge::HeapEntry()>> sources2_3 = {partsupp_delta_src, lineitem_delta_src, part_src};
+      std::vector<std::function<HeapEntry<join_key_t>()>> sources2_3 = {partsupp_delta_src, lineitem_delta_src, part_src};
       Merge delta_join2_3(sources2_3);
       delta_join2_3.run();
 
@@ -396,7 +394,7 @@ class BasicJoin
       partsupp_scanner->reset();
       lineitem_scanner->reset();
       next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
-      std::vector<std::function<typename Merge::HeapEntry()>> sources3_1 = {part_delta_src, partsupp_src, lineitem_src};
+      std::vector<std::function<HeapEntry<join_key_t>()>> sources3_1 = {part_delta_src, partsupp_src, lineitem_src};
       Merge delta_join3_1(sources3_1);
       delta_join3_1.run();
 
@@ -404,7 +402,7 @@ class BasicJoin
       lineitem_scanner->reset();
       part_scanner->reset();
       next_jk = SKBuilder<join_key_t>::create(std::get<0>(*partsupp_it), std::get<1>(*partsupp_it));
-      std::vector<std::function<typename Merge::HeapEntry()>> sources3_2 = {partsupp_delta_src, lineitem_src, part_src};
+      std::vector<std::function<HeapEntry<join_key_t>()>> sources3_2 = {partsupp_delta_src, lineitem_src, part_src};
       Merge delta_join3_2(sources3_2);
       delta_join3_2.run();
 
@@ -412,7 +410,7 @@ class BasicJoin
       part_scanner->reset();
       partsupp_scanner->reset();
       next_jk = SKBuilder<join_key_t>::create(std::get<0>(*lineitems_it), std::get<1>(*lineitems_it));
-      std::vector<std::function<typename Merge::HeapEntry()>> sources3_3 = {lineitem_delta_src, partsupp_src, part_src};
+      std::vector<std::function<HeapEntry<join_key_t>()>> sources3_3 = {lineitem_delta_src, partsupp_src, part_src};
       Merge delta_join3_3(sources3_3);
       delta_join3_3.run();
 
@@ -477,7 +475,7 @@ class BasicJoin
 
    void loadBasicJoin()
    {
-      using Merge = MultiWayMerge<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
+      using Merge = MergeJoin<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
       auto part_scanner = part.getScanner();
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
@@ -487,7 +485,7 @@ class BasicJoin
 
    void loadMergedBasicJoin()
    {
-      using Merge = MultiWayMerge<join_key_t, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>;
+      using Merge = Merge<join_key_t, merged_part_t, merged_partsupp_t, merged_lineitem_t>;
       auto part_scanner = part.getScanner();
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
@@ -508,7 +506,6 @@ class BasicJoin
       std::vector<std::ostream*> out = {&std::cout, &size_csv};
       for (std::ostream* o : out) {
          *o << "joinedPPsL," << joinedPPsL.size() << std::endl;
-         *o << "joinedPPs," << joinedPPs.size() << std::endl;
          *o << "sortedLineitem," << sortedLineitem.size() << std::endl;
          *o << "mergedPPsL," << mergedPPsL.size() << std::endl;
       }

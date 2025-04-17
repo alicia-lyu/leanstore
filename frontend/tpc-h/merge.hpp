@@ -9,76 +9,45 @@
 #include "view_templates.hpp"
 
 // MultiWayMerge performs a multi-way merge-join or merge-insert from multiple sorted sources
-// Each source yields key-value pairs, merged by JK, into JoinedRec or MergedAdapterType
+// Each source yields key-value pairs, merged by JK, into JR or MergedAdapterType
 
-template <typename JK, typename JoinedRec, typename... Records>
-struct MultiWayMerge {
-   static constexpr size_t nways = sizeof...(Records);
+template <typename JK>
+struct HeapEntry {
+   JK jk;
+   std::vector<std::byte> k, v;
+   u8 source;
+   HeapEntry() : jk(JK::max()), source(std::numeric_limits<u8>::max()) {}
+   HeapEntry(JK jk, std::vector<std::byte> k, std::vector<std::byte> v, u8 source) : jk(jk), k(std::move(k)), v(std::move(v)), source(source) {}
+   bool operator>(const HeapEntry& other) const { return jk > other.jk; }
+};
 
-   struct HeapEntry {
-      JK jk;
-      std::vector<std::byte> k, v;
-      u8 source;
-      HeapEntry() : jk(JK::max()), source(std::numeric_limits<u8>::max()) {}
-      HeapEntry(JK jk, std::vector<std::byte> k, std::vector<std::byte> v, u8 source) : jk(jk), k(std::move(k)), v(std::move(v)), source(source) {}
-      bool operator>(const HeapEntry& other) const { return jk > other.jk; }
-   };
+template <typename JK, typename... Rs>
+struct HeapMergeImpl {
+   static constexpr size_t nways = sizeof...(Rs);
 
-   std::vector<std::function<HeapEntry()>> sources;
-   std::vector<std::function<void(HeapEntry&)>> consumes;
-   std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...> cached_records;
+   std::vector<std::function<HeapEntry<JK>()>> sources;
+   std::vector<std::function<void(HeapEntry<JK>&)>> consumes;
+   std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...> cached_records;
+   std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<>> heap;
    long produced = 0;
-   JK current_jk = JK::max();
-   HeapEntry current_entry;
-   std::optional<std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>> consume_joined;
-   std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<>> heap;
-   std::string msg = "Joined";
-   // Default: To be joined
+   JK current_jk;
+   HeapEntry<JK> current_entry;
+
+   HeapMergeImpl(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
+       : sources(sources), consumes(consumes)
+   {
+   }
+
    template <template <typename> class ScannerType>
-   MultiWayMerge(ScannerType<Records>&... scanners)
-       : sources(getHeapSources(scanners...)),
-         consumes(getHeapConsumesToBeJoined()),
-         consume_joined([](const typename JoinedRec::Key&, const JoinedRec&) {})
+   HeapMergeImpl(std::vector<std::function<void(HeapEntry<JK>&)>> consumes, ScannerType<Rs>&... scanners)
+       : HeapMergeImpl(getHeapSources(scanners...), consumes)
    {
-      init();
    }
 
-   MultiWayMerge(std::vector<std::function<HeapEntry()>>& sources)
-       : sources(sources), consumes(getHeapConsumesToBeJoined()), consume_joined([](const typename JoinedRec::Key&, const JoinedRec&) {})
+   template <template <typename> class ScannerType, typename... SourceRecords>
+   HeapMergeImpl(std::vector<std::function<void(HeapEntry<JK>&)>> consumes, ScannerType<SourceRecords>&... scanners)
+       : HeapMergeImpl(getHeapSources(scanners...), consumes)
    {
-      init();
-   }
-
-   // Explicit joinedAdapter
-   template <template <typename> class AdapterType, template <typename> class ScannerType>
-   MultiWayMerge(AdapterType<JoinedRec>& joinedAdapter, ScannerType<Records>&... scanners)
-       : sources(getHeapSources(scanners...)),
-         consumes(getHeapConsumesToBeJoined()),
-         consume_joined([&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
-   {
-      init();
-   }
-   // explicit consume_joined
-   MultiWayMerge(std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>& consume_joined,
-                 std::vector<std::function<HeapEntry()>>& sources)
-       : sources(sources), consumes(getHeapConsumesToBeJoined()), consume_joined(consume_joined)
-   {
-      init();
-   }
-
-   template <typename MergedAdapterType, template <typename> class ScannerType, typename... SourceRecords>
-   MultiWayMerge(MergedAdapterType& mergedAdapter, ScannerType<SourceRecords>&... scanners)
-       : sources(getHeapSources(scanners...)),
-         consumes(getHeapConsumesToMerged<MergedAdapterType, SourceRecords...>(mergedAdapter)),
-         consume_joined(std::nullopt),
-         msg("Merged")
-   {
-      init();
-   }
-
-   ~MultiWayMerge()
-   {
-      std::cout << "\r~MultiWayMerge: " << msg << " " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
    }
 
    void run()
@@ -99,11 +68,11 @@ struct MultiWayMerge {
 
    void next()
    {
-      HeapEntry entry = heap.top();
+      HeapEntry<JK> entry = heap.top();
       heap.pop();
       consumes.at(entry.source)(entry);
 
-      HeapEntry next;
+      HeapEntry<JK> next;
       if (nways == sources.size()) {
          next = sources.at(entry.source)();
       } else if (sources.size() == 1) {
@@ -113,30 +82,28 @@ struct MultiWayMerge {
       }
       if (next.jk != JK::max())
          heap.push(next);
-      else if (consume_joined)
-         heap = {};
    }
 
    template <template <typename> class ScannerType, typename RecordType>
-   static std::function<HeapEntry()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
+   static std::function<HeapEntry<JK>()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
    {
       return [source, &scanner]() {
          auto kv = scanner.next();
          if (!kv)
-            return HeapEntry();
+            return HeapEntry<JK>();
          auto& [k, v] = *kv;
-         return HeapEntry(SKBuilder<JK>::create(k, v), RecordType::toBytes(k), RecordType::toBytes(v), source);
+         return HeapEntry<JK>(SKBuilder<JK>::create(k, v), RecordType::toBytes(k), RecordType::toBytes(v), source);
       };
    }
 
    template <template <typename> class ScannerType, size_t... Is, typename... SourceRecords>
-   static std::vector<std::function<HeapEntry()>> getHeapSources(std::index_sequence<Is...>, ScannerType<SourceRecords>&... scanners)
+   static std::vector<std::function<HeapEntry<JK>()>> getHeapSources(std::index_sequence<Is...>, ScannerType<SourceRecords>&... scanners)
    {
       return {getHeapSource(scanners, Is)...};
    }
 
    template <template <typename> class ScannerType, typename... SourceRecords>
-   static std::vector<std::function<HeapEntry()>> getHeapSources(ScannerType<SourceRecords>&... scanners)
+   static std::vector<std::function<HeapEntry<JK>()>> getHeapSources(ScannerType<SourceRecords>&... scanners)
    {
       return getHeapSources(std::index_sequence_for<SourceRecords...>{}, scanners...);
    }
@@ -146,12 +113,59 @@ struct MultiWayMerge {
    {
       std::apply([&](auto&... elems) { (..., func(elems)); }, tup);
    }
+};
+
+template <typename JK, typename JR, size_t ST, typename... Rs>
+struct MergeJoinImpl : public HeapMergeImpl<JK, Rs...> {
+   using Base = HeapMergeImpl<JK, Rs...>;
+
+   std::optional<std::function<void(const typename JR::Key&, const JR&)>> consume_joined;
+
+   template <template <typename> class ScannerType>
+   MergeJoinImpl(ScannerType<Rs>&... scanners)
+       : Base(getHeapConsumesToBeJoined(), scanners...), consume_joined([](const typename JR::Key&, const JR&) {})
+   {
+      this->init();
+   }
+
+   MergeJoinImpl(std::vector<std::function<HeapEntry<JK>()>>& sources)
+       : Base(sources, getHeapConsumesToBeJoined()), consume_joined([](const typename JR::Key&, const JR&) {})
+   {
+      this->init();
+   }
+
+   template <template <typename> class AdapterType, template <typename> class ScannerType>
+   MergeJoinImpl(AdapterType<JR>& joinedAdapter, ScannerType<Rs>&... scanners)
+       : Base(getHeapConsumesToBeJoined(), scanners...),
+         consume_joined([&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
+   {
+      this->init();
+   }
+
+   MergeJoinImpl(std::function<void(const typename JR::Key&, const JR&)>& consume_joined, std::vector<std::function<HeapEntry<JK>()>>& sources)
+       : Base(sources, getHeapConsumesToBeJoined()), consume_joined(consume_joined)
+   {
+      this->init();
+   }
+
+   ~MergeJoinImpl()
+   {
+      std::cout << "\r~MergeJoin: produced " << (double)this->produced / 1000 << "k records------------------------------------" << std::endl;
+   }
+
+   void printProgress()
+   {
+      if (this->current_jk % 10 == 0) {
+         double progress = (double)this->produced / 1000;
+         std::cout << "\rMergeJoin: produced " << progress << "k records------------------------------------";
+      }
+   }
 
    template <std::size_t... Is>
-   static void joinAndClear(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
+   static void joinAndClear(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
                             JK current_jk,
                             JK current_entry_jk,
-                            std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>& consume_joined,
+                            std::function<void(const typename JR::Key&, const JR&)>& consume_joined,
                             std::index_sequence<Is...>)
    {
       (..., ([&] {
@@ -165,97 +179,70 @@ struct MultiWayMerge {
        }()));
    }
 
-   void joinAndClear() { joinAndClear(cached_records, current_jk, current_entry.jk, consume_joined.value(), std::index_sequence_for<Records...>{}); }
+   void joinAndClear() { joinAndClear(this->cached_records, this->current_jk, this->current_entry.jk, consume_joined.value(), std::index_sequence_for<Rs...>{}); }
 
    template <typename CurrRec, size_t I>
    auto getHeapConsumeToBeJoined()
    {
-      return [this](HeapEntry& entry) {
-         current_entry = entry;
+      return [this](HeapEntry<JK>& entry) {
+         this->current_entry = entry;
          joinAndClear();
-         current_jk = entry.jk;
-         std::get<I>(cached_records)
+         this->current_jk = entry.jk;
+         std::get<I>(this->cached_records)
              .emplace_back(typename CurrRec::Key(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k)),
                            CurrRec(CurrRec::template fromBytes<CurrRec>(entry.v)));
       };
    }
 
    template <size_t... Is>
-   std::vector<std::function<void(HeapEntry&)>> getHeapConsumesToBeJoined(std::index_sequence<Is...>)
+   std::vector<std::function<void(HeapEntry<JK>&)>> getHeapConsumesToBeJoined(std::index_sequence<Is...>)
    {
-      return {getHeapConsumeToBeJoined<Records, Is>()...};
+      return {getHeapConsumeToBeJoined<Rs, Is>()...};
    }
 
-   std::vector<std::function<void(HeapEntry&)>> getHeapConsumesToBeJoined()
+   std::vector<std::function<void(HeapEntry<JK>&)>> getHeapConsumesToBeJoined()
    {
-      return getHeapConsumesToBeJoined(std::index_sequence_for<Records...>{});
-   }
-
-   void printProgress()
-   {
-      if (current_jk % 10 == 0) {
-         double progress = (double)produced / 1000;
-         std::cout << "\r" << msg << " " << progress << "k records------------------------------------";
-      }
-   }
-
-   template <typename MergedAdapterType, typename RecordType, typename SourceRecord>
-   auto getHeapConsumeToMerged(MergedAdapterType& mergedAdapter)
-   {
-      return [&mergedAdapter, this](HeapEntry& entry) {
-         current_entry = entry;
-         current_jk = entry.jk;
-         mergedAdapter.insert(typename RecordType::Key(current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)),
-                              RecordType{SourceRecord::template fromBytes<SourceRecord>(entry.v)});
-         produced++;
-         printProgress();
-      };
-   }
-
-   template <typename MergedAdapterType, typename... SourceRecords>
-   std::vector<std::function<void(HeapEntry&)>> getHeapConsumesToMerged(MergedAdapterType& mergedAdapter)
-   {
-      return {getHeapConsumeToMerged<MergedAdapterType, Records, SourceRecords>(mergedAdapter)...};
+      return getHeapConsumesToBeJoined(std::index_sequence_for<Rs...>{});
    }
 
    int joinCurrent()
    {
-      int count = join_current(cached_records, consume_joined);
-      produced += count;
+      int count = join_current(this->cached_records, consume_joined);
+      this->produced += count;
       printProgress();
       return count;
    }
 
-   static int join_current(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
-                           std::function<void(const typename JoinedRec::Key&, const JoinedRec&)>& consume_joined)
+   static int join_current(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
+                           std::function<void(const typename JR::Key&, const JR&)>& consume_joined)
    {
       int count = 1;
-      forEach(cached_records, [&](const auto& v) { count *= v.size(); });
+      Base::forEach(cached_records, [&](const auto& v) { count *= v.size(); });
       if (count == 0)
          return 0;
 
-      std::vector<std::tuple<std::tuple<typename Records::Key, Records>...>> output(count);
+      std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>> output(count);
       unsigned long batch_size = count;
-      assignRecords(cached_records, output, &batch_size, count, std::index_sequence_for<Records...>{});
+      assignRecords(cached_records, output, &batch_size, count, std::index_sequence_for<Rs...>{});
 
       for (auto& rec : output) {
-         std::apply([&](auto&... pairs) { consume_joined(typename JoinedRec::Key{std::get<0>(pairs)...}, JoinedRec{std::get<1>(pairs)...}); }, rec);
+         std::apply([&](auto&... pairs) { consume_joined(typename JR::Key{std::get<0>(pairs)...}, JR{std::get<1>(pairs)...}); }, rec);
       }
       return count;
    }
 
    template <size_t... Is>
-   void assignRecords(std::vector<std::tuple<std::tuple<typename Records::Key, Records>...>>& output,
+   void assignRecords(std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>>& output,
                       unsigned long* batch_size,
                       int total,
                       std::index_sequence<Is...>)
    {
-      return assignRecords(cached_records, output, batch_size, total, std::index_sequence<Is...>{});
+      return assignRecords(this->cached_records, output, batch_size, total, std::index_sequence<Is...>{});
    }
 
    template <size_t... Is>
-   static void assignRecords(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
-                             std::vector<std::tuple<std::tuple<typename Records::Key, Records>...>>& output,
+   static void assignRecords(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
+                             std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>>& output,
                              unsigned long* batch_size,
                              int total,
                              std::index_sequence<Is...>)
@@ -270,4 +257,54 @@ struct MultiWayMerge {
           *batch_size /= vec.size();
        })());
    }
+   
+};
+
+template <typename JK, typename... Rs>
+struct Merge : public HeapMergeImpl<JK, Rs...> {
+   using Base = HeapMergeImpl<JK, Rs...>;
+   
+
+   template <typename MergedAdapterType, template <typename> class ScannerType, typename... SourceRecords>
+   Merge(MergedAdapterType& mergedAdapter, ScannerType<SourceRecords>&... scanners)
+       : Base(getHeapConsumesToMerged<MergedAdapterType, SourceRecords...>(mergedAdapter), scanners...)
+   {
+      this->init();
+   }
+
+   void printProgress()
+   {
+      if (this->current_jk % 10 == 0) {
+         double progress = (double)this->produced / 1000;
+         std::cout << "\rMerge: " << progress << "k records------------------------------------";
+      }
+   }
+
+   template <typename MergedAdapterType, typename RecordType, typename SourceRecord>
+   auto getHeapConsumeToMerged(MergedAdapterType& mergedAdapter)
+   {
+      return [&mergedAdapter, this](HeapEntry<JK>& entry) {
+         this->current_entry = entry;
+         this->current_jk = entry.jk;
+         mergedAdapter.insert(typename RecordType::Key(this->current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)),
+                              RecordType{SourceRecord::template fromBytes<SourceRecord>(entry.v)});
+         this->produced++;
+         printProgress();
+      };
+   }
+
+   template <typename MergedAdapterType, typename... SourceRecords>
+   std::vector<std::function<void(HeapEntry<JK>&)>> getHeapConsumesToMerged(MergedAdapterType& mergedAdapter)
+   {
+      return {getHeapConsumeToMerged<MergedAdapterType, Rs, SourceRecords>(mergedAdapter)...};
+   }
+};
+
+template <typename JK, typename JR, typename...Rs>
+struct MergeJoin: public MergeJoinImpl<JK, JR, sizeof...(Rs), Rs...> {
+   using MergeJoinImpl<JK, JR, sizeof...(Rs), Rs...>::MergeJoinImpl;
+};
+
+template <typename JK, typename JR, typename R1, typename R2>
+struct BinaryJoin : public MergeJoinImpl<JK, JR, 2, R1, R2> {
 };
