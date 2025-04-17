@@ -1,7 +1,6 @@
 #pragma once
 #include <functional>
 #include <limits>
-#include <optional>
 #include <queue>
 #include <vector>
 #include "../shared/MergedScanner.hpp"
@@ -326,6 +325,8 @@ struct Merge {
    {
       heap_merge.init();
    }
+
+   ~Merge() { std::cout << "\r~Merge: produced " << (double)heap_merge.sifted / 1000 << "k records------------------------------------" << std::endl; }
 
    void printProgress()
    {
