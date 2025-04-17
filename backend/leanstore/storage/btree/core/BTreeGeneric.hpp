@@ -6,6 +6,7 @@
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
 #include "leanstore/sync-primitives/PageGuard.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 #include "leanstore/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -158,7 +159,9 @@ class BTreeGeneric
                }
             }
          }
-         jumpmuCatch() {}
+         jumpmuCatchNoPrint() {
+            std::cerr << "findParent: retrieve from optimistic parent pointer failed...";
+         }
       }
       // -------------------------------------------------------------------------------------
       auto& c_node = *reinterpret_cast<BTreeNode*>(to_find.page.dt);
@@ -238,7 +241,9 @@ class BTreeGeneric
             c_guard.unlock();
             parent_handler.is_bf_updated = true;
          }
-         jumpmuCatch() {}
+         jumpmuCatchNoPrint() {
+            std::cerr << "findParent: update optimistic parent pointer failed." << std::endl;
+         }
       }
       COUNTERS_BLOCK() { WorkerCounters::myCounters().dt_find_parent_slow[btree.dt_id]++; }
       return parent_handler;
