@@ -13,7 +13,7 @@ class CPUTable : public ProfilingTable
 {
   public:
    std::unordered_map<std::string, double> workers_agg_events, pp_agg_events, ww_agg_events;
-   std::vector<std::unordered_map<std::string, double>> workers_events;
+   std::unordered_map<std::string, std::unordered_map<std::string, double>> workers_events;
    virtual std::string getName();
    virtual void open();
    virtual void next();

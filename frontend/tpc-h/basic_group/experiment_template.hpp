@@ -27,8 +27,6 @@ int run()
    LeanStoreAdapter<region_t> region;
    // Views
    LeanStoreAdapter<view_t> view;
-   LeanStoreAdapter<count_partsupp_t> count_partsupp;
-   LeanStoreAdapter<sum_supplycost_t> sum_supplycost;
    LeanStoreMergedAdapter<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t> mergedBasicGroup;
 
    auto& crm = db.getCRManager();
@@ -43,8 +41,6 @@ int run()
       region = LeanStoreAdapter<region_t>(db, "region");
       mergedBasicGroup = LeanStoreMergedAdapter<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t>(db, "mergedBasicGroup");
       view = LeanStoreAdapter<view_t>(db, "view");
-      count_partsupp = LeanStoreAdapter<count_partsupp_t>(db, "count_partsupp");
-      sum_supplycost = LeanStoreAdapter<sum_supplycost_t>(db, "sum_supplycost");
    });
 
    db.registerConfigEntry("tpch_scale_factor", FLAGS_tpch_scale_factor);
@@ -55,7 +51,7 @@ int run()
 
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter, merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t> tpchBasicGroup(
-       tpch, mergedBasicGroup, view, count_partsupp, sum_supplycost);
+       tpch, mergedBasicGroup, view);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
@@ -69,8 +65,6 @@ int run()
    }
 
    WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, maintainMerged);
-
-   WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForIndex, queryByIndex, maintainIndex);
 
    WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, maintainView);
 

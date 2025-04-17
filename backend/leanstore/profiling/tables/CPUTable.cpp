@@ -20,18 +20,14 @@ std::string CPUTable::getName()
 // -------------------------------------------------------------------------------------
 void CPUTable::open()
 {
-   auto workers_count = CPUCounters::threads.size();
    PerfEvent e; // Only for getting the names
    for (const auto& event_name : e.getEventsName()) {
       workers_agg_events[event_name] = 0;
       pp_agg_events[event_name] = 0;
       ww_agg_events[event_name] = 0;
-      for (u64 i = 0; i < workers_count; i++) {
-         // Initialize for each worker
-         if (workers_events.size() <= i) {
-            workers_events.emplace_back();
-         }
-         workers_events.at(i)[event_name] = 0;
+      for (auto& [_, counters] : CPUCounters::threads) {
+         auto& t_name = counters.name;
+         workers_events[t_name][event_name] = 0;
       }
       columns.emplace(event_name, [](Column&) {});
    }
@@ -51,7 +47,7 @@ void CPUTable::next()
    for (auto& c : ww_agg_events) {
       c.second = 0;
    }
-   for (auto& w : workers_events) {
+   for (auto& [_, w] : workers_events) {
       for (auto& c : w) {
          c.second = 0;
       }
@@ -59,10 +55,11 @@ void CPUTable::next()
    // -------------------------------------------------------------------------------------
    {
       std::unique_lock guard(CPUCounters::mutex);
-      for (auto& thread : CPUCounters::threads) {
-         thread.second.e->stopCounters();
-         auto events_map = thread.second.e->getCountersMap();
-         columns.at("key") << thread.second.name;
+      for (auto& [t_id, counters] : CPUCounters::threads) {
+         counters.e->stopCounters();
+         auto events_map = counters.e->getCountersMap();
+         auto& t_name = counters.name;
+         columns.at("key") << t_name;
          for (auto& event : events_map) {
             double event_value;
             if (std::isnan(event.second)) {
@@ -70,17 +67,17 @@ void CPUTable::next()
             } else {
                event_value = event.second;
             }
-            if (thread.second.name.rfind("worker", 0) == 0) {
+            workers_events[t_name][event.first] += event_value;
+            if (t_name.rfind("worker", 0) == 0) {
                workers_agg_events[event.first] += event_value;
-               workers_events.at(thread.first)[event.first] = event_value;
-            } else if (thread.second.name.rfind("pp", 0) == 0) {
+            } else if (t_name.rfind("pp", 0) == 0) {
                pp_agg_events[event.first] += event_value;
-            } else if (thread.second.name.rfind("ww") == 0) {
+            } else if (t_name.rfind("ww") == 0) {
                ww_agg_events[event.first] += event_value;
             }
             columns.at(event.first) << event.second;
          }
-         thread.second.e->startCounters();
+         counters.e->startCounters();
       }
    }
 }

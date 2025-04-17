@@ -34,19 +34,15 @@ class BasicGroup
    TPCH& workload;
    using merged_t = MergedAdapterType<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t>;
    AdapterType<view_t>& view;
-   AdapterType<count_partsupp_t>& count_partsupp;
-   AdapterType<sum_supplycost_t>& sum_supplycost;
    AdapterType<partsupp_t>& partsupp;
    merged_t& mergedBasicGroup;
 
    Logger& logger;
 
   public:
-   BasicGroup(TPCH& workload, merged_t& mbg, AdapterType<view_t>& v, AdapterType<count_partsupp_t>& count, AdapterType<sum_supplycost_t>& sum)
+   BasicGroup(TPCH& workload, merged_t& mbg, AdapterType<view_t>& v)
        : workload(workload),
          view(v),
-         count_partsupp(count),
-         sum_supplycost(sum),
          partsupp(workload.partsupp),
          mergedBasicGroup(mbg),
          logger(workload.logger)
@@ -79,22 +75,6 @@ class BasicGroup
       workload.lineitem.lookup1(lineitem_t::Key{order_id, 1}, [&](const lineitem_t&) {});
       workload.nation.lookup1(nation_t::Key{nation_id}, [&](const nation_t&) {});
       workload.region.lookup1(region_t::Key{region_id}, [&](const region_t&) {});
-   }
-
-   void pointLookupsForIndex()
-   {
-      pointLookupsTemplate(
-          [this](Integer& part_id, Integer& supplier_id) {
-             auto partsupp_scanner = partsupp.getScanner();
-             partsupp_scanner->seek(partsupp_t::Key{part_id, supplier_id});
-             auto kv = partsupp_scanner->current();
-             assert(kv.has_value());
-             auto& [k, v] = *kv;
-             part_id = k.ps_partkey;
-             supplier_id = k.ps_suppkey;
-          },
-          [this](const Integer part_id) { count_partsupp.lookup1(count_partsupp_t::Key({part_id}), [&](const count_partsupp_t&) {}); },
-          [this](const Integer part_id) { sum_supplycost.lookup1(sum_supplycost_t::Key({part_id}), [&](const sum_supplycost_t&) {}); });
    }
 
    void pointLookupsForMerged()
@@ -170,31 +150,6 @@ class BasicGroup
       logger.log(t, "query-view");
    }
 
-   void queryByIndex()
-   {
-      // enumerate index
-      logger.reset();
-      std::cout << "BasicGroup::queryByIndex()" << std::endl;
-      auto start = std::chrono::high_resolution_clock::now();
-      [[maybe_unused]] long produced = 0;
-      auto count_scanner = count_partsupp.getScanner();
-      auto sum_scanner = sum_supplycost.getScanner();
-      while (true) {
-         auto count_kv = count_scanner->next();
-         auto sum_kv = sum_scanner->next();
-         if (count_kv == std::nullopt || sum_kv == std::nullopt)
-            break;
-         auto& [count_k, count_v] = *count_kv;
-         auto& [sum_k, sum_v] = *sum_kv;
-         assert(count_k.p_partkey == sum_k.p_partkey);
-         [[maybe_unused]] auto avg_supplycost = sum_v.sum_supplycost / count_v.count;
-         inspectIncrementProduced("Enumerating index: ", produced);
-      }
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "query-index");
-   }
-
    void queryByMerged()
    {
       logger.reset();
@@ -259,20 +214,6 @@ class BasicGroup
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       logger.log(t, "maintain-" + name);
-   }
-
-   void maintainIndex()
-   {
-      maintainTemplate([this](const partsupp_t::Key& k, const partsupp_t& v) { workload.partsupp.insert(k, v); },
-                       [this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
-                          count_partsupp.update1(count_partsupp_t::Key({part_id}), [](count_partsupp_t& rec) { rec.count++; }, update_descriptor);
-                       },
-                       [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
-                          sum_supplycost.update1(
-                              sum_supplycost_t::Key({part_id}), [supplycost](sum_supplycost_t& rec) { rec.sum_supplycost += supplycost; },
-                              update_descriptor);
-                       },
-                       "index");
    }
 
    void maintainMerged()
@@ -358,9 +299,6 @@ class BasicGroup
 
       mergedBasicGroup.insert(typename merged_count_option_t::Key(count_pk), merged_count_option_t(count_pv));
       mergedBasicGroup.insert(typename merged_sum_option_t::Key(sum_pk), merged_sum_option_t(sum_pv));
-
-      count_partsupp.insert(count_pk, count_pv);
-      sum_supplycost.insert(sum_pk, sum_pv);
    }
 
    void logSize()
@@ -376,8 +314,6 @@ class BasicGroup
       std::vector<std::ostream*> out = {&std::cout, &size_csv};
       for (std::ostream* o : out) {
          *o << "view," << view.size() << std::endl;
-         *o << "count_partsupp," << count_partsupp.size() << std::endl;
-         *o << "sum_supplycost," << sum_supplycost.size() << std::endl;
          *o << "mergedBasicGroup," << mergedBasicGroup.size() << std::endl;
       }
       size_csv.close();
