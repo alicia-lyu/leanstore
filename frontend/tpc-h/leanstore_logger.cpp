@@ -32,18 +32,16 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
    tx_console_header.push_back("R MiB");
    tx_console_data.push_back(bm_table.get("0", "r_mib"));
 
-   int worker_id = 0;
-   for (auto& t : cpu_table.workers_events) {
-      long long cycles = static_cast<long long>(t.at("cycle"));
+   for (auto& [t_name, worker_e] : cpu_table.workers_events) {
+      long cycles = static_cast<long>(worker_e.at("cycle"));
       if (cycles == 0)
          continue;
-      tx_console_header.push_back("Worker " + std::to_string(worker_id) + " Cycles");
+      tx_console_header.push_back(t_name + " Cycles");
       tx_console_data.push_back(std::to_string(cycles));
-      double cpu_utilization = t.at("CPU");
-      tx_console_header.push_back("Worker " + std::to_string(worker_id) + " CPU Utilization (%)");
+      double cpu_utilization = std::min(worker_e.at("CPU"), 1.0);
+      tx_console_header.push_back(t_name + " CPU Utilization (%)");
       // 2 decimal places
       tx_console_data.push_back(to_fixed(cpu_utilization * 100));
-      worker_id++;
    }
 
    return {tx_console_header, tx_console_data};
@@ -59,7 +57,7 @@ void LeanStoreLogger::log(long elapsed, std::string csv_dir)
       csvs.emplace_back();
       auto& csv = csvs.back();
       csv.open(csv_dir_abs + "/" + tables[t_i]->getName() + ".csv", std::ios::app);
-      csv << std::setprecision(2) << std::fixed;
+      csv << std::setprecision(2) << std::fixed; // TODO change precision by data type
 
       if (csv.tellp() == 0) {  // no header
          csv << "c_hash";

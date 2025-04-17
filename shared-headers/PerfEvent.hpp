@@ -67,8 +67,8 @@ struct PerfEvent {
 
   std::vector<event> events;
   std::vector<std::string> names;
-  std::chrono::time_point<std::chrono::steady_clock> startTime;
-  std::chrono::time_point<std::chrono::steady_clock> stopTime;
+  timespec startTime;
+  timespec stopTime;
   std::map<std::string, std::string> params;
   const bool inherit;
   bool printHeader;
@@ -147,7 +147,7 @@ struct PerfEvent {
       if (read(event.fd, &event.prev, sizeof(uint64_t) * 3) != sizeof(uint64_t) * 3)
         std::cerr << "Error reading counter " << names[i] << std::endl;
     }
-    startTime = std::chrono::steady_clock::now();
+    clock_gettime(CLOCK_MONOTONIC_RAW, &startTime);
   }
 
   ~PerfEvent()
@@ -159,7 +159,7 @@ struct PerfEvent {
 
   void stopCounters()
   {
-    stopTime = std::chrono::steady_clock::now();
+    clock_gettime(CLOCK_MONOTONIC_RAW, &stopTime);
     for (unsigned i = 0; i < events.size(); i++) {
       auto& event = events[i];
       if (read(event.fd, &event.data, sizeof(uint64_t) * 3) != sizeof(uint64_t) * 3)
@@ -168,18 +168,20 @@ struct PerfEvent {
     }
   }
 
-  double getDuration() { return std::chrono::duration<double>(stopTime - startTime).count(); }
+  long getDuration() const {
+    return (stopTime.tv_sec - startTime.tv_sec) * 1e9 + (stopTime.tv_nsec - startTime.tv_nsec);
+  }
 
   bool IPCAvailable() { return std::find(names.begin(), names.end(), "instr") != names.end() && std::find(names.begin(), names.end(), "cycle") != names.end(); }
-  double getIPC() { return getCounter("instr") / getCounter("cycle"); }
+  double getIPC() { return (double) getCounter("instr") / getCounter("cycle"); }
 
   bool CPUsAvailable() { return std::find(names.begin(), names.end(), "task") != names.end(); }
-  double getCPUs() { return getCounter("task") / (getDuration() * 1e9); }
+  double getCPUs() { return (double) getCounter("task") / getDuration(); }
 
   bool GHzAvailable() { return std::find(names.begin(), names.end(), "cycle") != names.end() && std::find(names.begin(), names.end(), "task") != names.end(); }
-  double getGHz() { return getCounter("cycle") / getCounter("task"); }
+  double getGHz() { return (double) getCounter("cycle") / getCounter("task"); }
 
-  double getCounter(const std::string& name)
+  long getCounter(const std::string& name)
   {
     for (unsigned i = 0; i < events.size(); i++)
       if (names[i] == name)

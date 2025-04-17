@@ -30,13 +30,13 @@ struct Column {
    std::string to_string(double x)
    {
       std::stringstream stream;
-      stream << std::fixed << std::setprecision(1) << x;
+      stream << std::fixed << std::setprecision(2) << x;
       return stream.str();
    }
    std::string to_string(float x)
    {
       std::stringstream stream;
-      stream << std::fixed << std::setprecision(1) << x;
+      stream << std::fixed << std::setprecision(2) << x;
       return stream.str();
    }
    std::string to_string(std::string x) { return x; }
