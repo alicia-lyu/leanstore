@@ -28,7 +28,6 @@ int main(int argc, char** argv)
    LeanStoreAdapter<region_t> region;
    // Views
    LeanStoreAdapter<joinedPPsL_t> joinedPPsL;
-   LeanStoreAdapter<joinedPPs_t> joinedPPs;
    LeanStoreAdapter<sorted_lineitem_t> sortedLineitem;
    LeanStoreMergedAdapter<merged_part_t, merged_partsupp_t, merged_lineitem_t> mergedBasicJoin;
 
@@ -44,7 +43,6 @@ int main(int argc, char** argv)
       region = LeanStoreAdapter<region_t>(db, "region");
       mergedBasicJoin = LeanStoreMergedAdapter<merged_part_t, merged_partsupp_t, merged_lineitem_t>(db, "mergedBasicJoin");
       joinedPPsL = LeanStoreAdapter<joinedPPsL_t>(db, "joinedPPsL");
-      joinedPPs = LeanStoreAdapter<joinedPPs_t>(db, "joinedPPs");
       sortedLineitem = LeanStoreAdapter<sorted_lineitem_t>(db, "sortedLineitem");
    });
 
@@ -53,7 +51,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   basic_join::BasicJoin<LeanStoreAdapter, LeanStoreMergedAdapter> tpchBasicJoin(tpch, mergedBasicJoin, joinedPPsL, joinedPPs, sortedLineitem);
+   basic_join::BasicJoin<LeanStoreAdapter, LeanStoreMergedAdapter> tpchBasicJoin(tpch, mergedBasicJoin, joinedPPsL, sortedLineitem);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
