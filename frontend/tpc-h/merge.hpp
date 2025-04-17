@@ -21,6 +21,12 @@ struct HeapEntry {
    bool operator>(const HeapEntry& other) const { return jk > other.jk; }
 };
 
+template <typename Tuple, typename Func>
+inline void forEach(Tuple& tup, Func func)
+{
+   std::apply([&](auto&... elems) { (..., func(elems)); }, tup);
+}
+
 template <typename JK, typename... Rs>
 struct HeapMergeImpl {
    static constexpr size_t nways = sizeof...(Rs);
@@ -107,56 +113,50 @@ struct HeapMergeImpl {
    {
       return getHeapSources(std::index_sequence_for<SourceRecords...>{}, scanners...);
    }
-
-   template <typename Tuple, typename Func>
-   static void forEach(Tuple& tup, Func func)
-   {
-      std::apply([&](auto&... elems) { (..., func(elems)); }, tup);
-   }
 };
 
-template <typename JK, typename JR, size_t ST, typename... Rs>
-struct MergeJoinImpl : public HeapMergeImpl<JK, Rs...> {
-   using Base = HeapMergeImpl<JK, Rs...>;
+template <typename JK, typename JR, typename... Rs>
+struct MergeJoin {
+   HeapMergeImpl<JK, Rs...> heap_merge;
 
    std::optional<std::function<void(const typename JR::Key&, const JR&)>> consume_joined;
 
    template <template <typename> class ScannerType>
-   MergeJoinImpl(ScannerType<Rs>&... scanners)
-       : Base(getHeapConsumesToBeJoined(), scanners...), consume_joined([](const typename JR::Key&, const JR&) {})
+   MergeJoin(ScannerType<Rs>&... scanners)
+       : heap_merge(getHeapConsumesToBeJoined(), scanners...), consume_joined([](const typename JR::Key&, const JR&) {})
    {
-      this->init();
+      heap_merge.init();
    }
 
-   MergeJoinImpl(std::vector<std::function<HeapEntry<JK>()>>& sources)
-       : Base(sources, getHeapConsumesToBeJoined()), consume_joined([](const typename JR::Key&, const JR&) {})
+   MergeJoin(std::vector<std::function<HeapEntry<JK>()>>& sources)
+       : heap_merge(sources, getHeapConsumesToBeJoined()), consume_joined([](const typename JR::Key&, const JR&) {})
    {
-      this->init();
+      heap_merge.init();
    }
 
    template <template <typename> class AdapterType, template <typename> class ScannerType>
-   MergeJoinImpl(AdapterType<JR>& joinedAdapter, ScannerType<Rs>&... scanners)
-       : Base(getHeapConsumesToBeJoined(), scanners...),
+   MergeJoin(AdapterType<JR>& joinedAdapter, ScannerType<Rs>&... scanners)
+       : heap_merge(getHeapConsumesToBeJoined(), scanners...),
          consume_joined([&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
-      this->init();
+      heap_merge.init();
    }
 
-   MergeJoinImpl(std::function<void(const typename JR::Key&, const JR&)>& consume_joined, std::vector<std::function<HeapEntry<JK>()>>& sources)
-       : Base(sources, getHeapConsumesToBeJoined()), consume_joined(consume_joined)
+   MergeJoin(std::function<void(const typename JR::Key&, const JR&)>& consume_joined, std::vector<std::function<HeapEntry<JK>()>>& sources)
+       : heap_merge(sources, getHeapConsumesToBeJoined()), consume_joined(consume_joined)
    {
-      this->init();
+      heap_merge.init();
    }
 
-   ~MergeJoinImpl()
+   ~MergeJoin()
    {
-      std::cout << "\r~MergeJoin: produced " << (double)this->produced / 1000 << "k records------------------------------------" << std::endl;
+      std::cout << "\r~MergeJoin: produced " << (double)heap_merge.produced / 1000 << "k records------------------------------------" << std::endl;
    }
 
    void printProgress()
    {
-      if (this->current_jk % 10 == 0) {
-         double progress = (double)this->produced / 1000;
+      if (heap_merge.current_jk % 10 == 0) {
+         double progress = (double)heap_merge.produced / 1000;
          std::cout << "\rMergeJoin: produced " << progress << "k records------------------------------------";
       }
    }
@@ -179,16 +179,16 @@ struct MergeJoinImpl : public HeapMergeImpl<JK, Rs...> {
        }()));
    }
 
-   void joinAndClear() { joinAndClear(this->cached_records, this->current_jk, this->current_entry.jk, consume_joined.value(), std::index_sequence_for<Rs...>{}); }
+   void joinAndClear() { joinAndClear(heap_merge.cached_records, heap_merge.current_jk, heap_merge.current_entry.jk, consume_joined.value(), std::index_sequence_for<Rs...>{}); }
 
    template <typename CurrRec, size_t I>
    auto getHeapConsumeToBeJoined()
    {
       return [this](HeapEntry<JK>& entry) {
-         this->current_entry = entry;
+         heap_merge.current_entry = entry;
          joinAndClear();
-         this->current_jk = entry.jk;
-         std::get<I>(this->cached_records)
+         heap_merge.current_jk = entry.jk;
+         std::get<I>(heap_merge.cached_records)
              .emplace_back(typename CurrRec::Key(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k)),
                            CurrRec(CurrRec::template fromBytes<CurrRec>(entry.v)));
       };
@@ -207,8 +207,8 @@ struct MergeJoinImpl : public HeapMergeImpl<JK, Rs...> {
 
    int joinCurrent()
    {
-      int count = join_current(this->cached_records, consume_joined);
-      this->produced += count;
+      int count = join_current(heap_merge.cached_records, consume_joined);
+      heap_merge.produced += count;
       printProgress();
       return count;
    }
@@ -217,7 +217,7 @@ struct MergeJoinImpl : public HeapMergeImpl<JK, Rs...> {
                            std::function<void(const typename JR::Key&, const JR&)>& consume_joined)
    {
       int count = 1;
-      Base::forEach(cached_records, [&](const auto& v) { count *= v.size(); });
+      forEach(cached_records, [&](const auto& v) { count *= v.size(); });
       if (count == 0)
          return 0;
 
@@ -237,7 +237,7 @@ struct MergeJoinImpl : public HeapMergeImpl<JK, Rs...> {
                       int total,
                       std::index_sequence<Is...>)
    {
-      return assignRecords(this->cached_records, output, batch_size, total, std::index_sequence<Is...>{});
+      return assignRecords(heap_merge.cached_records, output, batch_size, total, std::index_sequence<Is...>{});
    }
 
    template <size_t... Is>
@@ -257,25 +257,27 @@ struct MergeJoinImpl : public HeapMergeImpl<JK, Rs...> {
           *batch_size /= vec.size();
        })());
    }
+
+   void run() { heap_merge.run(); }
    
 };
 
 template <typename JK, typename... Rs>
-struct Merge : public HeapMergeImpl<JK, Rs...> {
-   using Base = HeapMergeImpl<JK, Rs...>;
+struct Merge {
+   HeapMergeImpl<JK, Rs...> heap_merge;
    
 
    template <typename MergedAdapterType, template <typename> class ScannerType, typename... SourceRecords>
    Merge(MergedAdapterType& mergedAdapter, ScannerType<SourceRecords>&... scanners)
-       : Base(getHeapConsumesToMerged<MergedAdapterType, SourceRecords...>(mergedAdapter), scanners...)
+       : heap_merge(getHeapConsumesToMerged<MergedAdapterType, SourceRecords...>(mergedAdapter), scanners...)
    {
-      this->init();
+      heap_merge.init();
    }
 
    void printProgress()
    {
-      if (this->current_jk % 10 == 0) {
-         double progress = (double)this->produced / 1000;
+      if (heap_merge.current_jk % 10 == 0) {
+         double progress = (double)heap_merge.produced / 1000;
          std::cout << "\rMerge: " << progress << "k records------------------------------------";
       }
    }
@@ -284,11 +286,11 @@ struct Merge : public HeapMergeImpl<JK, Rs...> {
    auto getHeapConsumeToMerged(MergedAdapterType& mergedAdapter)
    {
       return [&mergedAdapter, this](HeapEntry<JK>& entry) {
-         this->current_entry = entry;
-         this->current_jk = entry.jk;
-         mergedAdapter.insert(typename RecordType::Key(this->current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)),
+         heap_merge.current_entry = entry;
+         heap_merge.current_jk = entry.jk;
+         mergedAdapter.insert(typename RecordType::Key(heap_merge.current_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)),
                               RecordType{SourceRecord::template fromBytes<SourceRecord>(entry.v)});
-         this->produced++;
+         heap_merge.produced++;
          printProgress();
       };
    }
@@ -298,13 +300,6 @@ struct Merge : public HeapMergeImpl<JK, Rs...> {
    {
       return {getHeapConsumeToMerged<MergedAdapterType, Rs, SourceRecords>(mergedAdapter)...};
    }
-};
 
-template <typename JK, typename JR, typename...Rs>
-struct MergeJoin: public MergeJoinImpl<JK, JR, sizeof...(Rs), Rs...> {
-   using MergeJoinImpl<JK, JR, sizeof...(Rs), Rs...>::MergeJoinImpl;
-};
-
-template <typename JK, typename JR, typename R1, typename R2>
-struct BinaryJoin : public MergeJoinImpl<JK, JR, 2, R1, R2> {
+   void run() { heap_merge.run(); }
 };
