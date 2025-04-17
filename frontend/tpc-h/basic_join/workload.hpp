@@ -2,12 +2,12 @@
 #include <optional>
 #include <variant>
 #include <vector>
-#include "views.hpp"
+#include "../binary_join.hpp"
 #include "../logger.hpp"
 #include "../merge.hpp"
-#include "../tpch_workload.hpp"
 #include "../tables.hpp"
-#include "../binary_join.hpp"
+#include "../tpch_workload.hpp"
+#include "views.hpp"
 
 // SELECT *
 // FROM Lineitem l, PartSupp ps, Part p
@@ -180,11 +180,11 @@ class BasicJoin
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
 
-      BinaryJoin<join_key_t,joinedPPs_t,part_t,partsupp_t> binary_join1(
-          [&]() { return part_scanner->next(); }, [&]() { return partsupp_scanner->next(); });
+      BinaryJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
+                                                                           [&]() { return partsupp_scanner->next(); });
 
-      BinaryJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2(
-          [&]() { return binary_join1.next(); }, [&]() { return lineitem_scanner->next(); });
+      BinaryJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2([&]() { return binary_join1.next(); },
+                                                                                        [&]() { return lineitem_scanner->next(); });
 
       binary_join2.run();
 
@@ -315,7 +315,7 @@ class BasicJoin
             }
             last_accessed_jk = jk;
             return HeapEntry<join_key_t>(jk, part_t::toBytes(k), part_t::toBytes(v),
-                                             0);  // not guaranteed to match the deltas but such waste is limited
+                                         0);  // not guaranteed to match the deltas but such waste is limited
          }
       };
 
@@ -336,7 +336,7 @@ class BasicJoin
             }
             last_accessed_jk = jk;
             return HeapEntry<join_key_t>(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v),
-                                             1);  // not guaranteed to match the deltas but such waste is limited
+                                         1);  // not guaranteed to match the deltas but such waste is limited
          }
       };
 
@@ -357,7 +357,7 @@ class BasicJoin
             }
             last_accessed_jk = jk;
             return HeapEntry<join_key_t>(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v),
-                                             2);  // not guaranteed to match the deltas but such waste is limited
+                                         2);  // not guaranteed to match the deltas but such waste is limited
          }
       };
 
@@ -442,16 +442,22 @@ class BasicJoin
    {
       logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
-      // 100 new orders
-      auto order_start = workload.last_order_id + 1;
-      auto order_end = workload.last_order_id + 100;
-      workload.loadLineitem(lineitem_insert_func, order_start, order_end);
-      workload.loadOrders(order_insert_func, order_start, order_end);  // update last_order_id after lineitems are also loaded
-      // 1 new part & several partsupp
-      auto part_start = workload.last_part_id + 1;
-      auto part_end = workload.last_part_id + 1;
-      workload.loadPart(part_insert_func, part_start, part_end);
-      workload.loadPartsupp(partsupp_insert_func, part_start, part_end);
+      // 1 new part & several partsupp & one order/lineitem for this part
+      auto part_id = workload.last_part_id + 1;
+      workload.loadPart(part_insert_func, part_id, part_id);
+      workload.loadPartsupp(partsupp_insert_func, part_id, part_id);
+      auto o_id = workload.last_order_id + 1;
+      Integer s_id;
+      partsupp.scan(
+          partsupp_t::Key{part_id, 1},
+          [&](const partsupp_t::Key& k, const partsupp_t&) {
+             assert(k.ps_partkey == part_id);
+             s_id = k.ps_suppkey;
+             return false;
+          },
+          []() {});
+      lineitem_insert_func(lineitem_t::Key{o_id, 1}, lineitem_t::generateRandomRecord([part_id]() { return part_id; }, [s_id]() { return s_id; }));
+      workload.loadOrders(order_insert_func, o_id, o_id);
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       logger.log(t, "maintain-" + name);

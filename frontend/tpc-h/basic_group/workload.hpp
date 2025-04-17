@@ -175,7 +175,8 @@ class BasicGroup
    }
 
    // maintenance
-   void maintainTemplate(std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
+   void maintainTemplate(std::function<std::pair<Integer, Integer>()> get_part_supplier_id,
+                         std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
                          std::function<void(const Integer, leanstore::UpdateSameSizeInPlaceDescriptor&)> count_increment_func,
                          std::function<void(const Integer, const Numeric, leanstore::UpdateSameSizeInPlaceDescriptor&)> sum_update_func,
                          std::string name)
@@ -184,22 +185,7 @@ class BasicGroup
       logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
       // add one supplier (preexisting) for an existing part
-      auto part_id = workload.getPartID();
-      auto supplier_id = workload.getSupplierID();
-      bool found = false;
-      while (found == false) {
-         partsupp.scan(
-             partsupp_t::Key({part_id, supplier_id}),
-             [&](const partsupp_t::Key& k, const partsupp_t&) {
-                if (k.ps_partkey != part_id || k.ps_suppkey != supplier_id) {
-                   found = true;
-                } else {
-                   supplier_id++;
-                }
-                return false;
-             },
-             []() {});
-      }
+      auto [part_id, supplier_id] = get_part_supplier_id();
 
       UpdateDescriptorGenerator1(countsupp_update_descriptor, count_partsupp_t, count);
       UpdateDescriptorGenerator1(sum_supplycost_update_descriptor, sum_supplycost_t, sum_supplycost);
@@ -220,6 +206,40 @@ class BasicGroup
       UpdateDescriptorGenerator1(sum_supplycost_update_descriptor, merged_sum_option_t, payload.sum_supplycost);
 
       maintainTemplate(
+          [this]() {
+             auto supposed_part_id = workload.getPartID();
+             auto supposed_supplier_id = workload.getSupplierID();
+             auto merged_scanner = mergedBasicGroup.getScanner();
+             bool found = false;
+             while (!found) {
+                merged_scanner->template seekTyped<merged_partsupp_option_t>(
+                    typename merged_partsupp_option_t::Key(partsupp_t::Key{supposed_part_id, supposed_supplier_id}));
+                auto kv = merged_scanner->current();
+                assert(kv.has_value());
+                auto& [k, v] = *kv;
+                std::visit(overloaded{[&](const typename merged_partsupp_option_t::Key& actual_key) {
+                                         if (actual_key.pk.ps_partkey != supposed_part_id ||
+                                             actual_key.pk.ps_suppkey != supposed_supplier_id) {  // supposed ids are new
+                                            found = true;
+                                         } else {
+                                            // suppose the next id pairs are the following
+                                            if (actual_key.pk.ps_suppkey == workload.last_supplier_id) {
+                                               supposed_part_id = actual_key.pk.ps_partkey + 1;
+                                               supposed_supplier_id = 1;
+                                            } else {
+                                               supposed_part_id = actual_key.pk.ps_partkey;
+                                               supposed_supplier_id = actual_key.pk.ps_suppkey + 1;
+                                            }
+                                         }
+                                      },
+                                      [&](const typename merged_count_option_t::Key&) { UNREACHABLE(); },
+                                      [&](const typename merged_sum_option_t::Key&) {
+                                         UNREACHABLE();
+                                      }},  // merged_partsupp_option_t is the only one that can be found
+                           k);
+             }
+             return std::pair<Integer, Integer>(supposed_part_id, supposed_supplier_id);
+          },
           [this](const partsupp_t::Key& k, const partsupp_t& v) {
              mergedBasicGroup.insert(typename merged_partsupp_option_t::Key(k), merged_partsupp_option_t(v));
           },
@@ -239,14 +259,37 @@ class BasicGroup
    void maintainView()
    {
       // partsupp is kept as a base table
-      maintainTemplate([this](const partsupp_t::Key& k, const partsupp_t& v) { workload.partsupp.insert(k, v); },
-                       [this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
-                          view.update1(view_t::Key({part_id}), [](view_t& rec) { rec.count_partsupp++; }, update_descriptor);
-                       },
-                       [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
-                          view.update1(view_t::Key({part_id}), [supplycost](view_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
-                       },
-                       "view");
+      maintainTemplate(
+          [this]() {
+             auto supposed_part_id = workload.getPartID();
+             auto supposed_supplier_id = workload.getSupplierID();
+             partsupp.scan(
+                 partsupp_t::Key({supposed_part_id, supposed_supplier_id}),
+                 [&](const partsupp_t::Key& k, const partsupp_t&) {
+                    if (k.ps_partkey != supposed_part_id || k.ps_suppkey != supposed_supplier_id) {  // supposed ids are new
+                       return false;
+                    } else {  // suppose the next id pairs are the following
+                       if (k.ps_suppkey == workload.last_supplier_id) {
+                          supposed_part_id = k.ps_partkey + 1;
+                          supposed_supplier_id = 1;
+                       } else {
+                          supposed_part_id = k.ps_partkey;
+                          supposed_supplier_id = k.ps_suppkey + 1;
+                       }
+                       return true;
+                    }
+                 },
+                 []() {});
+             return std::pair<Integer, Integer>(supposed_part_id, supposed_supplier_id);
+          },
+          [this](const partsupp_t::Key& k, const partsupp_t& v) { workload.partsupp.insert(k, v); },
+          [this](const Integer part_id, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+             view.update1(view_t::Key({part_id}), [](view_t& rec) { rec.count_partsupp++; }, update_descriptor);
+          },
+          [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
+             view.update1(view_t::Key({part_id}), [supplycost](view_t& rec) { rec.sum_supplycost += supplycost; }, update_descriptor);
+          },
+          "view");
    }
 
    // loading
