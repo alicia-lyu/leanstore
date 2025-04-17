@@ -89,7 +89,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
             }
             // -------------------------------------------------------------------------------------
             if (tries > 0) {
-               std::cerr << "\rfindLeafAndLatch done after " << tries << " tries." << std::endl;
+               std::cerr << "findLeafAndLatch done after " << tries << " tries." << std::endl;
             }
             jumpmu_return;
          }
@@ -135,7 +135,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                pos_in_parent += diff;
                auto pos_check = p_guard->lowerBound<false>(key.data(), key.length());
                if (pos_in_parent != pos_check) {
-                  std::cerr << "WARNING: pos_in_parent != pos_check" << std::endl;
+                  // std::cerr << "WARNING: pos_in_parent != pos_check" << std::endl;
                }
                COUNTERS_BLOCK()
                {
@@ -188,7 +188,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                enter_leaf_cb(leaf);
             }
             // if (tries > 0)
-               std::cerr << "turnPage by " << diff << std::endl;
+               // std::cerr << "turnPage by " << diff << std::endl;
             jumpmu_return;
          }
          jumpmuCatch()
