@@ -16,6 +16,14 @@ def collect_data(exec):
         scale = m.group(1)
         dram = m.group(2)
         data_files = sorted(os.listdir(os.path.join(p, exp)))
+        size_path = os.path.join(p, exp, "size.csv")
+        size_dict = {}
+        for line in open(size_path, "r"):
+            line = line.strip()
+            if not line:
+                continue
+            key, value = line.split(",")
+            size_dict[key] = value
         for d in data_files:
             d_pattern = r"(maintain|query)-(\w+)\.csv"
             match = re.match(d_pattern, d)
@@ -37,11 +45,12 @@ def collect_data(exec):
                 with open(os.path.join(p, exp, d), "r") as f:
                     if query_f.tell() == 0:
                         query_f.write("method,dram,scale,")
-                        header = f.readline()
+                        header = f.readline().rstrip()
                         query_f.write(header)
+                        query_f.write(",size(mib)\n")
                     # add the last line
                     lines = f.readlines()
-                    query_f.write(f"{method},{dram},{scale}," + lines[-1].strip(','))
+                    query_f.write(f"{method},{dram},{scale}," + lines[-1].strip(r',\s') + f",{size_dict[method]}\n")
     maintenance_f.close()
     query_f.close()
     

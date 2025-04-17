@@ -41,11 +41,7 @@ class BasicGroup
 
   public:
    BasicGroup(TPCH& workload, merged_t& mbg, AdapterType<view_t>& v)
-       : workload(workload),
-         view(v),
-         partsupp(workload.partsupp),
-         mergedBasicGroup(mbg),
-         logger(workload.logger)
+       : workload(workload), view(v), partsupp(workload.partsupp), mergedBasicGroup(mbg), logger(workload.logger)
 
    {
    }
@@ -275,12 +271,11 @@ class BasicGroup
             count++;
             supplycost_sum += v.ps_supplycost;
          } else {
-            if (curr_partkey != 0)
-            {
+            if (curr_partkey != 0) {
                insertAll(curr_partkey, count, supplycost_sum);
                std::cout << "\rLoading views and indexes for " << num_part_keys++ << " part keys------------------------------------";
             }
-               
+
             curr_partkey = k.ps_partkey;
             count = 1;
             supplycost_sum = v.ps_supplycost;
@@ -314,7 +309,7 @@ class BasicGroup
       std::vector<std::ostream*> out = {&std::cout, &size_csv};
       for (std::ostream* o : out) {
          *o << "view," << view.size() << std::endl;
-         *o << "mergedBasicGroup," << mergedBasicGroup.size() << std::endl;
+         *o << "merged," << mergedBasicGroup.size() - partsupp.size() << std::endl;
       }
       size_csv.close();
    }

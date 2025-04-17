@@ -509,9 +509,10 @@ class BasicJoin
       std::cout << "table,size" << std::endl;
       std::vector<std::ostream*> out = {&std::cout, &size_csv};
       for (std::ostream* o : out) {
-         *o << "joinedPPsL," << joinedPPsL.size() << std::endl;
+         *o << "view," << joinedPPsL.size() << std::endl;
          *o << "sortedLineitem," << sortedLineitem.size() << std::endl;
-         *o << "mergedPPsL," << mergedPPsL.size() << std::endl;
+         *o << "merged," << mergedPPsL.size() << std::endl;
+         *o << "base," << part.size() + partsupp.size() + sortedLineitem.size() << std::endl;
       }
       size_csv.close();
    }
