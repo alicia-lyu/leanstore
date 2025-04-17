@@ -7,6 +7,7 @@
 #include "../merge.hpp"
 #include "../tpch_workload.hpp"
 #include "../tables.hpp"
+#include "../binary_join.hpp"
 
 // SELECT *
 // FROM Lineitem l, PartSupp ps, Part p
@@ -175,14 +176,17 @@ class BasicJoin
       std::cout << "BasicJoin::queryByBase()" << std::endl;
       auto index_start = std::chrono::high_resolution_clock::now();
 
-      using Merge = MergeJoin<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
-
       auto part_scanner = part.getScanner();
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
 
-      Merge multiway_merge(*part_scanner.get(), *partsupp_scanner.get(), *lineitem_scanner.get());
-      multiway_merge.run();
+      BinaryJoin<join_key_t,joinedPPs_t,part_t,partsupp_t> binary_join1(
+          [&]() { return part_scanner->next(); }, [&]() { return partsupp_scanner->next(); });
+
+      BinaryJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2(
+          [&]() { return binary_join1.next(); }, [&]() { return lineitem_scanner->next(); });
+
+      binary_join2.run();
 
       auto index_end = std::chrono::high_resolution_clock::now();
       auto index_t = std::chrono::duration_cast<std::chrono::microseconds>(index_end - index_start).count();
