@@ -39,7 +39,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
       tx_console_header.push_back(t_name + " Cycles");
       tx_console_data.push_back(std::to_string(cycles));
       double cpu_utilization = std::min(worker_e.at("CPU"), 1.0);
-      tx_console_header.push_back(t_name + " CPU Utilization (%)");
+      tx_console_header.push_back(t_name + " CPU Util (%)");
       // 2 decimal places
       tx_console_data.push_back(to_fixed(cpu_utilization * 100));
    }

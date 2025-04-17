@@ -139,52 +139,10 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
    }
 
    template <typename JK, typename JoinedRec>
-   void scanJoin()
+   void scanJoin(std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined = [](const typename JoinedRec::Key&, const JoinedRec&) {})
    {
-      using Merge = MergeJoin<JK, JoinedRec, Records...>;
       reset();
-      std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...> cached_records;
-      [[maybe_unused]] long long joined = 0;
-      std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined = [&](const typename JoinedRec::Key&, const JoinedRec&) {
-         joined++;
-         if (joined % 1000 == 0) {
-            std::cout << "\rJoined " << (double)joined / 1000 << "k records------------------------------------";
-         }
-      };
-      JK current_jk = JK();
-      while (true) {
-         auto kv = next();
-         if (!kv) {
-            break;
-         }
-         auto& k = kv->first;
-         auto& v = kv->second;
-         JK jk;
-         match_emplace_tuple(cached_records, k, v, std::index_sequence_for<Records...>{});
-         Merge::joinAndClear(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Records...>{});
-      }
-      std::cout << "\rJoined " << (double)joined / 1000 << "k records------------------------------------";
-   }
-
-   template <typename Record, size_t I>
-   void emplace_tuple(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
-                      const typename Record::Key& key,
-                      const Record& rec)
-   {
-      std::get<I>(cached_records).emplace_back(key, rec);
-   }
-
-   template <size_t... Is>
-   void match_emplace_tuple(std::tuple<std::vector<std::tuple<typename Records::Key, Records>>...>& cached_records,
-                          const std::variant<typename Records::Key...>& key,
-                          const std::variant<Records...>& rec,
-                          std::index_sequence<Is...>)
-   {
-      (([&]() {
-          if (std::holds_alternative<typename Records::Key>(key) && std::holds_alternative<Records>(rec)) {
-             emplace_tuple<Records, Is>(cached_records, std::get<typename Records::Key>(key), std::get<Records>(rec));
-          }
-       })(),
-       ...);
-   }
+      PremergedJoin<JK, JoinedRec, Records...> joiner(*this, consume_joined);
+      joiner.run();
+   } 
 };
