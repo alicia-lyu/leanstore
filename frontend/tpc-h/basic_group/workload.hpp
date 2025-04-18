@@ -396,8 +396,8 @@ class BasicGroup
       std::cout << "table,size" << std::endl;
       std::vector<std::ostream*> out = {&std::cout, &size_csv};
       for (std::ostream* o : out) {
-         *o << "view," << view.size() << std::endl;
-         *o << "merged," << mergedBasicGroup.size() - partsupp.size() << std::endl;
+         *o << "view," << view.size() + partsupp.size() << std::endl;
+         *o << "merged," << mergedBasicGroup.size() << std::endl;
       }
       size_csv.close();
    }
