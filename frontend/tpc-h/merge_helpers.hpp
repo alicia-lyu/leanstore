@@ -32,7 +32,7 @@ struct HeapMergeHelper {
    std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...> cached_records;
    std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<>> heap;
    long sifted = 0;
-   JK last_joined_jk;
+   JK current_jk;
    HeapEntry<JK> current_entry;
 
    HeapMergeHelper(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
@@ -68,6 +68,14 @@ struct HeapMergeHelper {
       }
    }
 
+   void next_jk()
+   {
+      auto current_jk_copy = current_jk;
+      while (!heap.empty() && current_jk_copy == current_jk) {
+         next();
+      }
+   }
+
    void next()
    {
       HeapEntry<JK> entry = heap.top();
@@ -86,14 +94,6 @@ struct HeapMergeHelper {
 
       if (next.jk != JK::max())
          heap.push(next);
-   }
-
-   void next_jk()
-   {
-      auto last_joined_jk_copy = last_joined_jk;
-      while (last_joined_jk_copy == last_joined_jk) {
-         next();
-      }
    }
 
    template <template <typename> class ScannerType, typename RecordType>
@@ -123,7 +123,7 @@ struct HeapMergeHelper {
 
 template <typename JK, typename JR, typename... Rs, std::size_t... Is>
 inline int joinAndClear(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                        JK& last_joined_jk,
+                        JK& current_jk,
                         JK& current_entry_jk,
                         std::function<void(const typename JR::Key&, const JR&)>& consume_joined,
                         std::index_sequence<Is...>)
@@ -133,13 +133,12 @@ inline int joinAndClear(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>
        auto& vec = std::get<Is>(cached_records);
        using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
        using RecordType = std::tuple_element_t<1, VecElem>;
-       if (current_entry_jk.match(SKBuilder<JK>::template get<RecordType>(last_joined_jk)) != 0) {
+       if (current_entry_jk.match(SKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
           joined_cnt += join_current<JK, JR, Rs...>(cached_records, consume_joined);
           vec.clear();
        }
     }()));
-   if (joined_cnt != 0)
-      last_joined_jk = current_entry_jk;
+   current_jk = current_entry_jk;
    return joined_cnt;
 }
 

@@ -145,7 +145,11 @@ class BinaryJoin
       auto start_jk = kv->first.jk;
       JK curr_jk = start_jk;
       while (curr_jk == start_jk) {
-         next();
+         auto kv = next();
+         if (!kv.has_value()) {
+            break;
+         }
+         curr_jk = kv->first.jk;
       }
    }
 

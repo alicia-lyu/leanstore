@@ -41,7 +41,7 @@ struct MergeJoin {
    void updateAndPrintProduced(int curr_joined)
    {
       produced += curr_joined;
-      if (heap_merge.last_joined_jk % 10 == 0) {
+      if (heap_merge.current_jk % 10 == 0) {
          double progress = (double)produced / 1000;
          std::cout << "\rMergeJoin: produced " << progress << "k records------------------------------------";
       }
@@ -52,8 +52,8 @@ struct MergeJoin {
    {
       return [this](HeapEntry<JK>& entry) {
          heap_merge.current_entry = entry;
-         int joined_cnt = joinAndClear<JK, JR, Rs...>(heap_merge.cached_records, heap_merge.last_joined_jk, heap_merge.current_entry.jk, consume_joined,
-                                                      std::index_sequence_for<Rs...>{});
+         int joined_cnt = joinAndClear<JK, JR, Rs...>(heap_merge.cached_records, heap_merge.current_jk, heap_merge.current_entry.jk,
+                                                      consume_joined, std::index_sequence_for<Rs...>{});
          updateAndPrintProduced(joined_cnt);
          std::get<I>(heap_merge.cached_records)
              .emplace_back(typename CurrRec::Key(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k)),
@@ -80,15 +80,18 @@ struct MergeJoin {
 template <typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
    long produced = 0;
-   JK last_joined_jk;
+   JK current_jk = JK::max();
    std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...> cached_records;
    std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {};
 
    MergedScanner<Rs...>& merged_scanner;
 
-   PremergedJoin(MergedScanner<Rs...>& merged_scanner, std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
+   PremergedJoin(
+       MergedScanner<Rs...>& merged_scanner,
+       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
        : consume_joined(consume_joined), merged_scanner(merged_scanner)
    {
+
    }
 
    ~PremergedJoin()
@@ -99,7 +102,7 @@ struct PremergedJoin {
    void updateAndPrintProduced(int curr_joined)
    {
       produced += curr_joined;
-      if (last_joined_jk % 10 == 0) {
+      if (current_jk % 10 == 0) {
          double progress = (double)produced / 1000;
          std::cout << "\rPremergedJoin: produced " << progress << "k records------------------------------------";
       }
@@ -115,21 +118,24 @@ struct PremergedJoin {
       auto& v = kv->second;
       JK jk;
       std::visit([&](auto& actual_key) -> void { jk = actual_key.jk; }, k);
-      match_emplace_tuple(cached_records, k, v, std::index_sequence_for<Rs...>{});
-      auto curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, last_joined_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
+      // if (current_jk != jk) join the cached records
+      auto curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
       updateAndPrintProduced(curr_joined);
+      // add the new record to the cache
+      match_emplace_tuple(k, v, std::index_sequence_for<Rs...>{});
       return curr_joined;
    }
 
    int next_jk()
    {
-      auto last_joined_jk_copy = last_joined_jk;
-      int count = 0;
-      while (last_joined_jk_copy == last_joined_jk) {
-         next();
-         count++;
+      while (true) {
+         int res = next();
+         if (res == -1)
+            return 0;
+         else if (res > 0) {
+            return res;
+         }
       }
-      return count;
    }
 
    void run()
@@ -143,22 +149,18 @@ struct PremergedJoin {
    }
 
    template <typename Record, size_t I>
-   void emplace_tuple(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                      const typename Record::Key& key,
-                      const Record& rec)
+   void emplace_tuple(const typename Record::Key& key, const Record& rec)
    {
       std::get<I>(cached_records).emplace_back(key, rec);
    }
 
    template <size_t... Is>
-   void match_emplace_tuple(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                            const std::variant<typename Rs::Key...>& key,
-                            const std::variant<Rs...>& rec,
-                            std::index_sequence<Is...>)
+   void match_emplace_tuple(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec, std::index_sequence<Is...>)
    {
       (([&]() {
-          if (std::holds_alternative<typename Rs::Key>(key) && std::holds_alternative<Rs>(rec)) {
-             emplace_tuple<Rs, Is>(cached_records, std::get<typename Rs::Key>(key), std::get<Rs>(rec));
+          if (std::holds_alternative<typename Rs::Key>(key)) {
+             assert(std::holds_alternative<Rs>(rec));
+             emplace_tuple<Rs, Is>(std::get<typename Rs::Key>(key), std::get<Rs>(rec));
           }
        })(),
        ...);
@@ -183,7 +185,7 @@ struct Merge {
 
    void printProgress()
    {
-      if (heap_merge.last_joined_jk % 10 == 0) {
+      if (heap_merge.current_jk % 10 == 0) {
          double progress = (double)heap_merge.sifted / 1000;
          std::cout << "\rMerge: " << progress << "k records------------------------------------";
       }
