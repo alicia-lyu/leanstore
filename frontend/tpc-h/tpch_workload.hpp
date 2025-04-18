@@ -12,7 +12,7 @@
 #include "logger.hpp"
 #include "leanstore/Config.hpp"
 
-DECLARE_double(tpch_scale_factor);
+DECLARE_int32(tpch_scale_factor);
 
 template <template <typename> class AdapterType>
 struct TPCHWorkload {
@@ -63,12 +63,12 @@ struct TPCHWorkload {
       logSize();
    }
 
-   static constexpr Integer PART_SCALE = 200*1000;
-   static constexpr Integer SUPPLIER_SCALE = 10000;
-   static constexpr Integer CUSTOMER_SCALE = 150000;
-   static constexpr Integer ORDERS_SCALE = 1500000;
-   static constexpr Integer LINEITEM_SCALE = 6000000;
-   static constexpr Integer PARTSUPP_SCALE = 800000;
+   static constexpr Integer PART_SCALE = 200;
+   static constexpr Integer SUPPLIER_SCALE = 10;
+   static constexpr Integer CUSTOMER_SCALE = 150;
+   static constexpr Integer ORDERS_SCALE = 1500;
+   static constexpr Integer LINEITEM_SCALE = 6000;
+   static constexpr Integer PARTSUPP_SCALE = 800;
    static constexpr Integer NATION_COUNT = 25;
    static constexpr Integer REGION_COUNT = 5;
 
