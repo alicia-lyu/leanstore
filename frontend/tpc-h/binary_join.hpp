@@ -140,6 +140,15 @@ class BinaryJoin
       }
    };
 
+   void next_jk() {
+      auto kv = next();
+      auto start_jk = SKBuilder<JK>::create(kv->first.jk);
+      JK curr_jk = start_jk;
+      while (curr_jk == start_jk) {
+         next();
+      }
+   }
+
    std::pair<typename JR::Key, JR> merge(typename LeftRec::Key& lk, LeftRec& lr, typename RightRec::Key& rk, RightRec& rr)
    {
       if ((++produced) % 1000 == 1) {

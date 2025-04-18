@@ -33,6 +33,10 @@ class BasicGroup
    using TPCH = TPCHWorkload<AdapterType>;
    TPCH& workload;
    using merged_t = MergedAdapterType<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t>;
+   using merged_k_variant_t =
+       std::variant<typename merged_count_option_t::Key, typename merged_sum_option_t::Key, typename merged_partsupp_option_t::Key>;
+   using merged_v_variant_t = std::variant<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t>;
+
    AdapterType<view_t>& view;
    AdapterType<partsupp_t>& partsupp;
    merged_t& mergedBasicGroup;
@@ -172,6 +176,47 @@ class BasicGroup
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       logger.log(t, "query-merged");
+   }
+
+   void pointQueryByView()
+   {
+      logger.reset();
+      std::cout << "BasicGroup::pointQueryByView()" << std::endl;
+      auto start = std::chrono::high_resolution_clock::now();
+
+      Integer part_id = workload.getPartID();
+
+      view.scan(view_t::Key{part_id}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "point-query-view");
+   }
+
+   void pointQueryByMerged()
+   {
+      logger.reset();
+      std::cout << "BasicGroup::pointQueryByMerged()" << std::endl;
+      auto start = std::chrono::high_resolution_clock::now();
+
+      Integer part_id = workload.getPartID();
+
+      auto scanner = mergedBasicGroup.getScanner();
+      scanner->template seek<merged_count_option_t>(typename merged_count_option_t::Key(count_partsupp_t::Key({part_id})));
+      auto update_part_id = [&part_id](const std::pair<merged_k_variant_t, merged_v_variant_t>& kv) {
+         auto& [k, v] = kv;
+         std::visit(overloaded{[&](const typename merged_partsupp_option_t::Key& actual_key) { part_id = actual_key.jk.partkey; },
+                               [&](const typename merged_count_option_t::Key& actual_key) { part_id = actual_key.jk.partkey; },
+                               [&](const typename merged_sum_option_t::Key& actual_key) { part_id = actual_key.jk.partkey; }},
+                    k);
+      };
+      update_part_id(scanner->current().value());
+      auto start_part_id = part_id;
+      while (start_part_id == part_id) {
+         update_part_id(scanner->next().value());
+      }
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "point-query-merged");
    }
 
    // maintenance

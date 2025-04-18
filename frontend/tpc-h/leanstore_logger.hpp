@@ -72,10 +72,14 @@ class LeanStoreLogger : public Logger
       printTable(table);
    }
 
-   static inline std::string to_fixed(double value, int precision = 2)
+   static inline std::string to_fixed(double value)
    {
       std::ostringstream oss;
-      oss << std::fixed << std::setprecision(precision) << value;
+      if (value >= 0 && value <=1) {
+         oss << std::defaultfloat << std::setprecision(4) << value;
+      } else {
+         oss << std::fixed << std::setprecision(2) << value;
+      }
       return oss.str();
    }
 };

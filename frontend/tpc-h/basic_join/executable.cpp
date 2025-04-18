@@ -1,12 +1,12 @@
 #include <gflags/gflags.h>
-#include "workload.hpp"
+#include "../../shared/LeanStoreMergedAdapter.hpp"
+#include "../leanstore_executable_helper.hpp"
 #include "../leanstore_logger.hpp"
 #include "../tables.hpp"
-#include "views.hpp"
-#include "../../shared/LeanStoreMergedAdapter.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
-#include "../leanstore_executable_helper.hpp"
+#include "views.hpp"
+#include "workload.hpp"
 
 using namespace leanstore;
 
@@ -68,9 +68,9 @@ int main(int argc, char** argv)
       });
    }
 
-   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForBase, queryByBase, maintainBase);
+   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForBase, queryByBase, pointQueryByBase, maintainBase);
 
-   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, maintainMerged);
+   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged);
 
-   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForView, queryByView, maintainView);
+   WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView);
 }

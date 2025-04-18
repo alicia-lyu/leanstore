@@ -145,14 +145,6 @@ class BasicJoin
       logger.log(t, "query-view");
    }
 
-   void query()
-   {
-      // TXs: Measure end-to-end time
-      queryByMerged();
-      queryByBase();
-      queryByView();
-   }
-
    // TXs: Measure end-to-end time
    void queryByMerged()
    {
@@ -193,11 +185,74 @@ class BasicJoin
       logger.log(index_t, "query-base");
    }
 
-   void maintain()
+   void pointQueryByView()
    {
-      maintainBase();
-      maintainMerged();
-      maintainView();
+      logger.reset();
+      auto start = std::chrono::high_resolution_clock::now();
+      std::cout << "BasicJoin::pointQueryByView()" << std::endl;
+      auto part_id = workload.getPartID();
+      auto supplier_id = workload.getSupplierID();
+      int count = 0;
+      joinedPPsL.scan(
+          joinedPPsL_t::Key{part_id, supplier_id},
+          [&](const joinedPPsL_t::Key& k, const joinedPPsL_t&) {
+             if (count == 0) {
+                part_id = k.jk.l_partkey;
+                supplier_id = k.jk.suppkey;
+             } else if (k.jk.l_partkey != part_id || k.jk.suppkey != supplier_id) {
+                return false;
+             }
+             count++;
+             return true;
+          },
+          [&]() {});
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "point-query-view");
+   }
+
+   void pointQueryByBase()
+   {
+      logger.reset();
+      auto start = std::chrono::high_resolution_clock::now();
+      std::cout << "BasicJoin::pointQueryByBase()" << std::endl;
+      auto part_id = workload.getPartID();
+      auto supplier_id = workload.getSupplierID();
+      auto part_scanner = part.getScanner();
+      auto partsupp_scanner = partsupp.getScanner();
+      auto lineitem_scanner = sortedLineitem.getScanner();
+      part_scanner->seek(part_t::Key{part_id});
+      partsupp_scanner->seek(partsupp_t::Key{part_id, supplier_id});
+      lineitem_scanner->seek(sorted_lineitem_t::Key{part_id, supplier_id});
+
+      BinaryJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
+                                                                           [&]() { return partsupp_scanner->next(); });
+      BinaryJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2([&]() { return binary_join1.next(); },
+                                                                                        [&]() { return lineitem_scanner->next(); });
+
+      binary_join2.next_jk();
+
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "point-query-base");
+   }
+
+   void pointQueryByMerged()
+   {
+      logger.reset();
+      auto start = std::chrono::high_resolution_clock::now();
+      std::cout << "BasicJoin::pointQueryByMerged()" << std::endl;
+
+      auto part_id = workload.getPartID();
+      auto supplier_id = workload.getSupplierID();
+      auto merged_scanner = mergedPPsL.getScanner();
+      merged_scanner->seekJK(join_key_t{part_id, supplier_id});
+      PremergedJoin<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t> merge(merged_scanner);
+      merge.next_jk();
+
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      logger.log(t, "point-query-merged");
    }
 
    void maintainMerged()
