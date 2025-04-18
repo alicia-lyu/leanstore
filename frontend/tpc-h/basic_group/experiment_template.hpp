@@ -64,9 +64,9 @@ int run()
       });
    }
 
-   WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, maintainMerged);
+   WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged);
 
-   WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, maintainView);
+   WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView);
 
    return 0;
 }

@@ -6,7 +6,7 @@
 #include "leanstore/utils/JumpMU.hpp"
 #include "tpch_workload.hpp"
 
-#define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, maintainFunc)                                     \
+#define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, pointQueryFunc, maintainFunc)                     \
    {                                                                                                                                    \
       atomic<u64> keep_running = true;                                                                                                  \
       atomic<u64> lookup_count = 0;                                                                                                     \
@@ -14,11 +14,12 @@
       crm.scheduleJobAsync(0, [&]() {                                                                                                   \
          runLookupPhase([&]() { tpchQuery.lookupFunc(); }, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); \
       });                                                                                                                               \
-      sleep(10);                                                                            \
+      sleep(10);                                                                                                                        \
       crm.scheduleJobSync(1, [&]() {                                                                                                    \
          runTXPhase(                                                                                                                    \
              [&]() {                                                                                                                    \
                 tpchQuery.queryFunc();                                                                                                  \
+                tpchQuery.pointQueryFunc();                                                                                             \
                 tpchQuery.maintainFunc();                                                                                               \
              },                                                                                                                         \
              running_threads_counter, isolation_level);                                                                                 \
