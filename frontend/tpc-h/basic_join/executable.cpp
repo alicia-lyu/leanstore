@@ -10,7 +10,7 @@
 
 using namespace leanstore;
 
-DEFINE_double(tpch_scale_factor, 1, "TPC-H scale factor");
+DEFINE_int32(tpch_scale_factor, 1000, "TPC-H scale factor");
 
 int main(int argc, char** argv)
 {

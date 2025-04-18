@@ -142,7 +142,7 @@ class BinaryJoin
 
    void next_jk() {
       auto kv = next();
-      auto start_jk = SKBuilder<JK>::create(kv->first.jk);
+      auto start_jk = kv->first.jk;
       JK curr_jk = start_jk;
       while (curr_jk == start_jk) {
          next();

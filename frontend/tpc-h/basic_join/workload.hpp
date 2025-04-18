@@ -194,7 +194,7 @@ class BasicJoin
       auto supplier_id = workload.getSupplierID();
       int count = 0;
       joinedPPsL.scan(
-          joinedPPsL_t::Key{part_id, supplier_id},
+          joinedPPsL_t::Key(join_key_t{part_id, supplier_id}, part_t::Key{part_id}, partsupp_t::Key{part_id, supplier_id}, sorted_lineitem_t::Key{}),
           [&](const joinedPPsL_t::Key& k, const joinedPPsL_t&) {
              if (count == 0) {
                 part_id = k.jk.l_partkey;
@@ -223,7 +223,7 @@ class BasicJoin
       auto lineitem_scanner = sortedLineitem.getScanner();
       part_scanner->seek(part_t::Key{part_id});
       partsupp_scanner->seek(partsupp_t::Key{part_id, supplier_id});
-      lineitem_scanner->seek(sorted_lineitem_t::Key{part_id, supplier_id});
+      lineitem_scanner->seek(sorted_lineitem_t::Key(join_key_t{part_id, supplier_id}, lineitem_t::Key{}));
 
       BinaryJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
                                                                            [&]() { return partsupp_scanner->next(); });
@@ -247,7 +247,7 @@ class BasicJoin
       auto supplier_id = workload.getSupplierID();
       auto merged_scanner = mergedPPsL.getScanner();
       merged_scanner->seekJK(join_key_t{part_id, supplier_id});
-      PremergedJoin<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t> merge(merged_scanner);
+      PremergedJoin<join_key_t, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t> merge(*merged_scanner);
       merge.next_jk();
 
       auto end = std::chrono::high_resolution_clock::now();

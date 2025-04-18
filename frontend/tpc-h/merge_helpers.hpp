@@ -135,10 +135,11 @@ inline int joinAndClear(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>
        using RecordType = std::tuple_element_t<1, VecElem>;
        if (current_entry_jk.match(SKBuilder<JK>::template get<RecordType>(last_joined_jk)) != 0) {
           joined_cnt += join_current<JK, JR, Rs...>(cached_records, consume_joined);
-          last_joined_jk = current_entry_jk;
           vec.clear();
        }
     }()));
+   if (joined_cnt != 0)
+      last_joined_jk = current_entry_jk;
    return joined_cnt;
 }
 

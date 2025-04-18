@@ -106,6 +106,7 @@ struct merged_lineitem_t : public merged_t<13, lineitem_t, join_key_t, ExtraID::
    struct Key : public merged_t::Key {
       Key() = default;
       Key(const typename lineitem_t::Key& pk, const lineitem_t& pv) : merged_t::Key{join_key_t{pv.l_partkey, pv.l_suppkey}, pk} {}
+      Key(const typename sorted_lineitem_t::Key& sk, const sorted_lineitem_t& sl) : merged_t::Key{sk.jk, sk.pk} {}
       Key(const join_key_t& jk, const typename lineitem_t::Key& pk) : merged_t::Key{jk, pk} {}
       Key(const join_key_t&, const typename sorted_lineitem_t::Key& sk) : merged_t::Key{sk.jk, sk.pk} {}
    };

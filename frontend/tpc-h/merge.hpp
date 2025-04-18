@@ -1,4 +1,5 @@
 #pragma once
+#include <variant>
 #include "../shared/MergedScanner.hpp"
 #include "merge_helpers.hpp"
 
@@ -113,7 +114,7 @@ struct PremergedJoin {
       auto& k = kv->first;
       auto& v = kv->second;
       JK jk;
-      std::visit([&](auto& actual_key) { jk = actual_key.jk; }, k);
+      std::visit([&](auto& actual_key) -> void { jk = actual_key.jk; }, k);
       match_emplace_tuple(cached_records, k, v, std::index_sequence_for<Rs...>{});
       auto curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, last_joined_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
       updateAndPrintProduced(curr_joined);
@@ -123,10 +124,12 @@ struct PremergedJoin {
    int next_jk()
    {
       auto last_joined_jk_copy = last_joined_jk;
+      int count = 0;
       while (last_joined_jk_copy == last_joined_jk) {
          next();
+         count++;
       }
-      return last_joined_jk;
+      return count;
    }
 
    void run()
@@ -191,8 +194,9 @@ struct Merge {
    {
       return [&mergedAdapter, this](HeapEntry<JK>& entry) {
          heap_merge.current_entry = entry;
-         mergedAdapter.insert(typename RecordType::Key(heap_merge.last_joined_jk, SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k)),
-                              RecordType{SourceRecord::template fromBytes<SourceRecord>(entry.v)});
+         auto source_k = SourceRecord::template fromBytes<typename SourceRecord::Key>(entry.k);
+         auto source_v = SourceRecord::template fromBytes<SourceRecord>(entry.v);
+         mergedAdapter.insert(typename RecordType::Key(source_k, source_v), RecordType(source_v));
          printProgress();
       };
    }
