@@ -2,11 +2,7 @@ import os, re
 
 def collect_data(exec):
     p = f"./build/{exec}"
-    maintenance_f = open(f"{p}/maintenance.csv", "w")
-    # maintenance_f.write("scale,dram,method")
-    query_f = open(f"{p}/query.csv", "w")
-    # query_f.write("scale,dram,method")
-    # all dirs in p
+    sum_f = open(f"{p}.csv", "w")
     for exp in os.listdir(p):
         pattern = r"([\d.]+)-in-([\d.]+)"
         m = re.match(pattern, exp)
@@ -25,34 +21,21 @@ def collect_data(exec):
             key, value = line.split(",")
             size_dict[key] = value
         for d in data_files:
-            d_pattern = r"(maintain|query)-(\w+)\.csv"
+            d_pattern = r"(maintain|query|point-query)-(\w+)\.csv"
             match = re.match(d_pattern, d)
             if not match:
                 print(f"Skipping {d}")
                 continue
             tx = match.group(1)
             method = match.group(2)
-            if tx == "maintain":
-                with open(os.path.join(p, exp, d), "r") as f:
-                    if maintenance_f.tell() == 0:
-                        maintenance_f.write("method,dram,scale,")
-                        header = f.readline()
-                        maintenance_f.write(header)
-                    # add the last line
-                    lines = f.readlines()
-                    maintenance_f.write(f"{method},{dram},{scale}," + lines[-1])
-            elif tx == "query":
-                with open(os.path.join(p, exp, d), "r") as f:
-                    if query_f.tell() == 0:
-                        query_f.write("method,dram,scale,")
-                        header = f.readline().rstrip()
-                        query_f.write(header)
-                        query_f.write(",size(mib)\n")
-                    # add the last line
-                    lines = f.readlines()
-                    query_f.write(f"{method},{dram},{scale}," + lines[-1].strip(r',\s') + f",{size_dict[method]}\n")
-    maintenance_f.close()
-    query_f.close()
+            with open(os.path.join(p, exp, d), "r") as f:
+                if sum_f.tell() == 0:
+                    sum_f.write("method,tx,dram,scale,")
+                    header = f.readline().strip().strip(",")
+                    sum_f.write(header + ",size(mib)\n")
+                latest_line = f.readlines()[-1].strip().strip(",")
+                sum_f.write(f"{method},{tx},{dram},{scale}," + latest_line + f",{size_dict[method]}\n")
+    sum_f.close()
     
 if __name__ == "__main__":
     collect_data("basic_join")
