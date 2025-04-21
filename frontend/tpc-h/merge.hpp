@@ -1,7 +1,9 @@
 #pragma once
 #include <variant>
 #include "../shared/MergedScanner.hpp"
+#include "Exceptions.hpp"
 #include "merge_helpers.hpp"
+#include "view_templates.hpp"
 
 template <typename JK, typename JR, typename... Rs>
 struct MergeJoin {
@@ -52,8 +54,8 @@ struct MergeJoin {
    {
       return [this](HeapEntry<JK>& entry) {
          heap_merge.current_entry = entry;
-         int joined_cnt = joinAndClear<JK, JR, Rs...>(heap_merge.cached_records, heap_merge.current_jk, heap_merge.current_entry.jk,
-                                                      consume_joined, std::index_sequence_for<Rs...>{});
+         int joined_cnt = joinAndClear<JK, JR, Rs...>(heap_merge.cached_records, heap_merge.current_jk, heap_merge.current_entry.jk, consume_joined,
+                                                      std::index_sequence_for<Rs...>{});
          updateAndPrintProduced(joined_cnt);
          std::get<I>(heap_merge.cached_records)
              .emplace_back(typename CurrRec::Key(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k)),
@@ -91,7 +93,6 @@ struct PremergedJoin {
        std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
        : consume_joined(consume_joined), merged_scanner(merged_scanner)
    {
-
    }
 
    ~PremergedJoin()
@@ -212,4 +213,183 @@ struct Merge {
    void run() { heap_merge.run(); }
 
    void next_jk() { heap_merge.next_jk(); }
+};
+
+template <typename JK, typename JR, typename R1, typename R2>
+struct BinaryMergeJoin {
+   long produced = 0;
+   JK current_jk = JK::max();
+   std::tuple<std::vector<std::tuple<typename R1::Key, R1>>, std::vector<std::tuple<typename R2::Key, R2>>> cached_records = {
+       std::vector<std::tuple<typename R1::Key, R1>>(),
+       std::vector<std::tuple<typename R2::Key, R2>>(),
+   };
+   std::vector<std::tuple<typename R1::Key, R1>>& cached_r1s = std::get<0>(cached_records);
+   std::vector<std::tuple<typename R2::Key, R2>>& cached_r2s = std::get<1>(cached_records);
+   std::optional<std::pair<typename R1::Key, R1>> cutoff_r1 = std::nullopt;  // larger than current_jk
+   std::optional<std::pair<typename R2::Key, R2>> cutoff_r2 = std::nullopt;  // larger than current_jk
+
+   std::queue<std::pair<typename JR::Key, JR>> joined_records;
+
+   std::function<std::optional<std::pair<typename R1::Key, R1>>()> next_left_func;
+   std::function<std::optional<std::pair<typename R2::Key, R2>>()> next_right_func;
+
+   std::function<void(const typename JR::Key&, const JR&)> consume_joined = [this](const typename JR::Key& k, const JR& v) {
+      std::pair<typename JR::Key, JR> joined_record = {k, v};
+      joined_records.push(joined_record);
+   };
+
+   BinaryMergeJoin(std::function<std::optional<std::pair<typename R1::Key, R1>>()> next_left_func,
+                   std::function<std::optional<std::pair<typename R2::Key, R2>>()> next_right_func)
+       : next_left_func(next_left_func), next_right_func(next_right_func)
+   {
+      scan_to_cutoff();
+   }
+
+   ~BinaryMergeJoin()
+   {
+      std::cout << "\r~BinaryMergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
+   }
+
+   void scan_to_cutoff()
+   {
+      while (true) {
+         auto r1 = next_left_func();
+         auto r2 = next_right_func();
+         if (!r1.has_value()) {
+            break;
+         } else if (!r2.has_value()) {
+            break;
+         }
+         auto r1_jk = SKBuilder<JK>::create(r1->first, r1->second);
+         auto r2_jk = SKBuilder<JK>::create(r2->first, r2->second);
+         if (r1_jk.match(r2_jk) < 0) {
+            cutoff_r2 = r2;
+            cached_r1s.emplace_back(r1->first, r1->second);
+            current_jk = r1_jk;
+            break;
+         } else if (r1_jk.match(r2_jk) > 0) {
+            cutoff_r1 = r1;
+            cached_r2s.emplace_back(r2->first, r2->second);
+            current_jk = r2_jk;
+            break;
+         } else {
+            cached_r1s.emplace_back(r1->first, r1->second);
+            cached_r2s.emplace_back(r2->first, r2->second);
+         }
+      }
+   }
+
+   void updateAndPrintProduced(int curr_joined)
+   {
+      produced += curr_joined;
+      if (current_jk % 10 == 0) {
+         double progress = (double)produced / 1000;
+         std::cout << "\rBinaryMergeJoin: produced " << progress << "k records------------------------------------";
+      }
+   }
+
+   int join_current(JK current_entry_jk)
+   {
+      auto joined_cnt = joinAndClear<JK, JR, R1, R2>(cached_records, current_jk, current_entry_jk, consume_joined, std::index_sequence_for<R1, R2>{});
+      updateAndPrintProduced(joined_cnt);
+      return joined_cnt;
+   }
+
+   int join_update_cutoff(std::pair<typename R1::Key, R1>& r1, std::pair<typename R2::Key, R2>& r2)
+   {
+      auto r1_jk = SKBuilder<JK>::create(r1.first, r1.second);
+      auto r2_jk = SKBuilder<JK>::create(r2.first, r2.second);
+      auto match_ret = r1_jk.match(r2_jk);
+
+      // join
+      JK current_entry_jk;
+      if (match_ret <= 0) {
+         current_entry_jk = r1_jk;
+      } else {
+         current_entry_jk = r2_jk;
+      }
+      auto joined_cnt = join_current(current_entry_jk);
+
+      // update cutoff
+      if (match_ret < 0) {
+         cutoff_r1 = std::nullopt;
+         cached_r1s.emplace_back(r1.first, r1.second);
+         current_jk = r1_jk;
+         cutoff_r2 = r2;
+      } else if (match_ret > 0) {
+         cutoff_r2 = std::nullopt;
+         cached_r2s.emplace_back(r2.first, r2.second);
+         current_jk = r2_jk;
+         cutoff_r1 = r1;
+      } else {
+         cutoff_r1 = std::nullopt;
+         cutoff_r2 = std::nullopt;
+         cached_r1s.emplace_back(r1.first, r1.second);
+         cached_r2s.emplace_back(r2.first, r2.second);
+         scan_to_cutoff();
+      }
+      return joined_cnt;
+   }
+
+   int next_jk()
+   {
+      if (cutoff_r1.has_value() && !cutoff_r2.has_value()) {
+         auto kv = next_right_func();
+         if (!kv) {  // last batch of joins
+            cutoff_r1 = std::nullopt;
+            cutoff_r2 = std::nullopt;
+            return join_current(SKBuilder<JK>::create(cutoff_r1->first, cutoff_r1->second));
+         } else {
+            if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {  // fill cached records
+               cached_r2s.emplace_back(kv->first, kv->second);
+               return next_jk();
+            } else {  // cached records are cutoff, with competing cutoffs
+               return join_update_cutoff(*cutoff_r1, *kv);
+            }
+         }
+      } else if (!cutoff_r1.has_value() && cutoff_r2.has_value()) {
+         auto kv = next_left_func();
+         if (!kv) {  // last batch of joins
+            cutoff_r1 = std::nullopt;
+            cutoff_r2 = std::nullopt;
+            return join_current(SKBuilder<JK>::create(cutoff_r2->first, cutoff_r2->second));
+            // proceed to join
+         } else {
+            if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {  // fill cached records
+               cached_r1s.emplace_back(kv->first, kv->second);
+               return next_jk();
+            } else {  // cached records are cutoff, with competing cutoffs
+               return join_update_cutoff(*kv, *cutoff_r2);
+            }
+         }
+      } else if (!cutoff_r1.has_value() && !cutoff_r2.has_value()) {
+         // either scanner_r1 or scanner_r2 is empty
+         return -1;
+      } else {
+         UNREACHABLE();
+      }
+   }
+
+   void run()
+   {
+      while (true) {
+         int curr_joined = next_jk();
+         if (curr_joined == -1) {
+            break;
+         }
+      }
+   }
+
+   std::optional<std::pair<typename JR::Key, JR>> next()
+   {
+      if (joined_records.empty()) {
+         auto curr_joined = next_jk();
+         if (curr_joined == -1) {
+            return std::nullopt;
+         }
+      }
+      auto kv = joined_records.front();
+      joined_records.pop();
+      return std::make_optional(kv);
+   }
 };
