@@ -38,7 +38,11 @@ struct MergeJoin {
       heap_merge.init();
    }
 
-   ~MergeJoin() { std::cout << "\r~MergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl; }
+   ~MergeJoin()
+   {
+      if (produced > 0)
+         std::cout << "\r~MergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
+   }
 
    void updateAndPrintProduced(int curr_joined)
    {
@@ -97,7 +101,8 @@ struct PremergedJoin {
 
    ~PremergedJoin()
    {
-      std::cout << "\r~PremergedJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
+      if (produced > 0)
+         std::cout << "\r~PremergedJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
    }
 
    void updateAndPrintProduced(int curr_joined)
@@ -181,7 +186,8 @@ struct Merge {
 
    ~Merge()
    {
-      std::cout << "\r~Merge: produced " << (double)heap_merge.sifted / 1000 << "k records------------------------------------" << std::endl;
+      if (heap_merge.sifted > 0)
+         std::cout << "\r~Merge: produced " << (double)heap_merge.sifted / 1000 << "k records------------------------------------" << std::endl;
    }
 
    void printProgress()
@@ -247,7 +253,8 @@ struct BinaryMergeJoin {
 
    ~BinaryMergeJoin()
    {
-      std::cout << "\r~BinaryMergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
+      if (produced > 0)
+         std::cout << "\r~BinaryMergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
    }
 
    void updateAndPrintProduced(int curr_joined)
