@@ -2,7 +2,6 @@
 #include <optional>
 #include <variant>
 #include <vector>
-#include "../binary_join.hpp"
 #include "../logger.hpp"
 #include "../merge.hpp"
 #include "../tables.hpp"
@@ -179,11 +178,11 @@ class BasicJoin
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
 
-      BinaryJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
-                                                                           [&]() { return partsupp_scanner->next(); });
+      BinaryMergeJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
+                                                                                [&]() { return partsupp_scanner->next(); });
 
-      BinaryJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2([&]() { return binary_join1.next(); },
-                                                                                        [&]() { return lineitem_scanner->next(); });
+      BinaryMergeJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2([&]() { return binary_join1.next(); },
+                                                                                             [&]() { return lineitem_scanner->next(); });
 
       binary_join2.run();
 
@@ -232,10 +231,10 @@ class BasicJoin
       partsupp_scanner->seek(partsupp_t::Key{part_id, supplier_id});
       lineitem_scanner->seek(sorted_lineitem_t::Key(join_key_t{part_id, supplier_id}, lineitem_t::Key{}));
 
-      BinaryJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
-                                                                           [&]() { return partsupp_scanner->next(); });
-      BinaryJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2([&]() { return binary_join1.next(); },
-                                                                                        [&]() { return lineitem_scanner->next(); });
+      BinaryMergeJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
+                                                                                [&]() { return partsupp_scanner->next(); });
+      BinaryMergeJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2([&]() { return binary_join1.next(); },
+                                                                                             [&]() { return lineitem_scanner->next(); });
 
       binary_join2.next_jk();
 
