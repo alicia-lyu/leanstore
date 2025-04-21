@@ -242,41 +242,12 @@ struct BinaryMergeJoin {
                    std::function<std::optional<std::pair<typename R2::Key, R2>>()> next_right_func)
        : next_left_func(next_left_func), next_right_func(next_right_func)
    {
-      scan_to_cutoff();
+      cutoff_r1 = next_left_func();
    }
 
    ~BinaryMergeJoin()
    {
       std::cout << "\r~BinaryMergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
-   }
-
-   void scan_to_cutoff()
-   {
-      while (true) {
-         auto r1 = next_left_func();
-         auto r2 = next_right_func();
-         if (!r1.has_value()) {
-            break;
-         } else if (!r2.has_value()) {
-            break;
-         }
-         auto r1_jk = SKBuilder<JK>::create(r1->first, r1->second);
-         auto r2_jk = SKBuilder<JK>::create(r2->first, r2->second);
-         if (r1_jk.match(r2_jk) < 0) {
-            cutoff_r2 = r2;
-            cached_r1s.emplace_back(r1->first, r1->second);
-            current_jk = r1_jk;
-            break;
-         } else if (r1_jk.match(r2_jk) > 0) {
-            cutoff_r1 = r1;
-            cached_r2s.emplace_back(r2->first, r2->second);
-            current_jk = r2_jk;
-            break;
-         } else {
-            cached_r1s.emplace_back(r1->first, r1->second);
-            cached_r2s.emplace_back(r2->first, r2->second);
-         }
-      }
    }
 
    void updateAndPrintProduced(int curr_joined)
@@ -288,7 +259,7 @@ struct BinaryMergeJoin {
       }
    }
 
-   int join_current(JK current_entry_jk)
+   int join_current_and_clear(JK current_entry_jk)  // also updated current_jk
    {
       auto joined_cnt = joinAndClear<JK, JR, R1, R2>(cached_records, current_jk, current_entry_jk, consume_joined, std::index_sequence_for<R1, R2>{});
       updateAndPrintProduced(joined_cnt);
@@ -297,36 +268,26 @@ struct BinaryMergeJoin {
 
    int join_update_cutoff(std::pair<typename R1::Key, R1>& r1, std::pair<typename R2::Key, R2>& r2)
    {
+      // join the cached records
       auto r1_jk = SKBuilder<JK>::create(r1.first, r1.second);
       auto r2_jk = SKBuilder<JK>::create(r2.first, r2.second);
       auto match_ret = r1_jk.match(r2_jk);
-
-      // join
-      JK current_entry_jk;
-      if (match_ret <= 0) {
-         current_entry_jk = r1_jk;
-      } else {
-         current_entry_jk = r2_jk;
-      }
-      auto joined_cnt = join_current(current_entry_jk);
+      auto joined_cnt = join_current_and_clear(match_ret <= 0 ? r1_jk : r2_jk);
 
       // update cutoff
       if (match_ret < 0) {
          cutoff_r1 = std::nullopt;
          cached_r1s.emplace_back(r1.first, r1.second);
-         current_jk = r1_jk;
          cutoff_r2 = r2;
       } else if (match_ret > 0) {
          cutoff_r2 = std::nullopt;
          cached_r2s.emplace_back(r2.first, r2.second);
-         current_jk = r2_jk;
          cutoff_r1 = r1;
       } else {
-         cutoff_r1 = std::nullopt;
-         cutoff_r2 = std::nullopt;
          cached_r1s.emplace_back(r1.first, r1.second);
          cached_r2s.emplace_back(r2.first, r2.second);
-         scan_to_cutoff();
+         cutoff_r1 = next_left_func();
+         cutoff_r2 = std::nullopt;
       }
       return joined_cnt;
    }
@@ -338,7 +299,7 @@ struct BinaryMergeJoin {
          if (!kv) {  // last batch of joins
             cutoff_r1 = std::nullopt;
             cutoff_r2 = std::nullopt;
-            return join_current(SKBuilder<JK>::create(cutoff_r1->first, cutoff_r1->second));
+            return join_current_and_clear(SKBuilder<JK>::create(cutoff_r1->first, cutoff_r1->second));
          } else {
             if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {  // fill cached records
                cached_r2s.emplace_back(kv->first, kv->second);
@@ -352,7 +313,7 @@ struct BinaryMergeJoin {
          if (!kv) {  // last batch of joins
             cutoff_r1 = std::nullopt;
             cutoff_r2 = std::nullopt;
-            return join_current(SKBuilder<JK>::create(cutoff_r2->first, cutoff_r2->second));
+            return join_current_and_clear(SKBuilder<JK>::create(cutoff_r2->first, cutoff_r2->second));
             // proceed to join
          } else {
             if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {  // fill cached records
@@ -383,9 +344,13 @@ struct BinaryMergeJoin {
    std::optional<std::pair<typename JR::Key, JR>> next()
    {
       if (joined_records.empty()) {
-         auto curr_joined = next_jk();
-         if (curr_joined == -1) {
-            return std::nullopt;
+         while (true) {
+            auto curr_joined = next_jk();
+            if (curr_joined == -1) {
+               return std::nullopt;
+            } else if (curr_joined > 0) {
+               break;
+            }
          }
       }
       auto kv = joined_records.front();
