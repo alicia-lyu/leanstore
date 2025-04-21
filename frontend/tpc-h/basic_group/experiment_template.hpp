@@ -10,7 +10,7 @@
 #include "views.hpp"
 #include "workload.hpp"
 
-template <typename merged_count_option_t, typename merged_sum_option_t, typename merged_partsupp_option_t>
+template <typename merged_view_option_t, typename merged_partsupp_option_t>
 int run()
 {
    using namespace basic_group;
@@ -27,7 +27,7 @@ int run()
    LeanStoreAdapter<region_t> region;
    // Views
    LeanStoreAdapter<view_t> view;
-   LeanStoreMergedAdapter<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t> mergedBasicGroup;
+   LeanStoreMergedAdapter<merged_view_option_t, merged_partsupp_option_t> mergedBasicGroup;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -39,7 +39,7 @@ int run()
       orders = LeanStoreAdapter<orders_t>(db, "orders");
       nation = LeanStoreAdapter<nation_t>(db, "nation");
       region = LeanStoreAdapter<region_t>(db, "region");
-      mergedBasicGroup = LeanStoreMergedAdapter<merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t>(db, "mergedBasicGroup");
+      mergedBasicGroup = LeanStoreMergedAdapter<merged_view_option_t, merged_partsupp_option_t>(db, "mergedBasicGroup");
       view = LeanStoreAdapter<view_t>(db, "view");
    });
 
@@ -50,7 +50,7 @@ int run()
    LeanStoreLogger logger(db);
 
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter, merged_count_option_t, merged_sum_option_t, merged_partsupp_option_t> tpchBasicGroup(
+   BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter, merged_view_option_t, merged_partsupp_option_t> tpchBasicGroup(
        tpch, mergedBasicGroup, view);
 
    if (!FLAGS_recover) {
