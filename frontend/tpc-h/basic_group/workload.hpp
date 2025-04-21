@@ -153,8 +153,8 @@ class BasicGroup
           [&]() {});
       std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "query-view");
+      auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+      logger.log(t, ColumnName::ELAPSED, "query-view");
    }
 
    void queryByMerged()
@@ -181,8 +181,8 @@ class BasicGroup
       }
       std::cout << "\rEnumerating merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "query-merged");
+      auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+      logger.log(t, ColumnName::ELAPSED, "query-merged");
    }
 
    // -----------------------------------------------------------
@@ -191,22 +191,11 @@ class BasicGroup
 
    void pointQueryByView()
    {
-      logger.reset();
-      std::cout << "BasicGroup::pointQueryByView()" << std::endl;
-      auto start = std::chrono::high_resolution_clock::now();
-
       view.scan(view_t::Key{point_query_partkey}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "point-query-view");
    }
 
    void pointQueryByMerged()
    {
-      logger.reset();
-      std::cout << "BasicGroup::pointQueryByMerged()" << std::endl;
-      auto start = std::chrono::high_resolution_clock::now();
-
       auto scanner = mergedBasicGroup.getScanner();
       scanner->template seekTyped<merged_view_option_t>(typename merged_view_option_t::Key(point_query_partkey));
       auto kv = scanner->current();
@@ -217,9 +206,6 @@ class BasicGroup
                                [[maybe_unused]] double avg_supplycost = aggregates.payload.sum_supplycost / aggregates.payload.count_partsupp;
                             }},
                  v);
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "point-query-merged");
    }
 
    // -----------------------------------------------------------
@@ -233,9 +219,6 @@ class BasicGroup
                              agg_update_func,  // increment count, add second argument to supply cost
                          std::string name)
    {
-      std::cout << "BasicGroup::maintainTemplate for " << name << std::endl;
-      logger.reset();
-      auto start = std::chrono::high_resolution_clock::now();
       auto [part_id, supplier_id] = get_part_supplier_id();
 
       auto rec = partsupp_t::generateRandomRecord();
@@ -243,9 +226,6 @@ class BasicGroup
       // count_increment_func(part_id, countsupp_update_descriptor);
       // sum_update_func(part_id, rec.ps_supplycost, sum_supplycost_update_descriptor);
       agg_update_func(part_id, rec.ps_supplycost, agg_update_descriptor);
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "maintain-" + name);
    }
 
    void maintainMerged()

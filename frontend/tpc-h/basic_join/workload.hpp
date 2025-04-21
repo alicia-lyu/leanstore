@@ -147,8 +147,8 @@ class BasicJoin
           [&]() {});
       std::cout << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "query-view");
+      auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+      logger.log(t, ColumnName::ELAPSED, "query-view");
    }
 
    // TXs: Measure end-to-end time
@@ -164,8 +164,8 @@ class BasicJoin
       merged_scanner->template scanJoin<join_key_t, joinedPPsL_t>();
 
       auto merged_end = std::chrono::high_resolution_clock::now();
-      auto merged_t = std::chrono::duration_cast<std::chrono::microseconds>(merged_end - merged_start).count();
-      logger.log(merged_t, "query-merged");
+      auto merged_t = std::chrono::duration_cast<std::chrono::milliseconds>(merged_end - merged_start).count();
+      logger.log(merged_t, ColumnName::ELAPSED, "query-merged");
    }
 
    void queryByBase()
@@ -187,15 +187,12 @@ class BasicJoin
       binary_join2.run();
 
       auto index_end = std::chrono::high_resolution_clock::now();
-      auto index_t = std::chrono::duration_cast<std::chrono::microseconds>(index_end - index_start).count();
-      logger.log(index_t, "query-base");
+      auto index_t = std::chrono::duration_cast<std::chrono::milliseconds>(index_end - index_start).count();
+      logger.log(index_t, ColumnName::ELAPSED, "query-base");
    }
 
    void pointQueryByView()
    {
-      logger.reset();
-      auto start = std::chrono::high_resolution_clock::now();
-      std::cout << "BasicJoin::pointQueryByView()" << std::endl;
       auto part_id = workload.getPartID();
       auto supplier_id = workload.getSupplierID();
       int count = 0;
@@ -212,16 +209,10 @@ class BasicJoin
              return true;
           },
           [&]() {});
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "point-query-view");
    }
 
    void pointQueryByBase()
    {
-      logger.reset();
-      auto start = std::chrono::high_resolution_clock::now();
-      std::cout << "BasicJoin::pointQueryByBase()" << std::endl;
       auto part_id = workload.getPartID();
       auto supplier_id = workload.getSupplierID();
       auto part_scanner = part.getScanner();
@@ -237,33 +228,20 @@ class BasicJoin
                                                                                              [&]() { return lineitem_scanner->next(); });
 
       binary_join2.next_jk();
-
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "point-query-base");
    }
 
    void pointQueryByMerged()
    {
-      logger.reset();
-      auto start = std::chrono::high_resolution_clock::now();
-      std::cout << "BasicJoin::pointQueryByMerged()" << std::endl;
-
       auto part_id = workload.getPartID();
       auto supplier_id = workload.getSupplierID();
       auto merged_scanner = mergedPPsL.getScanner();
       merged_scanner->seekJK(join_key_t{part_id, supplier_id});
       PremergedJoin<join_key_t, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t> merge(*merged_scanner);
       merge.next_jk();
-
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "point-query-merged");
    }
 
    void maintainMerged()
    {
-      std::cout << "BasicJoin::maintainMerged()" << std::endl;
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
       maintainTemplate(
           [this](Integer part_id) {
@@ -294,16 +272,11 @@ class BasicJoin
              merged_partsupp_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
              merged_partsupp_t v_new(v);
              mergedPPsL.insert(k_new, v_new);
-          },
-          "merged");
+          });
    }
 
    void maintainView()
    {
-      logger.reset();
-      std::cout << "BasicJoin::maintainView()" << std::endl;
-      auto start = std::chrono::high_resolution_clock::now();
-
       // sortedLineitem and all base tables cannot be replaced by this view
       std::vector<std::tuple<part_t::Key, part_t>> new_part;
       std::vector<std::tuple<partsupp_t::Key, partsupp_t>> new_partupp;
@@ -336,8 +309,7 @@ class BasicJoin
           [&, this](const partsupp_t::Key& k, const partsupp_t& v) {
              this->partsupp.insert(k, v);
              new_partupp.push_back({k, v});
-          },
-          "view-stage1");
+          });
       // sort deltas
       auto compare = [](const auto& a, const auto& b) {
          return SKBuilder<join_key_t>::create(std::get<0>(a), std::get<1>(a)) < SKBuilder<join_key_t>::create(std::get<0>(b), std::get<1>(b));
@@ -449,8 +421,7 @@ class BasicJoin
       };
 
       // Step 1 Join deltas
-      std::cout << "Size: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems"
-                << std::endl;
+      // std::cout << "Delta sizes: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems" << std::endl;
       std::vector<std::function<HeapEntry<join_key_t>()>> sources1 = {part_delta_src, partsupp_delta_src, lineitem_delta_src};
       Merge delta_join1(sources1);
       delta_join1.run();
@@ -504,17 +475,10 @@ class BasicJoin
       std::vector<std::function<HeapEntry<join_key_t>()>> sources3_3 = {lineitem_delta_src, partsupp_src, part_src};
       Merge delta_join3_3(sources3_3);
       delta_join3_3.run();
-
-      auto end = std::chrono::high_resolution_clock::now();
-
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-
-      logger.log(t, "maintain-view");
    }
 
    void maintainBase()
    {
-      std::cout << "BasicJoin::maintainBase()" << std::endl;
       maintainTemplate(
           [this](Integer part_id) {
              Integer s_id;
@@ -534,18 +498,15 @@ class BasicJoin
              sortedLineitem.insert(sorted_lineitem_t::Key{k, v}, sorted_lineitem_t{v});
           },
           [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
-          [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); }, "base");
+          [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); });
    }
 
    void maintainTemplate(std::function<Integer(Integer)> find_valid_supplier_id,
                          std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
                          std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
                          std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
-                         std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
-                         std::string name)
+                         std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func)
    {
-      logger.reset();
-      auto start = std::chrono::high_resolution_clock::now();
       // 1 new part & several partsupp & one order/lineitem for this part
       auto part_id = workload.last_part_id + 1;
       workload.loadPart(part_insert_func, part_id, part_id);
@@ -554,9 +515,6 @@ class BasicJoin
       Integer s_id = find_valid_supplier_id(part_id);
       lineitem_insert_func(lineitem_t::Key{o_id, 1}, lineitem_t::generateRandomRecord([part_id]() { return part_id; }, [s_id]() { return s_id; }));
       workload.loadOrders(order_insert_func, o_id, o_id);
-      auto end = std::chrono::high_resolution_clock::now();
-      auto t = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger.log(t, "maintain-" + name);
    }
 
    void loadBaseTables() { workload.load(); }

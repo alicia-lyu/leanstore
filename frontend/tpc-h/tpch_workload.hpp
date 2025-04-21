@@ -9,8 +9,8 @@
 
 #include "tables.hpp"
 
-#include "logger.hpp"
 #include "leanstore/Config.hpp"
+#include "logger.hpp"
 
 DECLARE_int32(tpch_scale_factor);
 
@@ -194,7 +194,9 @@ struct TPCHWorkload {
          current_order_key++;
          lineitem_cnt_in_order = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
       }
-      std::cout << order_keys.end() - current_order_key << " orders left to fill out lineitems" << std::endl;
+      auto rem_order_cnt = order_keys.end() - current_order_key;
+      if (rem_order_cnt > 0)
+         std::cout << rem_order_cnt << " orders left to fill out lineitems" << std::endl;
       auto orders_rem_start = current_order_key;
       for (; current_order_key < order_keys.end(); current_order_key++) {
          printProgress("orders of lineitems", current_order_key - orders_rem_start, 0, order_keys.end() - orders_rem_start);

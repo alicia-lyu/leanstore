@@ -11,6 +11,8 @@
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
 #include "tabulate/table.hpp"
 
+
+
 class LeanStoreLogger : public Logger
 {
    leanstore::LeanStore& db;
@@ -37,9 +39,9 @@ class LeanStoreLogger : public Logger
    ~LeanStoreLogger() { std::cout << "Logs written to " << FLAGS_csv_path << std::endl; }
 
    void writeOutAll();
-   std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed);
+   std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed_or_tput, ColumnName column_name);
    void reset();
-   void log(long elapsed, std::string csv_dir);
+   void log(long elapsed_or_tput, ColumnName column_name, std::string csv_dir);
    void prepare();
    void logLoading();
 

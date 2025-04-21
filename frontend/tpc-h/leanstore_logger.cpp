@@ -2,6 +2,7 @@
 #include <gflags/gflags.h>
 #include <filesystem>
 #include <tabulate/table.hpp>
+#include "logger.hpp"
 
 void LeanStoreLogger::reset()
 {
@@ -16,15 +17,15 @@ void LeanStoreLogger::writeOutAll()
    db.buffer_manager->writeAllBufferFrames();
 }
 
-std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::summarizeStats(long elapsed = 0)
+std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::summarizeStats(long elapsed_or_tput, ColumnName column_name)
 {
    std::vector<std::string> tx_console_header;
    std::vector<std::string> tx_console_data;
    tx_console_header.reserve(20);
    tx_console_data.reserve(20);
 
-   tx_console_header.push_back("Elapsed (ms)");
-   tx_console_data.push_back(to_fixed((double)elapsed / 1000));
+   tx_console_header.push_back(to_string(column_name));
+   tx_console_data.push_back(std::to_string(elapsed_or_tput));
 
    tx_console_header.push_back("W MiB");
    tx_console_data.push_back(bm_table.get("0", "w_mib"));
@@ -47,7 +48,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
    return {tx_console_header, tx_console_data};
 }
 
-void LeanStoreLogger::log(long elapsed, std::string csv_dir)
+void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::string csv_dir)
 {
    u64 config_hash = configs_table.hash();
    std::vector<std::ofstream> csvs;
@@ -77,7 +78,7 @@ void LeanStoreLogger::log(long elapsed, std::string csv_dir)
       csv.close();
    }
 
-   auto [tx_console_header, tx_console_data] = summarizeStats(elapsed);
+   auto [tx_console_header, tx_console_data] = summarizeStats(elapsed_or_tput, columne_name);
    std::ofstream csv_sum;
    csv_sum.open(csv_dir_abs + ".csv", std::ios::app);
    if (csv_sum.tellp() == 0) {  // no header
@@ -97,7 +98,7 @@ void LeanStoreLogger::log(long elapsed, std::string csv_dir)
 
 void LeanStoreLogger::logLoading()
 {
-   log(0, "load");
+   log(0, ColumnName::ELAPSED, "load");
    auto w_mib = std::stod(bm_table.get("0", "w_mib"));
    if (w_mib != 0) {
       std::cout << "Out of memory workload, loading tables caused " << w_mib << " MiB write." << std::endl;
