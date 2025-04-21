@@ -13,6 +13,13 @@
 // FROM Lineitem l, PartSupp ps, Part p
 // WHERE l.partkey = ps.partkey AND l.partkey = p.partkey AND l.suppkey = ps.suppkey;
 
+template <class... Ts>
+struct overloaded : Ts... {
+   using Ts::operator()...;
+};
+template <class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
 namespace basic_join
 {
 template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>
@@ -259,24 +266,37 @@ class BasicJoin
    {
       std::cout << "BasicJoin::maintainMerged()" << std::endl;
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
-      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
-                       [this](const lineitem_t::Key& k, const lineitem_t& v) {
-                          workload.lineitem.insert(k, v);
-                          merged_lineitem_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
-                          merged_lineitem_t v_new(v);
-                          mergedPPsL.insert(k_new, v_new);
-                       },
-                       [this](const part_t::Key& k, const part_t& v) {
-                          merged_part_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
-                          merged_part_t v_new{v};
-                          mergedPPsL.insert(k_new, v_new);
-                       },
-                       [this](const partsupp_t::Key& k, const partsupp_t& v) {
-                          merged_partsupp_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
-                          merged_partsupp_t v_new(v);
-                          mergedPPsL.insert(k_new, v_new);
-                       },
-                       "merged");
+      maintainTemplate(
+          [this](Integer part_id) {
+             auto scanner = mergedPPsL.getScanner();
+             scanner->template seekTyped<merged_partsupp_t>(typename merged_partsupp_t::Key{join_key_t{part_id, 1}, partsupp_t::Key{part_id, 1}});
+             auto kv = scanner->current();
+             assert(kv.has_value());
+             auto& [k, v] = *kv;
+             Integer s_id;
+             std::visit(overloaded{[&](const merged_partsupp_t::Key& actual_key) { s_id = actual_key.jk.suppkey; },
+                                   [&](const merged_part_t::Key&) { UNREACHABLE(); }, [&](const merged_lineitem_t::Key&) { UNREACHABLE(); }},
+                        k);
+             return s_id;
+          },
+          [this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
+          [this](const lineitem_t::Key& k, const lineitem_t& v) {
+             workload.lineitem.insert(k, v);
+             merged_lineitem_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
+             merged_lineitem_t v_new(v);
+             mergedPPsL.insert(k_new, v_new);
+          },
+          [this](const part_t::Key& k, const part_t& v) {
+             merged_part_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
+             merged_part_t v_new{v};
+             mergedPPsL.insert(k_new, v_new);
+          },
+          [this](const partsupp_t::Key& k, const partsupp_t& v) {
+             merged_partsupp_t::Key k_new{SKBuilder<join_key_t>::create(k, v), k};
+             merged_partsupp_t v_new(v);
+             mergedPPsL.insert(k_new, v_new);
+          },
+          "merged");
    }
 
    void maintainView()
@@ -289,23 +309,36 @@ class BasicJoin
       std::vector<std::tuple<part_t::Key, part_t>> new_part;
       std::vector<std::tuple<partsupp_t::Key, partsupp_t>> new_partupp;
       std::vector<std::tuple<sorted_lineitem_t::Key, sorted_lineitem_t>> new_lineitems;
-      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
-                       [&, this](const lineitem_t::Key& k, const lineitem_t& v) {
-                          workload.lineitem.insert(k, v);
-                          sorted_lineitem_t::Key k_new{k, v};
-                          sorted_lineitem_t v_new(v);
-                          this->sortedLineitem.insert(k_new, v_new);
-                          new_lineitems.push_back({k_new, v_new});
-                       },
-                       [&, this](const part_t::Key& k, const part_t& v) {
-                          this->part.insert(k, v);
-                          new_part.push_back({k, v});
-                       },
-                       [&, this](const partsupp_t::Key& k, const partsupp_t& v) {
-                          this->partsupp.insert(k, v);
-                          new_partupp.push_back({k, v});
-                       },
-                       "view-stage1");
+      maintainTemplate(
+          [this](Integer part_id) {
+             Integer s_id;
+             partsupp.scan(
+                 partsupp_t::Key{part_id, 1},
+                 [&](const partsupp_t::Key& k, const partsupp_t&) {
+                    assert(k.ps_partkey == part_id);
+                    s_id = k.ps_suppkey;
+                    return false;
+                 },
+                 []() {});
+             return s_id;
+          },
+          [this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
+          [&, this](const lineitem_t::Key& k, const lineitem_t& v) {
+             workload.lineitem.insert(k, v);
+             sorted_lineitem_t::Key k_new{k, v};
+             sorted_lineitem_t v_new(v);
+             this->sortedLineitem.insert(k_new, v_new);
+             new_lineitems.push_back({k_new, v_new});
+          },
+          [&, this](const part_t::Key& k, const part_t& v) {
+             this->part.insert(k, v);
+             new_part.push_back({k, v});
+          },
+          [&, this](const partsupp_t::Key& k, const partsupp_t& v) {
+             this->partsupp.insert(k, v);
+             new_partupp.push_back({k, v});
+          },
+          "view-stage1");
       // sort deltas
       auto compare = [](const auto& a, const auto& b) {
          return SKBuilder<join_key_t>::create(std::get<0>(a), std::get<1>(a)) < SKBuilder<join_key_t>::create(std::get<0>(b), std::get<1>(b));
@@ -483,13 +516,30 @@ class BasicJoin
    void maintainBase()
    {
       std::cout << "BasicJoin::maintainBase()" << std::endl;
-      maintainTemplate([this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
-                       [this](const lineitem_t::Key& k, const lineitem_t& v) { workload.lineitem.insert(k, v); },
-                       [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
-                       [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); }, "base");
+      maintainTemplate(
+          [this](Integer part_id) {
+             Integer s_id;
+             partsupp.scan(
+                 partsupp_t::Key{part_id, 1},
+                 [&](const partsupp_t::Key& k, const partsupp_t&) {
+                    assert(k.ps_partkey == part_id);
+                    s_id = k.ps_suppkey;
+                    return false;
+                 },
+                 []() {});
+             return s_id;
+          },
+          [this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
+          [this](const lineitem_t::Key& k, const lineitem_t& v) {
+             workload.lineitem.insert(k, v);
+             sortedLineitem.insert(sorted_lineitem_t::Key{k, v}, sorted_lineitem_t{v});
+          },
+          [this](const part_t::Key& k, const part_t& v) { this->part.insert(k, v); },
+          [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); }, "base");
    }
 
-   void maintainTemplate(std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
+   void maintainTemplate(std::function<Integer(Integer)> find_valid_supplier_id,
+                         std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
                          std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
                          std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
                          std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
@@ -502,15 +552,7 @@ class BasicJoin
       workload.loadPart(part_insert_func, part_id, part_id);
       workload.loadPartsupp(partsupp_insert_func, part_id, part_id);
       auto o_id = workload.last_order_id + 1;
-      Integer s_id;
-      partsupp.scan(
-          partsupp_t::Key{part_id, 1},
-          [&](const partsupp_t::Key& k, const partsupp_t&) {
-             assert(k.ps_partkey == part_id);
-             s_id = k.ps_suppkey;
-             return false;
-          },
-          []() {});
+      Integer s_id = find_valid_supplier_id(part_id);
       lineitem_insert_func(lineitem_t::Key{o_id, 1}, lineitem_t::generateRandomRecord([part_id]() { return part_id; }, [s_id]() { return s_id; }));
       workload.loadOrders(order_insert_func, o_id, o_id);
       auto end = std::chrono::high_resolution_clock::now();
