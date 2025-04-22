@@ -23,19 +23,17 @@ check_perf_event_paranoid:
 		exit 1; \
 	fi
 
-executables := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXECS), $(dir)/frontend/$(exec)))
+executables := $(foreach dir, $(BUILD_DIRS), $(foreach exec, $(EXEC_NAMES), $(dir)/frontend/$(exec)))
 
 $(foreach exec, $(EXEC_NAMES), \
-	$(foreach dir, $(BUILD_DIRS),
+	$(foreach dir, $(BUILD_DIRS), \
 		$(eval $(dir)/frontend/$(exec): check_perf_event_paranoid) \
 		$(eval define $(dir)_$(exec)_recipe
-@echo "Building $@"
-mkdir -p $(dir)/frontend
-cd $(dir)/frontend && $(CMAKE) $(if $(findstring debug,$(dir)),$(CMAKE_DEBUG),$(CMAKE_RELWITHDEBINFO))
-cd $(dir)/frontend && $(MAKE) $(exec) -j$(NUMJOBS)
+@echo "Building executable $$@"
+cd $(dir)/frontend && $(if $(findstring debug,$(dir)),$(CMAKE_DEBUG),$(CMAKE_RELWITHDEBINFO)) $(CMAKE_OPTIONS) && $(MAKE) $(exec) -j$(NUMJOBS)
 endef) \
-		$(eval $(dir)/frontend/$(exec): ; $(dir)_$(exec)_recipe) \
-	)
+		$(eval $(dir)/frontend/$(exec): ; $($(dir)_$(exec)_recipe)) \
+	) \
 )
 
 .PHONY: check_perf_event_paranoid
@@ -51,9 +49,10 @@ $(foreach dir, $(BUILD_DIRS), \
   $(foreach exec, $(EXEC_NAMES), \
     $(eval $(dir)_$(exec)_restore_path := $(dir)/frontend/$(exec)/$(scale).json) \
     $(eval $(dir)_$(exec)_restore_path: $(dir)/frontend/$(exec)) \
+	$(eval $(dir)_$(target)_csv_dir := $(dir)/frontend/$(exec)/$(scale)-in-$(dram)) \
     $(eval define $(dir)_$(exec)_restore_path_recipe
-@echo "Persisting data to $@"
-$(dir)/frontend/$(exec) $(leanstore_flags) --csv_path=$(CSV) --persist_file=$@ 2>$(CSV)/stderr.txt
+@echo "Persisting data to $$@"
+$(dir)/frontend/$(exec) $(leanstore_flags) --csv_path=$(dir)_$(target)_csv_dir --persist_file=$$@ 2>$(dir)_$(target)_csv_dir/stderr.txt
 endef) \
     $(eval $(dir)_$(exec)_restore_path: ; $($(dir)_$(exec)_restore_path_recipe)) \
   ) \
@@ -63,12 +62,11 @@ endef) \
 TARGETS := $(EXEC_NAMES)
 
 $(foreach target, $(EXEC_NAMES), \
-	$(eval executable := $(BUILD_DIR)/frontend/$(target)) \
-	$(eval $(target) : $(executable) $(BUILD_DIR)/frontend/$(exec)/$(scale).json)\
+	$(eval $(target) : $(BUILD_DIR)/frontend/$(target) $(BUILD_DIR)/frontend/$(exec)/$(scale).json)\
+	$(eval $(BUILD_DIR)_$(target)_csv_dir := $(BUILD_DIR)/frontend/$(target)/$(scale)-in-$(dram))
 	$(eval define $(target)_recipe
-@echo "Running $@"
-mkdir -p $(CSV)
-script -q -c 'bash -c "$(executable) $(leanstore_flags) --csv_path=$(CSV) --restore_file=$(dir)/frontend/$(exec)/$(scale).json 2>$(CSV)/stderr.txt"' $(CSV)/log
+@echo "Running $$@"
+script -q -c "$(BUILD_DIR)/frontend/$(target) $(leanstore_flags) --csv_path=$(BUILD_DIR)_$(target)_csv_dir --restore_file=$(json) 2>$(BUILD_DIR)_$(target)_csv_dir/stderr.txt" $(BUILD_DIR)_$(target)_csv_dir/log
 endef) \
 	$(eval $(target): ; $($(target)_recipe)) \
 )
@@ -77,11 +75,11 @@ endef) \
 LLDB_TARGETS := $(foreach exec, $(EXEC_NAMES), $(exec)_lldb)
 
 $(foreach exec, $(EXEC_NAMES), \
-	$(eval $(exec)_lldb: $(BUILD_DIR_DEBUG)/frontend/$(exec) $(BUILD_DIR)/frontend/$(exec)/$(scale).json) \
+	$(eval json := $(BUILD_DIR_DEBUG)/frontend/$(exec)/$(scale).json) \
+	$(eval $(exec)_lldb: $(BUILD_DIR_DEBUG)/frontend/$(exec) $(json)) \
 	$(eval define $(exec)_lldb_recipe
-@echo "Running $@"
-mkdir -p $(CSV)
-lldb --source .lldbinit -- $(BUILD_DIR_DEBUG)/frontend/$(exec) $(leanstore_flags) --csv_path=$(CSV) --restore_file=$(BUILD_DIR)/frontend/$(exec)/$(scale).json
+@echo "Running $$@"
+lldb --source .lldbinit -- $(BUILD_DIR_DEBUG)/frontend/$(exec) $(leanstore_flags) --csv_path=$(BUILD_DIR_DEBUG)_$(target)_csv_dir --restore_file=$(json)
 endef) \
 	$(eval $(exec)_lldb: ; $($(exec)_lldb_recipe)) \
 )
