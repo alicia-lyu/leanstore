@@ -50,8 +50,7 @@ int run()
    LeanStoreLogger logger(db);
 
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter, merged_view_option_t, merged_partsupp_option_t> tpchBasicGroup(
-       tpch, mergedBasicGroup, view);
+   BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter, merged_view_option_t, merged_partsupp_option_t> tpchBasicGroup(tpch, mergedBasicGroup, view);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
@@ -62,11 +61,10 @@ int run()
          tpchBasicGroup.logSize();
          cr::Worker::my().commitTX();
       });
+   } else {
+      WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged);
+
+      WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView);
    }
-
-   WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged);
-
-   WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView);
-
    return 0;
 }

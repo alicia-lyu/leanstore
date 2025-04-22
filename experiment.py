@@ -127,7 +127,7 @@ class RuntimeConfig:
         return [
             f"--csv_path={self.get_csv_prefix()}", "--csv_truncate=true", "--pp_threads=1", "--worker_threads=2",
         ], [
-            f"--persist_file={self.dbconfig.recovery_path if self.persist else self.dbconfig.build_dir}/leanstore.json", 
+            f"--persist_file={self.dbconfig.recovery_path if self.persist else self.dbconfig.build_dir+"leanstore.json"}", 
             f"--dram_gib={self.dram_gib}",
             f"--read_percentage={self.read_percentage}", f"--scan_percentage={self.scan_percentage}", f"--write_percentage={self.write_percentage}", f"--run_for_seconds={self.duration}"
         ]
