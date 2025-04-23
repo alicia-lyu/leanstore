@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <variant>
+#include <chrono>
 #include "../../shared/Adapter.hpp"
 #include "../logger.hpp"
 #include "../tables.hpp"
