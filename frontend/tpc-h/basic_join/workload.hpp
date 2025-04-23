@@ -1,11 +1,11 @@
 #include <chrono>
 #include <optional>
 #include <variant>
-#include <vector>
 #include "../logger.hpp"
 #include "../merge.hpp"
 #include "../tables.hpp"
 #include "../tpch_workload.hpp"
+#include "view_maintainer.hpp"
 #include "views.hpp"
 
 // SELECT *
@@ -21,7 +21,7 @@ overloaded(Ts...) -> overloaded<Ts...>;
 
 namespace basic_join
 {
-template <template <typename> class AdapterType, template <typename...> class MergedAdapterType>
+template <template <typename> class AdapterType, template <typename...> class MergedAdapterType, template <typename> class ScannerType>
 class BasicJoin
 {
    using TPCH = TPCHWorkload<AdapterType>;
@@ -30,7 +30,7 @@ class BasicJoin
    merged_t& mergedPPsL;
    AdapterType<joinedPPsL_t>& joinedPPsL;
    AdapterType<sorted_lineitem_t>& sortedLineitem;
-   
+
    Logger& logger;
    AdapterType<part_t>& part;
    AdapterType<partsupp_t>& partsupp;
@@ -320,205 +320,10 @@ class BasicJoin
 
    void maintainView()
    {
-      // sortedLineitem and all base tables cannot be replaced by this view
-      std::vector<std::tuple<part_t::Key, part_t>> new_part;
-      std::vector<std::tuple<partsupp_t::Key, partsupp_t>> new_partupp;
-      std::vector<std::tuple<sorted_lineitem_t::Key, sorted_lineitem_t>> new_lineitems;
-      maintainTemplate(
-          [this](Integer part_id) {
-             Integer s_id;
-             partsupp.scan(
-                 partsupp_t::Key{part_id, 1},
-                 [&](const partsupp_t::Key& k, const partsupp_t&) {
-                    assert(k.ps_partkey == part_id);
-                    s_id = k.ps_suppkey;
-                    return false;
-                 },
-                 []() {});
-             return s_id;
-          },
-          [this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
-          [&, this](const lineitem_t::Key& k, const lineitem_t& v) {
-             workload.lineitem.insert(k, v);
-             sorted_lineitem_t::Key k_new{k, v};
-             sorted_lineitem_t v_new(v);
-             this->sortedLineitem.insert(k_new, v_new);
-             new_lineitems.push_back({k_new, v_new});
-          },
-          [&, this](const part_t::Key& k, const part_t& v) {
-             this->part.insert(k, v);
-             new_part.push_back({k, v});
-          },
-          [&, this](const partsupp_t::Key& k, const partsupp_t& v) {
-             this->partsupp.insert(k, v);
-             new_partupp.push_back({k, v});
-          });
-      // sort deltas
-      auto compare = [](const auto& a, const auto& b) {
-         return SKBuilder<join_key_t>::create(std::get<0>(a), std::get<1>(a)) < SKBuilder<join_key_t>::create(std::get<0>(b), std::get<1>(b));
-      };
-      std::sort(new_part.begin(), new_part.end(), compare);
-      std::sort(new_partupp.begin(), new_partupp.end(), compare);
-      std::sort(new_lineitems.begin(), new_lineitems.end(), compare);
-      using Merge = MergeJoin<join_key_t, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t>;
-      auto part_it = new_part.begin();
-      auto partsupp_it = new_partupp.begin();
-      auto lineitems_it = new_lineitems.begin();
-      join_key_t next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
-      auto part_delta_src = [&]() {
-         if (part_it == new_part.end()) {
-            return HeapEntry<join_key_t>();
-         }
-         auto& [k, v] = *part_it;
-         part_it++;
-         auto jk = SKBuilder<join_key_t>::create(k, v);
-         next_jk = jk;
-         return HeapEntry<join_key_t>(jk, part_t::toBytes(k), part_t::toBytes(v), 0);
-      };
-      auto partsupp_delta_src = [&]() {
-         if (partsupp_it == new_partupp.end()) {
-            return HeapEntry<join_key_t>();
-         }
-         auto& [k, v] = *partsupp_it;
-         partsupp_it++;
-         auto jk = SKBuilder<join_key_t>::create(k, v);
-         next_jk = jk;
-         return HeapEntry<join_key_t>(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v), 1);
-      };
-      auto lineitem_delta_src = [&]() {
-         if (lineitems_it == new_lineitems.end()) {
-            return HeapEntry<join_key_t>();
-         }
-         auto& [k, v] = *lineitems_it;
-         lineitems_it++;
-         auto jk = SKBuilder<join_key_t>::create(k, v);
-         return HeapEntry<join_key_t>(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v), 2);
-      };
-
-      join_key_t last_accessed_jk = next_jk;
-      auto part_scanner = part.getScanner();
-      auto partsupp_scanner = partsupp.getScanner();
-      auto lineitem_scanner = sortedLineitem.getScanner();
-
-      auto part_src = [&next_jk, &last_accessed_jk, &part_scanner]() {
-         while (true) {
-            auto kv = part_scanner->next();
-            if (kv == std::nullopt) {
-               return HeapEntry<join_key_t>();
-            }
-            auto& [k, v] = *kv;
-            auto jk = SKBuilder<join_key_t>::create(k, v);
-            if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
-                && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
-            {
-               part_scanner->seek(part_t::Key{next_jk.l_partkey});
-               last_accessed_jk = next_jk;
-               continue;
-            }
-            last_accessed_jk = jk;
-            return HeapEntry<join_key_t>(jk, part_t::toBytes(k), part_t::toBytes(v),
-                                         0);  // not guaranteed to match the deltas but such waste is limited
-         }
-      };
-
-      auto partsupp_src = [&next_jk, &last_accessed_jk, &partsupp_scanner]() {
-         while (true) {
-            auto kv = partsupp_scanner->next();
-            if (kv == std::nullopt) {
-               return HeapEntry<join_key_t>();
-            }
-            auto& [k, v] = *kv;
-            auto jk = SKBuilder<join_key_t>::create(k, v);
-            if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
-                && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
-            {
-               partsupp_scanner->seek(partsupp_t::Key{next_jk.l_partkey, next_jk.suppkey});
-               last_accessed_jk = next_jk;
-               continue;
-            }
-            last_accessed_jk = jk;
-            return HeapEntry<join_key_t>(jk, partsupp_t::toBytes(k), partsupp_t::toBytes(v),
-                                         1);  // not guaranteed to match the deltas but such waste is limited
-         }
-      };
-
-      auto lineitem_src = [&next_jk, &last_accessed_jk, &lineitem_scanner]() {
-         while (true) {
-            auto kv = lineitem_scanner->next();
-            if (kv == std::nullopt) {
-               return HeapEntry<join_key_t>();
-            }
-            auto& [k, v] = *kv;
-            auto jk = SKBuilder<join_key_t>::create(k, v);
-            if (last_accessed_jk.match(jk) != 0  // Scanned to a new jk
-                && next_jk.match(jk) > 0)        // this new jk is not in the deltas, deltas have advanced to a larger jk
-            {
-               lineitem_scanner->seek(sorted_lineitem_t::Key{next_jk, lineitem_t::Key{0, 0}});
-               last_accessed_jk = next_jk;
-               continue;
-            }
-            last_accessed_jk = jk;
-            return HeapEntry<join_key_t>(jk, sorted_lineitem_t::toBytes(k), sorted_lineitem_t::toBytes(v),
-                                         2);  // not guaranteed to match the deltas but such waste is limited
-         }
-      };
-
-      // Step 1 Join deltas
-      // std::cout << "Delta sizes: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems"
-      // << std::endl;
-      std::vector<std::function<HeapEntry<join_key_t>()>> sources1 = {part_delta_src, partsupp_delta_src, lineitem_delta_src};
-      Merge delta_join1(sources1);
-      delta_join1.run();
-      // Step 2 join 2 deltas and search for matches in a base table
-      part_it = new_part.begin();
-      partsupp_it = new_partupp.begin();
-      lineitem_scanner->reset();
-      next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
-      std::vector<std::function<HeapEntry<join_key_t>()>> sources2_1 = {part_delta_src, partsupp_delta_src, lineitem_src};
-      Merge delta_join2_1(sources2_1);
-      delta_join2_1.run();
-
-      // TODO: change order of record types
-      part_it = new_part.begin();
-      lineitems_it = new_lineitems.begin();
-      partsupp_scanner->reset();
-      next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
-      std::vector<std::function<HeapEntry<join_key_t>()>> sources2_2 = {part_delta_src, lineitem_delta_src, partsupp_src};
-      Merge delta_join2_2(sources2_2);
-      delta_join2_2.run();
-
-      partsupp_it = new_partupp.begin();
-      lineitems_it = new_lineitems.begin();
-      part_scanner->reset();
-      next_jk = SKBuilder<join_key_t>::create(std::get<0>(*partsupp_it), std::get<1>(*partsupp_it));
-      std::vector<std::function<HeapEntry<join_key_t>()>> sources2_3 = {partsupp_delta_src, lineitem_delta_src, part_src};
-      Merge delta_join2_3(sources2_3);
-      delta_join2_3.run();
-
-      // step 3 For 1 delta, search for matches in 2 base tables
-      part_it = new_part.begin();
-      partsupp_scanner->reset();
-      lineitem_scanner->reset();
-      next_jk = SKBuilder<join_key_t>::create(std::get<0>(*part_it), std::get<1>(*part_it));
-      std::vector<std::function<HeapEntry<join_key_t>()>> sources3_1 = {part_delta_src, partsupp_src, lineitem_src};
-      Merge delta_join3_1(sources3_1);
-      delta_join3_1.run();
-
-      partsupp_it = new_partupp.begin();
-      lineitem_scanner->reset();
-      part_scanner->reset();
-      next_jk = SKBuilder<join_key_t>::create(std::get<0>(*partsupp_it), std::get<1>(*partsupp_it));
-      std::vector<std::function<HeapEntry<join_key_t>()>> sources3_2 = {partsupp_delta_src, lineitem_src, part_src};
-      Merge delta_join3_2(sources3_2);
-      delta_join3_2.run();
-
-      lineitems_it = new_lineitems.begin();
-      part_scanner->reset();
-      partsupp_scanner->reset();
-      next_jk = SKBuilder<join_key_t>::create(std::get<0>(*lineitems_it), std::get<1>(*lineitems_it));
-      std::vector<std::function<HeapEntry<join_key_t>()>> sources3_3 = {lineitem_delta_src, partsupp_src, part_src};
-      Merge delta_join3_3(sources3_3);
-      delta_join3_3.run();
+      ViewMaintainer<AdapterType, MergedAdapterType, ScannerType> vm(
+          [this](auto&&... args) { return this->maintainTemplate(std::forward<decltype(args)>(args)...); },
+          workload, sortedLineitem, joinedPPsL);
+      vm.run();
    }
 
    void maintainBase()

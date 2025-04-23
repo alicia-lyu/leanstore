@@ -51,7 +51,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   basic_join::BasicJoin<LeanStoreAdapter, LeanStoreMergedAdapter> tpchBasicJoin(tpch, mergedBasicJoin, joinedPPsL, sortedLineitem);
+   basic_join::BasicJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner> tpchBasicJoin(tpch, mergedBasicJoin, joinedPPsL, sortedLineitem);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
