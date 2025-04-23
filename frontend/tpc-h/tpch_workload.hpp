@@ -1,8 +1,6 @@
 #pragma once
 #include <gflags/gflags.h>
 #include <algorithm>
-#include <filesystem>
-#include <fstream>
 #include <functional>
 #include <limits>
 #include <map>
@@ -11,7 +9,6 @@
 
 #include "tables.hpp"
 
-#include "leanstore/Config.hpp"
 #include "logger.hpp"
 
 DECLARE_int32(tpch_scale_factor);
