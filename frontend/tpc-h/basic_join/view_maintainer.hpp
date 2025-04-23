@@ -73,6 +73,8 @@ class ViewMaintainer
    std::vector<SuppEntry> delta_partsupps_;
    std::vector<LineEntry> delta_lineitems_;
 
+   part_t::Key start_partkey_;
+
    void collect_deltas()
    {
       delta_parts_.clear();
@@ -122,6 +124,8 @@ class ViewMaintainer
       std::sort(delta_parts_.begin(), delta_parts_.end(), cmp);
       std::sort(delta_partsupps_.begin(), delta_partsupps_.end(), cmp);
       std::sort(delta_lineitems_.begin(), delta_lineitems_.end(), cmp);
+
+      start_partkey_ = std::get<0>(delta_parts_.front()); // all deltas are about the same partkey
    }
 
    void run_joins(std::array<int, 3> tables, std::array<bool, 3> base)
@@ -180,7 +184,7 @@ class ViewMaintainer
    {
       switch (table_id) {
          case 0: {
-            scanner_part_->reset(); // TODO: seek once a while
+            scanner_part_->seek(start_partkey_);
             return [this]() mutable {
                if (auto opt = scanner_part_->next()) {
                   auto const& [k, v] = *opt;
@@ -191,7 +195,7 @@ class ViewMaintainer
             };
          }
          case 1: {
-            scanner_partsupp_->reset();
+            scanner_partsupp_->seek(partsupp_t::Key{start_partkey_.p_partkey, 0});
             return [this]() mutable {
                if (auto opt = scanner_partsupp_->next()) {
                   auto const& [k, v] = *opt;
@@ -202,7 +206,7 @@ class ViewMaintainer
             };
          }
          default: {
-            scanner_sorted_lineitem_->reset();
+            scanner_sorted_lineitem_->seek(sorted_lineitem_t::Key{join_key_t{start_partkey_.p_partkey, 0}, lineitem_t::Key{}});
             return [this]() mutable {
                if (auto opt = scanner_sorted_lineitem_->next()) {
                   auto const& [k, v] = *opt;
