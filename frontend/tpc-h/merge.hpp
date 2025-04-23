@@ -125,7 +125,11 @@ struct PremergedJoin {
       JK jk;
       std::visit([&](auto& actual_key) -> void { jk = actual_key.jk; }, k);
       // if (current_jk != jk) join the cached records
-      auto curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
+      int curr_joined;
+      if (current_jk != jk)
+         auto curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
+      else
+         curr_joined = 0;
       updateAndPrintProduced(curr_joined);
       // add the new record to the cache
       match_emplace_tuple(k, v, std::index_sequence_for<Rs...>{});

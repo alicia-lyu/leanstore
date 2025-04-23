@@ -24,3 +24,4 @@ paper*
 /.vscode/
 stderr.txt
 *.mk
+perf*

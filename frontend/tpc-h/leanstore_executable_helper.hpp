@@ -71,7 +71,7 @@ inline void runTXPhase(std::function<void()> query_cb,
 
    auto pq_start = std::chrono::high_resolution_clock::now();
    atomic<u64> point_query_count = 0;
-   while (point_query_count < 100) {
+   while (point_query_count < 1000) {
       jumpmuTry()
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
@@ -95,7 +95,7 @@ inline void runTXPhase(std::function<void()> query_cb,
 
    auto maintain_start = std::chrono::high_resolution_clock::now();
    atomic<u64> maintain_count = 0;
-   while (maintain_count < 100) {
+   while (maintain_count < 1000) {
       jumpmuTry()
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
