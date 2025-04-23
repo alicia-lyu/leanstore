@@ -52,7 +52,7 @@ class BTreeGeneric
    atomic<u64> height = 1;
    DTID dt_id;
    struct Config {
-      bool enable_wal = true;
+      bool enable_wal = FLAGS_wal;
       bool use_bulk_insert = false;
    };
    Config config;

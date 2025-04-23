@@ -62,6 +62,8 @@ int run()
          cr::Worker::my().commitTX();
       });
    } else {
+      tpch.recover_last_ids();
+      
       WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged);
 
       WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView);

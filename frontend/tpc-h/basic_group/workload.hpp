@@ -41,9 +41,8 @@ class BasicGroup
 
    Logger& logger;
 
-   Integer point_query_partkey;
-   Integer maintenance_partkey;
-   Integer maintenance_supplierkey;
+   Integer rand_partkey;
+   Integer rand_supplierkey;
 
   public:
    BasicGroup(TPCH& workload, merged_t& mbg, AdapterType<view_t>& v)
@@ -52,9 +51,8 @@ class BasicGroup
          partsupp(workload.partsupp),
          mergedBasicGroup(mbg),
          logger(workload.logger),
-         point_query_partkey(0),
-         maintenance_partkey(0),
-         maintenance_supplierkey(0)
+         rand_partkey(0),
+         rand_supplierkey(0)
    {
    }
    // -------------------------------------------------------------
@@ -189,15 +187,21 @@ class BasicGroup
    // ---------------------- POINT QUERIES ----------------------
    // Aggregates of the same part id
 
+   void refresh_rand_keys()
+   {
+      rand_partkey = workload.getPartID();
+      rand_supplierkey = workload.getSupplierID();
+   }
+
    void pointQueryByView()
    {
-      view.scan(view_t::Key{point_query_partkey}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
+      view.scan(view_t::Key{rand_partkey}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
    }
 
    void pointQueryByMerged()
    {
       auto scanner = mergedBasicGroup.getScanner();
-      scanner->template seekTyped<merged_view_option_t>(typename merged_view_option_t::Key(point_query_partkey));
+      scanner->template seekTyped<merged_view_option_t>(typename merged_view_option_t::Key(rand_partkey));
       auto kv = scanner->current();
       assert(kv.has_value());
       auto& [k, v] = *kv;
@@ -216,8 +220,7 @@ class BasicGroup
                          std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
                          leanstore::UpdateSameSizeInPlaceDescriptor& agg_update_descriptor,
                          std::function<void(const Integer, const Numeric, leanstore::UpdateSameSizeInPlaceDescriptor&)>
-                             agg_update_func,  // increment count, add second argument to supply cost
-                         std::string name)
+                             agg_update_func) // increment count, add second argument to supply cost
    {
       auto [part_id, supplier_id] = get_part_supplier_id();
 
@@ -235,8 +238,8 @@ class BasicGroup
 
       maintainTemplate(
           [this]() {
-             auto supposed_part_id = maintenance_partkey;
-             auto supposed_supplier_id = maintenance_supplierkey;
+             auto supposed_part_id = rand_partkey;
+             auto supposed_supplier_id = rand_supplierkey;
              auto merged_scanner = mergedBasicGroup.getScanner();
              bool found = false;
              while (!found) {
@@ -276,8 +279,7 @@ class BasicGroup
                     rec.payload.sum_supplycost += supplycost;
                  },
                  update_descriptor);
-          },
-          "merged");
+          });
    }
 
    void maintainView()
@@ -286,8 +288,8 @@ class BasicGroup
       UpdateDescriptorGenerator2(agg_update_descriptor, view_t, count_partsupp, sum_supplycost);
       maintainTemplate(
           [this]() {
-             auto supposed_part_id = maintenance_partkey;
-             auto supposed_supplier_id = maintenance_supplierkey;
+             auto supposed_part_id = rand_partkey;
+             auto supposed_supplier_id = rand_supplierkey;
              partsupp.scan(
                  partsupp_t::Key({supposed_part_id, supposed_supplier_id}),
                  [&](const partsupp_t::Key& k, const partsupp_t&) {
@@ -316,8 +318,7 @@ class BasicGroup
                     rec.sum_supplycost += supplycost;
                  },
                  update_descriptor);
-          },
-          "view");
+          });
    }
 
    // ---------------------------------------------------------
@@ -327,10 +328,6 @@ class BasicGroup
 
    void loadAllOptions()
    {
-      point_query_partkey = workload.getPartID();
-      maintenance_partkey = workload.getPartID();
-      maintenance_supplierkey = workload.getSupplierID();
-
       auto partsupp_scanner = workload.partsupp.getScanner();
       Integer count = 0;
       Numeric supplycost_sum = 0;

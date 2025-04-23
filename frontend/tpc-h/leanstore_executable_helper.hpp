@@ -18,7 +18,7 @@
       sleep(10);                                                                                                                        \
       crm.scheduleJobSync(1, [&]() {                                                                                                    \
          runTXPhase([&]() { tpchQuery.queryFunc(); }, [&]() { tpchQuery.pointQueryFunc(); }, [&]() { tpchQuery.maintainFunc(); },       \
-                    running_threads_counter, isolation_level, tpch);                                                                    \
+                    [&]() { tpchQuery.refresh_rand_keys(); }, running_threads_counter, isolation_level, tpch);                          \
       });                                                                                                                               \
       keep_running = false;                                                                                                             \
       while (running_threads_counter) {                                                                                                 \
@@ -59,6 +59,7 @@ inline void runLookupPhase(std::function<void()> lookupCallback,
 inline void runTXPhase(std::function<void()> query_cb,
                        std::function<void()> point_query_cb,
                        std::function<void()> maintain_cb,
+                       std::function<void()> refresh_rand_keys_cb,
                        atomic<u64>& running_threads_counter,
                        leanstore::TX_ISOLATION_LEVEL isolation_level,
                        TPCHWorkload<LeanStoreAdapter>& tpch)
@@ -75,6 +76,7 @@ inline void runTXPhase(std::function<void()> query_cb,
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
          // tpchBasicJoin.pointLookupsForBase();
+         refresh_rand_keys_cb();
          point_query_cb();
          point_query_count++;
          cr::Worker::my().commitTX();
@@ -98,6 +100,7 @@ inline void runTXPhase(std::function<void()> query_cb,
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
          // tpchBasicJoin.pointLookupsForBase();
+         refresh_rand_keys_cb();
          maintain_cb();
          maintain_count++;
          cr::Worker::my().commitTX();
