@@ -7,7 +7,8 @@ Auto-generates a Makefile fragment with build, csv-dir, image, recovery and LLDB
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+import re
+
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,16 @@ def generate_image_files() -> None:
         print(f'\t@echo "Touching image file {img}"')
         print(f"\tmkdir -p {img.parent} && touch {img}\n")
 
+LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
+
+def loading_file(exe) -> str:
+    # strip variant if any
+    # return f"./frontend/tpc-h/{exe}/workload.hpp"
+    pattern = r"^(.+)_variant$"
+    match = re.match(pattern, exe)
+    if match:
+        exe = match.group(1)
+    return f"./frontend/tpc-h/{exe}/workload.hpp"
 
 def generate_recover_rules() -> None:
     print_section("recover files")
@@ -96,7 +107,7 @@ def generate_recover_rules() -> None:
             rd = runtime_dir(bd, exe)
             recover = Path(bd) / exe / f"{cfg.scale}.json"
             img = image_file(exe)
-            print(f"{recover}: {exe_path} {img} {rd}") # Reload the database if the executable is new or the image has been changed
+            print(f"{recover}: {LOADING_META_FILE} {loading_file(exe)} {img} {rd} check_perf_event_paranoid") # Reload the database if the executable is new or the image has been changed
             print(f'\t@echo "Persisting data to {recover}"')
             print(
                 f"\t{exe_path} {cfg.leanstore_flags} "
