@@ -220,7 +220,7 @@ class BasicGroup
                          std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
                          leanstore::UpdateSameSizeInPlaceDescriptor& agg_update_descriptor,
                          std::function<void(const Integer, const Numeric, leanstore::UpdateSameSizeInPlaceDescriptor&)>
-                             agg_update_func) // increment count, add second argument to supply cost
+                             agg_update_func)  // increment count, add second argument to supply cost
    {
       auto [part_id, supplier_id] = get_part_supplier_id();
 
@@ -363,22 +363,18 @@ class BasicGroup
       mergedBasicGroup.insert(typename merged_view_option_t::Key(curr_partkey), merged_view_option_t(view_t{count, supplycost_sum}));
    }
 
-   void logSize()
+   void load()
    {
-      std::cout << "Logging size" << std::endl;
-      std::ofstream size_csv;
-      std::filesystem::create_directories(FLAGS_csv_path);
-      size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
-      if (size_csv.tellp() == 0) {
-         size_csv << "table,size (MiB)" << std::endl;
-      }
-      std::cout << "table,size" << std::endl;
-      std::vector<std::ostream*> out = {&std::cout, &size_csv};
-      for (std::ostream* o : out) {
-         *o << "view," << view.size() + partsupp.size() << std::endl;
-         *o << "merged," << mergedBasicGroup.size() << std::endl;
-      }
-      size_csv.close();
+      loadBaseTables();
+      loadAllOptions();
+      log_sizes();
+   }
+
+   void log_sizes()
+   {
+      std::map<std::string, double> sizes = {{"view", view.size() + partsupp.size()}, {"merged", mergedBasicGroup.size()}};
+
+      logger.log_sizes(sizes);
    }
 };
 }  // namespace basic_group

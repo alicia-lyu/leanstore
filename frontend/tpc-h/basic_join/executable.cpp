@@ -58,17 +58,13 @@ int main(int argc, char** argv)
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          logger.reset();
-         tpchBasicJoin.loadBaseTables();
-         tpchBasicJoin.loadSortedLineitem();
-         tpchBasicJoin.loadBasicJoin();
-         tpchBasicJoin.loadMergedBasicJoin();
-         tpchBasicJoin.logSize();
+         tpchBasicJoin.load();
          logger.logLoading();
          cr::Worker::my().commitTX();
       });
    } else {
       tpch.recover_last_ids();
-      
+
       WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForBase, queryByBase, pointQueryByBase, maintainBase);
 
       WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged);

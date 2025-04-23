@@ -27,9 +27,10 @@ class BasicJoin
    using TPCH = TPCHWorkload<AdapterType>;
    using merged_t = MergedAdapterType<merged_part_t, merged_partsupp_t, merged_lineitem_t>;
    TPCH& workload;
+   merged_t& mergedPPsL;
    AdapterType<joinedPPsL_t>& joinedPPsL;
    AdapterType<sorted_lineitem_t>& sortedLineitem;
-   merged_t& mergedPPsL;
+   
    Logger& logger;
    AdapterType<part_t>& part;
    AdapterType<partsupp_t>& partsupp;
@@ -463,7 +464,8 @@ class BasicJoin
       };
 
       // Step 1 Join deltas
-      // std::cout << "Delta sizes: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems" << std::endl;
+      // std::cout << "Delta sizes: " << new_part.size() << " parts, " << new_partupp.size() << " partsupps, " << new_lineitems.size() << " lineitems"
+      // << std::endl;
       std::vector<std::function<HeapEntry<join_key_t>()>> sources1 = {part_delta_src, partsupp_delta_src, lineitem_delta_src};
       Merge delta_join1(sources1);
       delta_join1.run();
@@ -544,7 +546,7 @@ class BasicJoin
    }
 
    // -------------------------------------------------------------
-   // ---------------------- LOAD ---------------------------------   
+   // ---------------------- LOAD ---------------------------------
 
    void loadBaseTables() { workload.load(); }
 
@@ -586,24 +588,23 @@ class BasicJoin
       multiway_merge.run();
    }
 
-   void logSize()
+   void load()
    {
-      std::cout << "Logging size" << std::endl;
-      std::ofstream size_csv;
-      std::filesystem::create_directories(FLAGS_csv_path);
-      size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
-      if (size_csv.tellp() == 0) {
-         size_csv << "table,size (MiB)" << std::endl;
-      }
-      std::cout << "table,size" << std::endl;
-      std::vector<std::ostream*> out = {&std::cout, &size_csv};
-      for (std::ostream* o : out) {
-         *o << "view," << joinedPPsL.size() << std::endl;
-         *o << "sortedLineitem," << sortedLineitem.size() << std::endl;
-         *o << "merged," << mergedPPsL.size() << std::endl;
-         *o << "base," << part.size() + partsupp.size() + sortedLineitem.size() << std::endl;
-      }
-      size_csv.close();
+      loadBaseTables();
+      loadSortedLineitem();
+      loadBasicJoin();
+      loadMergedBasicJoin();
+      log_sizes();
+   }
+
+   void log_sizes()
+   {
+      std::map<std::string, double> sizes = {{"view", joinedPPsL.size()},
+                                             {"sortedLineitem", sortedLineitem.size()},
+                                             {"merged", mergedPPsL.size()},
+                                             {"base", part.size() + partsupp.size() + sortedLineitem.size()}};
+
+      logger.log_sizes(sizes);
    }
 };
 }  // namespace basic_join

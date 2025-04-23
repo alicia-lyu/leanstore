@@ -56,14 +56,12 @@ int run()
       std::cout << "Loading TPC-H" << std::endl;
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpchBasicGroup.loadBaseTables();
-         tpchBasicGroup.loadAllOptions();
-         tpchBasicGroup.logSize();
+         tpchBasicGroup.load();
          cr::Worker::my().commitTX();
       });
    } else {
       tpch.recover_last_ids();
-      
+
       WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged);
 
       WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView);

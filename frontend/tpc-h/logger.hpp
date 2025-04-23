@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <string>
 enum class ColumnName
 {
@@ -24,5 +25,6 @@ class Logger
   public:
    virtual void reset() = 0;
    virtual void log(long elapsed_or_tput, ColumnName column_name, std::string csv_dir) = 0;
+   virtual void log_sizes(std::map<std::string, double> sizes) = 0;
    virtual void prepare() = 0;
 };
