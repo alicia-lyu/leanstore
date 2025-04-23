@@ -42,6 +42,9 @@ class LeanStoreLogger : public Logger
    std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed_or_tput, ColumnName column_name);
    void reset();
    void log(long elapsed_or_tput, ColumnName column_name, std::string csv_dir);
+
+   void log_sizes(std::map<std::string, double> sizes);
+
    void prepare();
    void logLoading();
 

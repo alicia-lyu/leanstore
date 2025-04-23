@@ -58,7 +58,7 @@ void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::st
       csvs.emplace_back();
       auto& csv = csvs.back();
       csv.open(csv_dir_abs + "/" + tables[t_i]->getName() + ".csv", std::ios::app);
-      csv << std::setprecision(2) << std::fixed; // TODO change precision by data type
+      csv << std::setprecision(2) << std::fixed;  // TODO change precision by data type
 
       if (csv.tellp() == 0) {  // no header
          csv << "c_hash";
@@ -94,6 +94,24 @@ void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::st
 
    std::vector<std::vector<std::string>> rows = {tx_console_header, tx_console_data};
    printTable(rows);
+}
+
+void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
+{
+   std::ofstream size_csv;
+   std::filesystem::create_directories(FLAGS_csv_path);
+   size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
+   if (size_csv.tellp() == 0) {
+      size_csv << "table,size (MiB)" << std::endl;
+   }
+   std::cout << "table,size (MiB)" << std::endl;
+   std::vector<std::ostream*> out = {&std::cout, &size_csv};
+   for (std::ostream* o : out) {
+      for (auto& [table_name, size] : sizes) {
+         *o << table_name << "," << size << std::endl;
+      }
+   }
+   size_csv.close();
 }
 
 void LeanStoreLogger::logLoading()

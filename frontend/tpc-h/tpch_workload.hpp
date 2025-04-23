@@ -5,6 +5,7 @@
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -61,7 +62,7 @@ struct TPCHWorkload {
       loadOrders();
       loadNation();
       loadRegion();
-      logSize();
+      log_sizes();
    }
 
    static constexpr Integer PART_SCALE = 200;
@@ -338,28 +339,11 @@ struct TPCHWorkload {
       loadRegion([this](const region_t::Key& k, const region_t& v) { this->region.insert(k, v); });
    }
 
-   // Log size
-   void logSize()
+   void log_sizes()
    {
-      std::cout << "Logging size" << std::endl;
-      std::ofstream size_csv;
-      std::filesystem::create_directories(FLAGS_csv_path);
-      size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
-      if (size_csv.tellp() == 0) {
-         size_csv << "table,size (MiB)" << std::endl;
-      }
-      std::cout << "table,size" << std::endl;
-      std::vector<std::ostream*> out = {&std::cout, &size_csv};
-      for (std::ostream* o : out) {
-         *o << "part," << part.size() << std::endl;
-         *o << "supplier," << supplier.size() << std::endl;
-         *o << "partsupp," << partsupp.size() << std::endl;
-         *o << "customer," << customer.size() << std::endl;
-         *o << "orders," << orders.size() << std::endl;
-         *o << "lineitem," << lineitem.size() << std::endl;
-         *o << "nation," << nation.size() << std::endl;
-         *o << "region," << region.size() << std::endl;
-      }
-      size_csv.close();
+      std::map<std::string, double> sizes = {{"part", part.size()},         {"supplier", supplier.size()}, {"partsupp", partsupp.size()},
+                                             {"customer", customer.size()}, {"orders", orders.size()},     {"lineitem", lineitem.size()},
+                                             {"nation", nation.size()},     {"region", region.size()}};
+      logger.log_sizes(sizes);
    }
 };
