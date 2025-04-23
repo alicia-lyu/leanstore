@@ -1,5 +1,6 @@
 #include "LeanStore.hpp"
 
+#include "leanstore/Config.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
@@ -37,6 +38,7 @@ LeanStore::LeanStore()
    // LeanStore::addStringFlag("ssd_path", &FLAGS_ssd_path);
    if (FLAGS_recover_file != "./leanstore.json" && std::filesystem::exists(FLAGS_recover_file)) {
       FLAGS_recover = true;
+      assert(std::filesystem::exists(FLAGS_ssd_path) && !FLAGS_trunc);
    }
    if (FLAGS_persist_file != "./leanstore.json") {
       FLAGS_persist = true;
