@@ -34,6 +34,9 @@ class BasicJoin
    AdapterType<part_t>& part;
    AdapterType<partsupp_t>& partsupp;
 
+   Integer rand_partkey;
+   Integer rand_supplierkey;
+
   public:
    BasicJoin(TPCH& workload, merged_t& mbj, AdapterType<joinedPPsL_t>& jppsl, AdapterType<sorted_lineitem_t>& sl)
        : workload(workload),
@@ -42,9 +45,15 @@ class BasicJoin
          sortedLineitem(sl),
          logger(workload.logger),
          part(workload.part),
-         partsupp(workload.partsupp)
+         partsupp(workload.partsupp),
+         rand_partkey(0),
+         rand_supplierkey(0)
    {
    }
+
+   // -------------------------------------------------------------
+   // ---------------------- POINT LOOKUPS ------------------------
+   // Warm-up/background TXs
 
    std::tuple<Integer, Integer> pointLookupsForBase()
    {
@@ -125,6 +134,10 @@ class BasicJoin
       joinedPPsL.tryLookup(join_key_t{part_id, supplier_id}, [&](const auto&) {});
    }
 
+   // -------------------------------------------------------------
+   // ---------------------- QUERIES -----------------------------
+   // Enumerate all rows in the joined result
+
    void queryByView()
    {
       // Enumrate materialized view
@@ -191,10 +204,20 @@ class BasicJoin
       logger.log(index_t, ColumnName::ELAPSED, "query-base");
    }
 
+   // -------------------------------------------------------------
+   // ---------------------- POINT QUERIES ------------------------
+   // Find all joined rows for the same join key
+
+   void refresh_rand_keys()
+   {
+      rand_partkey = workload.getPartID();
+      rand_supplierkey = workload.getSupplierID();
+   }
+
    void pointQueryByView()
    {
-      auto part_id = workload.getPartID();
-      auto supplier_id = workload.getSupplierID();
+      auto part_id = rand_partkey;
+      auto supplier_id = rand_supplierkey;
       int count = 0;
       joinedPPsL.scan(
           joinedPPsL_t::Key(join_key_t{part_id, supplier_id}, part_t::Key{part_id}, partsupp_t::Key{part_id, supplier_id}, sorted_lineitem_t::Key{}),
@@ -213,8 +236,8 @@ class BasicJoin
 
    void pointQueryByBase()
    {
-      auto part_id = workload.getPartID();
-      auto supplier_id = workload.getSupplierID();
+      auto part_id = rand_partkey;
+      auto supplier_id = rand_supplierkey;
       auto part_scanner = part.getScanner();
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
@@ -232,12 +255,31 @@ class BasicJoin
 
    void pointQueryByMerged()
    {
-      auto part_id = workload.getPartID();
-      auto supplier_id = workload.getSupplierID();
+      auto part_id = rand_partkey;
+      auto supplier_id = rand_supplierkey;
       auto merged_scanner = mergedPPsL.getScanner();
       merged_scanner->seekJK(join_key_t{part_id, supplier_id});
       PremergedJoin<join_key_t, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t> merge(*merged_scanner);
       merge.next_jk();
+   }
+
+   // -------------------------------------------------------------
+   // ---------------------- MAINTENANCE --------------------------
+   // // Add 1 new part & several partsupp & one order/lineitem for this part
+
+   void maintainTemplate(std::function<Integer(Integer)> find_valid_supplier_id,
+                         std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
+                         std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
+                         std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
+                         std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func)
+   {
+      auto part_id = workload.last_part_id + 1;
+      workload.loadPart(part_insert_func, part_id, part_id);
+      workload.loadPartsupp(partsupp_insert_func, part_id, part_id);
+      auto o_id = workload.last_order_id + 1;
+      Integer s_id = find_valid_supplier_id(part_id);
+      lineitem_insert_func(lineitem_t::Key{o_id, 1}, lineitem_t::generateRandomRecord([part_id]() { return part_id; }, [s_id]() { return s_id; }));
+      workload.loadOrders(order_insert_func, o_id, o_id);
    }
 
    void maintainMerged()
@@ -501,21 +543,8 @@ class BasicJoin
           [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); });
    }
 
-   void maintainTemplate(std::function<Integer(Integer)> find_valid_supplier_id,
-                         std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
-                         std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
-                         std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
-                         std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func)
-   {
-      // 1 new part & several partsupp & one order/lineitem for this part
-      auto part_id = workload.last_part_id + 1;
-      workload.loadPart(part_insert_func, part_id, part_id);
-      workload.loadPartsupp(partsupp_insert_func, part_id, part_id);
-      auto o_id = workload.last_order_id + 1;
-      Integer s_id = find_valid_supplier_id(part_id);
-      lineitem_insert_func(lineitem_t::Key{o_id, 1}, lineitem_t::generateRandomRecord([part_id]() { return part_id; }, [s_id]() { return s_id; }));
-      workload.loadOrders(order_insert_func, o_id, o_id);
-   }
+   // -------------------------------------------------------------
+   // ---------------------- LOAD ---------------------------------   
 
    void loadBaseTables() { workload.load(); }
 

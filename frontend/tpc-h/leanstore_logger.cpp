@@ -98,14 +98,8 @@ void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::st
 
 void LeanStoreLogger::logLoading()
 {
+   std::cout << "Loading" << std::endl;
    log(0, ColumnName::ELAPSED, "load");
-   auto w_mib = std::stod(bm_table.get("0", "w_mib"));
-   if (w_mib != 0) {
-      std::cout << "Out of memory workload, loading tables caused " << w_mib << " MiB write." << std::endl;
-      writeOutAll();
-   } else {
-      std::cout << "In memory workload, loading tables caused no write." << std::endl;
-   }
 }
 
 void LeanStoreLogger::prepare()

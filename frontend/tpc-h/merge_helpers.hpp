@@ -173,7 +173,7 @@ inline void assignRecords(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs
        int repeat = *batch_size / vec.size(), batch = total / *batch_size;
        for (int b = 0; b < batch; ++b)
           for (int r = 0; r < repeat; ++r)
-             for (int j = 0; j < vec.size(); ++j)
+             for (size_t j = 0; j < vec.size(); ++j)
                 std::get<Is>(output[b * *batch_size + j * repeat + r]) = vec.at(j);
        *batch_size /= vec.size();
     })());

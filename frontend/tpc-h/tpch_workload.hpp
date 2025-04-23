@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <set>
 #include <vector>
 
@@ -76,6 +77,40 @@ struct TPCHWorkload {
    Integer last_supplier_id;
    Integer last_customer_id;
    Integer last_order_id;
+
+   void recover_last_ids()
+   {
+      part.scanDesc(
+          part_t::Key{std::numeric_limits<Integer>::max()},
+          [&](const part_t::Key& k, const part_t&) {
+             last_part_id = k.p_partkey;
+             return false;
+          },
+          []() {});
+      supplier.scanDesc(
+          supplier_t::Key{std::numeric_limits<Integer>::max()},
+          [&](const supplier_t::Key& k, const supplier_t&) {
+             last_supplier_id = k.s_suppkey;
+             return false;
+          },
+          []() {});
+      customer.scanDesc(
+          customerh_t::Key{std::numeric_limits<Integer>::max()},
+          [&](const customerh_t::Key& k, const customerh_t&) {
+             last_customer_id = k.c_custkey;
+             return false;
+          },
+          []() {});
+      orders.scanDesc(
+          orders_t::Key{std::numeric_limits<Integer>::max()},
+          [&](const orders_t::Key& k, const orders_t&) {
+             last_order_id = k.o_orderkey;
+             return false;
+          },
+          []() {});
+      std::cout << "Recovered last_part_id: " << last_part_id << ", last_supplier_id: " << last_supplier_id
+                << ", last_customer_id: " << last_customer_id << ", last_order_id: " << last_order_id << std::endl;
+   }
 
    inline Integer getPartID() { return urand(1, last_part_id); }
 
@@ -302,12 +337,6 @@ struct TPCHWorkload {
    {
       loadRegion([this](const region_t::Key& k, const region_t& v) { this->region.insert(k, v); });
    }
-
-   // ------------------------------------LOAD VIEWS-------------------------------------------------
-
-   void loadBasicGroup();
-
-   void loadBasicJoinGroup();
 
    // Log size
    void logSize()

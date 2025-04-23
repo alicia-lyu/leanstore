@@ -58,16 +58,16 @@ def image_file(exe: str) -> Path:
 
 def generate_build_rules() -> None:
     print_section("build executables")
+    print("FORCE: ;")  # Dummy target to force the build
     for bd in cfg.build_dirs:
         for exe in cfg.exec_names:
             exe_path = executable_path(bd, exe)
-            print(f"{exe_path}: check_perf_event_paranoid")
+            print(f"{exe_path}: FORCE")
             print(f'\t@echo "Building {exe_path}"')
             print(
                 f'\tcd {bd}/frontend && {cmake_cmd(bd)} {cfg.cmake_options} '
                 f'&& make {exe} -j{cfg.numjobs}\n'
             )
-
 
 def generate_csv_dirs() -> None:
     print_section("csv directories")
@@ -113,7 +113,7 @@ def generate_run_rules() -> None:
         rd = runtime_dir(bd, exe)
         recover = Path(bd) / exe / f"{cfg.scale}.json"
         img = image_file(exe)
-        print(f"{exe}: {exe_path} {recover}")
+        print(f"{exe}: {exe_path} {recover} check_perf_event_paranoid")
         print(f'\t@echo "Running {exe}"')
         print(
             f'\tscript -q -c "{exe_path} {cfg.leanstore_flags} '
@@ -130,7 +130,7 @@ def generate_lldb_rules() -> None:
         rd = runtime_dir(bd, exe)
         recover = Path(bd) / exe / f"{cfg.scale}.json"
         img = image_file(exe)
-        print(f"{exe}_lldb: {exe_path} {recover}")
+        print(f"{exe}_lldb: {exe_path} {recover} check_perf_event_paranoid")
         print(f'\t@echo "Running {exe}_lldb under LLDB"')
         print(
             f"\tlldb --source .lldbinit -- "
@@ -151,7 +151,7 @@ def main() -> None:
     generate_lldb_rules()
 
     # phony declaration
-    phony = ["check_perf_event_paranoid"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
+    phony = ["check_perf_event_paranoid", "FORCE"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
     print(f".PHONY: {' '.join(phony)}")
 
 
