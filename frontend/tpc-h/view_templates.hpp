@@ -78,9 +78,9 @@ struct joined_t {
 };
 
 enum class ExtraID {
-   NONE,  // When the sort key is a superset of the primary key, and the sort key can distinguish different sources
+   NONE,  // When the sort key is a superset of the primary key, and the key length & payload length can distinguish different sources
    PK,    // When the sort key is a subset of the primary key
-   PKID   // When the sort key is a superset ofto the primary key, but the sort key cannot distinguish different sources
+   PKID   // When the sort key is a superset ofto the primary key, but the key length & payload length cannot distinguish different sources
 };
 
 template <int TID, typename T, typename JK, ExtraID extra_id>
