@@ -62,8 +62,8 @@ class BasicJoinGroup
    {
       point_lookups_template([this](Integer orderkey) {
          orders.scan(orders_t::Key{orderkey}, [&](const orders_t&) { return false; }, [&]() {});
-         lineitem.scan(lineitem_t::Key{orderkey}, [&](const lineitem_t&) { return false; }, [&]() {});
-         view.scan(view_t::Key{orderkey}, [&](const view_t&) { return false; }, [&]() {});
+         lineitem.scan(lineitem_t::Key{orderkey, 1}, [&](const lineitem_t&) { return false; }, [&]() {});
+         view.scan(view_t::Key{orderkey, Timestamp{0}}, [&](const view_t&) { return false; }, [&]() {});
       });
    }
 
@@ -130,6 +130,57 @@ class BasicJoinGroup
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
       logger.log(t, ColumnName::ELAPSED, "query-merged");
+   }
+
+   // ---------------------------------------------------------------
+   // ---------------------- POINT QUERIES -----------------------------
+   // search aggregate for a specific orderkey
+
+   void refresh_rand_keys() { rand_orderkey = workload.getOrderID(); }
+
+   void point_query_by_view()
+   {
+      view.scan(view_t::Key{rand_orderkey, Timestamp{0}}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
+   }
+
+   void point_query_by_merged()
+   {
+      auto scanner = merged.getScanner();
+      scanner->template seekTyped<merged_view_t>(typename merged_view_t::Key(rand_orderkey, Timestamp{0}));
+      [[maybe_unused]] auto kv = scanner->current();
+   }
+
+   // -------------------------------------------------------------
+   // ---------------------- MAINTENANCE --------------------------
+   // a new order with several lineitems, update the view
+
+   void maintain_template(std::function<void(const orders_t::Key&, const orders_t&)> insert_orders,
+                          std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_lineitem,
+                          std::function<void(const view_t::Key&, const view_t&)> insert_view)
+   {
+      auto order_v = orders_t::generateRandomRecord([this](Integer) { return workload.getCustomerID(); });
+      insert_orders(orders_t::Key{rand_orderkey}, order_v);
+      auto lineitem_cnt = workload.load_lineitems_1order(insert_lineitem, rand_orderkey);
+      insert_view(view_t::Key{rand_orderkey, Timestamp{order_v.o_orderdate}}, view_t(lineitem_cnt));
+   }
+
+   void maintain_view()
+   {
+      maintain_template([this](const orders_t::Key& k, const orders_t& v) { orders.insert(k, v); },
+                        [this](const lineitem_t::Key& k, const lineitem_t& v) { lineitem.insert(k, v); },
+                        [this](const view_t::Key& k, const view_t& v) { view.insert(k, v); });
+   }
+
+   void maintain_merged()
+   {
+      maintain_template(
+          [this](const orders_t::Key& k, const orders_t& v) {
+             merged.insert(merged_orders_t::Key(sort_key_t{k.o_orderkey, v.o_orderdate}, k), merged_orders_t(v));
+          },
+          [this](const lineitem_t::Key& k, const lineitem_t& v) {
+             merged.insert(merged_lineitem_t::Key(sort_key_t{k.l_orderkey, Timestamp{0}}, k), merged_lineitem_t(v));
+          },
+          [this](const view_t::Key& k, const view_t& v) { merged.insert(merged_view_t::Key(k), merged_view_t(v)); });
    }
 
    // -------------------------------------------------------------

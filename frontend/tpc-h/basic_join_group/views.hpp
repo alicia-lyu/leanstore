@@ -68,7 +68,7 @@ struct merged_view_t : public merged_t<31, view_t, sort_key_t, ExtraID::PKID> {
       Key() = default;
       Key(Integer orderkey, Timestamp orderdate) : merged_t::Key{sort_key_t{orderkey, orderdate}, view_t::Key{orderkey, orderdate}} {}
       Key(const view_t::Key& pk) : merged_t::Key{sort_key_t{pk.o_orderkey, pk.o_orderdate}, pk} {}
-      Key(const sort_key_t& sk, view_t::Key&& pk) : merged_t::Key{sk, pk} {}
+      Key(const sort_key_t& sk, const view_t::Key& pk) : merged_t::Key{sk, pk} {}
    };
 };
 
@@ -81,7 +81,7 @@ struct merged_orders_t : public merged_t<31, orders_t, sort_key_t, ExtraID::PKID
    struct Key : public merged_t::Key {
       Key() = default;
       Key(Integer orderkey, Timestamp orderdate) : merged_t::Key{sort_key_t{orderkey, orderdate}, orders_t::Key{orderkey}} {}
-      Key(const sort_key_t& sk, orders_t::Key&& pk) : merged_t::Key{sk, pk} {}
+      Key(const sort_key_t& sk, const orders_t::Key& pk) : merged_t::Key{sk, pk} {}
    };
 };
 
@@ -94,7 +94,7 @@ struct merged_lineitem_t : public merged_t<31, lineitem_t, sort_key_t, ExtraID::
    struct Key : public merged_t::Key {
       Key() = default;
       Key(Integer orderkey, Timestamp orderdate) : merged_t::Key{sort_key_t{orderkey, orderdate}, lineitem_t::Key{orderkey, 1}} {}
-      Key(const sort_key_t& sk, lineitem_t::Key&& pk) : merged_t::Key{sk, pk} {}
+      Key(const sort_key_t& sk, const lineitem_t::Key& pk) : merged_t::Key{sk, pk} {}
    };
 };
 
