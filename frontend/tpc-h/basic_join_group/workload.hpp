@@ -50,20 +50,20 @@ class BasicJoinGroup
       auto nationkey = workload.getNationID();
       auto regionkey = workload.getRegionID();
 
-      workload.part.scan(part_t::Key{partkey}, [&](const part_t&) { return false; }, [&]() {});
-      workload.supplier.scan(supplier_t::Key{supplierkey}, [&](const supplier_t&) { return false; }, [&]() {});
-      workload.partsupp.scan(partsupp_t::Key{partkey, supplierkey}, [&](const partsupp_t&) { return false; }, [&]() {});
-      workload.customer.scan(customerh_t::Key{customerkey}, [&](const customerh_t&) { return false; }, [&]() {});
-      workload.nation.scan(nation_t::Key{nationkey}, [&](const nation_t&) { return false; }, [&]() {});
-      workload.region.scan(region_t::Key{regionkey}, [&](const region_t&) { return false; }, [&]() {});
+      workload.part.scan(part_t::Key{partkey}, [](const part_t::Key&, const part_t&) { return false; }, []() {});
+      workload.supplier.scan(supplier_t::Key{supplierkey}, [](const supplier_t::Key&, const supplier_t&) { return false; }, []() {});
+      workload.partsupp.scan(partsupp_t::Key{partkey, supplierkey}, [](const partsupp_t::Key&, const partsupp_t&) { return false; }, []() {});
+      workload.customer.scan(customerh_t::Key{customerkey}, [](const customerh_t::Key&, const customerh_t&) { return false; }, []() {});
+      workload.nation.scan(nation_t::Key{nationkey}, [](const nation_t::Key&, const nation_t&) { return false; }, []() {});
+      workload.region.scan(region_t::Key{regionkey}, [](const region_t::Key&, const region_t&) { return false; }, []() {});
    }
 
    void point_lookups_for_view()
    {
       point_lookups_template([this](Integer orderkey) {
-         orders.scan(orders_t::Key{orderkey}, [&](const orders_t&) { return false; }, [&]() {});
-         lineitem.scan(lineitem_t::Key{orderkey, 1}, [&](const lineitem_t&) { return false; }, [&]() {});
-         view.scan(view_t::Key{orderkey, Timestamp{0}}, [&](const view_t&) { return false; }, [&]() {});
+         orders.scan(orders_t::Key{orderkey}, [&](const orders_t::Key&, const orders_t&) { return false; }, [&]() {});
+         lineitem.scan(lineitem_t::Key{orderkey, 1}, [&](const lineitem_t::Key&, const lineitem_t&) { return false; }, [&]() {});
+         view.scan(view_t::Key{orderkey, Timestamp{0}}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
       });
    }
 
@@ -79,9 +79,9 @@ class BasicJoinGroup
                break;
             auto& [k, v] = *kv;
 
-            std::visit(overloaded{[&](const merged_orders_t::Key&) { curr_orderkey = k.jk.orderkey; },
-                                  [&](const merged_lineitem_t::Key&) { curr_orderkey = k.jk.orderkey; },
-                                  [&](const merged_view_t::Key&) { curr_orderkey = k.jk.orderkey; }},
+            std::visit(overloaded{[&](const merged_orders_t::Key& actual_key) { curr_orderkey = actual_key.jk.orderkey; },
+                                  [&](const merged_lineitem_t::Key& actual_key) { curr_orderkey = actual_key.jk.orderkey; },
+                                  [&](const merged_view_t::Key& actual_key) { curr_orderkey = actual_key.jk.orderkey; }},
                        k);
          }
       });
@@ -125,6 +125,7 @@ class BasicJoinGroup
          if (kv == std::nullopt)
             break;
          TPCH::inspect_produced("Enumerating merged: ", produced);
+         orderkey++;
       }
       std::cout << "\rEnumerating merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
@@ -158,10 +159,16 @@ class BasicJoinGroup
                           std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_lineitem,
                           std::function<void(const view_t::Key&, const view_t&)> insert_view)
    {
-      auto order_v = orders_t::generateRandomRecord([this](Integer) { return workload.getCustomerID(); });
-      insert_orders(orders_t::Key{rand_orderkey}, order_v);
-      auto lineitem_cnt = workload.load_lineitems_1order(insert_lineitem, rand_orderkey);
-      insert_view(view_t::Key{rand_orderkey, Timestamp{order_v.o_orderdate}}, view_t(lineitem_cnt));
+      auto new_orderkey = workload.last_order_id + 1;
+      auto order_v = orders_t::generateRandomRecord([this]() { return workload.getCustomerID(); });
+
+      insert_orders(orders_t::Key{new_orderkey}, order_v);
+
+      auto lineitem_cnt = workload.load_lineitems_1order(insert_lineitem, new_orderkey);
+
+      insert_view(view_t::Key{new_orderkey, Timestamp{order_v.o_orderdate}}, view_t{lineitem_cnt});
+
+      workload.last_order_id = new_orderkey;
    }
 
    void maintain_view()
@@ -199,23 +206,23 @@ class BasicJoinGroup
          if (kv == std::nullopt)
             break;
          auto& [lk, lv] = *kv;
-         merged.insert(typename merged_lineitem_t::Key(lk), merged_lineitem_t(lv));
-         auto& [ok, ov] = *kv;
-         if (curr_orderkey != ok.l_orderkey) {
-            auto& [k, v] = orders_scanner->next().value();
-            merged.insert(typename merged_orders_t::Key(ok), merged_orders_t(ov));
+         merged.insert(typename merged_lineitem_t::Key(sort_key_t{lk.l_orderkey, Timestamp{0}}, lk), merged_lineitem_t(lv));
+         if (curr_orderkey != lk.l_orderkey) {
+            auto [ok, ov] = orders_scanner->next().value();
+            merged.insert(typename merged_orders_t::Key(sort_key_t{curr_orderkey, ov.o_orderdate}, ok), merged_orders_t(ov));
             if (curr_orderkey != 0) {
-               view_t::Key k_new(curr_orderkey, v.o_orderdate);
+               view_t::Key k_new{curr_orderkey, ov.o_orderdate};
                view_t v_new{count};
                view.insert(k_new, v_new);
                merged.insert(typename merged_view_t::Key(k_new), merged_view_t(v_new));
             }
-            curr_orderkey = k.l_orderkey;
+            curr_orderkey = ok.o_orderkey;
             count = 0;
          }
          count++;
       }
       std::map<std::string, double> sizes = {{"view", view.size() + orders.size() + lineitem.size()}, {"merged", merged.size()}};
+      logger.log_sizes(sizes);
    }
 };
 }  // namespace basic_join_group
