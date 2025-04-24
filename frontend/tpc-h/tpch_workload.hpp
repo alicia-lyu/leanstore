@@ -264,24 +264,30 @@ struct TPCHWorkload {
    void loadLineitem(std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_func, Integer order_start, Integer order_end)
    {
       for (Integer i = order_start; i <= order_end; i++) {
-         Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
-         for (Integer j = 1; j <= lineitem_cnt; j++) {
-            // look up partsupp
-            auto p = urand(1, last_part_id);
-            auto s = urand(1, last_supplier_id);
-            auto start_key = partsupp_t::Key{p, s};
-            partsupp.scan(
-                start_key,
-                [&](const partsupp_t::Key& k, const partsupp_t&) {
-                   p = k.ps_partkey;
-                   s = k.ps_suppkey;
-                   // LATER: each ps pair does not have uniform chance of being selected
-                   return false;
-                },
-                []() {});
-            insert_func(lineitem_t::Key{i, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
-         }
+         load_lineitems_1order(insert_func, i);
       }
+   }
+
+   int load_lineitems_1order(std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_func, Integer orderkey)
+   {
+      Integer lineitem_cnt = urand(1, LINEITEM_SCALE / ORDERS_SCALE * 2 - 1);
+      for (Integer j = 1; j <= lineitem_cnt; j++) {
+         // look up partsupp
+         auto p = urand(1, last_part_id);
+         auto s = urand(1, last_supplier_id);
+         auto start_key = partsupp_t::Key{p, s};
+         partsupp.scan(
+             start_key,
+             [&](const partsupp_t::Key& k, const partsupp_t&) {
+                p = k.ps_partkey;
+                s = k.ps_suppkey;
+                // LATER: each ps pair does not have uniform chance of being selected
+                return false;
+             },
+             []() {});
+         insert_func(lineitem_t::Key{orderkey, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
+      }
+      return lineitem_cnt;
    }
 
    void loadLineitem(Integer order_start = 1, Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)

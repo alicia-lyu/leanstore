@@ -14,7 +14,7 @@ import re
 @dataclass(frozen=True)
 class Config:
     build_dirs = ["build", "build-debug"]
-    exec_names = ["basic_join", "basic_group", "basic_group_variant"]
+    exec_names = ["basic_join", "basic_group", "basic_group_variant", "basic_join_group"]
     numjobs: str = "$(NUMJOBS)"
     cmake_options: str = "$(CMAKE_OPTIONS)"
     cmake_debug: str = "$(CMAKE_DEBUG)"
