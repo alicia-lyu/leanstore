@@ -1,8 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <variant>
-#include <chrono>
 #include "../../shared/Adapter.hpp"
 #include "../logger.hpp"
 #include "../tables.hpp"
@@ -116,15 +116,6 @@ class BasicGroup
           });
    }
 
-   // queries
-   static void inspectIncrementProduced(const std::string& msg, long& produced)
-   {
-      if (produced % 1000 == 0) {
-         std::cout << "\r" << msg << (double)produced / 1000 << "k------------------------------------";
-      }
-      produced++;
-   }
-
    // -----------------------------------------------------------
    // ---------------------- QUERIES ----------------------------
    // Enumerate all aggregates of all parts
@@ -139,7 +130,7 @@ class BasicGroup
       view.scan(
           {},
           [&](const auto&, const auto&) {
-             inspectIncrementProduced("Enumerating materialized view: ", produced);
+             TPCH::inspect_produced("Enumerating materialized view: ", produced);
              return true;
           },
           [&]() {});
@@ -156,9 +147,21 @@ class BasicGroup
       auto start = std::chrono::high_resolution_clock::now();
       [[maybe_unused]] long produced = 0;
       auto scanner = mergedBasicGroup.getScanner();
-      scanner->template seekForPrev<merged_view_option_t>(typename merged_view_option_t::Key(0)); // TODO seek for scattered summary rows, scan for collocated summary rows
+      auto partkey = 1;
+      auto start_key = typename merged_view_option_t::Key(partkey);
+      if (std::is_same_v<decltype(start_key.jk), sort_key_variant_t>)
+         scanner->template seekForPrev<merged_view_option_t>(start_key);
       while (true) {
-         auto kv = scanner->next();
+         std::optional<std::pair<merged_k_variant_t, merged_v_variant_t>> kv;
+         if (std::is_same_v<decltype(start_key.jk), sort_key_variant_t>)
+            kv = scanner->next();
+         else
+         {
+            bool ret = scanner->template seekTyped<merged_view_option_t>(typename merged_view_option_t::Key(++partkey));
+            if (!ret) break;
+            kv = scanner->current();
+         }
+            
          if (kv == std::nullopt)
             break;
          auto& [k, v] = *kv;
@@ -169,7 +172,7 @@ class BasicGroup
                                   [[maybe_unused]] double avg_supplycost = aggregates.payload.sum_supplycost / aggregates.payload.count_partsupp;
                                }},
                     v);
-         inspectIncrementProduced("Enumerating merged: ", produced);
+         TPCH::inspect_produced("Enumerating merged: ", produced);
       }
       std::cout << "\rEnumerating merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();

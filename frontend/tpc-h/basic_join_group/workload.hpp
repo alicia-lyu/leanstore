@@ -118,9 +118,11 @@ class BasicJoinGroup
       auto scanner = merged.getScanner();
       Integer orderkey = 1;
       while (true) {
-         scanner->template seekTyped<merged_view_t>(
+         auto ret = scanner->template seekTyped<merged_view_t>(
              typename merged_view_t::Key(orderkey, Timestamp{1}));  // timestamp 1 to skip lineitems, each orderkey has a unique timestamp, expect to
-                                                                    // land on merged_orders_t, whatever the timestamp is, scan only 1 extra record
+         // land on merged_orders_t, whatever the timestamp is, scan only 1 extra record
+         if (ret == false)
+            break;
          auto kv = scanner->current();
          if (kv == std::nullopt)
             break;
@@ -201,6 +203,7 @@ class BasicJoinGroup
       auto orders_scanner = workload.orders.getScanner();
       Integer curr_orderkey = 0;
       Integer count = 0;
+      long produced = 0;
       while (true) {
          auto kv = lineitem_scanner->next();
          if (kv == std::nullopt)
@@ -220,6 +223,7 @@ class BasicJoinGroup
             count = 0;
          }
          count++;
+         TPCH::inspect_produced("Loading all options: ", produced);
       }
       std::map<std::string, double> sizes = {{"view", view.size() + orders.size() + lineitem.size()}, {"merged", merged.size()}};
       logger.log_sizes(sizes);
