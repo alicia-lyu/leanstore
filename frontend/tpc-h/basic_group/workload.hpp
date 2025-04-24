@@ -15,13 +15,6 @@
 // FROM PartSupp
 // GROUP BY partkey;
 
-template <class... Ts>
-struct overloaded : Ts... {
-   using Ts::operator()...;
-};
-template <class... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
-
 namespace basic_group
 {
 template <template <typename> class AdapterType,
@@ -163,7 +156,7 @@ class BasicGroup
       auto start = std::chrono::high_resolution_clock::now();
       [[maybe_unused]] long produced = 0;
       auto scanner = mergedBasicGroup.getScanner();
-      scanner->template seekForPrev<merged_view_option_t>(typename merged_view_option_t::Key(0));
+      scanner->template seekForPrev<merged_view_option_t>(typename merged_view_option_t::Key(0)); // TODO seek for scattered summary rows, scan for collocated summary rows
       while (true) {
          auto kv = scanner->next();
          if (kv == std::nullopt)

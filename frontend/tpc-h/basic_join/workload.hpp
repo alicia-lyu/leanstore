@@ -12,13 +12,6 @@
 // FROM Lineitem l, PartSupp ps, Part p
 // WHERE l.partkey = ps.partkey AND l.partkey = p.partkey AND l.suppkey = ps.suppkey;
 
-template <class... Ts>
-struct overloaded : Ts... {
-   using Ts::operator()...;
-};
-template <class... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
-
 namespace basic_join
 {
 template <template <typename> class AdapterType, template <typename...> class MergedAdapterType, template <typename> class ScannerType>
@@ -145,17 +138,11 @@ class BasicJoin
       logger.reset();
       std::cout << "BasicJoin::queryByView()" << std::endl;
       [[maybe_unused]] long produced = 0;
-      auto inspect_produced = [&](const std::string& msg) {
-         if (produced % 100 == 0) {
-            std::cout << "\r" << msg << (double)produced / 1000 << "k------------------------------------";
-         }
-         produced++;
-      };
       auto start = std::chrono::high_resolution_clock::now();
       joinedPPsL.scan(
           {},
           [&](const auto&, const auto&) {
-             inspect_produced("Enumerating materialized view: ");
+             TPCH::inspect_produced("Enumerating materialized view: ", produced);
              return true;
           },
           [&]() {});

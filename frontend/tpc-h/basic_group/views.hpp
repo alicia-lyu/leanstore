@@ -44,7 +44,7 @@ struct view_t {
    static view_t generateRandomRecord() { return view_t({randutils::urand(1, 10000), randutils::randomNumeric(0.0000, 100.0000)}); }
 };
 
-struct merged_view_t : public merged_t<22, view_t, sort_key_t, ExtraID::NONE> {
+struct merged_view_t : public merged_t<23, view_t, sort_key_t, ExtraID::NONE> {
    template <typename... Args>
    explicit merged_view_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
    {
@@ -70,7 +70,7 @@ struct merged_partsupp_t : public merged_t<23, partsupp_t, sort_key_t, ExtraID::
    };
 };
 
-struct merged_view_variant_t : public merged_t<22, view_t, sort_key_variant_t, ExtraID::NONE> {
+struct merged_view_variant_t : public merged_t<23, view_t, sort_key_variant_t, ExtraID::NONE> {
    template <typename... Args>
    explicit merged_view_variant_t(Args&&... args) : merged_t{std::forward<Args>(args)...}
    {

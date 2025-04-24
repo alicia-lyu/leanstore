@@ -13,6 +13,13 @@
 
 DECLARE_int32(tpch_scale_factor);
 
+template <class... Ts>
+struct overloaded : Ts... {
+   using Ts::operator()...;
+};
+template <class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
 template <template <typename> class AdapterType>
 struct TPCHWorkload {
    Logger& logger;
@@ -342,5 +349,13 @@ struct TPCHWorkload {
                                              {"customer", customer.size()}, {"orders", orders.size()},     {"lineitem", lineitem.size()},
                                              {"nation", nation.size()},     {"region", region.size()}};
       logger.log_sizes(sizes);
+   }
+
+   static void inspect_produced(const std::string& msg, long& produced)
+   {
+      if (produced % 100 == 0) {
+         std::cout << "\r" << msg << (double)produced / 1000 << "k------------------------------------";
+      }
+      produced++;
    }
 };
