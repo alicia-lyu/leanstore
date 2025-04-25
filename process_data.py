@@ -40,4 +40,5 @@ def collect_data(exec):
 if __name__ == "__main__":
     collect_data("basic_join")
     collect_data("basic_group")
+    collect_data("basic_join_group")
     collect_data("basic_group_variant")

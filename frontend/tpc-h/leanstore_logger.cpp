@@ -1,7 +1,9 @@
 #include "leanstore_logger.hpp"
 #include <gflags/gflags.h>
 #include <filesystem>
+#include <string>
 #include <tabulate/table.hpp>
+#include "leanstore_executable_helper.hpp"
 #include "logger.hpp"
 
 void LeanStoreLogger::reset()
@@ -27,18 +29,45 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
    tx_console_header.push_back(to_string(column_name));
    tx_console_data.push_back(std::to_string(elapsed_or_tput));
 
-   tx_console_header.push_back("W MiB");
-   tx_console_data.push_back(bm_table.get("0", "w_mib"));
+   switch (column_name) {
+      case ColumnName::ELAPSED:
+         tx_console_header.push_back("W MiB");
+         tx_console_data.push_back(bm_table.get("0", "w_mib"));
 
-   tx_console_header.push_back("R MiB");
-   tx_console_data.push_back(bm_table.get("0", "r_mib"));
+         tx_console_header.push_back("R MiB");
+         tx_console_data.push_back(bm_table.get("0", "r_mib"));
+
+         for (auto& [t_name, worker_e] : cpu_table.workers_events) {
+            long cycles = static_cast<long>(worker_e.at("cycle"));
+            if (cycles == 0)
+               continue;
+            tx_console_header.push_back(t_name + " Cycles");
+            tx_console_data.push_back(std::to_string(cycles));
+         }
+         break;
+      case ColumnName::TPUT:
+         tx_console_header.push_back("W MiB / TX");
+         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "w_mib")) / FLAGS_tx_count));
+
+         tx_console_header.push_back("R MiB / TX");
+         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "r_mib")) / FLAGS_tx_count));
+
+         for (auto& [t_name, worker_e] : cpu_table.workers_events) {
+            long cycles = static_cast<long>(worker_e.at("cycle"));
+            if (cycles == 0)
+               continue;
+            tx_console_header.push_back(t_name + " Cycles / TX");
+            tx_console_data.push_back(std::to_string(cycles / FLAGS_tx_count));
+         }
+         break;
+      default:
+         break;
+   }
 
    for (auto& [t_name, worker_e] : cpu_table.workers_events) {
       long cycles = static_cast<long>(worker_e.at("cycle"));
       if (cycles == 0)
          continue;
-      tx_console_header.push_back(t_name + " Cycles");
-      tx_console_data.push_back(std::to_string(cycles));
       double cpu_utilization = std::min(worker_e.at("CPU"), 1.0);
       tx_console_header.push_back(t_name + " CPU Util (%)");
       // 2 decimal places

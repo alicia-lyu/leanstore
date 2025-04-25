@@ -12,6 +12,7 @@ using namespace leanstore;
 using namespace basic_join_group;
 
 DEFINE_int32(tpch_scale_factor, 1000, "TPC-H scale factor");
+DEFINE_int32(tx_count, 1000, "Number of transactions to run");
 
 int main(int argc, char** argv)
 {
@@ -65,7 +66,7 @@ int main(int argc, char** argv)
       tpch.recover_last_ids();
       
       WARMUP_THEN_TXS(tpchBasicJoinGroup, tpch, crm, isolation_level, point_lookups_for_merged, query_by_merged, point_query_by_merged,
-                      maintain_view);
-      WARMUP_THEN_TXS(tpchBasicJoinGroup, tpch, crm, isolation_level, point_lookups_for_view, query_by_view, point_query_by_view, maintain_view);
+                      maintain_view, "merged");
+      WARMUP_THEN_TXS(tpchBasicJoinGroup, tpch, crm, isolation_level, point_lookups_for_view, query_by_view, point_query_by_view, maintain_view, "view");
    }
 }

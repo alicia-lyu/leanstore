@@ -17,10 +17,6 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 # Experiment flags
 dram                := 1
 scale               := 10
-leanstore_flags     := --dram_gib=$(dram) --vi=false --mv=false \
-                       --isolation_level=ser --optimistic_scan=false \
-                       --pp_threads=1 --csv_truncate=false --worker_threads=2 \
-                       --tpch_scale_factor=$(scale)
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
@@ -40,11 +36,12 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	$(MAKE) basic_join scale=100 dram=4 # in-memory
-	$(MAKE) basic_join scale=100 dram=1 # disk-based
-	#(MAKE) basic_group scale=100 dram=1 # in-memory
-	#(MAKE) basic_group scale=100 dram=0.2 # disk-based
-	#(MAKE) basic_group_variant scale=100 dram=1 # in-memory
-	#(MAKE) basic_group_variant scale=100 dram=0.2 # disk-based
-	$(MAKE) basic_join_group scale=100 dram=2 # in-memory
-	$(MAKE) basic_join_group scale=100 dram=0.5 # disk-based
+	-$(MAKE) basic_join_group scale=100 dram=2 # in-memory
+	-$(MAKE) basic_join_group scale=100 dram=0.5 # disk-based
+	-$(MAKE) basic_group scale=100 dram=1 # in-memory
+	-$(MAKE) basic_group scale=100 dram=0.2 # disk-based
+	-$(MAKE) basic_join scale=100 dram=4 # in-memory
+	-$(MAKE) basic_join scale=100 dram=1 # disk-based
+	-$(MAKE) basic_group_variant scale=100 dram=1 # in-memory
+	-$(MAKE) basic_group_variant scale=100 dram=0.2 # disk-based
+	
