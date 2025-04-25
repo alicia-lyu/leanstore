@@ -7,7 +7,9 @@
 #include "leanstore/utils/JumpMU.hpp"
 #include "tpch_workload.hpp"
 
-#define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, pointQueryFunc, maintainFunc)                     \
+DECLARE_int32(tx_count);
+
+#define WARMUP_THEN_TXS(tpchQuery, tpch, crm, isolation_level, lookupFunc, queryFunc, pointQueryFunc, maintainFunc, suffix)                     \
    {                                                                                                                                    \
       atomic<u64> keep_running = true;                                                                                                  \
       atomic<u64> lookup_count = 0;                                                                                                     \
@@ -18,7 +20,7 @@
       sleep(10);                                                                                                                        \
       crm.scheduleJobSync(1, [&]() {                                                                                                    \
          runTXPhase([&]() { tpchQuery.queryFunc(); }, [&]() { tpchQuery.pointQueryFunc(); }, [&]() { tpchQuery.maintainFunc(); },       \
-                    [&]() { tpchQuery.refresh_rand_keys(); }, running_threads_counter, isolation_level, tpch);                          \
+                    [&]() { tpchQuery.refresh_rand_keys(); }, running_threads_counter, isolation_level, tpch, suffix);                          \
       });                                                                                                                               \
       keep_running = false;                                                                                                             \
       while (running_threads_counter) {                                                                                                 \
@@ -62,7 +64,9 @@ inline void runTXPhase(std::function<void()> query_cb,
                        std::function<void()> refresh_rand_keys_cb,
                        atomic<u64>& running_threads_counter,
                        leanstore::TX_ISOLATION_LEVEL isolation_level,
-                       TPCHWorkload<LeanStoreAdapter>& tpch)
+                       TPCHWorkload<LeanStoreAdapter>& tpch,
+                       std::string suffix
+                     )
 {
    running_threads_counter++;
    cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
@@ -71,7 +75,7 @@ inline void runTXPhase(std::function<void()> query_cb,
 
    auto pq_start = std::chrono::high_resolution_clock::now();
    atomic<u64> point_query_count = 0;
-   while (point_query_count < 1000) {
+   while (point_query_count < FLAGS_tx_count) {
       jumpmuTry()
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
@@ -91,11 +95,11 @@ inline void runTXPhase(std::function<void()> query_cb,
    auto pq_end = std::chrono::high_resolution_clock::now();
    auto pq_duration = std::chrono::duration_cast<std::chrono::microseconds>(pq_end - pq_start).count();
    double point_query_tput = (double)point_query_count.load() / pq_duration * 1e6;
-   tpch.logger.log(static_cast<long>(point_query_tput), ColumnName::TPUT, "point_query");
+   tpch.logger.log(static_cast<long>(point_query_tput), ColumnName::TPUT, "point-query-" + suffix);
 
    auto maintain_start = std::chrono::high_resolution_clock::now();
    atomic<u64> maintain_count = 0;
-   while (maintain_count < 1000) {
+   while (maintain_count < FLAGS_tx_count) {
       jumpmuTry()
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
@@ -115,7 +119,7 @@ inline void runTXPhase(std::function<void()> query_cb,
    auto maintain_end = std::chrono::high_resolution_clock::now();
    auto maintain_duration = std::chrono::duration_cast<std::chrono::microseconds>(maintain_end - maintain_start).count();
    double maint_tput = (double)maintain_count.load() / maintain_duration * 1e6;
-   tpch.logger.log(static_cast<long>(maint_tput), ColumnName::TPUT, "maintain");
+   tpch.logger.log(static_cast<long>(maint_tput), ColumnName::TPUT, "maintain-" + suffix);
 
    cr::Worker::my().shutdown();
    running_threads_counter--;
