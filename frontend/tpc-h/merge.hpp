@@ -127,7 +127,7 @@ struct PremergedJoin {
       // if (current_jk != jk) join the cached records
       int curr_joined;
       if (current_jk != jk)
-         auto curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
+         curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
       else
          curr_joined = 0;
       updateAndPrintProduced(curr_joined);

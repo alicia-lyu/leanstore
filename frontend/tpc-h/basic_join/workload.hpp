@@ -255,18 +255,15 @@ class BasicJoin
    // ---------------------- MAINTENANCE --------------------------
    // // Add 1 new part & several partsupp & one order/lineitem for this part
 
-   void maintainTemplate(std::function<Integer(Integer)> find_valid_supplier_id,
-                         std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
+   void maintainTemplate(std::function<void(const orders_t::Key&, const orders_t&)> order_insert_func,
                          std::function<void(const lineitem_t::Key&, const lineitem_t&)> lineitem_insert_func,
                          std::function<void(const part_t::Key&, const part_t&)> part_insert_func,
                          std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func)
    {
       auto part_id = workload.last_part_id + 1;
       auto o_id = workload.last_order_id + 1;
-      // Integer s_id = find_valid_supplier_id(part_id);
 
       workload.loadPart(part_insert_func, part_id, part_id);
-      // workload.loadPartsupp(partsupp_insert_func, part_id, part_id);
 
       size_t supplier_cnt = urand(1, workload.PARTSUPP_SCALE / workload.PART_SCALE * 2 - 1);
       std::set<Integer> suppliers = {};
@@ -292,18 +289,6 @@ class BasicJoin
    {
       // sortedLineitem, part, partsupp are seen as discarded and do not contribute to database size
       maintainTemplate(
-          [this](Integer part_id) {
-             auto scanner = mergedPPsL.getScanner();
-             scanner->template seekTyped<merged_partsupp_t>(typename merged_partsupp_t::Key{join_key_t{part_id, 1}, partsupp_t::Key{part_id, 1}});
-             auto kv = scanner->current();
-             assert(kv.has_value());
-             auto& [k, v] = *kv;
-             Integer s_id;
-             std::visit(overloaded{[&](const merged_partsupp_t::Key& actual_key) { s_id = actual_key.jk.suppkey; },
-                                   [&](const merged_part_t::Key&) { UNREACHABLE(); }, [&](const merged_lineitem_t::Key&) { UNREACHABLE(); }},
-                        k);
-             return s_id;
-          },
           [this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
           [this](const lineitem_t::Key& k, const lineitem_t& v) {
              workload.lineitem.insert(k, v);
@@ -333,18 +318,6 @@ class BasicJoin
    void maintainBase()
    {
       maintainTemplate(
-          [this](Integer part_id) {
-             Integer s_id;
-             partsupp.scan(
-                 partsupp_t::Key{part_id, 1},
-                 [&](const partsupp_t::Key& k, const partsupp_t&) {
-                    assert(k.ps_partkey == part_id);
-                    s_id = k.ps_suppkey;
-                    return false;
-                 },
-                 []() {});
-             return s_id;
-          },
           [this](const orders_t::Key& k, const orders_t& v) { workload.orders.insert(k, v); },
           [this](const lineitem_t::Key& k, const lineitem_t& v) {
              workload.lineitem.insert(k, v);
