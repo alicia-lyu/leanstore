@@ -219,7 +219,9 @@ class BasicGroup
                          std::function<void(const Integer, const Numeric, leanstore::UpdateSameSizeInPlaceDescriptor&)>
                              agg_update_func)  // increment count, add second argument to supply cost
    {
-      auto [part_id, supplier_id] = get_part_supplier_id();
+      // auto [part_id, supplier_id] = get_part_supplier_id();
+      auto part_id = rand_partkey;
+      auto supplier_id = rand_supplierkey; // WARNING: breaking referential integrity
 
       auto rec = partsupp_t::generateRandomRecord();
       partsupp_insert_func(partsupp_t::Key({part_id, supplier_id}), rec);
@@ -369,6 +371,7 @@ class BasicGroup
 
    void log_sizes()
    {
+      workload.log_sizes();
       std::map<std::string, double> sizes = {{"view", view.size() + partsupp.size()}, {"merged", mergedBasicGroup.size()}};
 
       logger.log_sizes(sizes);

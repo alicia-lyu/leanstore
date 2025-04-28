@@ -64,9 +64,9 @@ int main(int argc, char** argv)
       });
    } else {
       tpch.recover_last_ids();
-      
-      WARMUP_THEN_TXS(tpchBasicJoinGroup, tpch, crm, isolation_level, point_lookups_for_merged, query_by_merged, point_query_by_merged,
-                      maintain_view, "merged");
+      tpchBasicJoinGroup.log_sizes();
       WARMUP_THEN_TXS(tpchBasicJoinGroup, tpch, crm, isolation_level, point_lookups_for_view, query_by_view, point_query_by_view, maintain_view, "view");
+      WARMUP_THEN_TXS(tpchBasicJoinGroup, tpch, crm, isolation_level, point_lookups_for_merged, query_by_merged, point_query_by_merged,
+                      maintain_merged, "merged");
    }
 }
