@@ -66,6 +66,7 @@ int main(int argc, char** argv)
       });
    } else {
       tpch.recover_last_ids();
+      tpchBasicJoin.log_sizes();
 
       WARMUP_THEN_TXS(tpchBasicJoin, tpch, crm, isolation_level, pointLookupsForBase, queryByBase, pointQueryByBase, maintainBase, "base");
 

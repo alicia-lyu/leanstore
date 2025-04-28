@@ -40,8 +40,7 @@ temp:
 	-$(MAKE) basic_join_group scale=100 dram=0.5 # disk-based
 	-$(MAKE) basic_group scale=100 dram=1 # in-memory
 	-$(MAKE) basic_group scale=100 dram=0.2 # disk-based
-	-$(MAKE) basic_join scale=100 dram=4 # in-memory
-	-$(MAKE) basic_join scale=100 dram=1 # disk-based
 	-$(MAKE) basic_group_variant scale=100 dram=1 # in-memory
 	-$(MAKE) basic_group_variant scale=100 dram=0.2 # disk-based
-	
+	-$(MAKE) basic_join scale=100 dram=4 # in-memory
+	-$(MAKE) basic_join scale=100 dram=1 # disk-based

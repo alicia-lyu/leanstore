@@ -262,11 +262,29 @@ class BasicJoin
                          std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func)
    {
       auto part_id = workload.last_part_id + 1;
-      workload.loadPart(part_insert_func, part_id, part_id);
-      workload.loadPartsupp(partsupp_insert_func, part_id, part_id);
       auto o_id = workload.last_order_id + 1;
-      Integer s_id = find_valid_supplier_id(part_id);
-      lineitem_insert_func(lineitem_t::Key{o_id, 1}, lineitem_t::generateRandomRecord([part_id]() { return part_id; }, [s_id]() { return s_id; }));
+      // Integer s_id = find_valid_supplier_id(part_id);
+
+      workload.loadPart(part_insert_func, part_id, part_id);
+      // workload.loadPartsupp(partsupp_insert_func, part_id, part_id);
+
+      size_t supplier_cnt = urand(1, workload.PARTSUPP_SCALE / workload.PART_SCALE * 2 - 1);
+      std::set<Integer> suppliers = {};
+      while (suppliers.size() < supplier_cnt) {
+         Integer supplier_id = urand(1, workload.last_supplier_id);
+         suppliers.insert(supplier_id);
+      }
+      for (auto& s : suppliers) {
+         // load 1 partsupp
+         partsupp_insert_func(partsupp_t::Key{part_id, s}, partsupp_t::generateRandomRecord());
+         // load lineitems
+         Integer lineitem_cnt_ps = urand(0, workload.LINEITEM_SCALE / workload.PARTSUPP_SCALE * 2);
+         for (Integer l = 1; l <= lineitem_cnt_ps; l++) {
+            auto rec = lineitem_t::generateRandomRecord([part_id]() { return part_id; }, [s]() { return s; });
+            lineitem_insert_func(lineitem_t::Key{o_id, l}, rec);
+         }
+      }
+      
       workload.loadOrders(order_insert_func, o_id, o_id);
    }
 
@@ -308,8 +326,7 @@ class BasicJoin
    void maintainView()
    {
       ViewMaintainer<AdapterType, MergedAdapterType, ScannerType> vm(
-          [this](auto&&... args) { return this->maintainTemplate(std::forward<decltype(args)>(args)...); },
-          workload, sortedLineitem, joinedPPsL);
+          [this](auto&&... args) { return this->maintainTemplate(std::forward<decltype(args)>(args)...); }, workload, sortedLineitem, joinedPPsL);
       vm.run();
    }
 
@@ -391,6 +408,7 @@ class BasicJoin
 
    void log_sizes()
    {
+      workload.log_sizes();
       std::map<std::string, double> sizes = {{"view", joinedPPsL.size()},
                                              {"sortedLineitem", sortedLineitem.size()},
                                              {"merged", mergedPPsL.size()},

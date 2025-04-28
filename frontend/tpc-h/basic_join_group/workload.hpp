@@ -166,7 +166,15 @@ class BasicJoinGroup
 
       insert_orders(orders_t::Key{new_orderkey}, order_v);
 
-      auto lineitem_cnt = workload.load_lineitems_1order(insert_lineitem, new_orderkey);
+      // auto lineitem_cnt = workload.load_lineitems_1order(insert_lineitem, new_orderkey);
+
+      Integer lineitem_cnt = urand(1, workload.LINEITEM_SCALE / workload.ORDERS_SCALE * 2 - 1);
+      for (Integer j = 1; j <= lineitem_cnt; j++) {
+         // look up partsupp
+         auto p = urand(1, workload.last_part_id); // WARNING: breaking referential integrity
+         auto s = urand(1, workload.last_supplier_id);
+         insert_lineitem(lineitem_t::Key{new_orderkey, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
+      }
 
       insert_view(view_t::Key{new_orderkey, Timestamp{order_v.o_orderdate}}, view_t{lineitem_cnt});
 
@@ -225,6 +233,12 @@ class BasicJoinGroup
          count++;
          TPCH::inspect_produced("Loading all options: ", produced);
       }
+      log_sizes();
+   }
+
+   void log_sizes()
+   {
+      workload.log_sizes();
       std::map<std::string, double> sizes = {{"view", view.size() + orders.size() + lineitem.size()}, {"merged", merged.size()}};
       logger.log_sizes(sizes);
    }

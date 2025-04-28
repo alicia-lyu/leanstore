@@ -2,7 +2,8 @@ import os, re
 
 def collect_data(exec):
     p = f"./build/{exec}"
-    sum_f = open(f"{p}.csv", "w")
+    sum_queries = open(f"{p}_query.csv", "w")
+    sum_txs = open(f"{p}_tx.csv", "w")
     for exp in os.listdir(p):
         pattern = r"([\d.]+)-in-([\d.]+)"
         m = re.match(pattern, exp)
@@ -28,14 +29,24 @@ def collect_data(exec):
                 continue
             tx = match.group(1)
             method = match.group(2)
-            with open(os.path.join(p, exp, d), "r") as f:
-                if sum_f.tell() == 0:
-                    sum_f.write("method,tx,dram,scale,")
-                    header = f.readline().strip().strip(",")
-                    sum_f.write(header + ",size(mib)\n")
-                latest_line = f.readlines()[-1].strip().strip(",")
-                sum_f.write(f"{method},{tx},{dram},{scale}," + latest_line + f",{size_dict[method]}\n")
-    sum_f.close()
+            if tx == "query":
+                with open(os.path.join(p, exp, d), "r") as f:
+                    if sum_queries.tell() == 0:
+                        sum_queries.write("method,tx,dram,scale,")
+                        header = f.readline().strip().strip(",")
+                        sum_queries.write(header + ",size(mib)\n")
+                    latest_line = f.readlines()[-1].strip().strip(",")
+                    sum_queries.write(f"{method},{tx},{dram},{scale}," + latest_line + f",{size_dict[method]}\n")
+            else:
+                with open(os.path.join(p, exp, d), "r") as f:
+                    if sum_txs.tell() == 0:
+                        sum_txs.write("method,tx,dram,scale,")
+                        header = f.readline().strip().strip(",")
+                        sum_txs.write(header + ",size(mib)\n")
+                    latest_line = f.readlines()[-1].strip().strip(",")
+                    sum_txs.write(f"{method},{tx},{dram},{scale}," + latest_line + f",{size_dict[method]}\n")
+    sum_queries.close()
+    sum_txs.close()
     
 if __name__ == "__main__":
     collect_data("basic_join")

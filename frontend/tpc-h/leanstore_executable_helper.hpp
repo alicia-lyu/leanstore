@@ -74,7 +74,7 @@ inline void runTXPhase(std::function<void()> query_cb,
    cr::Worker::my().commitTX();
 
    auto pq_start = std::chrono::high_resolution_clock::now();
-   atomic<u64> point_query_count = 0;
+   atomic<int> point_query_count = 0;
    while (point_query_count < FLAGS_tx_count) {
       jumpmuTry()
       {
@@ -87,9 +87,9 @@ inline void runTXPhase(std::function<void()> query_cb,
       }
       jumpmuCatchNoPrint()
       {
-         std::cerr << "#" << point_query_count.load() << " point query failed." << std::endl;
+         std::cerr << "#" << point_query_count.load() << " point query for " << suffix << "  failed." << std::endl;
       }
-      std::cout << "\r#" << point_query_count.load() << " point queries performed.";
+      std::cout << "\r#" << point_query_count.load() << " point queries for " << suffix << " performed.";
    }
    std::cout << std::endl;
    auto pq_end = std::chrono::high_resolution_clock::now();
@@ -98,7 +98,7 @@ inline void runTXPhase(std::function<void()> query_cb,
    tpch.logger.log(static_cast<long>(point_query_tput), ColumnName::TPUT, "point-query-" + suffix);
 
    auto maintain_start = std::chrono::high_resolution_clock::now();
-   atomic<u64> maintain_count = 0;
+   atomic<int> maintain_count = 0;
    while (maintain_count < FLAGS_tx_count) {
       jumpmuTry()
       {
@@ -111,9 +111,9 @@ inline void runTXPhase(std::function<void()> query_cb,
       }
       jumpmuCatchNoPrint()
       {
-         std::cerr << "#" << maintain_count.load() << " maintenance TX failed." << std::endl;
+         std::cerr << "#" << maintain_count.load() << " maintenance TX for " << suffix << " failed." << std::endl;
       }
-      std::cout << "\r#" << maintain_count.load() << " maintenance TXs performed.";
+      std::cout << "\r#" << maintain_count.load() << " maintenance TXs for " << suffix << " performed.";
    }
    std::cout << std::endl;
    auto maintain_end = std::chrono::high_resolution_clock::now();

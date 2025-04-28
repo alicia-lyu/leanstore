@@ -61,10 +61,11 @@ int run()
       });
    } else {
       tpch.recover_last_ids();
-
-      WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged, "merged");
+      tpchBasicGroup.log_sizes();
 
       WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView, "view");
+
+      WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged, "merged");
    }
    return 0;
 }
