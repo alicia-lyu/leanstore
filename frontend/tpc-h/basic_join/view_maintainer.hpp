@@ -47,13 +47,17 @@ class ViewMaintainer
       // 1. join only deltas
       run_joins({0, 1, 2}, {false, false, false});
       // 2. join two deltas + one base
-      run_joins({0, 1, 2}, {false, false, true});
-      run_joins({0, 1, 2}, {false, true, false});
-      run_joins({0, 1, 2}, {true, false, false});
+      run_joins({0, 1, 2}, {false, false, true}); // YES part as base: a part-supplier pair not seen before can use an existing part rather than a new one; new lineitems can use a new part-supplier pair that uses an existing part
+      // run_joins({0, 1, 2}, {false, true, false}); // NO partsupp as base: a part not seen before cannot be found in the previous state of the partsupp table
+      // run_joins({0, 1, 2}, {true, false, false}); // NO lineitem as base: part & part-supplier pair not seen before cannot appear in the previous state of the lineitem table
       // 3. join one delta + two bases
-      run_joins({0, 1, 2}, {false, true, true});
-      run_joins({0, 1, 2}, {true, false, true});
-      run_joins({0, 1, 2}, {true, true, false});
+      run_joins({0, 1, 2}, {false, true, true}); // NO part as delta: new parts cannot appear in the previous state of the partsupp table
+      // run_joins({0, 1, 2}, {true, false, true}); // NO partsupp as delta: new part-supplier pair cannot appear in the previous state of the lineitem table
+      // run_joins({0, 1, 2}, {true, true, false}); // YES lineitem as delta: new lineitems can use existing part-supplier pairs
+
+      for (auto const& [k, v] : delta_joinedPPsL_) {
+         view_.insert(k, v);
+      }
    }
 
   private:
@@ -68,10 +72,13 @@ class ViewMaintainer
    using PartEntry = std::tuple<part_t::Key, part_t>;
    using SuppEntry = std::tuple<partsupp_t::Key, partsupp_t>;
    using LineEntry = std::tuple<sorted_lineitem_t::Key, sorted_lineitem_t>;
+   using JoinedEntry = std::tuple<joinedPPsL_t::Key, joinedPPsL_t>;
 
    std::vector<PartEntry> delta_parts_;
    std::vector<SuppEntry> delta_partsupps_;
    std::vector<LineEntry> delta_lineitems_;
+
+   std::vector<JoinedEntry> delta_joinedPPsL_;
 
    part_t::Key start_partkey_;
 
@@ -130,6 +137,9 @@ class ViewMaintainer
 
    void run_joins(std::array<int, 3> tables, std::array<bool, 3> base)
    {
+      std::function<void(const joinedPPsL_t::Key&, const joinedPPsL_t&)> consume_joined = [this](const joinedPPsL_t::Key& k, const joinedPPsL_t& v) {
+         delta_joinedPPsL_.emplace_back(k, v);
+      };
       std::vector<std::function<HeapEntry<JoinKey>()>> sources;
       for (int idx : tables) {
          if (base[idx]) {
@@ -138,7 +148,7 @@ class ViewMaintainer
             sources.push_back(make_delta_source(idx));
          }
       }
-      MergeJoin<JoinKey, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t> merger(sources);
+      MergeJoin<JoinKey, joinedPPsL_t, part_t, partsupp_t, sorted_lineitem_t> merger(consume_joined, sources);
       merger.run();
    }
 

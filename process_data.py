@@ -30,21 +30,16 @@ def collect_data(exec):
             tx = match.group(1)
             method = match.group(2)
             if tx == "query":
-                with open(os.path.join(p, exp, d), "r") as f:
-                    if sum_queries.tell() == 0:
-                        sum_queries.write("method,tx,dram,scale,")
-                        header = f.readline().strip().strip(",")
-                        sum_queries.write(header + ",size(mib)\n")
-                    latest_line = f.readlines()[-1].strip().strip(",")
-                    sum_queries.write(f"{method},{tx},{dram},{scale}," + latest_line + f",{size_dict[method]}\n")
+                sum_f = sum_queries
             else:
-                with open(os.path.join(p, exp, d), "r") as f:
-                    if sum_txs.tell() == 0:
-                        sum_txs.write("method,tx,dram,scale,")
-                        header = f.readline().strip().strip(",")
-                        sum_txs.write(header + ",size(mib)\n")
-                    latest_line = f.readlines()[-1].strip().strip(",")
-                    sum_txs.write(f"{method},{tx},{dram},{scale}," + latest_line + f",{size_dict[method]}\n")
+                sum_f = sum_txs
+            with open(os.path.join(p, exp, d), "r") as f:
+                if sum_f.tell() == 0:
+                    sum_f.write("method,tx,dram,scale,")
+                    header = f.readline().strip().strip(",")
+                    sum_f.write(header + ",size(mib)\n")
+                latest_line = f.readlines()[-1].strip().strip(",")
+                sum_f.write(f"{method},{tx},{dram},{scale}," + latest_line + f",{size_dict[method]}\n")
     sum_queries.close()
     sum_txs.close()
     

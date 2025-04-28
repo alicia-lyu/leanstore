@@ -166,13 +166,11 @@ class BasicJoinGroup
 
       insert_orders(orders_t::Key{new_orderkey}, order_v);
 
-      // auto lineitem_cnt = workload.load_lineitems_1order(insert_lineitem, new_orderkey);
-
       Integer lineitem_cnt = urand(1, workload.LINEITEM_SCALE / workload.ORDERS_SCALE * 2 - 1);
       for (Integer j = 1; j <= lineitem_cnt; j++) {
          // look up partsupp
-         auto p = urand(1, workload.last_part_id); // WARNING: breaking referential integrity
-         auto s = urand(1, workload.last_supplier_id);
+         auto p = workload.getPartID(); // WARNING: breaking referential integrity
+         auto s = workload.getSupplierID();
          insert_lineitem(lineitem_t::Key{new_orderkey, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
       }
 
