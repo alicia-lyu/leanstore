@@ -28,8 +28,6 @@ class BasicJoin
    AdapterType<part_t>& part;
    AdapterType<partsupp_t>& partsupp;
 
-   Integer rand_partkey;
-   Integer rand_supplierkey;
 
   public:
    BasicJoin(TPCH& workload, merged_t& mbj, AdapterType<joinedPPsL_t>& jppsl, AdapterType<sorted_lineitem_t>& sl)
@@ -39,9 +37,7 @@ class BasicJoin
          sortedLineitem(sl),
          logger(workload.logger),
          part(workload.part),
-         partsupp(workload.partsupp),
-         rand_partkey(0),
-         rand_supplierkey(0)
+         partsupp(workload.partsupp)
    {
    }
 
@@ -196,16 +192,10 @@ class BasicJoin
    // ---------------------- POINT QUERIES ------------------------
    // Find all joined rows for the same join key
 
-   void refresh_rand_keys()
-   {
-      rand_partkey = workload.getPartID();
-      rand_supplierkey = workload.getSupplierID();
-   }
-
    void pointQueryByView()
    {
-      auto part_id = rand_partkey;
-      auto supplier_id = rand_supplierkey;
+      auto part_id = workload.getPartID();
+      auto supplier_id = workload.getSupplierID();
       int count = 0;
       joinedPPsL.scan(
           joinedPPsL_t::Key(join_key_t{part_id, supplier_id}, part_t::Key{part_id}, partsupp_t::Key{part_id, supplier_id}, sorted_lineitem_t::Key{}),
@@ -224,8 +214,8 @@ class BasicJoin
 
    void pointQueryByBase()
    {
-      auto part_id = rand_partkey;
-      auto supplier_id = rand_supplierkey;
+      auto part_id = workload.getPartID();
+      auto supplier_id = workload.getSupplierID();
       auto part_scanner = part.getScanner();
       auto partsupp_scanner = partsupp.getScanner();
       auto lineitem_scanner = sortedLineitem.getScanner();
@@ -243,8 +233,8 @@ class BasicJoin
 
    void pointQueryByMerged()
    {
-      auto part_id = rand_partkey;
-      auto supplier_id = rand_supplierkey;
+      auto part_id = workload.getPartID();
+      auto supplier_id = workload.getSupplierID();
       auto merged_scanner = mergedPPsL.getScanner();
       merged_scanner->seekJK(join_key_t{part_id, supplier_id});
       PremergedJoin<join_key_t, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t> merge(*merged_scanner);

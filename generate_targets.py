@@ -66,15 +66,18 @@ def image_file(exe: str) -> Path:
 def generate_build_rules() -> None:
     print_section("build executables")
     print("FORCE: ;")  # Dummy target to force the build
+    executables = []
     for bd in cfg.build_dirs:
         for exe in cfg.exec_names:
             exe_path = executable_path(bd, exe)
+            executables.append(exe_path)
             print(f"{exe_path}: FORCE")
             print(f'\t@echo "Building {exe_path}"')
             print(
                 f'\tcd {bd}/frontend && {cmake_cmd(bd)} {cfg.cmake_options} '
                 f'&& make {exe} -j{cfg.numjobs}\n'
             )
+    print(f"executables: {' '.join([str(e) for e in executables])}\n")
 
 def generate_runtime_dirs() -> None:
     print_section("runtime directories")
@@ -86,14 +89,12 @@ def generate_runtime_dirs() -> None:
             print(f"\tmkdir -p {rd}\n")
 
 def clean_runtime_dirs() -> None:
-    print_section("clean runtime directories")
+    print(f"clean_runtime_dirs:")
     for bd in cfg.build_dirs:
         for exe in cfg.exec_names:
             rd = runtime_dir(bd, exe)
-            print(f"clean_{rd}:")
-            print(f'\t@echo "Cleaning CSV runtime dir {rd}"')
-            print(f"\trm -rf {rd}\n")
-    print(f"clean_runtime_dirs: {' '.join([f'clean_{runtime_dir(bd, exe)}' for bd in cfg.build_dirs for exe in cfg.exec_names])}")
+            print(f"\trm -rf {rd}")
+    print()
 
 def generate_image_files() -> None:
     print_section("image files")
@@ -200,7 +201,7 @@ def main() -> None:
     generate_lldb_rules()
 
     # phony declaration
-    phony = ["check_perf_event_paranoid", "FORCE"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
+    phony = ["check_perf_event_paranoid", "FORCE", "executables", "clean_runtime_dirs"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")
