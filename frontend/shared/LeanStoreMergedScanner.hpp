@@ -9,9 +9,8 @@
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
 template <typename... Records>
-class LeanStoreMergedScanner : public MergedScanner<Records...>
+struct LeanStoreMergedScanner : public MergedScanner<Records...>
 {
-  private:
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
    std::unique_ptr<BTreeIt> it;
@@ -37,7 +36,6 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
       return std::make_pair(result_key, result_rec);
    }
 
-  public:
    uint64_t produced = 0;
 
    LeanStoreMergedScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
@@ -143,5 +141,7 @@ class LeanStoreMergedScanner : public MergedScanner<Records...>
       reset();
       PremergedJoin<JK, JoinedRec, Records...> joiner(*this, consume_joined);
       joiner.run();
-   } 
+   }
+
+   
 };

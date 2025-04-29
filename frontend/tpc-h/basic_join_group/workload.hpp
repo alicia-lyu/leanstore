@@ -6,6 +6,7 @@
 // GROUP BY o.orderkey, o.orderdate;
 
 #include <chrono>
+#include <limits>
 #include <optional>
 #include <variant>
 #include "../../shared/Adapter.hpp"
@@ -157,98 +158,84 @@ class BasicJoinGroup
 
    // -------------------------------------------------------------
    // ---------------------- MAINTENANCE --------------------------
-   // Insert a lineitem from a random order, update the view
-
-   void maintain_template(std::function<int(int)> get_lineitem_count,
-                          std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_lineitem,
-                          std::function<void(int)> increment_view)
-   {
-      int lineitem_cnt = get_lineitem_count(rand_orderkey);
-      insert_lineitem(lineitem_t::Key{rand_orderkey, lineitem_cnt + 1},
-                      lineitem_t::generateRandomRecord([this]() { return workload.getPartID(); }, [this]() { return workload.getSupplierID(); }));
-
-      increment_view(rand_orderkey);
-   }
+   // Insert a lineitem from a random order, update o_totalprice, update the view
 
    void maintain_view()
    {
-      UpdateDescriptorGenerator1(view_update_descriptor, view_t, count_lineitem);
-
-      maintain_template(
-          [this](int orderkey) {
-             int lineitem_cnt = 0;
-             lineitem.scan(
-                 lineitem_t::Key{orderkey, 1},
-                 [&](const lineitem_t::Key& k, const lineitem_t&) {
-                    if (k.l_orderkey == orderkey) {
-                       lineitem_cnt++;
-                       return true;
-                    }
-                    return false;
-                 },
-                 [&]() {});
-             return lineitem_cnt;
+      // get the last lineitem number for this orderkey for lineitem count
+      int lineitem_cnt = 0;
+      lineitem.scanDesc(
+          lineitem_t::Key{rand_orderkey, std::numeric_limits<Integer>::max()},
+          [&](const lineitem_t::Key& k, const lineitem_t&) {
+             lineitem_cnt = k.l_linenumber;
+             return false;
           },
-          [this](const lineitem_t::Key& k, const lineitem_t& v) { lineitem.insert(k, v); },
-          [&, this](int orderkey) {
-             Timestamp orderdate = Timestamp{0};
-             view.scan(
-                 view_t::Key{orderkey, orderdate},
-                 [&](const view_t::Key& k, const view_t&) {
-                    orderdate = k.o_orderdate;
-                    return false;
-                 },
-                 []() {});
-             view.update1(view_t::Key{orderkey, orderdate}, [this](view_t& rec) { rec.count_lineitem++; }, view_update_descriptor);
-          });
+          [&]() {});
+      // insert new lineitem
+      auto lv = lineitem_t::generateRandomRecord([this]() { return workload.getPartID(); }, [this]() { return workload.getSupplierID(); });
+      lineitem.insert(lineitem_t::Key{rand_orderkey, lineitem_cnt + 1}, lv);
+      // get the correct orderdate for this orderkey
+      view_t::Key vk{rand_orderkey, Timestamp{0}};
+      view.scan(
+          view_t::Key{rand_orderkey, Timestamp{0}},
+          [&](const view_t::Key& k, const view_t&) {
+             vk = k;
+             return false;
+          },
+          []() {});
+      // update view
+      UpdateDescriptorGenerator1(view_update_descriptor, view_t, count_lineitem);
+      view.update1(vk, [](view_t& rec) { rec.count_lineitem++; }, view_update_descriptor);
+      // update orders
+      UpdateDescriptorGenerator1(orders_update_descriptor, orders_t, o_totalprice);
+      orders.update1(orders_t::Key{rand_orderkey}, [&lv](orders_t& rec) { rec.o_totalprice += lv.l_extendedprice; }, orders_update_descriptor);
    }
 
    void maintain_merged()
    {
+      auto scanner = merged.getScanner();
+      auto max_int = std::numeric_limits<Integer>::max();
+      // in this complex object instance, first come the last lineitem because their date is 0
+      scanner->template seekForPrev<merged_lineitem_t>(
+          typename merged_lineitem_t::Key(sort_key_t{rand_orderkey, 0}, lineitem_t::Key{max_int, max_int}));
+      auto l_kv = scanner->current();
+      assert(l_kv != std::nullopt);
+      auto& [lk, lv] = *l_kv;
+      // get lineitem count
+      int lineitem_cnt = 0;
+      std::visit(
+          overloaded{[&](const merged_orders_t::Key&) { UNREACHABLE(); },
+                     [&](const merged_lineitem_t::Key& lk) { lineitem_cnt = lk.pk.l_linenumber; }, [&](const merged_view_t::Key&) { UNREACHABLE(); }},
+          lk);
+      // get actual keys with correct orderdate
+      auto o_kv = scanner->next();
+      assert(o_kv != std::nullopt);
+      auto& [ok, ov] = *o_kv;
+      merged_orders_t::Key actual_ok;
+      std::visit(overloaded{[&](const merged_orders_t::Key& actual_key) { actual_ok = actual_key; }, [&](const merged_lineitem_t::Key&) { UNREACHABLE(); },
+                            [&](const merged_view_t::Key&) { UNREACHABLE(); }},
+                 ok);
+                 
+      auto v_kv = scanner->next();
+      auto& [vk, vv] = *v_kv;
+      merged_view_t::Key actual_vk;
+      std::visit(overloaded{[&](const merged_orders_t::Key&) { UNREACHABLE(); }, [&](const merged_lineitem_t::Key&) { UNREACHABLE(); },
+                            [&](const merged_view_t::Key& actual_key) { actual_vk = actual_key; }},
+                 vk);
+      scanner->reset();  // avoid contention
+      // insert new lineitem
+      auto new_lv = lineitem_t::generateRandomRecord([this]() { return workload.getPartID(); }, [this]() { return workload.getSupplierID(); });
+      merged.insert(merged_lineitem_t::Key(sort_key_t{rand_orderkey, Timestamp{0}}, lineitem_t::Key{rand_orderkey, lineitem_cnt + 1}),
+                    merged_lineitem_t(new_lv));
+      // update view
       UpdateDescriptorGenerator1(view_update_descriptor, merged_view_t, payload.count_lineitem);
+      merged.template update1<merged_view_t>(actual_vk, [](merged_view_t& rec) { rec.payload.count_lineitem++; }, view_update_descriptor);
 
-      maintain_template(
-          [this](int orderkey) {
-             int lineitem_cnt = 1;
-             auto scanner = merged.getScanner();
-             scanner->template seekTyped<merged_lineitem_t>(
-                 typename merged_lineitem_t::Key(sort_key_t{orderkey, Timestamp{0}}, lineitem_t::Key{orderkey, 1}));
-             bool b = false;
-             while (!b) {
-                auto kv = scanner->next();
-                if (kv == std::nullopt)
-                   break;
-                auto& [k, v] = *kv;
-                std::visit(overloaded{[&](const merged_orders_t::Key&) { b = true; },
-                                      [&](const merged_lineitem_t::Key& actual_key) {
-                                         if (actual_key.jk.orderkey == orderkey) {
-                                            lineitem_cnt++;
-                                         }
-                                      },
-                                      [&](const merged_view_t::Key&) { b = true; }},
-                           k);
-             }
-             return lineitem_cnt;
-          },
-
-          [this](const lineitem_t::Key& k, const lineitem_t& v) {
-             merged.insert(merged_lineitem_t::Key(sort_key_t{k.l_orderkey, Timestamp{0}}, k), merged_lineitem_t(v));
-          },
-          [&, this](int orderkey) {
-             auto scanner = merged.getScanner();
-             scanner->template seekTyped<merged_view_t>(typename merged_view_t::Key(orderkey, Timestamp{0}));
-             auto kv = scanner->current();
-             if (kv == std::nullopt)
-                return;
-             auto& [k, v] = *kv;
-             merged_view_t::Key merged_key;
-             std::visit(overloaded{[](const merged_orders_t::Key&) { UNREACHABLE(); }, [](const merged_lineitem_t::Key&) { UNREACHABLE(); },
-                                   [&](const merged_view_t::Key& actual_key) { merged_key = actual_key; }},
-                        k);
-             scanner.reset();  // destroy object to avoid contention with update
-             merged.template update1<merged_view_t>(
-               merged_key, [](merged_view_t& rec) { rec.payload.count_lineitem++; }, view_update_descriptor);
-          });
+      // update orders
+      UpdateDescriptorGenerator1(orders_update_descriptor, merged_orders_t, payload.o_totalprice);
+      merged.template update1<merged_orders_t>(
+          actual_ok,
+          [&new_lv](merged_orders_t& rec) { rec.payload.o_totalprice += new_lv.l_extendedprice; }, orders_update_descriptor);
    }
 
    // -------------------------------------------------------------
