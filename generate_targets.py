@@ -7,9 +7,12 @@ Auto-generates a Makefile fragment with build, csv-dir, image, recovery and LLDB
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
+import re, json
 
-
+vscode_launch_obj = {
+    "version": "0.2.0",
+    "configurations": []
+}
 
 @dataclass(frozen=True)
 class Config:
@@ -161,7 +164,29 @@ def generate_lldb_rules() -> None:
             f"--csv_path={rd} --recover_file={recover} "
             f"--ssd_path={img} --dram_gib=$(dram)\n"
         )
-
+        args = list(cfg.leanstore_flags.split()) + [
+            f"--csv_path={rd}",
+            f"--recover_file={recover}",
+            f"--ssd_path={img}",
+            f"--dram_gib=1",
+        ]
+        for i, arg in enumerate(args):
+            arg = arg.replace("$(dram)", "1")
+            arg = arg.replace("$(scale)", "10")
+            args[i] = arg
+        exp_configs = {
+            "name": f"{exe}",
+            "type": "lldb",
+            "request": "launch",
+            "program": f"${{workspaceFolder}}/{exe_path}",
+            "args": args,
+            "cwd": "${workspaceFolder}",
+            "stopOnEntry": False,
+            "initCommands": [
+                "command source .lldbinit"
+            ]
+        }
+        vscode_launch_obj["configurations"].append(exp_configs)
 
 def main() -> None:
     """Emits the entire Makefile snippet to stdout."""
@@ -177,7 +202,10 @@ def main() -> None:
     # phony declaration
     phony = ["check_perf_event_paranoid", "FORCE"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
     print(f".PHONY: {' '.join(phony)}")
-
+    
+    vscode_launch = open(".vscode/launch.json", "w")
+    json.dump(vscode_launch_obj, vscode_launch, indent=2)
+    vscode_launch.close()
 
 if __name__ == "__main__":
     main()

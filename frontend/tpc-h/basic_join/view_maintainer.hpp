@@ -21,8 +21,7 @@ class ViewMaintainer
    using LineAdapter = AdapterType<sorted_lineitem_t>;
    using ViewAdapter = AdapterType<joinedPPsL_t>;
    using JoinKey = join_key_t;
-   using MaintainTemplateTypes = std::function<void(std::function<Integer(Integer)>,
-                                                    std::function<void(const orders_t::Key&, const orders_t&)>,
+   using MaintainTemplateTypes = std::function<void(std::function<void(const orders_t::Key&, const orders_t&)>,
                                                     std::function<void(const lineitem_t::Key&, const lineitem_t&)>,
                                                     std::function<void(const part_t::Key&, const part_t&)>,
                                                     std::function<void(const partsupp_t::Key&, const partsupp_t&)>)>;
@@ -47,13 +46,15 @@ class ViewMaintainer
       // 1. join only deltas
       run_joins({0, 1, 2}, {false, false, false});
       // 2. join two deltas + one base
-      run_joins({0, 1, 2}, {false, false, true}); // YES part as base: a part-supplier pair not seen before can use an existing part rather than a new one; new lineitems can use a new part-supplier pair that uses an existing part
-      // run_joins({0, 1, 2}, {false, true, false}); // NO partsupp as base: a part not seen before cannot be found in the previous state of the partsupp table
-      // run_joins({0, 1, 2}, {true, false, false}); // NO lineitem as base: part & part-supplier pair not seen before cannot appear in the previous state of the lineitem table
+      run_joins({0, 1, 2}, {false, false, true});  // YES part as base: a part-supplier pair not seen before can use an existing part rather than a
+                                                   // new one; new lineitems can use a new part-supplier pair that uses an existing part
+      // run_joins({0, 1, 2}, {false, true, false}); // NO partsupp as base: a part not seen before cannot be found in the previous state of the
+      // partsupp table run_joins({0, 1, 2}, {true, false, false}); // NO lineitem as base: part & part-supplier pair not seen before cannot appear in
+      // the previous state of the lineitem table
       // 3. join one delta + two bases
-      run_joins({0, 1, 2}, {false, true, true}); // NO part as delta: new parts cannot appear in the previous state of the partsupp table
-      // run_joins({0, 1, 2}, {true, false, true}); // NO partsupp as delta: new part-supplier pair cannot appear in the previous state of the lineitem table
-      // run_joins({0, 1, 2}, {true, true, false}); // YES lineitem as delta: new lineitems can use existing part-supplier pairs
+      run_joins({0, 1, 2}, {false, true, true});  // NO part as delta: new parts cannot appear in the previous state of the partsupp table
+      // run_joins({0, 1, 2}, {true, false, true}); // NO partsupp as delta: new part-supplier pair cannot appear in the previous state of the
+      // lineitem table run_joins({0, 1, 2}, {true, true, false}); // YES lineitem as delta: new lineitems can use existing part-supplier pairs
 
       for (auto const& [k, v] : delta_joinedPPsL_) {
          view_.insert(k, v);
@@ -89,18 +90,6 @@ class ViewMaintainer
       delta_lineitems_.clear();
 
       maintainTemplate_(
-          // find supplier
-          [this](Integer part_id) {
-             Integer supp_id = 0;
-             workload_.partsupp.scan(
-                 partsupp_t::Key{part_id, 1},
-                 [&](auto const& key, auto const&) {
-                    supp_id = key.ps_suppkey;
-                    return false;
-                 },
-                 []() {});
-             return supp_id;
-          },
           // insert orders
           [this](auto const& k, auto const& v) { workload_.orders.insert(k, v); },
           // insert lineitem + view-side delta
@@ -132,7 +121,7 @@ class ViewMaintainer
       std::sort(delta_partsupps_.begin(), delta_partsupps_.end(), cmp);
       std::sort(delta_lineitems_.begin(), delta_lineitems_.end(), cmp);
 
-      start_partkey_ = std::get<0>(delta_parts_.front()); // all deltas are about the same partkey
+      start_partkey_ = std::get<0>(delta_parts_.front());  // all deltas are about the same partkey
    }
 
    void run_joins(std::array<int, 3> tables, std::array<bool, 3> base)
