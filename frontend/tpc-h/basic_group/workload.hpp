@@ -35,18 +35,13 @@ class BasicGroup
 
    Logger& logger;
 
-   Integer rand_partkey;
-   Integer rand_supplierkey;
-
   public:
    BasicGroup(TPCH& workload, merged_t& mbg, AdapterType<view_t>& v)
        : workload(workload),
          view(v),
          partsupp(workload.partsupp),
          mergedBasicGroup(mbg),
-         logger(workload.logger),
-         rand_partkey(0),
-         rand_supplierkey(0)
+         logger(workload.logger)
    {
    }
    // -------------------------------------------------------------
@@ -181,22 +176,15 @@ class BasicGroup
    // -----------------------------------------------------------
    // ---------------------- POINT QUERIES ----------------------
    // Aggregates of the same part id
-
-   void refresh_rand_keys()
-   {
-      rand_partkey = workload.getPartID();
-      rand_supplierkey = workload.getSupplierID();
-   }
-
    void pointQueryByView()
    {
-      view.scan(view_t::Key{rand_partkey}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
+      view.scan(view_t::Key{workload.getPartID()}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
    }
 
    void pointQueryByMerged()
    {
       auto scanner = mergedBasicGroup.getScanner();
-      scanner->template seekTyped<merged_view_option_t>(typename merged_view_option_t::Key(rand_partkey));
+      scanner->template seekTyped<merged_view_option_t>(typename merged_view_option_t::Key(workload.getPartID()));
       auto kv = scanner->current();
       assert(kv.has_value());
       auto& [k, v] = *kv;
@@ -217,8 +205,8 @@ class BasicGroup
                              agg_update_func)  // increment count, add second argument to supply cost
    {
       // auto [part_id, supplier_id] = get_part_supplier_id();
-      auto part_id = rand_partkey;
-      auto supplier_id = rand_supplierkey;  // WARNING: breaking referential integrity
+      auto part_id = workload.getPartID();
+      auto supplier_id = workload.getSupplierID();  // WARNING: breaking referential integrity
 
       auto rec = partsupp_t::generateRandomRecord();
       partsupp_insert_func(partsupp_t::Key({part_id, supplier_id}), rec);

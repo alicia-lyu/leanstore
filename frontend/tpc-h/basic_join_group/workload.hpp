@@ -29,11 +29,9 @@ class BasicJoinGroup
 
    Logger& logger;
 
-   Integer rand_orderkey;
-
   public:
    BasicJoinGroup(TPCH& workload, MergedTree& m, AdapterType<view_t>& v)
-       : workload(workload), merged(m), view(v), orders(workload.orders), lineitem(workload.lineitem), logger(workload.logger), rand_orderkey(0)
+       : workload(workload), merged(m), view(v), orders(workload.orders), lineitem(workload.lineitem), logger(workload.logger)
    {
    }
 
@@ -142,17 +140,15 @@ class BasicJoinGroup
    // ---------------------- POINT QUERIES -----------------------------
    // search aggregate for a specific orderkey
 
-   void refresh_rand_keys() { rand_orderkey = workload.getOrderID(); }
-
    void point_query_by_view()
    {
-      view.scan(view_t::Key{rand_orderkey, Timestamp{0}}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
+      view.scan(view_t::Key{workload.getOrderID(), Timestamp{0}}, [&](const view_t::Key&, const view_t&) { return false; }, [&]() {});
    }
 
    void point_query_by_merged()
    {
       auto scanner = merged.getScanner();
-      scanner->template seekTyped<merged_view_t>(typename merged_view_t::Key(rand_orderkey, Timestamp{0}));
+      scanner->template seekTyped<merged_view_t>(typename merged_view_t::Key(workload.getOrderID(), Timestamp{0}));
       [[maybe_unused]] auto kv = scanner->current();
    }
 
@@ -164,6 +160,7 @@ class BasicJoinGroup
    {
       // get the last lineitem number for this orderkey for lineitem count
       int lineitem_cnt = 0;
+      auto rand_orderkey = workload.getOrderID();
       lineitem.scanDesc(
           lineitem_t::Key{rand_orderkey, std::numeric_limits<Integer>::max()},
           [&](const lineitem_t::Key& k, const lineitem_t&) {
@@ -194,6 +191,7 @@ class BasicJoinGroup
    void maintain_merged()
    {
       auto scanner = merged.getScanner();
+      auto rand_orderkey = workload.getOrderID();
       auto max_int = std::numeric_limits<Integer>::max();
       // in this complex object instance, first come the last lineitem because their date is 0
       scanner->template seekForPrev<merged_lineitem_t>(
