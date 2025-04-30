@@ -1,7 +1,9 @@
 #pragma once
 
 #include <chrono>
+#include <csignal>
 #include <optional>
+#include <stdexcept>
 #include <variant>
 #include "../../shared/Adapter.hpp"
 #include "../logger.hpp"
@@ -37,11 +39,7 @@ class BasicGroup
 
   public:
    BasicGroup(TPCH& workload, merged_t& mbg, AdapterType<view_t>& v)
-       : workload(workload),
-         view(v),
-         partsupp(workload.partsupp),
-         mergedBasicGroup(mbg),
-         logger(workload.logger)
+       : workload(workload), view(v), partsupp(workload.partsupp), mergedBasicGroup(mbg), logger(workload.logger)
    {
    }
    // -------------------------------------------------------------
@@ -173,6 +171,11 @@ class BasicGroup
       logger.log(t, ColumnName::ELAPSED, "query-merged");
    }
 
+   // ----------------------------------------------------------------------------------
+   // ---------------------- QUERIES w EXTERNAL SELECT CONDITIONS ----------------------
+   // do not really make sense here.
+   // A select condition that makes sense and uses the partsupp stored in the merged index essentially calls for a join.
+
    // -----------------------------------------------------------
    // ---------------------- POINT QUERIES ----------------------
    // Aggregates of the same part id
@@ -199,17 +202,23 @@ class BasicGroup
    // ---------------------- MAINTAIN ---------------------------
    // add one supplier (preexisting) for an existing part
 
-   void maintainTemplate(std::function<void(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
+   void maintainTemplate(std::function<bool(const partsupp_t::Key&, const partsupp_t&)> partsupp_insert_func,
                          leanstore::UpdateSameSizeInPlaceDescriptor& agg_update_descriptor,
                          std::function<void(const Integer, const Numeric, leanstore::UpdateSameSizeInPlaceDescriptor&)>
                              agg_update_func)  // increment count, add second argument to supply cost
    {
       // auto [part_id, supplier_id] = get_part_supplier_id();
-      auto part_id = workload.getPartID();
-      auto supplier_id = workload.getSupplierID();  // WARNING: breaking referential integrity
 
       auto rec = partsupp_t::generateRandomRecord();
-      partsupp_insert_func(partsupp_t::Key({part_id, supplier_id}), rec);
+      auto ret = false;
+      Integer part_id, supplier_id;
+      while (!ret)
+      {
+         part_id = workload.getPartID();
+         supplier_id = workload.getSupplierID();  // WARNING: breaking referential integrity
+         ret = partsupp_insert_func(partsupp_t::Key({part_id, supplier_id}), rec);
+         // if already exists, try new keys
+      }
       // count_increment_func(part_id, countsupp_update_descriptor);
       // sum_update_func(part_id, rec.ps_supplycost, sum_supplycost_update_descriptor);
       agg_update_func(part_id, rec.ps_supplycost, agg_update_descriptor);
@@ -222,7 +231,12 @@ class BasicGroup
 
       maintainTemplate(
           [this](const partsupp_t::Key& k, const partsupp_t& v) {
-             mergedBasicGroup.insert(typename merged_partsupp_option_t::Key(k), merged_partsupp_option_t(v));
+             try {
+                mergedBasicGroup.insert(typename merged_partsupp_option_t::Key(k), merged_partsupp_option_t(v));
+             } catch (std::runtime_error& e) {
+                return false;
+             }
+             return true;
           },
           agg_update_descriptor,
           [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
@@ -241,7 +255,15 @@ class BasicGroup
       // partsupp is kept as a base table
       UpdateDescriptorGenerator2(agg_update_descriptor, view_t, count_partsupp, sum_supplycost);
       maintainTemplate(
-          [this](const partsupp_t::Key& k, const partsupp_t& v) { workload.partsupp.insert(k, v); }, agg_update_descriptor,
+          [this](const partsupp_t::Key& k, const partsupp_t& v) {
+             try {
+                workload.partsupp.insert(k, v);
+             } catch (std::runtime_error& e) {
+                return false;
+             }
+             return true;
+          },
+          agg_update_descriptor,
           [this](const Integer part_id, const Numeric supplycost, leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) {
              view.update1(
                  view_t::Key({part_id}),

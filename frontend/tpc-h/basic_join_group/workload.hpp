@@ -1,10 +1,5 @@
 #pragma once
 
-// SELECT o.orderkey, o.orderdate, COUNT(*)
-// FROM Orders o, Lineitem l
-// WHERE o.orderkey = l.orderkey
-// GROUP BY o.orderkey, o.orderdate;
-
 #include <chrono>
 #include <limits>
 #include <optional>
@@ -13,6 +8,11 @@
 #include "../tpch_workload.hpp"
 #include "Exceptions.hpp"
 #include "views.hpp"
+
+// SELECT o.orderkey, o.orderdate, COUNT(*)
+// FROM Orders o, Lineitem l
+// WHERE o.orderkey = l.orderkey
+// GROUP BY o.orderkey, o.orderdate;
 
 namespace basic_join_group
 {
@@ -136,9 +136,77 @@ class BasicJoinGroup
       logger.log(t, ColumnName::ELAPSED, "query-merged");
    }
 
+   // -----------------------------------------------------------------------------------
+   // ---------------------- QUERIES w EXTERNAL SELECT CONDITION ------------------------
+   // WHERE o.orderstatus = 'O' -- not shipped yet
+
+   void query_by_view_external_select()
+   {
+      logger.reset();
+      std::cout << "BasicJoinGroup::query_by_view_external_select()" << std::endl;
+      auto start = std::chrono::high_resolution_clock::now();
+      [[maybe_unused]] long produced = 0;
+      auto orders_scanner = orders.getScanner();
+      while (true) {
+         auto kv = orders_scanner->next();
+         if (kv == std::nullopt)
+            break;
+         auto& [k, v] = *kv;
+         if (v.o_orderstatus == "O") {
+            view.lookup1(view_t::Key{k.o_orderkey, v.o_orderdate}, [&](const view_t&) {});
+            workload.inspect_produced("Jumping through view: ", produced);
+         }
+      }
+      std::cout << "\rJumping through view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+      logger.log(t, ColumnName::ELAPSED, "query-view-external-select");
+   }
+
+   void query_by_merged_external_select()
+   {
+      logger.reset();
+      std::cout << "BasicJoinGroup::query_by_merged_external_select()" << std::endl;
+      auto start = std::chrono::high_resolution_clock::now();
+      [[maybe_unused]] long produced = 0;
+      auto scanner = merged.getScanner();
+      bool selected = false;
+      while (true) {
+         auto kv = scanner->next();
+         if (kv == std::nullopt)
+            break;
+         auto& [k, v] = *kv;
+         std::visit(overloaded{[&](const merged_orders_t& actual_v) {
+                                  if (actual_v.payload.o_orderstatus == "O") {
+                                     selected = true;
+                                  }
+                               },
+                               [&](const merged_lineitem_t&) {},
+                               [&](const merged_view_t&) {
+                                  if (selected) {
+                                     // do something with the selected aggregates
+                                     workload.inspect_produced("Jumping through merged: ", produced);
+                                  }
+                                  selected = false;
+                               }},
+                    v);
+         std::visit(overloaded{[&](const merged_orders_t::Key&) {},
+                               [&](const merged_lineitem_t::Key& actual_k) {
+                                  scanner->template seek<merged_orders_t>(
+                                      typename merged_orders_t::Key(actual_k.jk.orderkey + 1, Timestamp{1}));  // skip lineitems
+                               },
+                               [&](const merged_view_t::Key&) {}},
+                    k);
+      }
+      std::cout << "\rJumping through merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
+      auto end = std::chrono::high_resolution_clock::now();
+      auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+      logger.log(t, ColumnName::ELAPSED, "query-merged-external-select");
+   }
+
    // ---------------------------------------------------------------
    // ---------------------- POINT QUERIES -----------------------------
-   // search aggregate for a specific orderkey
+   // WHERE orderkey = ?
 
    void point_query_by_view()
    {
@@ -210,10 +278,10 @@ class BasicJoinGroup
       assert(o_kv != std::nullopt);
       auto& [ok, ov] = *o_kv;
       merged_orders_t::Key actual_ok;
-      std::visit(overloaded{[&](const merged_orders_t::Key& actual_key) { actual_ok = actual_key; }, [&](const merged_lineitem_t::Key&) { UNREACHABLE(); },
-                            [&](const merged_view_t::Key&) { UNREACHABLE(); }},
+      std::visit(overloaded{[&](const merged_orders_t::Key& actual_key) { actual_ok = actual_key; },
+                            [&](const merged_lineitem_t::Key&) { UNREACHABLE(); }, [&](const merged_view_t::Key&) { UNREACHABLE(); }},
                  ok);
-                 
+
       auto v_kv = scanner->next();
       auto& [vk, vv] = *v_kv;
       merged_view_t::Key actual_vk;
@@ -232,8 +300,7 @@ class BasicJoinGroup
       // update orders
       UpdateDescriptorGenerator1(orders_update_descriptor, merged_orders_t, payload.o_totalprice);
       merged.template update1<merged_orders_t>(
-          actual_ok,
-          [&new_lv](merged_orders_t& rec) { rec.payload.o_totalprice += new_lv.l_extendedprice; }, orders_update_descriptor);
+          actual_ok, [&new_lv](merged_orders_t& rec) { rec.payload.o_totalprice += new_lv.l_extendedprice; }, orders_update_descriptor);
    }
 
    // -------------------------------------------------------------
@@ -246,6 +313,7 @@ class BasicJoinGroup
       auto lineitem_scanner = workload.lineitem.getScanner();
       auto orders_scanner = workload.orders.getScanner();
       Integer curr_orderkey = 0;
+      Timestamp curr_orderdate = Timestamp{0};
       Integer count = 0;
       long produced = 0;
       while (true) {
@@ -255,15 +323,16 @@ class BasicJoinGroup
          auto& [lk, lv] = *kv;
          merged.insert(typename merged_lineitem_t::Key(sort_key_t{lk.l_orderkey, Timestamp{0}}, lk), merged_lineitem_t(lv));
          if (curr_orderkey != lk.l_orderkey) {
-            auto [ok, ov] = orders_scanner->next().value();
-            merged.insert(typename merged_orders_t::Key(sort_key_t{curr_orderkey, ov.o_orderdate}, ok), merged_orders_t(ov));
             if (curr_orderkey != 0) {
-               view_t::Key k_new{curr_orderkey, ov.o_orderdate};
+               view_t::Key k_new{curr_orderkey, curr_orderdate};
                view_t v_new{count};
                view.insert(k_new, v_new);
                merged.insert(typename merged_view_t::Key(k_new), merged_view_t(v_new));
             }
+            auto [ok, ov] = orders_scanner->next().value();
+            merged.insert(typename merged_orders_t::Key(sort_key_t{ok.o_orderkey, ov.o_orderdate}, ok), merged_orders_t(ov));
             curr_orderkey = ok.o_orderkey;
+            curr_orderdate = ov.o_orderdate;
             count = 0;
          }
          count++;

@@ -71,18 +71,18 @@ struct LeanStoreAdapter : Adapter<Record> {
       u16 folded_key_len = Record::foldKey(folded_key, key);
       const OP_RESULT res = btree->insert(folded_key, folded_key_len, (u8*)(&record), sizeof(Record));
       if (res != leanstore::OP_RESULT::OK && res != leanstore::OP_RESULT::ABORT_TX) {
-         std::cout << "LeanStoreAdapter::insert failed with res value " << std::to_string((int) res) << ", key: " << key << std::endl;
+         std::cerr << "LeanStoreAdapter::insert failed with res value " << std::to_string((int) res) << ", key: " << key << std::endl;
          // print hex
-         std::cout << "LeanstoreAdapter::insert: folded key length: " << folded_key_len << std::endl;
+         std::cerr << "LeanstoreAdapter::insert: folded key length: " << folded_key_len << std::endl;
          for (size_t i = 0; i < folded_key_len; ++i) {
-            std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)folded_key[i] << " ";
+            std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)folded_key[i] << " ";
          }
-         std::cout << std::dec << std::endl;
+         std::cerr << std::dec << std::endl;
          // try unfold
          typename Record::Key typed_key;
          Record::unfoldKey(folded_key, typed_key);
-         std::cout << "unfolded key: " << typed_key << std::endl;
-         exit(1);
+         std::cerr << "unfolded key: " << typed_key << std::endl;
+         throw std::runtime_error("insert failed with res value " + std::to_string((int) res));
       }
       if (res == leanstore::OP_RESULT::ABORT_TX) {
          cr::Worker::my().abortTX();
@@ -102,8 +102,7 @@ struct LeanStoreAdapter : Adapter<Record> {
          cr::Worker::my().abortTX();
       }
       if (res != leanstore::OP_RESULT::OK) {
-         std::cout << (int) res << ":" << key << std::endl;
-         // ensure(false);
+         throw std::runtime_error("lookup1 failed with res value " + std::to_string((int) res));
       }
    }
 
