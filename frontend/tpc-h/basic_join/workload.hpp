@@ -188,6 +188,65 @@ class BasicJoin
       logger.log(index_t, ColumnName::ELAPSED, "query-base");
    }
 
+   // --------------------------------------------------------------
+   // ---------------------- RANGE QUERIES ------------------------
+   // Find all joined rows for the same partkey
+
+   void range_query_by_view()
+   {
+      auto part_id = workload.getPartID();
+      int count = 0;
+      joinedPPsL.scan(
+          joinedPPsL_t::Key(join_key_t{part_id, 0}, part_t::Key{part_id}, partsupp_t::Key{part_id, 0}, sorted_lineitem_t::Key{}),
+          [&](const joinedPPsL_t::Key& k, const joinedPPsL_t&) {
+             if (count == 0) {
+                part_id = k.jk.l_partkey;
+             } else if (k.jk.l_partkey != part_id) {
+                return false;
+             }
+             count++;
+             return true;
+          },
+          [&]() {});
+   }
+
+   void range_query_by_base()
+   {
+      auto part_id = workload.getPartID();
+      auto part_scanner = part.getScanner();
+      auto partsupp_scanner = partsupp.getScanner();
+      auto lineitem_scanner = sortedLineitem.getScanner();
+      part_scanner->seek(part_t::Key{part_id});
+      partsupp_scanner->seek(partsupp_t::Key{part_id, 0});
+      lineitem_scanner->seek(sorted_lineitem_t::Key(join_key_t{part_id, 0}, lineitem_t::Key{}));
+
+      BinaryMergeJoin<join_key_t, joinedPPs_t, part_t, partsupp_t> binary_join1([&]() { return part_scanner->next(); },
+                                                                                [&]() { return partsupp_scanner->next(); });
+      BinaryMergeJoin<join_key_t, joinedPPsL_t, joinedPPs_t, sorted_lineitem_t> binary_join2([&]() { return binary_join1.next(); },
+                                                                                             [&]() { return lineitem_scanner->next(); });
+
+      while (true) {
+         binary_join2.next_jk();
+         if (binary_join2.current_jk.l_partkey != part_id) {
+            break;
+         }
+      }
+   }
+
+   void range_query_by_merged()
+   {
+      auto part_id = workload.getPartID();
+      auto merged_scanner = mergedPPsL.getScanner();
+      merged_scanner->seekJK(join_key_t{part_id, 0});
+      PremergedJoin<join_key_t, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t> merge(*merged_scanner);
+      while (true) {
+         merge.next_jk();
+         if (merge.current_jk.l_partkey != part_id) {
+            break;
+         }
+      }
+   }
+
    // -------------------------------------------------------------
    // ---------------------- POINT QUERIES ------------------------
    // Find all joined rows for the same join key

@@ -40,7 +40,7 @@ struct MergeJoin {
 
    ~MergeJoin()
    {
-      if (produced > 0)
+      if (produced > 1000)
          std::cout << "\r~MergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
    }
 
@@ -101,7 +101,7 @@ struct PremergedJoin {
 
    ~PremergedJoin()
    {
-      if (produced > 0)
+      if (produced > 1000)
          std::cout << "\r~PremergedJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
    }
 
@@ -131,7 +131,7 @@ struct PremergedJoin {
       else
          curr_joined = 0;
       updateAndPrintProduced(curr_joined);
-      // add the new record to the cache
+      // add the new record to the fcache
       match_emplace_tuple(k, v, std::index_sequence_for<Rs...>{});
       return curr_joined;
    }
@@ -190,7 +190,7 @@ struct Merge {
 
    ~Merge()
    {
-      if (heap_merge.sifted > 0)
+      if (heap_merge.sifted > 1000)
          std::cout << "\r~Merge: produced " << (double)heap_merge.sifted / 1000 << "k records------------------------------------" << std::endl;
    }
 
@@ -257,7 +257,7 @@ struct BinaryMergeJoin {
 
    ~BinaryMergeJoin()
    {
-      if (produced > 0)
+      if (produced > 1000)
          std::cout << "\r~BinaryMergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
    }
 

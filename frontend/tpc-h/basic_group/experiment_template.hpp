@@ -15,6 +15,7 @@ int run()
 {
    using namespace basic_group;
    using namespace leanstore;
+   using BG = BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter, merged_view_option_t, merged_partsupp_option_t>;
    LeanStore db;
    // Tables
    LeanStoreAdapter<part_t> part;
@@ -50,7 +51,7 @@ int run()
    LeanStoreLogger logger(db);
 
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   BasicGroup<LeanStoreAdapter, LeanStoreMergedAdapter, merged_view_option_t, merged_partsupp_option_t> tpchBasicGroup(tpch, mergedBasicGroup, view);
+   BG tpchBasicGroup(tpch, mergedBasicGroup, view);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
@@ -63,9 +64,24 @@ int run()
       tpch.recover_last_ids();
       tpchBasicGroup.log_sizes();
 
-      WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForView, queryByView, pointQueryByView, maintainView, "view");
+      std::vector<std::string> tput_prefixes = {"point-query", "maintain"};
 
-      WARMUP_THEN_TXS(tpchBasicGroup, tpch, crm, isolation_level, pointLookupsForMerged, queryByMerged, pointQueryByMerged, maintainMerged, "merged");
+      std::vector<std::function<void()>> elapsed_cbs_view = {std::bind(&BG::queryByView, &tpchBasicGroup)};
+
+      std::vector<std::function<void()>> tput_cbs_view = {std::bind(&BG::pointQueryByView, &tpchBasicGroup),
+                                                          std::bind(&BG::maintainView, &tpchBasicGroup)};
+
+      WARMUP_THEN_TXS(
+          tpch, crm, isolation_level, [&tpchBasicGroup]() { tpchBasicGroup.pointLookupsForView(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes,
+          "view");
+
+      std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&BG::queryByMerged, &tpchBasicGroup)};
+      std::vector<std::function<void()>> tput_cbs_merged = {std::bind(&BG::pointQueryByMerged, &tpchBasicGroup),
+                                                            std::bind(&BG::maintainMerged, &tpchBasicGroup)};
+
+      WARMUP_THEN_TXS(
+          tpch, crm, isolation_level, [&tpchBasicGroup]() { tpchBasicGroup.pointLookupsForMerged(); }, elapsed_cbs_merged, tput_cbs_merged,
+          tput_prefixes, "merged");
    }
    return 0;
 }

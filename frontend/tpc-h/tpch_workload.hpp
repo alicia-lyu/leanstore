@@ -212,7 +212,7 @@ struct TPCHWorkload {
             ps_insert_func(partsupp_t::Key{i, s}, partsupp_t::generateRandomRecord());
             // load lineitems
             Integer lineitem_cnt_ps = urand(0, lineitem_size / partsupp_size * 2);
-            // No reference integrity but mostly matched
+            // ps pairs between partsupp and lineitem has no referential integrity but mostly matched
             for (Integer l = 0; l < lineitem_cnt_ps; l++) {
                auto rec = lineitem_t::generateRandomRecord([i]() { return i; }, [s]() { return s; });
                l_insert_func(lineitem_t::Key{*current_order_key, lineitem_number}, rec);

@@ -147,6 +147,7 @@ def generate_run_rules() -> None:
             f'--csv_path={rd} --recover_file={recover} '
             f'--ssd_path={img} --dram_gib=$(dram) 2>{rd}/stderr.txt" {rd}/log\n'
         )
+    print("run_all: " + " ".join(cfg.exec_names))
 
 
 def generate_lldb_rules() -> None:
@@ -188,6 +189,7 @@ def generate_lldb_rules() -> None:
             ]
         }
         vscode_launch_obj["configurations"].append(exp_configs)
+    print("lldb_all: " + " ".join([f"{e}_lldb" for e in cfg.exec_names]))
 
 def main() -> None:
     """Emits the entire Makefile snippet to stdout."""
@@ -201,7 +203,7 @@ def main() -> None:
     generate_lldb_rules()
 
     # phony declaration
-    phony = ["check_perf_event_paranoid", "FORCE", "executables", "clean_runtime_dirs"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
+    phony = ["check_perf_event_paranoid", "FORCE", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")
