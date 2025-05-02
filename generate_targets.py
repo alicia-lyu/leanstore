@@ -148,6 +148,7 @@ def generate_run_rules() -> None:
             f'--ssd_path={img} --dram_gib=$(dram) 2>{rd}/stderr.txt" {rd}/log\n'
         )
     print("run_all: " + " ".join(cfg.exec_names))
+    print()
 
 
 def generate_lldb_rules() -> None:
@@ -190,6 +191,7 @@ def generate_lldb_rules() -> None:
         }
         vscode_launch_obj["configurations"].append(exp_configs)
     print("lldb_all: " + " ".join([f"{e}_lldb" for e in cfg.exec_names]))
+    print()
 
 def main() -> None:
     """Emits the entire Makefile snippet to stdout."""

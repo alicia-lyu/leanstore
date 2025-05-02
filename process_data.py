@@ -22,14 +22,14 @@ def collect_data(exec):
             key, value = line.split(",")
             size_dict[key] = value
         for d in data_files:
-            d_pattern = r"(maintain|query|point-query)-(\w+)\.csv"
+            d_pattern = r"(maintain|query|point-query|range-query|query-external-select)-(\w+)\.csv"
             match = re.match(d_pattern, d)
             if not match:
                 print(f"Skipping {d}")
                 continue
             tx = match.group(1)
             method = match.group(2)
-            if tx == "query":
+            if tx == "query" or tx == "query-external-select":
                 sum_f = sum_queries
             else:
                 sum_f = sum_txs
