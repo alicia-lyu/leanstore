@@ -160,7 +160,7 @@ class BasicJoinGroup
       std::cout << "\rJumping through view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, ColumnName::ELAPSED, "query-view-external-select");
+      logger.log(t, ColumnName::ELAPSED, "query-external-select-view");
    }
 
    void query_by_merged_external_select()
@@ -201,7 +201,7 @@ class BasicJoinGroup
       std::cout << "\rJumping through merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, ColumnName::ELAPSED, "query-merged-external-select");
+      logger.log(t, ColumnName::ELAPSED, "query-external-select-merged");
    }
 
    // ---------------------------------------------------------------

@@ -140,11 +140,8 @@ struct PremergedJoin {
    {
       while (true) {
          int res = next();
-         if (res == -1)
-            return 0;
-         else if (res > 0) {
-            return res;
-         }
+         if (res == 0) continue;
+         return res;
       }
    }
 
