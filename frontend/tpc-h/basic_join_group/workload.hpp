@@ -192,8 +192,8 @@ class BasicJoinGroup
                     v);
          std::visit(overloaded{[&](const merged_orders_t::Key&) {},
                                [&](const merged_lineitem_t::Key& actual_k) {
-                                  scanner->template seek<merged_orders_t>(
-                                      typename merged_orders_t::Key(actual_k.jk.orderkey + 1, Timestamp{1}));  // skip lineitems
+                                  scanner->template seekForPrev<merged_orders_t>(
+                                      typename merged_orders_t::Key(actual_k.jk.orderkey, Timestamp{1}));  // skip lineitems
                                },
                                [&](const merged_view_t::Key&) {}},
                     k);

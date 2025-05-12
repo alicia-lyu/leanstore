@@ -12,6 +12,7 @@ using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 1000, "TPC-H scale factor");
 DEFINE_int32(tx_count, 1000, "Number of transactions to run");
+DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes");
 
 using namespace basic_join;
 
@@ -73,27 +74,37 @@ int main(int argc, char** argv)
 
       std::vector<std::string> tput_prefixes = {"point-query", "range-query", "maintain"};
 
-      std::vector<std::function<void()>> elapsed_cbs_base = {std::bind(&BJ::pointQueryByBase, &tpchBasicJoin)};
-      std::vector<std::function<void()>> tput_cbs_base = {std::bind(&BJ::pointQueryByBase, &tpchBasicJoin),
-                                                     std::bind(&BJ::range_query_by_base, &tpchBasicJoin),
-                                                     std::bind(&BJ::maintainBase, &tpchBasicJoin)};
+      if (FLAGS_storage_structure == 0) {
+         std::cout << "TPC-H with traditional indexes" << std::endl;
+         std::vector<std::function<void()>> elapsed_cbs_base = {std::bind(&BJ::queryByBase, &tpchBasicJoin)};
+         std::vector<std::function<void()>> tput_cbs_base = {std::bind(&BJ::pointQueryByBase, &tpchBasicJoin),
+                                                             std::bind(&BJ::range_query_by_base, &tpchBasicJoin),
+                                                             std::bind(&BJ::maintainBase, &tpchBasicJoin)};
 
-      WARMUP_THEN_TXS(tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForBase(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base");
+         WARMUP_THEN_TXS(
+             tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForBase(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base");
+      } else if (FLAGS_storage_structure == 1) {
+         std::cout << "TPC-H with materialized views" << std::endl;
+         std::vector<std::function<void()>> elapsed_cbs_view = {std::bind(&BJ::queryByView, &tpchBasicJoin)};
+         std::vector<std::function<void()>> tput_cbs_view = {std::bind(&BJ::pointQueryByView, &tpchBasicJoin),
+                                                             std::bind(&BJ::range_query_by_view, &tpchBasicJoin),
+                                                             std::bind(&BJ::maintainView, &tpchBasicJoin)};
 
-      std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&BJ::queryByMerged, &tpchBasicJoin)};
-      std::vector<std::function<void()>> tput_cbs_merged = {std::bind(&BJ::pointQueryByMerged, &tpchBasicJoin),
-                                                            std::bind(&BJ::range_query_by_merged, &tpchBasicJoin),
-                                                            std::bind(&BJ::maintainMerged, &tpchBasicJoin)};
+         WARMUP_THEN_TXS(
+             tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForView(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view");
+      } else if (FLAGS_storage_structure == 2) {
+         std::cout << "TPC-H with merged indexes" << std::endl;
+         std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&BJ::queryByMerged, &tpchBasicJoin)};
+         std::vector<std::function<void()>> tput_cbs_merged = {std::bind(&BJ::pointQueryByMerged, &tpchBasicJoin),
+                                                               std::bind(&BJ::range_query_by_merged, &tpchBasicJoin),
+                                                               std::bind(&BJ::maintainMerged, &tpchBasicJoin)};
 
-      WARMUP_THEN_TXS(
-          tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForMerged(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes, "merged");
-
-      std::vector<std::function<void()>> elapsed_cbs_view = {std::bind(&BJ::queryByView, &tpchBasicJoin)};
-      std::vector<std::function<void()>> tput_cbs_view = {std::bind(&BJ::pointQueryByView, &tpchBasicJoin),
-                                                          std::bind(&BJ::range_query_by_view, &tpchBasicJoin),
-                                                          std::bind(&BJ::maintainView, &tpchBasicJoin)};
-
-      WARMUP_THEN_TXS(
-          tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForView(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view");
+         WARMUP_THEN_TXS(
+             tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForMerged(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
+             "merged");
+      } else {
+         std::cerr << "Invalid storage structure: " << FLAGS_storage_structure << std::endl;
+         return -1;
+      }
    }
 }

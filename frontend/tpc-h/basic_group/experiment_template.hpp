@@ -66,22 +66,29 @@ int run()
 
       std::vector<std::string> tput_prefixes = {"point-query", "maintain"};
 
-      std::vector<std::function<void()>> elapsed_cbs_view = {std::bind(&BG::queryByView, &tpchBasicGroup)};
+      if (FLAGS_storage_structure == 0) {
+         std::cout << "TPC-H with traditional indexes" << std::endl;
+         std::vector<std::function<void()>> elapsed_cbs_view = {std::bind(&BG::queryByView, &tpchBasicGroup)};
 
-      std::vector<std::function<void()>> tput_cbs_view = {std::bind(&BG::pointQueryByView, &tpchBasicGroup),
-                                                          std::bind(&BG::maintainView, &tpchBasicGroup)};
+         std::vector<std::function<void()>> tput_cbs_view = {std::bind(&BG::pointQueryByView, &tpchBasicGroup),
+                                                             std::bind(&BG::maintainView, &tpchBasicGroup)};
 
-      WARMUP_THEN_TXS(
-          tpch, crm, isolation_level, [&tpchBasicGroup]() { tpchBasicGroup.pointLookupsForView(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes,
-          "view");
+         WARMUP_THEN_TXS(
+             tpch, crm, isolation_level, [&tpchBasicGroup]() { tpchBasicGroup.pointLookupsForView(); }, elapsed_cbs_view, tput_cbs_view,
+             tput_prefixes, "view");
+      } else if (FLAGS_storage_structure == 2) {
+         std::cout << "TPC-H with merged indexes" << std::endl;
+         std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&BG::queryByMerged, &tpchBasicGroup)};
+         std::vector<std::function<void()>> tput_cbs_merged = {std::bind(&BG::pointQueryByMerged, &tpchBasicGroup),
+                                                               std::bind(&BG::maintainMerged, &tpchBasicGroup)};
 
-      std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&BG::queryByMerged, &tpchBasicGroup)};
-      std::vector<std::function<void()>> tput_cbs_merged = {std::bind(&BG::pointQueryByMerged, &tpchBasicGroup),
-                                                            std::bind(&BG::maintainMerged, &tpchBasicGroup)};
-
-      WARMUP_THEN_TXS(
-          tpch, crm, isolation_level, [&tpchBasicGroup]() { tpchBasicGroup.pointLookupsForMerged(); }, elapsed_cbs_merged, tput_cbs_merged,
-          tput_prefixes, "merged");
+         WARMUP_THEN_TXS(
+             tpch, crm, isolation_level, [&tpchBasicGroup]() { tpchBasicGroup.pointLookupsForMerged(); }, elapsed_cbs_merged, tput_cbs_merged,
+             tput_prefixes, "merged");
+      } else {
+         std::cerr << "Invalid storage structure" << std::endl;
+         return -1;
+      }
    }
    return 0;
 }
