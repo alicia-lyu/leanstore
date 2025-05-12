@@ -8,6 +8,7 @@
 #include "tpch_workload.hpp"
 
 DECLARE_int32(tx_count);
+DECLARE_int32(storage_structure);
 
 #define WARMUP_THEN_TXS(tpch, crm, isolation_level, lookup_cb, elapsed_cbs, tput_cbs, tput_prefixes, suffix)                                       \
    {                                                                                                                                               \

@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "basic_join",
+      "name": "basic_join_0",
       "type": "lldb",
       "request": "launch",
       "program": "${workspaceFolder}/build-debug/frontend/basic_join",
@@ -18,16 +18,66 @@
         "--csv_path=build-debug/basic_join/10-in-1",
         "--recover_file=build-debug/basic_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_join/10.image",
-        "--dram_gib=1"
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=1",
+        "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
-      "stopOnEntry": false,
-      "initCommands": [
-        "command source .lldbinit"
-      ]
+      "stopOnEntry": false
     },
     {
-      "name": "basic_group",
+      "name": "basic_join_1",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/basic_join",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--tpch_scale_factor=10",
+        "--csv_path=build-debug/basic_join/10-in-1",
+        "--recover_file=build-debug/basic_join/10.json",
+        "--ssd_path=/mnt/hdd/leanstore_images/basic_join/10.image",
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=1",
+        "--storage_structure=2"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "basic_join_2",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/basic_join",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--tpch_scale_factor=10",
+        "--csv_path=build-debug/basic_join/10-in-1",
+        "--recover_file=build-debug/basic_join/10.json",
+        "--ssd_path=/mnt/hdd/leanstore_images/basic_join/10.image",
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=1",
+        "--storage_structure=2"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "basic_group_0",
       "type": "lldb",
       "request": "launch",
       "program": "${workspaceFolder}/build-debug/frontend/basic_group",
@@ -43,16 +93,39 @@
         "--csv_path=build-debug/basic_group/10-in-1",
         "--recover_file=build-debug/basic_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_group/10.image",
-        "--dram_gib=1"
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
-      "stopOnEntry": false,
-      "initCommands": [
-        "command source .lldbinit"
-      ]
+      "stopOnEntry": false
     },
     {
-      "name": "basic_group_variant",
+      "name": "basic_group_2",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/basic_group",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--tpch_scale_factor=10",
+        "--csv_path=build-debug/basic_group/10-in-1",
+        "--recover_file=build-debug/basic_group/10.json",
+        "--ssd_path=/mnt/hdd/leanstore_images/basic_group/10.image",
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=2"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "basic_group_variant_0",
       "type": "lldb",
       "request": "launch",
       "program": "${workspaceFolder}/build-debug/frontend/basic_group_variant",
@@ -68,16 +141,39 @@
         "--csv_path=build-debug/basic_group_variant/10-in-1",
         "--recover_file=build-debug/basic_group_variant/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_group_variant/10.image",
-        "--dram_gib=1"
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
-      "stopOnEntry": false,
-      "initCommands": [
-        "command source .lldbinit"
-      ]
+      "stopOnEntry": false
     },
     {
-      "name": "basic_join_group",
+      "name": "basic_group_variant_2",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/basic_group_variant",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--tpch_scale_factor=10",
+        "--csv_path=build-debug/basic_group_variant/10-in-1",
+        "--recover_file=build-debug/basic_group_variant/10.json",
+        "--ssd_path=/mnt/hdd/leanstore_images/basic_group_variant/10.image",
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=2"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "basic_join_group_0",
       "type": "lldb",
       "request": "launch",
       "program": "${workspaceFolder}/build-debug/frontend/basic_join_group",
@@ -93,13 +189,36 @@
         "--csv_path=build-debug/basic_join_group/10-in-1",
         "--recover_file=build-debug/basic_join_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_join_group/10.image",
-        "--dram_gib=1"
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
-      "stopOnEntry": false,
-      "initCommands": [
-        "command source .lldbinit"
-      ]
+      "stopOnEntry": false
+    },
+    {
+      "name": "basic_join_group_2",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/basic_join_group",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--tpch_scale_factor=10",
+        "--csv_path=build-debug/basic_join_group/10-in-1",
+        "--recover_file=build-debug/basic_join_group/10.json",
+        "--ssd_path=/mnt/hdd/leanstore_images/basic_join_group/10.image",
+        "--dram_gib=1",
+        "--storage_structure=0",
+        "--storage_structure=2"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
     }
   ]
 }
