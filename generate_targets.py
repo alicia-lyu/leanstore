@@ -127,10 +127,11 @@ def generate_recover_rules() -> None:
             recover = Path(bd) / exe / f"{cfg.scale}.json"
             img = image_file(exe)
 
-            print(f"{recover}: {LOADING_META_FILE} {loading_file(exe)} {img} {rd}")
-            # for f in [recover, LOADING_META_FILE, loading_file(exe), img, rd]:
+            print(f"{recover}: {LOADING_META_FILE} {loading_file(exe)} {img}")
+            # for f in [recover, LOADING_META_FILE, loading_file(exe), img]:
                 # print(f'\techo {f}; stat -c %y "{f}"')
             print(f'\techo "Persisting data to {recover}"')
+            print(f"\tmkdir -p {rd}")
             print(
                 f"\t{exe_path} {cfg.leanstore_flags} "
                 f"--csv_path={rd} --persist_file=$@ "
@@ -183,7 +184,7 @@ def generate_lldb_rules() -> None:
         args = list(cfg.leanstore_flags.split()) + [
             f"--csv_path={rd}",
             f"--recover_file={recover}",
-            f"--ssd_path={img}",
+            f"--ssd_path={img_temp}",
             f"--dram_gib=1",
         ]
         for i, arg in enumerate(args):
@@ -199,7 +200,7 @@ def generate_lldb_rules() -> None:
                 f"{exe_path} {cfg.leanstore_flags} "
                 f"--storage_structure={structure} "
                 f"--csv_path={rd} --recover_file={recover} "
-                f"--ssd_path={img} --dram_gib=$(dram)"
+                f"--ssd_path={img_temp} --dram_gib=$(dram)"
             )
             args.append(f"--storage_structure={structure}")
         
