@@ -3,7 +3,7 @@
 #include "../view_templates.hpp"
 #include "../tables.hpp"
 
-// id range: 10s (only one such namespace are included in each executable)
+// id range: 10s + 20s (only one such namespace are included in each executable)
 
 namespace geo_join
 {
@@ -51,12 +51,12 @@ struct sort_key_t {
 };
 
 struct region2_t {
-   static constexpr int id = 7;
+   static constexpr int id = 11;
    region2_t() = default;
    region2_t(const Varchar<25>& r_name, const Varchar<152>& r_comment) : r_name(r_name), r_comment(r_comment) {}
    region2_t(const region_t& r) : r_name(r.r_name), r_comment(r.r_comment) {}
    struct Key {
-      static constexpr int id = 7;
+      static constexpr int id = 11;
       Integer r_regionkey;
       ADD_KEY_TRAITS(&Key::r_regionkey)
       sort_key_t get_jk() const { return sort_key_t{r_regionkey, 0, 0, 0, 0}; }
@@ -72,12 +72,12 @@ struct region2_t {
 };
 
 struct nation2_t {
-   static constexpr int id = 6;
+   static constexpr int id = 12;
    nation2_t() = default;
    nation2_t(const Varchar<25>& n_name, const Varchar<152>& n_comment) : n_name(n_name), n_comment(n_comment) {}
    nation2_t(const nation_t& n) : n_name(n.n_name), n_comment(n.n_comment) {}
    struct Key {
-      static constexpr int id = 6;
+      static constexpr int id = 12;
       Integer n_regionkey;
       Integer n_nationkey;
       ADD_KEY_TRAITS(&Key::n_regionkey, &Key::n_nationkey)
@@ -97,10 +97,45 @@ struct nation2_t {
    }
 };
 
-struct states_t {
-   static constexpr int id = 11;
+struct rn_t {
+   static constexpr int id = 21;
+
+   rn_t() = default;
+   rn_t(const Varchar<25>& r_name, const Varchar<25>& n_name, const Varchar<152>& r_comment, const Varchar<152>& n_comment)
+       : region_name(r_name), nation_name(n_name), region_comment(r_comment), nation_comment(n_comment)
+   {
+   }
+
+   rn_t(const region2_t& r, const nation2_t& n) : region_name(r.r_name), nation_name(n.n_name), region_comment(r.r_comment), nation_comment(n.n_comment)
+   {
+   }
+
    struct Key {
-      static constexpr int id = 11;
+      static constexpr int id = 21;
+      Integer regionkey;
+      Integer nationkey;
+      ADD_KEY_TRAITS(&Key::regionkey, &Key::nationkey)
+
+      sort_key_t get_jk() const { return sort_key_t{regionkey, nationkey, 0, 0, 0}; }
+      Key get_pk() const { return *this; }
+   };
+
+   Varchar<25> region_name;
+   Varchar<25> nation_name;
+   Varchar<152> region_comment;
+   Varchar<152> nation_comment;
+   ADD_RECORD_TRAITS(rn_t)
+
+   static rn_t generateRandomRecord()
+   {
+      return rn_t{region2_t::generateRandomRecord(), nation2_t::generateRandomRecord()};
+   }
+};
+
+struct states_t {
+   static constexpr int id = 13;
+   struct Key {
+      static constexpr int id = 14;
       Integer regionkey;
       Integer nationkey;
       Integer statekey;
@@ -116,10 +151,53 @@ struct states_t {
    static states_t generateRandomRecord() { return states_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
 };
 
-struct county_t {
-   static constexpr int id = 12;
+struct rns_t {
+   static constexpr int id = 22;
+
+   rns_t() = default;
+   rns_t(const Varchar<25>& r_name, const Varchar<25>& n_name, const Varchar<25>& s_name, const Varchar<152>& r_comment,
+         const Varchar<152>& n_comment, const Varchar<152>& s_comment)
+       : region_name(r_name), nation_name(n_name), state_name(s_name), region_comment(r_comment), nation_comment(n_comment), state_comment(s_comment)
+   {
+   }
+
+   rns_t(const rn_t& rn, const states_t& s) : region_name(rn.region_name), nation_name(rn.nation_name), state_name(s.name),
+                                          region_comment(rn.region_comment), nation_comment(rn.nation_comment), state_comment(s.comment)
+   {
+   }
+
    struct Key {
-      static constexpr int id = 12;
+      static constexpr int id = 22;
+      Integer regionkey;
+      Integer nationkey;
+      Integer statekey;
+      ADD_KEY_TRAITS(&Key::regionkey, &Key::nationkey, &Key::statekey)
+
+      Key() = default;
+      Key(Integer r, Integer n, Integer s) : regionkey(r), nationkey(n), statekey(s) {}
+      Key(const rn_t::Key& rnk, const states_t::Key& sk) : regionkey(rnk.regionkey), nationkey(rnk.nationkey), statekey(sk.statekey) {}
+
+      sort_key_t get_jk() const { return sort_key_t{regionkey, nationkey, statekey, 0, 0}; }
+      Key get_pk() const { return *this; }
+   };
+
+   Varchar<25> region_name;
+   Varchar<25> nation_name;
+   Varchar<25> state_name;
+   Varchar<152> region_comment;
+   Varchar<152> nation_comment;
+   Varchar<152> state_comment;
+   ADD_RECORD_TRAITS(rns_t)
+   static rns_t generateRandomRecord()
+   {
+      return rns_t{rn_t::generateRandomRecord(), states_t::generateRandomRecord()};
+   }
+};
+
+struct county_t {
+   static constexpr int id = 15;
+   struct Key {
+      static constexpr int id = 15;
       Integer regionkey;
       Integer nationkey;
       Integer statekey;
@@ -136,10 +214,59 @@ struct county_t {
    static county_t generateRandomRecord() { return county_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
 };
 
-struct city_t {
-   static constexpr int id = 13;
+struct rnsc_t {
+   static constexpr int id = 23;
+
+   rnsc_t() = default;
+   rnsc_t(const Varchar<25>& r_name, const Varchar<25>& n_name, const Varchar<25>& s_name, const Varchar<25>& c_name,
+          const Varchar<152>& r_comment, const Varchar<152>& n_comment, const Varchar<152>& s_comment, const Varchar<152>& c_comment)
+       : region_name(r_name), nation_name(n_name), state_name(s_name), county_name(c_name), region_comment(r_comment), nation_comment(n_comment),
+         state_comment(s_comment), county_comment(c_comment)
+   {
+   }
+
+   rnsc_t(const rns_t& rns, const county_t& c) : region_name(rns.region_name), nation_name(rns.nation_name), state_name(rns.state_name),
+                                          county_name(c.name), region_comment(rns.region_comment), nation_comment(rns.nation_comment),
+                                          state_comment(rns.state_comment), county_comment(c.comment)
+   {
+   }
+
    struct Key {
-      static constexpr int id = 13;
+      static constexpr int id = 23;
+      Integer regionkey;
+      Integer nationkey;
+      Integer statekey;
+      Integer countykey;
+      ADD_KEY_TRAITS(&Key::regionkey, &Key::nationkey, &Key::statekey, &Key::countykey)
+
+      Key() = default;
+      Key(Integer r, Integer n, Integer s, Integer c) : regionkey(r), nationkey(n), statekey(s), countykey(c) {}
+      Key(const rns_t::Key& rnsk, const county_t::Key& ck) : regionkey(rnsk.regionkey), nationkey(rnsk.nationkey), statekey(rnsk.statekey), countykey(ck.countykey) {}
+
+      sort_key_t get_jk() const { return sort_key_t{regionkey, nationkey, statekey, countykey, 0}; }
+      Key get_pk() const { return *this; }
+   };
+
+   Varchar<25> region_name;
+   Varchar<25> nation_name;
+   Varchar<25> state_name;
+   Varchar<25> county_name;
+   Varchar<152> region_comment;
+   Varchar<152> nation_comment;
+   Varchar<152> state_comment;
+   Varchar<152> county_comment;
+   ADD_RECORD_TRAITS(rnsc_t)
+
+   static rnsc_t generateRandomRecord()
+   {
+      return rnsc_t{rns_t::generateRandomRecord(), county_t::generateRandomRecord()};
+   }
+};
+
+struct city_t {
+   static constexpr int id = 16;
+   struct Key {
+      static constexpr int id = 16;
       Integer regionkey;
       Integer nationkey;
       Integer statekey;
@@ -157,8 +284,16 @@ struct city_t {
    static city_t generateRandomRecord() { return city_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
 };
 
-struct view_t : public joined_t<15, sort_key_t, region_t, nation_t, states_t, county_t, city_t> {
+struct view_t : public joined_t<15, sort_key_t, region2_t, nation2_t, states_t, county_t, city_t> {
    view_t() = default;
+   view_t(const rnsc_t& rns, const city_t& c)
+       : joined_t{region2_t{rns.region_name, rns.region_comment},
+                  nation2_t{rns.nation_name, rns.nation_comment},
+                  states_t{rns.state_name, rns.state_comment},
+                  county_t{rns.county_name, rns.county_comment},
+                  city_t{c.name, c.comment}}
+   {
+   }
    template <typename... Args>
    explicit view_t(Args&&... args) : joined_t{std::forward<Args>(args)...}
    {
@@ -166,22 +301,12 @@ struct view_t : public joined_t<15, sort_key_t, region_t, nation_t, states_t, co
    struct Key : public joined_t::Key {
       Key() = default;
 
-      Key(const sort_key_t& jk,
-          const region_t::Key& rk,
-          const nation_t::Key& nk,
-          const states_t::Key& sk,
-          const county_t::Key& ck,
-          const city_t::Key& cik)
-          : joined_t::Key{jk, std::make_tuple(rk, nk, sk, ck, cik)}
+      Key(const rnsc_t::Key& rnsk, const city_t::Key& ck) : joined_t::Key(sort_key_t{rnsk.regionkey, rnsk.nationkey, rnsk.statekey, rnsk.countykey, ck.citykey})
       {
       }
 
-      Key(const sort_key_t& jk)
-          : joined_t::Key{jk, std::make_tuple(region_t::Key{jk.regionkey},
-                                              nation_t::Key{jk.regionkey, jk.nationkey},
-                                              states_t::Key{jk.regionkey, jk.nationkey, jk.statekey},
-                                              county_t::Key{jk.regionkey, jk.nationkey, jk.statekey, jk.countykey},
-                                              city_t::Key{jk.regionkey, jk.nationkey, jk.statekey, jk.countykey, jk.citykey})}
+      template <typename... Args>
+      explicit Key(Args&&... args) : joined_t::Key(std::forward<Args>(args)...)
       {
       }
    };

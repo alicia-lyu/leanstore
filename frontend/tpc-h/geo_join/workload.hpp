@@ -159,19 +159,19 @@ class GeoJoin
       auto county_scanner = county.getScanner();
       auto city_scanner = city.getScanner();
 
-      BinaryMergeJoin<sort_key_t, merged_nation_t, region2_t, nation2_t> binary_join1([&]() { return region_scanner->next(); },
+      BinaryMergeJoin<sort_key_t, rn_t, region2_t, nation2_t> binary_join1([&]() { return region_scanner->next(); },
                                                                                     [&]() { return nation_scanner->next(); });
 
-      BinaryMergeJoin<sort_key_t, merged_states_t, merged_nation_t, states_t> binary_join2([&]() { return binary_join1.next(); },
+      BinaryMergeJoin<sort_key_t, rns_t, rn_t, states_t> binary_join2([&]() { return binary_join1.next(); },
                                                                                            [&]() { return states_scanner->next(); });
 
-      BinaryMergeJoin<sort_key_t, merged_county_t, merged_states_t, county_t> binary_join3([&]() { return binary_join2.next(); },
+      BinaryMergeJoin<sort_key_t, rnsc_t, rns_t, county_t> binary_join3([&]() { return binary_join2.next(); },
                                                                                            [&]() { return county_scanner->next(); });
 
-      BinaryMergeJoin<sort_key_t, merged_city_t, merged_county_t, city_t> binary_join4([&]() { return binary_join3.next(); },
+      BinaryMergeJoin<sort_key_t, view_t, rnsc_t, city_t> binary_join4([&]() { return binary_join3.next(); },
                                                                                        [&]() { return city_scanner->next(); });
 
-      binary_join4.run();  // TODO: use correct intermediate schemata
+      binary_join4.run();
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
