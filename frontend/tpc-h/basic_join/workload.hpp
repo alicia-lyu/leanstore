@@ -90,7 +90,7 @@ class BasicJoin
       workload.customer.lookup1(customerh_t::Key{customer_id}, [&](const customerh_t&) {});
       workload.orders.lookup1(orders_t::Key{order_id}, [&](const orders_t&) {});
       workload.lineitem.lookup1(lineitem_t::Key{order_id, 1}, [&](const lineitem_t&) {});
-      workload.nation.lookup1(nation_t::Key{nation_id}, [&](const nation_t&) {});
+      workload.nation.lookup1(nation_t::Key{region_id, nation_id}, [&](const nation_t&) {});
       workload.region.lookup1(region_t::Key{region_id}, [&](const region_t&) {});
    }
 

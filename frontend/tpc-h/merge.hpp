@@ -123,7 +123,7 @@ struct PremergedJoin {
       auto& k = kv->first;
       auto& v = kv->second;
       JK jk;
-      std::visit([&](auto& actual_key) -> void { jk = actual_key.jk; }, k);
+      std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
       // if (current_jk != jk) join the cached records
       int curr_joined;
       if (current_jk != jk)

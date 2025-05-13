@@ -70,6 +70,7 @@ struct merged_view_t : public merged_t<31, view_t, sort_key_t, ExtraID::PKID> {
       Key(const view_t::Key& pk) : merged_t::Key{sort_key_t{pk.o_orderkey, pk.o_orderdate}, pk} {}
       Key(const sort_key_t& sk, const view_t::Key& pk) : merged_t::Key{sk, pk} {}
       Key(const sort_key_t& sk) : merged_t::Key{sk, view_t::Key{sk.orderkey, sk.orderdate}} {}
+      Key(const merged_t::Key& k) : merged_t::Key{k.jk, view_t::Key{k.jk.orderkey, k.jk.orderdate}} {}
    };
 };
 
@@ -84,6 +85,7 @@ struct merged_orders_t : public merged_t<31, orders_t, sort_key_t, ExtraID::PKID
       Key(Integer orderkey, Timestamp orderdate) : merged_t::Key{sort_key_t{orderkey, orderdate}, orders_t::Key{orderkey}} {}
       Key(const sort_key_t& sk, const orders_t::Key& pk) : merged_t::Key{sk, pk} {}
       Key(const orders_t::Key& pk) : merged_t::Key{sort_key_t{pk.o_orderkey, Timestamp{0}}, pk} {}
+      Key(const merged_t::Key& k) : merged_t::Key{k.jk, orders_t::Key{k.jk.orderkey}} {}
    };
 };
 
