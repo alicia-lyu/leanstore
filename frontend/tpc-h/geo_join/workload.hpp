@@ -4,6 +4,7 @@
 #include <optional>
 #include <variant>
 
+#include "../../shared/Adapter.hpp"
 #include "../merge.hpp"
 #include "../tpch_workload.hpp"
 #include "Exceptions.hpp"
@@ -160,16 +161,15 @@ class GeoJoin
       auto city_scanner = city.getScanner();
 
       BinaryMergeJoin<sort_key_t, rn_t, region2_t, nation2_t> binary_join1([&]() { return region_scanner->next(); },
-                                                                                    [&]() { return nation_scanner->next(); });
+                                                                           [&]() { return nation_scanner->next(); });
 
       BinaryMergeJoin<sort_key_t, rns_t, rn_t, states_t> binary_join2([&]() { return binary_join1.next(); },
-                                                                                           [&]() { return states_scanner->next(); });
+                                                                      [&]() { return states_scanner->next(); });
 
       BinaryMergeJoin<sort_key_t, rnsc_t, rns_t, county_t> binary_join3([&]() { return binary_join2.next(); },
-                                                                                           [&]() { return county_scanner->next(); });
+                                                                        [&]() { return county_scanner->next(); });
 
-      BinaryMergeJoin<sort_key_t, view_t, rnsc_t, city_t> binary_join4([&]() { return binary_join3.next(); },
-                                                                                       [&]() { return city_scanner->next(); });
+      BinaryMergeJoin<sort_key_t, view_t, rnsc_t, city_t> binary_join4([&]() { return binary_join3.next(); }, [&]() { return city_scanner->next(); });
 
       binary_join4.run();
 
@@ -195,12 +195,9 @@ class GeoJoin
 
    void point_query_by_merged()
    {
-      auto countykey = workload.getCountyID();
-      auto citykey = workload.getCityID();
-
       auto scanner = merged.getScanner();
-      bool ret =
-          scanner->template seekTyped<city_t>(city_t::Key{workload.getRegionID(), workload.getNationID(), workload.getStateID(), countykey, citykey});
+      bool ret = scanner->template seekTyped<city_t>(
+          city_t::Key{workload.getRegionID(), workload.getNationID(), workload.getStateID(), workload.getCountyID(), workload.getCityID()});
       if (!ret)
          return;
 
@@ -220,8 +217,7 @@ class GeoJoin
       std::optional<city_t> civ = std::nullopt;
 
       std::visit(overloaded{[&](const region2_t&) { UNREACHABLE(); }, [&](const nation2_t&) { UNREACHABLE(); },
-                            [&](const states_t&) { UNREACHABLE(); }, [&](const county_t&) { UNREACHABLE(); },
-                            [&](const city_t& ci) { civ = ci; }},
+                            [&](const states_t&) { UNREACHABLE(); }, [&](const county_t&) { UNREACHABLE(); }, [&](const city_t& ci) { civ = ci; }},
                  v);
 
       while (!rv.has_value() || !nv.has_value() || !sv.has_value() || !cv.has_value() || !civ.has_value()) {
@@ -230,16 +226,14 @@ class GeoJoin
             break;
          auto& [k, v] = *kv;
 
-         std::visit(
-             overloaded{[&](const region2_t::Key& rk) { assert(rk.get_jk().match(target_sk)); },
-                        [&](const nation2_t::Key& nk) { assert(nk.get_jk().match(target_sk)); },
-                        [&](const states_t::Key& sk) { assert(sk.get_jk().match(target_sk)); },
-                        [&](const county_t::Key& ck) { assert(ck.get_jk().match(target_sk)); }, [&](const city_t::Key&) { UNREACHABLE(); }},
-             k);
+         std::visit(overloaded{[&](const region2_t::Key& rk) { assert(rk.get_jk().match(target_sk)); },
+                               [&](const nation2_t::Key& nk) { assert(nk.get_jk().match(target_sk)); },
+                               [&](const states_t::Key& sk) { assert(sk.get_jk().match(target_sk)); },
+                               [&](const county_t::Key& ck) { assert(ck.get_jk().match(target_sk)); }, [&](const city_t::Key&) { UNREACHABLE(); }},
+                    k);
 
-         std::visit(overloaded{[&](const region2_t& av) { rv = av; }, [&](const nation2_t& av) { nv = av; },
-                               [&](const states_t& av) { sv = av; }, [&](const county_t& av) { cv = av; },
-                               [&](const city_t&) { UNREACHABLE(); }},
+         std::visit(overloaded{[&](const region2_t& av) { rv = av; }, [&](const nation2_t& av) { nv = av; }, [&](const states_t& av) { sv = av; },
+                               [&](const county_t& av) { cv = av; }, [&](const city_t&) { UNREACHABLE(); }},
                     v);
       }
 
@@ -248,8 +242,83 @@ class GeoJoin
 
    void point_query_by_base()
    {
+      auto regionkey = workload.getRegionID();
+      auto nationkey = workload.getNationID();
+      auto statekey = workload.getStateID();
       auto countykey = workload.getCountyID();
       auto citykey = workload.getCityID();
+
+      city_t civ;
+
+      city.scan(
+          city_t::Key{regionkey, nationkey, statekey, countykey, citykey},
+          [&](const city_t::Key& k, const city_t& v) {
+             regionkey = k.regionkey;
+             nationkey = k.nationkey;
+             statekey = k.statekey;
+             countykey = k.countykey;
+             citykey = k.citykey;
+             civ = v;
+             return false;
+          },
+          []() {});
+
+      county_t cv;
+      county.lookup1(county_t::Key{statekey, countykey}, [&](const county_t& v) { cv = v; });
+
+      states_t sv;
+      states.lookup1(states_t::Key{regionkey, statekey}, [&](const states_t& v) { sv = v; });
+
+      nation2_t nv;
+      nation.lookup1(nation2_t::Key{regionkey, nationkey}, [&](const nation2_t& v) { nv = v; });
+
+      region2_t rv;
+      region.lookup1(region2_t::Key{regionkey}, [&](const region2_t& v) { rv = v; });
+
+      view_t vv{rv, nv, sv, cv, civ};
+   }
+
+   // -------------------------------------------------------------
+   // ---------------------- MAINTAIN -----------------------------
+   // insert a new state, a new county, a new city
+
+   void maintain_view() {}
+
+   // -------------------------------------------------------------
+   // ---------------------- LOADING -----------------------------
+
+   static constexpr size_t STATE_MAX = 100;   // max 50 states in a nation
+   static constexpr size_t COUNTY_MAX = 100;  // max 1000 counties in a state
+   static constexpr size_t CITY_MAX = 100;    // max 10000 cities in a county
+
+   void load_scci()
+   {
+      // county id starts from 1 in each s tate
+      // city id starts from 1 in each county
+      for (int n = 1; n <= workload.NATION_COUNT; n++) {
+         // state id starts from 1 in each nation
+         size_t state_cnt = urand(1, STATE_MAX);
+         Integer r = n % workload.REGION_COUNT;
+         UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
+         nation.update1(
+             nation2_t::Key{r, n},
+             [&](nation2_t& n) {
+                n.last_statekey = state_cnt;
+                return true;
+             },
+             nation_update_desc);
+         for (int s = 1; s <= state_cnt; s++) {
+            int county_cnt = urand(1, COUNTY_MAX);
+            states.insert(states_t::Key{r, n, s}, states_t{randomastring<25>(1, 25), randomastring<152>(0, 152), county_cnt});
+            for (int c = 1; c <= county_cnt; c++) {
+               int city_cnt = urand(1, CITY_MAX);
+               county.insert(county_t::Key{r, n, s, c}, county_t{randomastring<25>(1, 25), randomastring<152>(0, 152), city_cnt});
+               for (int ci = 1; ci <= city_cnt; ci++) {
+                  city.insert(city_t::Key{r, n, s, c, ci}, city_t{randomastring<25>(1, 25), randomastring<152>(0, 152)});
+               }
+            }
+         }
+      }
    }
 };
 }  // namespace geo_join
