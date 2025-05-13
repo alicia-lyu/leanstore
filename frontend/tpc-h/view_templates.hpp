@@ -102,6 +102,9 @@ struct merged_t {
          os << ")";
          return os;
       }
+
+      JK get_jk() const { return jk; }
+      typename T::Key get_pk() const { return pk; }
    };
 
    T payload;
@@ -131,9 +134,9 @@ struct merged_t {
       pos += JK::keyunfold(in + pos, key.jk);
       if (extra_id == ExtraID::PK)
          pos += T::unfoldKey(in + pos, key.pk);
-      else {
-         key = Key{key.jk};
-      }
+      // else {
+      //    key = Key{key.jk};
+      // }
       
       if (extra_id == ExtraID::PKID) {
          u8 id;

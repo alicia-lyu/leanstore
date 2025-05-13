@@ -55,6 +55,7 @@ struct merged_view_t : public merged_t<23, view_t, sort_key_t, ExtraID::NONE> {
       Key(const view_t::Key& pk) : merged_t::Key{sort_key_t{pk.p_partkey}, pk} {}
       Key(const sort_key_t& sk, view_t::Key&& pk) : merged_t::Key{sk, pk} {}
       Key(const sort_key_variant_t& sk) : merged_t::Key{sort_key_t{sk.partkey}, view_t::Key{sk.partkey}} {}
+      Key(const merged_t::Key& k) : merged_t::Key{sort_key_t{k.jk.partkey}, view_t::Key{k.jk.partkey}} {}
    };
 };
 
@@ -82,6 +83,7 @@ struct merged_view_variant_t : public merged_t<23, view_t, sort_key_variant_t, E
       Key(const view_t::Key& pk) : merged_t::Key{sort_key_variant_t{view_t::id, pk.p_partkey}, pk} {}
       Key(const sort_key_variant_t& sk, view_t::Key&& pk) : merged_t::Key{sk, pk} {}
       Key(const sort_key_t& sk) : merged_t::Key{sort_key_variant_t{view_t::id, sk.partkey}, view_t::Key{sk.partkey}} {}
+      Key(const merged_t::Key& k) : merged_t::Key{sort_key_variant_t{view_t::id, k.jk.partkey}, view_t::Key{k.jk.partkey}} {}
    };
 };
 

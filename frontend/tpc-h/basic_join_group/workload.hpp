@@ -55,7 +55,7 @@ class BasicJoinGroup
       workload.supplier.scan(supplier_t::Key{supplierkey}, [](const supplier_t::Key&, const supplier_t&) { return false; }, []() {});
       workload.partsupp.scan(partsupp_t::Key{partkey, supplierkey}, [](const partsupp_t::Key&, const partsupp_t&) { return false; }, []() {});
       workload.customer.scan(customerh_t::Key{customerkey}, [](const customerh_t::Key&, const customerh_t&) { return false; }, []() {});
-      workload.nation.scan(nation_t::Key{nationkey}, [](const nation_t::Key&, const nation_t&) { return false; }, []() {});
+      workload.nation.scan(nation_t::Key{regionkey, nationkey}, [](const nation_t::Key&, const nation_t&) { return false; }, []() {});
       workload.region.scan(region_t::Key{regionkey}, [](const region_t::Key&, const region_t&) { return false; }, []() {});
    }
 
