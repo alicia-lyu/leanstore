@@ -131,7 +131,11 @@ struct merged_t {
       pos += JK::keyunfold(in + pos, key.jk);
       if (extra_id == ExtraID::PK)
          pos += T::unfoldKey(in + pos, key.pk);
-      else if (extra_id == ExtraID::PKID) {
+      else {
+         key = Key{key.jk};
+      }
+      
+      if (extra_id == ExtraID::PKID) {
          u8 id;
          pos += unfold(in + pos, id);
          assert(key.pk.id == id);

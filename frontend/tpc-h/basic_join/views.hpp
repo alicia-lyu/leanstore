@@ -56,6 +56,7 @@ struct merged_part_t : public merged_t<13, part_t, join_key_t, ExtraID::NONE> {
       Key() = default;
       Key(const typename part_t::Key& pk, const part_t&) : merged_t::Key{join_key_t{pk.p_partkey, 0}, pk} {}
       Key(const join_key_t& jk, const typename part_t::Key& pk) : merged_t::Key{jk, pk} {}
+      Key(const join_key_t& jk) : merged_t::Key{jk, part_t::Key{jk.l_partkey}} {}
    };
 };
 
@@ -72,6 +73,7 @@ struct merged_partsupp_t : public merged_t<13, partsupp_t, join_key_t, ExtraID::
       Key() = default;
       Key(const typename partsupp_t::Key& pk, const partsupp_t&) : merged_t::Key{join_key_t{pk.ps_partkey, pk.ps_suppkey}, pk} {}
       Key(const join_key_t& jk, const typename partsupp_t::Key& pk) : merged_t::Key{jk, pk} {}
+      Key(const join_key_t& jk) : merged_t::Key{jk, partsupp_t::Key{jk.l_partkey, jk.suppkey}} {}
    };
 };
 
