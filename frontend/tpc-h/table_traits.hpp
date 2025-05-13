@@ -7,7 +7,8 @@
 
 template <typename K, auto K::*... Members>
 struct key_traits {
-   static std::ostream& print(std::ostream& os, const K& k) {
+   static std::ostream& print(std::ostream& os, const K& k)
+   {
       ((os << k.*Members << ", "), ...);
       return os;
    }
@@ -17,7 +18,7 @@ struct key_traits {
    static unsigned keyfold(uint8_t* out, const K& key)
    {
       unsigned pos = 0;
-      ((pos += fold(out + pos, key.*Members)), ...);
+      ((key.*Members == 0 ? void() : pos += fold(out + pos, key.*Members)), ...);
       return pos;
    }
 
@@ -50,7 +51,6 @@ inline T struct_from_bytes(const std::vector<std::byte>& s)
 
 template <typename K, typename T>
 struct record_traits {
-
    static unsigned foldKey(uint8_t* out, const K& key) { return K::keyfold(out, key); }
 
    static unsigned unfoldKey(const uint8_t* in, K& key) { return K::keyunfold(in, key); }
