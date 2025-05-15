@@ -70,7 +70,7 @@ struct nation2_t {
 
    ADD_RECORD_TRAITS(nation2_t)
 
-   static nation2_t generateRandomRecord() { return nation2_t{randomastring<25>(1, 25), randomastring<152>(0, 152), 0}; }
+   static nation2_t generateRandomRecord(int state_cnt) { return nation2_t{randomastring<25>(1, 25), randomastring<152>(0, 152), state_cnt}; }
 };
 
 struct states_t {
@@ -89,7 +89,7 @@ struct states_t {
    Integer last_countykey;
    ADD_RECORD_TRAITS(states_t)
 
-   static states_t generateRandomRecord() { return states_t{randomastring<25>(1, 25), randomastring<152>(0, 152), 0}; }
+   static states_t generateRandomRecord(int county_cnt) { return states_t{randomastring<25>(1, 25), randomastring<152>(0, 152), county_cnt}; }
 };
 
 struct ns_t : public joined_t<21, sort_key_t, nation2_t, states_t> {
@@ -126,7 +126,7 @@ struct county_t {
    Integer last_citykey;
    ADD_RECORD_TRAITS(county_t)
 
-   static county_t generateRandomRecord() { return county_t{randomastring<25>(1, 25), randomastring<152>(0, 152), 0}; }
+   static county_t generateRandomRecord(int city_cnt) { return county_t{randomastring<25>(1, 25), randomastring<152>(0, 152), city_cnt}; }
 };
 
 struct nsc_t : public joined_t<20, sort_key_t, ns_t, county_t> {
@@ -189,11 +189,22 @@ struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, c
       {
       }
 
+      Key(int n, int s, int c, int ci)
+          : joined_t::Key(sort_key_t{n, s, c, ci}, nation2_t::Key{n}, states_t::Key{n, s}, county_t::Key{n, s, c}, city_t::Key{n, s, c, ci})
+      {
+      }
+
       template <typename... Args>
       explicit Key(Args&&... args) : joined_t::Key(std::forward<Args>(args)...)
       {
       }
    };
+
+   static view_t generateRandomRecord(int state_cnt, int county_cnt, int city_cnt)
+   {
+      return view_t{nation2_t::generateRandomRecord(state_cnt), states_t::generateRandomRecord(county_cnt),
+                    county_t::generateRandomRecord(city_cnt), city_t::generateRandomRecord()};
+   }
 };
 
 }  // namespace geo_join
