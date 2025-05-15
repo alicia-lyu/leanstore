@@ -176,19 +176,19 @@ struct nation_t {
    static constexpr int id = 6;
    struct Key {
       static constexpr int id = 6;
-      Integer n_regionkey;
       Integer n_nationkey;
-      ADD_KEY_TRAITS(&Key::n_regionkey, &Key::n_nationkey)
+      ADD_KEY_TRAITS(&Key::n_nationkey)
    };
 
+   Integer n_regionkey;
    Varchar<25> n_name;
    Varchar<152> n_comment;
 
    ADD_RECORD_TRAITS(nation_t)
 
-   static nation_t generateRandomRecord()
+   static nation_t generateRandomRecord(std::function<int()> generate_regionkey)
    {
-      return nation_t{randomastring<25>(1, 25), randomastring<152>(0, 152)};
+      return nation_t{generate_regionkey(), randomastring<25>(1, 25), randomastring<152>(0, 152)};
    }
 };
 

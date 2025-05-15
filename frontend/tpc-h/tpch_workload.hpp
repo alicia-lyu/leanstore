@@ -326,7 +326,7 @@ struct TPCHWorkload {
    void loadNation(std::function<void(const nation_t::Key&, const nation_t&)> insert_func)
    {
       for (Integer i = 1; i <= NATION_COUNT; i++) {
-         insert_func(nation_t::Key{i % REGION_COUNT, i}, nation_t::generateRandomRecord());
+         insert_func(nation_t::Key{i}, nation_t::generateRandomRecord([this]() { return this->getRegionID(); }));
          printProgress("nation", i, 1, NATION_COUNT);
       }
    }
