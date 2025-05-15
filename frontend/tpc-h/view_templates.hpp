@@ -17,6 +17,10 @@ struct joined_t {
       JK jk;
       std::tuple<typename Ts::Key...> keys;  // LATER: use a boolean array to indicate which keys should be folded
 
+      Key() = default;
+      explicit Key(JK jk, std::tuple<typename Ts::Key...> keys) : jk(jk), keys(std::move(keys)) {}
+      explicit Key(JK jk, typename Ts::Key... keys) : jk(jk), keys(std::make_tuple(keys...)) {}
+
       friend std::ostream& operator<<(std::ostream& os, const Key& key)
       {
          os << "JoinedKey(" << key.jk << ", ";
