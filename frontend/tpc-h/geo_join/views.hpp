@@ -99,10 +99,7 @@ struct ns_t : public joined_t<21, sort_key_t, nation2_t, states_t> {
    }
    struct Key : public joined_t::Key {
       Key() = default;
-      Key(const nation2_t::Key& nk, const states_t::Key& sk)
-          : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0}, std::make_tuple(nk, sk)}
-      {
-      }
+      Key(const nation2_t::Key& nk, const states_t::Key& sk) : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0}, std::make_tuple(nk, sk)} {}
 
       std::tuple<nation2_t::Key, states_t::Key> flatten() const { return keys; }
    };
@@ -117,7 +114,7 @@ struct county_t {
       Integer nationkey;
       Integer statekey;
       Integer countykey;
-      ADD_KEY_TRAITS(&Key::statekey, &Key::countykey)
+      ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey, &Key::countykey)
 
       sort_key_t get_jk() const { return sort_key_t{nationkey, statekey, countykey, 0}; }
       Key get_pk() const { return *this; }
@@ -164,7 +161,7 @@ struct city_t {
       Integer statekey;
       Integer countykey;
       Integer citykey;
-      ADD_KEY_TRAITS(&Key::countykey, &Key::citykey)
+      ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey, &Key::countykey, &Key::citykey)
 
       sort_key_t get_jk() const { return sort_key_t{nationkey, statekey, countykey, citykey}; }
       Key get_pk() const { return *this; }
@@ -183,10 +180,7 @@ struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, c
    // explicit view_t(Args&&... args) : joined_t{std::forward<Args>(args)...}
    // {
    // }
-   view_t(const nation2_t& n, const states_t& s, const county_t& c, const city_t& ci)
-       : joined_t{std::make_tuple(n, s, c, ci)}
-   {
-   }
+   view_t(const nation2_t& n, const states_t& s, const county_t& c, const city_t& ci) : joined_t{std::make_tuple(n, s, c, ci)} {}
    struct Key : public joined_t::Key {
       Key() = default;
 
@@ -207,11 +201,8 @@ struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, c
       }
 
       Key(const sort_key_t& jk)
-          : joined_t::Key{jk,
-                          nation2_t::Key{jk.nationkey},
-                          states_t::Key{jk.nationkey, jk.statekey},
-                          county_t::Key{jk.nationkey, jk.statekey, jk.countykey},
-                          city_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey}}
+          : joined_t::Key{jk, nation2_t::Key{jk.nationkey}, states_t::Key{jk.nationkey, jk.statekey},
+                          county_t::Key{jk.nationkey, jk.statekey, jk.countykey}, city_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey}}
       {
       }
    };

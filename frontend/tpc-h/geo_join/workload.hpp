@@ -461,6 +461,7 @@ class GeoJoin
 
    void load()
    {
+      workload.load();
       // county id starts from 1 in each s tate
       // city id starts from 1 in each county
       for (int n = 1; n <= workload.NATION_COUNT; n++) {
@@ -468,14 +469,15 @@ class GeoJoin
          int state_cnt = urand(1, STATE_MAX);
          UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
          auto nk = nation2_t::Key{n};
+         nation2_t nv;
          auto update_fn = [&](nation2_t& n) {
             n.last_statekey = state_cnt;
-            return true;
+            nv = n;
          };
          nation.update1(nk, update_fn, nation_update_desc);
-         merged.template update1<nation2_t>(nk, update_fn, nation_update_desc);
-         update_nation_in_view(n, update_fn);
+         merged.insert(nk, nv);
          for (int s = 1; s <= state_cnt; s++) {
+            std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "...";
             int county_cnt = urand(1, COUNTY_MAX);
             states.insert(states_t::Key{n, s}, states_t::generateRandomRecord(county_cnt));
             merged.insert(states_t::Key{n, s}, states_t::generateRandomRecord(county_cnt));
