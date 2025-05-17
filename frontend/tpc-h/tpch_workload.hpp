@@ -133,7 +133,7 @@ struct TPCHWorkload {
 
    void prepare() { logger.prepare(); }
 
-   void printProgress(std::string msg, Integer i, Integer start, Integer end)
+   static void printProgress(std::string msg, Integer i, Integer start, Integer end)
    {
       auto scale = end - start + 1;
       if (scale < 100)

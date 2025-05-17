@@ -62,7 +62,6 @@ def image_file(exe: str) -> Path:
     """Returns the path to the SSD image file for a given executable."""
     return cfg.image_dir / exe / f"{cfg.scale}.image"
 
-
 def generate_build_rules() -> None:
     print_section("build executables")
     executables = []
@@ -97,12 +96,13 @@ def clean_runtime_dirs() -> None:
 
 def generate_image_files() -> None:
     print_section("image files")
+    print(f"FORCE:;")
     for exe in cfg.exec_names:
         img = image_file(exe)
         print(f"{img}:")
         print(f'\t@echo "Touching image file {img}"')
         print(f"\tmkdir -p {img.parent} && touch {img}")
-        print(f"{img}_temp: {img}")
+        print(f"{img}_temp: {img} FORCE") # force duplicate
         print(f'\t@echo "Duplicating temporary image file {img} for transactions"')
         print(f"\tmkdir -p {img.parent} && cp -f {img} {img}_temp")
         print()
@@ -179,6 +179,7 @@ def generate_lldb_rules() -> None:
         recover = Path(bd) / exe / f"{cfg.scale}.json"
         img = image_file(exe)
         separate_runs = " ".join([f"{exe}_lldb_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
+        
         print(f"{exe}_lldb: {exe_path} {recover} check_perf_event_paranoid {separate_runs}")
         
         img_temp = f"{img}_temp"
@@ -231,7 +232,7 @@ def main() -> None:
     generate_lldb_rules()
 
     # phony declaration
-    phony = ["check_perf_event_paranoid", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
+    phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + cfg.exec_names + [f"{e}_lldb" for e in cfg.exec_names]
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")
