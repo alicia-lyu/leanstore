@@ -98,8 +98,9 @@ struct ns_t : public joined_t<21, sort_key_t, nation2_t, states_t> {
    {
    }
    struct Key : public joined_t::Key {
-      template <typename... Args>
-      explicit Key(Args&&... args) : joined_t::Key(std::forward<Args>(args)...)
+      Key() = default;
+      Key(const nation2_t::Key& nk, const states_t::Key& sk)
+          : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0}, std::make_tuple(nk, sk)}
       {
       }
 
@@ -135,8 +136,10 @@ struct nsc_t : public joined_t<20, sort_key_t, ns_t, county_t> {
    {
    }
    struct Key : public joined_t::Key {
-      template <typename... Args>
-      explicit Key(Args&&... args) : joined_t::Key(std::forward<Args>(args)...)
+      Key() = default;
+
+      Key(const ns_t::Key& nsk, const county_t::Key& ck)
+          : joined_t::Key{sort_key_t{nsk.jk.nationkey, nsk.jk.statekey, ck.countykey, 0}, std::make_tuple(nsk, ck)}
       {
       }
 
@@ -176,35 +179,85 @@ struct city_t {
 struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, city_t> {
    view_t() = default;
    view_t(const nsc_t& nsc, const city_t& c) : joined_t{std::tuple_cat(nsc.flatten(), std::make_tuple(c))} {}
-   template <typename... Args>
-   explicit view_t(Args&&... args) : joined_t{std::forward<Args>(args)...}
+   // template <typename... Args>
+   // explicit view_t(Args&&... args) : joined_t{std::forward<Args>(args)...}
+   // {
+   // }
+   view_t(const nation2_t& n, const states_t& s, const county_t& c, const city_t& ci)
+       : joined_t{std::make_tuple(n, s, c, ci)}
    {
    }
    struct Key : public joined_t::Key {
       Key() = default;
 
+      Key(const nation2_t::Key& nk, const states_t::Key& sk, const county_t::Key& ck, const city_t::Key& ci)
+          : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, ck.countykey, ci.citykey}, std::make_tuple(nk, sk, ck, ci)}
+      {
+      }
+
       Key(const nsc_t::Key& nsck, const city_t::Key& ck)
-          : joined_t::Key(sort_key_t{nsck.jk.nationkey, nsck.jk.statekey, nsck.jk.countykey, ck.citykey},
-                          std::tuple_cat(nsck.flatten(), std::make_tuple(ck)))
+          : joined_t::Key{sort_key_t{nsck.jk.nationkey, nsck.jk.statekey, nsck.jk.countykey, ck.citykey},
+                          std::tuple_cat(nsck.flatten(), std::make_tuple(ck))}
       {
       }
 
       Key(int n, int s, int c, int ci)
-          : joined_t::Key(sort_key_t{n, s, c, ci}, nation2_t::Key{n}, states_t::Key{n, s}, county_t::Key{n, s, c}, city_t::Key{n, s, c, ci})
+          : joined_t::Key{sort_key_t{n, s, c, ci}, nation2_t::Key{n}, states_t::Key{n, s}, county_t::Key{n, s, c}, city_t::Key{n, s, c, ci}}
       {
       }
 
-      template <typename... Args>
-      explicit Key(Args&&... args) : joined_t::Key(std::forward<Args>(args)...)
+      Key(const sort_key_t& jk)
+          : joined_t::Key{jk,
+                          nation2_t::Key{jk.nationkey},
+                          states_t::Key{jk.nationkey, jk.statekey},
+                          county_t::Key{jk.nationkey, jk.statekey, jk.countykey},
+                          city_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey}}
       {
       }
    };
 
    static view_t generateRandomRecord(int state_cnt, int county_cnt, int city_cnt)
    {
-      return view_t{nation2_t::generateRandomRecord(state_cnt), states_t::generateRandomRecord(county_cnt),
-                    county_t::generateRandomRecord(city_cnt), city_t::generateRandomRecord()};
+      return view_t{nation2_t::generateRandomRecord(state_cnt), states_t::generateRandomRecord(county_cnt), county_t::generateRandomRecord(city_cnt),
+                    city_t::generateRandomRecord()};
    }
 };
 
 }  // namespace geo_join
+
+using namespace geo_join;
+
+template <>
+struct SKBuilder<sort_key_t> {
+   static sort_key_t inline create(const nation2_t::Key& k, const nation2_t&) { return sort_key_t{k.nationkey, 0, 0, 0}; }
+   static sort_key_t inline create(const states_t::Key& k, const states_t&) { return sort_key_t{k.nationkey, k.statekey, 0, 0}; }
+   static sort_key_t inline create(const ns_t::Key& k, const ns_t&) { return k.jk; }
+   static sort_key_t inline create(const county_t::Key& k, const county_t&) { return sort_key_t{k.nationkey, k.statekey, k.countykey, 0}; }
+   static sort_key_t inline create(const nsc_t::Key& k, const nsc_t&) { return k.jk; }
+   static sort_key_t inline create(const city_t::Key& k, const city_t&) { return sort_key_t{k.nationkey, k.statekey, k.countykey, k.citykey}; }
+   static sort_key_t inline create(const view_t::Key& k, const view_t&) { return k.jk; }
+
+   template <typename Record>
+   static sort_key_t inline get(const sort_key_t& k)
+   {
+      return k;
+   }
+};
+
+template <>
+inline sort_key_t SKBuilder<sort_key_t>::get<nation2_t>(const sort_key_t& jk)
+{
+   return sort_key_t{jk.nationkey, 0, 0, 0};
+}
+
+template <>
+inline sort_key_t SKBuilder<sort_key_t>::get<states_t>(const sort_key_t& jk)
+{
+   return sort_key_t{jk.nationkey, jk.statekey, 0, 0};
+}
+
+template <>
+inline sort_key_t SKBuilder<sort_key_t>::get<county_t>(const sort_key_t& jk)
+{
+   return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, 0};
+}

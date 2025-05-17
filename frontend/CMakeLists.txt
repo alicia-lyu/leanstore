@@ -17,3 +17,7 @@ target_include_directories(basic_group_variant PRIVATE ${SHARED_INCLUDE_DIRECTOR
 add_executable(basic_join_group tpc-h/basic_join_group/executable.cpp)
 target_link_libraries(basic_join_group LeanStoreLogger leanstore Threads::Threads)
 target_include_directories(basic_join_group PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+
+add_executable(geo_join tpc-h/geo_join/executable.cpp)
+target_link_libraries(geo_join LeanStoreLogger leanstore Threads::Threads)
+target_include_directories(geo_join PRIVATE ${SHARED_INCLUDE_DIRECTORY})
