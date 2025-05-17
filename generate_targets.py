@@ -17,7 +17,7 @@ vscode_launch_obj = {
 @dataclass(frozen=True)
 class Config:
     build_dirs = ["build", "build-debug"]
-    exec_names = ["basic_join", "basic_group", "basic_group_variant", "basic_join_group"]
+    exec_names = ["basic_join", "basic_group", "basic_group_variant", "basic_join_group", "geo_join"]
     numjobs: str = "$(NUMJOBS)"
     cmake_options: str = "$(CMAKE_OPTIONS)"
     cmake_debug: str = "$(CMAKE_DEBUG)"
@@ -143,6 +143,7 @@ STRUCTURE_OPTIONS = {
     "basic_group": [0, 2],
     "basic_group_variant": [0, 2],
     "basic_join_group": [0, 2],
+    "geo_join": [0, 1, 2]
 }            
 
 def generate_run_rules() -> None:

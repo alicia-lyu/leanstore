@@ -121,25 +121,22 @@ struct HeapMergeHelper {
    }
 };
 
-template <typename JK, typename JR, typename... Rs, std::size_t... Is>
-inline int joinAndClear(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                        JK& current_jk,
-                        JK& current_entry_jk,
-                        std::function<void(const typename JR::Key&, const JR&)>& consume_joined,
-                        std::index_sequence<Is...>)
+template <typename... Rs, size_t... Is>
+inline void assignRecords(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
+                          std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>>& output,
+                          unsigned long* batch_size,
+                          int total,
+                          std::index_sequence<Is...>)
 {
-   int joined_cnt = 0;
    (..., ([&] {
        auto& vec = std::get<Is>(cached_records);
-       using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
-       using RecordType = std::tuple_element_t<1, VecElem>;
-       if (current_entry_jk.match(SKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
-          joined_cnt += join_current<JK, JR, Rs...>(cached_records, consume_joined);
-          vec.clear();
-       }
-    }()));
-   current_jk = current_entry_jk;
-   return joined_cnt;
+       int repeat = *batch_size / vec.size(), batch = total / *batch_size;
+       for (int b = 0; b < batch; ++b)
+          for (int r = 0; r < repeat; ++r)
+             for (size_t j = 0; j < vec.size(); ++j)
+                std::get<Is>(output[b * *batch_size + j * repeat + r]) = vec.at(j);
+       *batch_size /= vec.size();
+    })());
 }
 
 template <typename JK, typename JR, typename... Rs>
@@ -161,20 +158,23 @@ inline int join_current(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>
    return count;
 }
 
-template <typename... Rs, size_t... Is>
-inline void assignRecords(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                          std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>>& output,
-                          unsigned long* batch_size,
-                          int total,
-                          std::index_sequence<Is...>)
+template <typename JK, typename JR, typename... Rs, std::size_t... Is>
+inline int joinAndClear(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
+                        JK& current_jk,
+                        JK& current_entry_jk,
+                        std::function<void(const typename JR::Key&, const JR&)>& consume_joined,
+                        std::index_sequence<Is...>)
 {
+   int joined_cnt = 0;
    (..., ([&] {
        auto& vec = std::get<Is>(cached_records);
-       int repeat = *batch_size / vec.size(), batch = total / *batch_size;
-       for (int b = 0; b < batch; ++b)
-          for (int r = 0; r < repeat; ++r)
-             for (size_t j = 0; j < vec.size(); ++j)
-                std::get<Is>(output[b * *batch_size + j * repeat + r]) = vec.at(j);
-       *batch_size /= vec.size();
-    })());
+       using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
+       using RecordType = std::tuple_element_t<1, VecElem>;
+       if (current_entry_jk.match(SKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
+          joined_cnt += join_current<JK, JR, Rs...>(cached_records, consume_joined);
+          vec.clear();
+       }
+    }()));
+   current_jk = current_entry_jk;
+   return joined_cnt;
 }

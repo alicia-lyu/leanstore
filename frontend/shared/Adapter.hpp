@@ -62,6 +62,7 @@ class Adapter
    virtual void update1(const typename Record::Key& key,
                         const std::function<void(Record&)>& update_the_record_in_place_cb,
                         leanstore::UpdateSameSizeInPlaceDescriptor& update_descriptor) = 0;
+   virtual void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb) = 0;
    // -------------------------------------------------------------------------------------
    // Returns false if the record was not found
    virtual bool erase(const typename Record::Key& key) = 0;

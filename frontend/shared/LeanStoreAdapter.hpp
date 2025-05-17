@@ -173,6 +173,22 @@ struct LeanStoreAdapter : Adapter<Record> {
          cr::Worker::my().abortTX();
       }
    }
+
+   void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb) final
+   {
+      // lookup value
+      Record record;
+      const bool lookup_res = tryLookup(key, [&](const Record& r) {
+         record = r;
+         cb(record);
+      });
+      assert(lookup_res);
+      // remove
+      const bool remove_res = erase(key);
+      assert(remove_res);
+      // then insert
+      insert(key, record);
+   }
    // -------------------------------------------------------------------------------------
    bool erase(const typename Record::Key& key) final
    {
