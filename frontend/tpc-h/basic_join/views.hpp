@@ -58,6 +58,7 @@ struct merged_part_t : public merged_t<13, part_t, join_key_t, ExtraID::NONE> {
       Key(const join_key_t& jk, const typename part_t::Key& pk) : merged_t::Key{jk, pk} {}
       Key(const join_key_t& jk) : merged_t::Key{jk, part_t::Key{jk.l_partkey}} {}
       Key(const typename merged_t::Key& k) : merged_t::Key{k.jk, part_t::Key{k.jk.l_partkey}} {}
+      Key(const Integer partkey) : merged_t::Key{join_key_t{partkey, 0}, part_t::Key{partkey}} {}
    };
 };
 

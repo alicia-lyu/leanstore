@@ -294,6 +294,8 @@ class BasicJoin
       auto part_id = workload.getPartID();
       auto supplier_id = workload.getSupplierID();
       auto merged_scanner = mergedPPsL.getScanner();
+      merged_scanner->template seekTyped<merged_part_t>(merged_part_t::Key{part_id});
+      [[maybe_unused]] auto part = merged_scanner->current().value();
       merged_scanner->seekJK(join_key_t{part_id, supplier_id});
       PremergedJoin<join_key_t, joinedPPsL_t, merged_part_t, merged_partsupp_t, merged_lineitem_t> merge(*merged_scanner);
       merge.next_jk();

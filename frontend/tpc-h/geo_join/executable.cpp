@@ -12,7 +12,7 @@
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 1000, "TPC-H scale factor");
-DEFINE_int32(tx_count, 1000, "Number of transactions to run");
+DEFINE_int32(tx_count, 2000, "Number of transactions to run");
 DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes");
 
 using namespace geo_join;
@@ -95,7 +95,7 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with materialized views" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_view = {std::bind(&GJ::query_by_view, &tpchGeoJoin),
                                                                 std::bind(&GJ::range_query_by_view, &tpchGeoJoin)};
-         std::vector<std::function<void()>> tput_cbs_view = {std::bind(&GJ::point_query_by_view, &tpchGeoJoin),
+         std::vector<std::function<void()>> tput_cbs_view = {[&]() { tpchGeoJoin.point_query_by_view(); },
                                                              std::bind(&GJ::maintain_view, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_for_view(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view");
