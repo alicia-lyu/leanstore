@@ -19,9 +19,7 @@
         "--recover_file=build-debug/basic_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_join/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=1",
-        "--storage_structure=2"
+        "--storage_structure=0"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
@@ -44,9 +42,7 @@
         "--recover_file=build-debug/basic_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_join/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=1",
-        "--storage_structure=2"
+        "--storage_structure=1"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
@@ -69,8 +65,6 @@
         "--recover_file=build-debug/basic_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_join/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=1",
         "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
@@ -94,8 +88,7 @@
         "--recover_file=build-debug/basic_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_group/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=2"
+        "--storage_structure=0"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
@@ -118,7 +111,6 @@
         "--recover_file=build-debug/basic_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_group/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
         "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
@@ -142,8 +134,7 @@
         "--recover_file=build-debug/basic_group_variant/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_group_variant/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=2"
+        "--storage_structure=0"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
@@ -166,7 +157,6 @@
         "--recover_file=build-debug/basic_group_variant/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_group_variant/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
         "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
@@ -190,8 +180,7 @@
         "--recover_file=build-debug/basic_join_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_join_group/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=2"
+        "--storage_structure=0"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
@@ -214,7 +203,6 @@
         "--recover_file=build-debug/basic_join_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/basic_join_group/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
         "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
@@ -238,9 +226,7 @@
         "--recover_file=build-debug/geo_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/geo_join/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=1",
-        "--storage_structure=2"
+        "--storage_structure=0"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
@@ -263,9 +249,7 @@
         "--recover_file=build-debug/geo_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/geo_join/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=1",
-        "--storage_structure=2"
+        "--storage_structure=1"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
@@ -288,8 +272,6 @@
         "--recover_file=build-debug/geo_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/geo_join/10.image_temp",
         "--dram_gib=1",
-        "--storage_structure=0",
-        "--storage_structure=1",
         "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",

@@ -73,6 +73,7 @@ int main(int argc, char** argv)
          logger.logLoading();
          cr::Worker::my().commitTX();
       });
+      return 0;
    } else {
       tpch.recover_last_ids();
       tpchGeoJoin.log_sizes();
@@ -87,7 +88,7 @@ int main(int argc, char** argv)
          std::vector<std::function<void()>> tput_cbs_base = {std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
                                                              std::bind(&GJ::maintain_base, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_query_by_base(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base");
+             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_for_base(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base");
          break;
       }
       case 1: {
@@ -97,7 +98,7 @@ int main(int argc, char** argv)
          std::vector<std::function<void()>> tput_cbs_view = {std::bind(&GJ::point_query_by_view, &tpchGeoJoin),
                                                              std::bind(&GJ::maintain_view, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_query_by_view(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view");
+             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_for_view(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view");
          break;
       }
       case 2: {
@@ -107,7 +108,7 @@ int main(int argc, char** argv)
          std::vector<std::function<void()>> tput_cbs_merged = {std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),
                                                                std::bind(&GJ::maintain_merged, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_query_by_merged(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
+             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_for_merged(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
              "merged");
          break;
       }
