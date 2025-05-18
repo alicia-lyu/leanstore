@@ -135,7 +135,7 @@ def generate_recover_rules() -> None:
             print(
                 f"\t{exe_path} {cfg.leanstore_flags} "
                 f"--csv_path={rd} --persist_file=$@ "
-                f"--trunc=true --ssd_path={img} --dram_gib=4 2>{rd}/stderr.txt\n"
+                f"--trunc=true --ssd_path={img} --dram_gib=8 2>{rd}/stderr.txt\n"
             )
 
 STRUCTURE_OPTIONS = {
@@ -204,14 +204,14 @@ def generate_lldb_rules() -> None:
                 f"--csv_path={rd} --recover_file={recover} "
                 f"--ssd_path={img_temp} --dram_gib=$(dram)"
             )
-            args.append(f"--storage_structure={structure}")
+            args_run = args + [f"--storage_structure={structure}"]
         
             exp_configs = {
                 "name": f"{exe}_{structure}",
                 "type": "lldb",
                 "request": "launch",
                 "program": f"${{workspaceFolder}}/{exe_path}",
-                "args": args,
+                "args": args_run,
                 "cwd": "${workspaceFolder}",
                 "stopOnEntry": False
             }

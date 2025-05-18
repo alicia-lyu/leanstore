@@ -34,7 +34,14 @@ class GeoJoin
 
   public:
    GeoJoin(TPCH& workload, MergedTree& m, AdapterType<view_t>& v, AdapterType<states_t>& s, AdapterType<county_t>& c, AdapterType<city_t>& ci)
-       : workload(workload), merged(m), view(v), nation(reinterpret_cast<AdapterType<nation2_t>&>(workload.nation)), states(s), county(c), city(ci), logger(workload.logger)
+       : workload(workload),
+         merged(m),
+         view(v),
+         nation(reinterpret_cast<AdapterType<nation2_t>&>(workload.nation)),
+         states(s),
+         county(c),
+         city(ci),
+         logger(workload.logger)
    {
    }
 
@@ -42,7 +49,7 @@ class GeoJoin
    // ---------------------- POINT LOOKUPS ------------------------
    // point lookups: one per view, one per all base tables
 
-   void point_lookups_for_base()
+   std::tuple<Integer, Integer, Integer, Integer> point_lookups_for_base()
    {
       auto nationkey = workload.getNationID();
       auto statekey = getStateKey();
@@ -84,12 +91,35 @@ class GeoJoin
             break;
          auto& [k, v] = *kv;
 
-         std::visit(
-             [&](const auto& ak) {
-                if (ak.jk > sk)
-                   end = true;
-             },
-             k);
+         std::visit(overloaded{[&](const nation2_t::Key& ak) {
+                                  if (ak.nationkey > sk.nationkey)
+                                     end = true;
+                               },
+                               [&](const states_t::Key& ak) {
+                                  if (ak.nationkey > sk.nationkey)
+                                     end = true;
+                                  else if (ak.statekey > sk.statekey)
+                                     end = true;
+                               },
+                               [&](const county_t::Key& ak) {
+                                  if (ak.nationkey > sk.nationkey)
+                                     end = true;
+                                  else if (ak.statekey > sk.statekey)
+                                     end = true;
+                                  else if (ak.countykey > sk.countykey)
+                                     end = true;
+                               },
+                               [&](const city_t::Key& ak) {
+                                  if (ak.nationkey > sk.nationkey)
+                                     end = true;
+                                  else if (ak.statekey > sk.statekey)
+                                     end = true;
+                                  else if (ak.countykey > sk.countykey)
+                                     end = true;
+                                  else if (ak.citykey > sk.citykey)
+                                     end = true;
+                               }},
+                    k);
       }
       point_lookups_of_rest();
    }
@@ -158,7 +188,7 @@ class GeoJoin
                                                                          [&]() { return county_scanner->next(); });
 
       BinaryMergeJoin<sort_key_t, view_t, nsc_t, city_t> binary_join([&]() { return binary_join_nsc.next(); },
-                                                                      [&]() { return city_scanner->next(); });
+                                                                     [&]() { return city_scanner->next(); });
 
       binary_join.run();
 
@@ -237,35 +267,30 @@ class GeoJoin
 
    void point_query_by_base()
    {
-      auto nationkey = workload.getNationID();
-      auto statekey = getStateKey();
-      auto countykey = getCountyKey();
-      auto citykey = getCityKey();
-
-      city_t civ;
+      std::optional<city_t::Key> cik = std::nullopt;
+      std::optional<city_t> civ = std::nullopt;
 
       city.scan(
-          city_t::Key{nationkey, statekey, countykey, citykey},
+          city_t::Key{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()},
           [&](const city_t::Key& k, const city_t& v) {
-             nationkey = k.nationkey;
-             statekey = k.statekey;
-             countykey = k.countykey;
-             citykey = k.citykey;
+             cik = k;
              civ = v;
              return false;
           },
           []() {});
+      if (civ.has_value() && cik.has_value()) {
+         std::optional<county_t> cv = std::nullopt;
+         county.lookup1(county_t::Key{cik->nationkey, cik->statekey, cik->countykey}, [&](const county_t& v) { cv = v; });
 
-      county_t cv;
-      county.lookup1(county_t::Key{nationkey, statekey, countykey}, [&](const county_t& v) { cv = v; });
+         std::optional<states_t> sv = std::nullopt;
+         states.lookup1(states_t::Key{cik->nationkey, cik->statekey}, [&](const states_t& v) { sv = v; });
 
-      states_t sv;
-      states.lookup1(states_t::Key{nationkey, statekey}, [&](const states_t& v) { sv = v; });
-
-      nation2_t nv;
-      nation.lookup1(nation2_t::Key{nationkey}, [&](const nation2_t& v) { nv = v; });
-
-      view_t vv{nv, sv, cv, civ};
+         std::optional<nation2_t> nv = std::nullopt;
+         nation.lookup1(nation2_t::Key{cik->nationkey}, [&](const nation2_t& v) { nv = v; });
+         if (nv.has_value() && sv.has_value() && cv.has_value() && civ.has_value()) {
+            view_t::Key vk{cik->nationkey, cik->statekey, cik->countykey, cik->citykey};
+         }
+      }
    }
 
    // -------------------------------------------------------------
@@ -380,84 +405,80 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
-   // insert a new state, a new county, a new city
+   // insert a new county and multiple cities // TODO: no new state
 
    auto maintain_base()
    {
       int n = workload.getNationID();
       int s;
-      UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
-      auto update_fn = [&](nation2_t& n) {
-         s = ++n.last_statekey;
-         return true;
-      };
-      nation.update1(nation2_t::Key{n}, update_fn, nation_update_desc);
-      int c = 1;
-      int ci = 1;
-      states.insert(states_t::Key{n, s}, states_t::generateRandomRecord(c));
-      county.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(ci));
-      city.insert(city_t::Key{n, s, c, ci}, city_t::generateRandomRecord());
-      return std::make_tuple(n, s, c, ci, update_fn);
+      nation.lookup1(nation2_t::Key{n}, [&](const nation2_t& n) { s = urand(1, n.last_statekey); });
+      UpdateDescriptorGenerator1(states_update_desc, states_t, last_countykey);
+      int c;
+      states.update1(states_t::Key{n, s}, [&](states_t& s) { c = ++s.last_countykey; }, states_update_desc);
+      int city_cnt = urand(1, CITY_MAX);
+      county.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
+      for (int i = 1; i <= city_cnt; i++) {
+         city.insert(city_t::Key{n, s, c, i}, city_t::generateRandomRecord());
+      }
+      return std::make_tuple(n, s, c, city_cnt);
    }
 
    void maintain_merged()
    {
       int n = workload.getNationID();
       int s;
-      UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
-      merged.template update1<nation2_t>(
-          nation2_t::Key{n},
-          [&](nation2_t& n) {
-             s = ++n.last_statekey;
+      // UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
+      merged.template lookup1<nation2_t>(nation2_t::Key{n}, [&](const nation2_t& n) { s = urand(1, n.last_statekey); });
+      int c;
+      UpdateDescriptorGenerator1(states_update_desc, states_t, last_countykey);
+      merged.template update1<states_t>(states_t::Key{n, s}, [&](states_t& s) { c = ++s.last_countykey; }, states_update_desc);
+      int city_cnt = urand(1, CITY_MAX);
+      merged.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
+      for (int i = 1; i <= city_cnt; i++) {
+         merged.insert(city_t::Key{n, s, c, i}, city_t::generateRandomRecord());
+      }
+   }
+
+   void update_state_in_view(int n, int s, std::function<void(states_t&)> update_fn)
+   {
+      std::vector<view_t::Key> keys;
+      view.scan(
+          view_t::Key{n, s, 0, 0},
+          [&](const view_t::Key& k, const view_t&) {
+             if (k.jk.nationkey != n || k.jk.statekey != s)
+                return false;
+             keys.push_back(k);
              return true;
           },
-          nation_update_desc);
-      int c = 1;
-      int ci = 1;
-      merged.insert(states_t::Key{n, s}, states_t::generateRandomRecord(c));
-      merged.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(ci));
-      merged.insert(city_t::Key{n, s, c, ci}, city_t::generateRandomRecord());
+          []() {});
+      for (auto& k : keys) {
+         view.update1(k, [&](view_t& v) { update_fn(std::get<1>(v.payloads)); });
+      }
    }
 
    void maintain_view()
    {
-      int n, s, c, ci;
-      std::function<void(nation2_t&)> update_fn;
-      std::tie(n, s, c, ci, update_fn) = maintain_base();
-      update_nation_in_view(n, update_fn);
-      view.insert(view_t::Key{n, s, c, ci}, view_t::generateRandomRecord(s, c, ci));
+      int n, s, c, city_cnt;
+      std::tie(n, s, c, city_cnt) = maintain_base();
+      std::function<void(states_t&)> update_fn = [&](states_t& s) { s.last_countykey = c; };
+      update_state_in_view(n, s, update_fn);
+      for (int i = 1; i <= city_cnt; i++) {
+         view.insert(view_t::Key{n, s, c, i}, view_t::generateRandomRecord(s, c, i));
+      }
    }
 
    // -------------------------------------------------------------
    // ---------------------- LOADING -----------------------------
 
-   static constexpr size_t STATE_MAX = 100;   // max 100 states in a nation
-   static constexpr size_t COUNTY_MAX = 100;  // max 100 counties in a state
-   static constexpr size_t CITY_MAX = 100;    // max 100 cities in a county
+   static constexpr size_t STATE_MAX = 80;   // in a nation
+   static constexpr size_t COUNTY_MAX = 50;  // in a state
+   static constexpr size_t CITY_MAX = 20;    // in a county
 
    static int getStateKey() { return urand(1, STATE_MAX); }
 
    static int getCountyKey() { return urand(1, COUNTY_MAX); }
 
    static int getCityKey() { return urand(1, CITY_MAX); }
-
-   void update_nation_in_view(int n, std::function<void(nation2_t&)> update_fn)
-   {
-      std::vector<view_t::Key> keys;
-      view.scan(
-          view_t::Key{n, 0, 0, 0},
-          [&](const view_t::Key& k, const view_t&) {
-             if (k.jk.nationkey != n)
-                return false;
-             keys.push_back(k);
-             return true;
-          },
-          []() {});
-      // UpdateDescriptorGenerator1(nation_update_desc, view_t, payloads);
-      for (auto& k : keys) {
-         view.update1(k, [&](view_t& v) { update_fn(std::get<0>(v.payloads)); });
-      }
-   }
 
    void load()
    {
@@ -477,7 +498,7 @@ class GeoJoin
          nation.update1(nk, update_fn, nation_update_desc);
          merged.insert(nk, nv);
          for (int s = 1; s <= state_cnt; s++) {
-            std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "...";
+            std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
             int county_cnt = urand(1, COUNTY_MAX);
             states.insert(states_t::Key{n, s}, states_t::generateRandomRecord(county_cnt));
             merged.insert(states_t::Key{n, s}, states_t::generateRandomRecord(county_cnt));
@@ -493,6 +514,7 @@ class GeoJoin
             }
          }
       }
+      log_sizes();
    }
 
    void log_sizes()
