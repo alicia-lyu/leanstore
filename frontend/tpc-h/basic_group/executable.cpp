@@ -5,7 +5,7 @@ using namespace leanstore;
 using namespace basic_group;
 
 DEFINE_int32(tpch_scale_factor, 1000, "TPC-H scale factor");
-DEFINE_int32(tx_count, 1000, "Number of transactions to run");
+DEFINE_int32(tx_count, 2000, "Number of transactions to run");
 DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 2 for merged indexes");
 
 
