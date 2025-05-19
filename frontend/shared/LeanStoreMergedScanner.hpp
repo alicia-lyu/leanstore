@@ -58,6 +58,16 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       return this->current();
    }
 
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> prev()
+   {
+      const leanstore::OP_RESULT res = it->prev();
+      if (res != leanstore::OP_RESULT::OK) {
+         return std::nullopt;
+      }
+      produced--;
+      return this->current();
+   }
+
    template <typename RecordType>
    void seek(const typename RecordType::Key& k)
       requires std::disjunction_v<std::is_same<RecordType, Records>...>
@@ -87,7 +97,7 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
    bool seekTyped(const typename RecordType::Key& k)
       requires std::disjunction_v<std::is_same<RecordType, Records>...>
    {
-      [[maybe_unused]] auto result = seekForPrev<RecordType>(k);
+      seekForPrev<RecordType>(k);
       while (true) {
          auto kv = current().value();
          if (std::holds_alternative<RecordType>(kv.second)) {

@@ -7,8 +7,11 @@
 #include "leanstore/utils/JumpMU.hpp"
 #include "tpch_workload.hpp"
 
-DECLARE_int32(tx_count);
+DECLARE_int32(pq_count);
+DECLARE_int32(mt_count);
+
 DECLARE_int32(storage_structure);
+DECLARE_int32(warmup_seconds);
 
 #define WARMUP_THEN_TXS(tpch, crm, isolation_level, lookup_cb, elapsed_cbs, tput_cbs, tput_prefixes, suffix)                                       \
    {                                                                                                                                               \
@@ -16,7 +19,7 @@ DECLARE_int32(storage_structure);
       atomic<u64> lookup_count = 0;                                                                                                                \
       atomic<u64> running_threads_counter = 0;                                                                                                     \
       crm.scheduleJobAsync(0, [&]() { runLookupPhase(lookup_cb, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); });   \
-      sleep(10);                                                                                                                                   \
+      sleep(FLAGS_warmup_seconds);                                                                                                                                   \
       crm.scheduleJobSync(1, [&]() { runTXPhase(elapsed_cbs, tput_cbs, tput_prefixes, running_threads_counter, isolation_level, tpch, suffix); }); \
       keep_running = false;                                                                                                                        \
       while (running_threads_counter) {                                                                                                            \
@@ -57,26 +60,27 @@ inline void runLookupPhase(std::function<void()> lookupCallback,
 inline void run_tput(std::function<void()> cb, leanstore::TX_ISOLATION_LEVEL isolation_level, TPCHWorkload<LeanStoreAdapter>& tpch, std::string msg)
 {
    auto pq_start = std::chrono::high_resolution_clock::now();
-   atomic<int> point_query_count = 0;
-   while (point_query_count < FLAGS_tx_count) {
+   atomic<int> count = 0;
+   int target_count = msg == "point-query" ? FLAGS_pq_count : FLAGS_mt_count;
+   while (count < target_count) {
       jumpmuTry()
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
          // tpchBasicJoin.pointLookupsForBase();
          cb();
-         point_query_count++;
+         count++;
          cr::Worker::my().commitTX();
       }
       jumpmuCatchNoPrint()
       {
-         std::cerr << "#" << point_query_count.load() << " " << msg << "  failed." << std::endl;
+         std::cerr << "#" << count.load() << " " << msg << "  failed." << std::endl;
       }
-      std::cout << "\r#" << point_query_count.load() << " " << msg << " performed.";
+      std::cout << "\r#" << count.load() << " " << msg << " performed.";
    }
    std::cout << std::endl;
    auto pq_end = std::chrono::high_resolution_clock::now();
    auto pq_duration = std::chrono::duration_cast<std::chrono::microseconds>(pq_end - pq_start).count();
-   double point_query_tput = (double)point_query_count.load() / pq_duration * 1e6;
+   double point_query_tput = (double)count.load() / pq_duration * 1e6;
    tpch.logger.log(static_cast<long>(point_query_tput), ColumnName::TPUT, msg);
 }
 

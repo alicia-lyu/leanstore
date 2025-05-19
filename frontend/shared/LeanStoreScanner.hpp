@@ -76,6 +76,15 @@ class LeanStoreScanner : public Scanner<Record>
       return this->current();
    }
 
+   std::optional<std::pair<typename Record::Key, Record>> prev()
+   {
+      leanstore::OP_RESULT res = it->prev();
+      if (res != leanstore::OP_RESULT::OK)
+         return std::nullopt;
+      this->produced--;
+      return this->current();
+   }
+
    std::optional<std::pair<typename Record::Key, Record>> current()
    {
       if (it->cur == -1)
