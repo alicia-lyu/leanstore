@@ -32,6 +32,8 @@ class GeoJoin
 
    Logger& logger;
 
+   long lookup_aborted = 0;
+
   public:
    GeoJoin(TPCH& workload, MergedTree& m, AdapterType<view_t>& v, AdapterType<states_t>& s, AdapterType<county_t>& c, AdapterType<city_t>& ci)
        : workload(workload),
@@ -45,28 +47,47 @@ class GeoJoin
    {
    }
 
+   ~GeoJoin()
+   {
+      if (lookup_aborted > 0)
+         std::cout << "\rGeoJoin: " << lookup_aborted << " point lookups aborted------------------------------------" << std::endl;
+   }
+
    // -------------------------------------------------------------
    // ---------------------- POINT LOOKUPS ------------------------
    // point lookups: one per view, one per all base tables
 
    std::tuple<Integer, Integer, Integer, Integer> point_lookups_for_base()
    {
-      auto cik = point_query_by_base();
-
+      auto result = std::make_tuple(0, 0, 0, 0);
+      try {
+         auto cik = point_query_by_base(false);
+         result = std::make_tuple(cik.nationkey, cik.statekey, cik.countykey, cik.citykey);
+      } catch (const std::exception& e) {
+         lookup_aborted++;  // ignore exceptions, possibly because of contentions
+      }
       point_lookups_of_rest();
-
-      return std::make_tuple(cik.nationkey, cik.statekey, cik.countykey, cik.citykey);
+      return result;
    }
 
    void point_lookups_for_view()
    {
-      auto [nationkey, statekey, countykey, citykey] = point_lookups_for_base();
-      point_query_by_view(nationkey, statekey, countykey, citykey);
+      try {
+         auto cik = point_query_by_base(false);
+         point_query_by_view(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, false);
+      } catch (const std::exception& e) {
+         lookup_aborted++;  // ignore exceptions
+      }
+      point_lookups_of_rest();
    }
 
    void point_lookups_for_merged()
    {
-      point_query_by_merged();
+      try {
+         point_query_by_merged(false);
+      } catch (const std::exception& e) {
+         lookup_aborted++;  // ignore exceptions
+      }
       point_lookups_of_rest();
    }
 
@@ -157,9 +178,24 @@ class GeoJoin
       point_query_by_view(nationkey, statekey, countykey, citykey);
    }
 
-   void point_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey)
+   void point_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey, bool wait = true)
    {
-      view.scan(view_t::Key{nationkey, statekey, countykey, citykey}, [&](const view_t::Key&, const view_t&) { return false; }, []() {});
+      std::optional<view_t> vv = std::nullopt;
+      view.scan(
+          view_t::Key{nationkey, statekey, countykey, citykey},
+          [&](const view_t::Key&, const view_t& v) {
+             vv = v;
+             return false;
+          },
+          []() {});
+      if (wait) {
+         while (!vv.has_value()) {
+         }
+      } else {
+         if (vv.has_value()) {
+            throw std::runtime_error("View found");
+         }
+      }
    }
 
    template <typename R>
@@ -202,7 +238,7 @@ class GeoJoin
                  v);
    }
 
-   void point_query_by_merged()
+   void point_query_by_merged(bool wait = true)
    {
       std::shared_ptr<MergedScannerType<nation2_t, states_t, county_t, city_t>> scanner = std::move(merged.getScanner());
       std::optional<nation2_t> nv = std::nullopt;
@@ -213,7 +249,7 @@ class GeoJoin
       bool ret = scanner->template seekTyped<city_t>(city_t::Key{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()});
       if (!ret)
          return;
-      sort_key_t target_sk;
+      std::optional<sort_key_t> target_sk = std::nullopt;
       auto target_kv = scanner->current();
       assert(target_kv != std::nullopt);
       auto& [k, v] = *target_kv;
@@ -223,15 +259,22 @@ class GeoJoin
       std::visit(overloaded{[&](const nation2_t&) { UNREACHABLE(); }, [&](const states_t&) { UNREACHABLE(); },
                             [&](const county_t&) { UNREACHABLE(); }, [&](const city_t& av) { civ = av; }},
                  v);
-
-      seek_merged<county_t>(scanner, county_t::Key{target_sk.nationkey, target_sk.statekey, target_sk.countykey}, nv, sv, cv, civ);
-      seek_merged<states_t>(scanner, states_t::Key{target_sk.nationkey, target_sk.statekey}, nv, sv, cv, civ);
-      seek_merged<nation2_t>(scanner, nation2_t::Key{target_sk.nationkey}, nv, sv, cv, civ);
+      if (wait) {
+         while (!target_sk.has_value()) {
+         }
+      } else {
+         if (!target_sk.has_value()) {
+            throw std::runtime_error("target_sk not found");
+         }
+      }
+      seek_merged<county_t>(scanner, county_t::Key{target_sk->nationkey, target_sk->statekey, target_sk->countykey}, nv, sv, cv, civ);
+      seek_merged<states_t>(scanner, states_t::Key{target_sk->nationkey, target_sk->statekey}, nv, sv, cv, civ);
+      seek_merged<nation2_t>(scanner, nation2_t::Key{target_sk->nationkey}, nv, sv, cv, civ);
 
       view_t vv{nv.value(), sv.value(), cv.value(), civ.value()};
    }
 
-   city_t::Key point_query_by_base()
+   city_t::Key point_query_by_base(bool wait = true)
    {
       std::optional<city_t::Key> cik = std::nullopt;
       std::optional<city_t> civ = std::nullopt;
@@ -244,19 +287,33 @@ class GeoJoin
              return false;
           },
           []() {});
-      if (civ.has_value() && cik.has_value()) {
-         std::optional<county_t> cv = std::nullopt;
-         county.lookup1(county_t::Key{cik->nationkey, cik->statekey, cik->countykey}, [&](const county_t& v) { cv = v; });
-
-         std::optional<states_t> sv = std::nullopt;
-         states.lookup1(states_t::Key{cik->nationkey, cik->statekey}, [&](const states_t& v) { sv = v; });
-
-         std::optional<nation2_t> nv = std::nullopt;
-         nation.lookup1(nation2_t::Key{cik->nationkey}, [&](const nation2_t& v) { nv = v; });
-         if (nv.has_value() && sv.has_value() && cv.has_value() && civ.has_value()) {
-            view_t::Key vk{cik->nationkey, cik->statekey, cik->countykey, cik->citykey};
+      if (wait) {
+         while (!cik.has_value() || !civ.has_value()) {
+         }
+      } else {
+         if (!cik.has_value() || !civ.has_value()) {
+            throw std::runtime_error("City not found");
          }
       }
+
+      std::optional<county_t> cv = std::nullopt;
+      county.lookup1(county_t::Key{cik->nationkey, cik->statekey, cik->countykey}, [&](const county_t& v) { cv = v; });
+
+      std::optional<states_t> sv = std::nullopt;
+      states.lookup1(states_t::Key{cik->nationkey, cik->statekey}, [&](const states_t& v) { sv = v; });
+
+      std::optional<nation2_t> nv = std::nullopt;
+      nation.lookup1(nation2_t::Key{cik->nationkey}, [&](const nation2_t& v) { nv = v; });
+
+      if (wait) {
+         while (!nv.has_value() || !sv.has_value() || !cv.has_value() || !civ.has_value()) {
+         }
+      } else {
+         if (!nv.has_value() || !sv.has_value() || !cv.has_value() || !civ.has_value()) {
+            throw std::runtime_error("One of the keys not found");
+         }
+      }
+      view_t vv{nv.value(), sv.value(), cv.value(), civ.value()};
       return cik.value();
    }
 
@@ -317,7 +374,9 @@ class GeoJoin
                                   curr_citykey = ci.citykey;
                                }},
                     k);
-         find_base_v(v, nv, sv, cv, civ);
+         std::visit(overloaded{[&](const nation2_t& av) { nv = av; }, [&](const states_t& av) { sv = av; }, [&](const county_t& av) { cv = av; },
+                               [&](const city_t& av) { civ = av; }},
+                    v);
          if (nv.has_value() && sv.has_value() && cv.has_value() && civ.has_value()) {
             view_t::Key vk{n, curr_statekey, curr_countykey, curr_citykey};
             view_t vv{nv.value(), sv.value(), cv.value(), civ.value()};

@@ -79,13 +79,13 @@ int main(int argc, char** argv)
       tpchGeoJoin.log_sizes();
    }
    std::vector<std::string> tput_prefixes = {"point-query", "maintain"};
-   
+
    switch (FLAGS_storage_structure) {
       case 0: {
          std::cout << "TPC-H with traditional indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_base = {std::bind(&GJ::query_by_base, &tpchGeoJoin),
                                                                 std::bind(&GJ::range_query_by_base, &tpchGeoJoin)};
-         std::vector<std::function<void()>> tput_cbs_base = {std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
+         std::vector<std::function<void()>> tput_cbs_base = {[&]() { tpchGeoJoin.point_query_by_base(); },
                                                              std::bind(&GJ::maintain_base, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_for_base(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base");
@@ -105,7 +105,7 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&GJ::query_by_merged, &tpchGeoJoin),
                                                                   std::bind(&GJ::range_query_by_merged, &tpchGeoJoin)};
-         std::vector<std::function<void()>> tput_cbs_merged = {std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),
+         std::vector<std::function<void()>> tput_cbs_merged = {[&]() { tpchGeoJoin.point_query_by_merged(); },
                                                                std::bind(&GJ::maintain_merged, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_for_merged(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
