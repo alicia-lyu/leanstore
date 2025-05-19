@@ -39,7 +39,7 @@ class LeanStoreLogger : public Logger
    ~LeanStoreLogger() { std::cout << "Logs written to " << FLAGS_csv_path << std::endl; }
 
    void writeOutAll();
-   std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed_or_tput, ColumnName column_name);
+   std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed_or_tput, ColumnName column_name, int tx_count);
    void reset();
    void log(long elapsed_or_tput, ColumnName column_name, std::string csv_dir);
 

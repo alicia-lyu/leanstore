@@ -140,7 +140,8 @@ struct PremergedJoin {
    {
       while (true) {
          int res = next();
-         if (res == 0) continue;
+         if (res == 0)
+            continue;
          return res;
       }
    }
@@ -343,9 +344,17 @@ struct BinaryMergeJoin {
    {
       while (true) {
          int curr_joined = next_jk();
+         clear_cached_joined_records();
          if (curr_joined == -1) {
             break;
          }
+      }
+   }
+
+   void clear_cached_joined_records()
+   {
+      while (!joined_records.empty()) {
+         joined_records.pop();
       }
    }
 

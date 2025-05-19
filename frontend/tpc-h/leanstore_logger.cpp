@@ -19,7 +19,7 @@ void LeanStoreLogger::writeOutAll()
    db.buffer_manager->writeAllBufferFrames();
 }
 
-std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::summarizeStats(long elapsed_or_tput, ColumnName column_name)
+std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::summarizeStats(long elapsed_or_tput, ColumnName column_name, int tx_count)
 {
    std::vector<std::string> tx_console_header;
    std::vector<std::string> tx_console_data;
@@ -47,17 +47,17 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
          break;
       case ColumnName::TPUT:
          tx_console_header.push_back("W MiB / TX");
-         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "w_mib")) / FLAGS_tx_count));
+         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "w_mib")) / tx_count));
 
          tx_console_header.push_back("R MiB / TX");
-         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "r_mib")) / FLAGS_tx_count));
+         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "r_mib")) / tx_count));
 
          for (auto& [t_name, worker_e] : cpu_table.workers_events) {
             long cycles = static_cast<long>(worker_e.at("cycle"));
             if (cycles == 0)
                continue;
             tx_console_header.push_back(t_name + " Cycles / TX");
-            tx_console_data.push_back(std::to_string(cycles / FLAGS_tx_count));
+            tx_console_data.push_back(std::to_string(cycles / tx_count));
          }
          break;
       default:
@@ -107,7 +107,9 @@ void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::st
       csv.close();
    }
 
-   auto [tx_console_header, tx_console_data] = summarizeStats(elapsed_or_tput, columne_name);
+   int tx_count = csv_dir == "point-query" ? FLAGS_pq_count : FLAGS_mt_count;
+
+   auto [tx_console_header, tx_console_data] = summarizeStats(elapsed_or_tput, columne_name, tx_count);
    std::ofstream csv_sum;
    csv_sum.open(csv_dir_abs + ".csv", std::ios::app);
    if (csv_sum.tellp() == 0) {  // no header
