@@ -11,8 +11,8 @@
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 1000, "TPC-H scale factor");
-DEFINE_int32(pq_count, 2000, "Number of point queries to run");
-DEFINE_int32(mt_count, 2000, "Number of maintenance TXs to run");DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes");
+DEFINE_int32(tx_seconds, 10, "Number of seconds to run each type of transactions");
+DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds");
 
 using namespace basic_join;

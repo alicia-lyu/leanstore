@@ -3,7 +3,6 @@
 #include <filesystem>
 #include <string>
 #include <tabulate/table.hpp>
-#include "leanstore_executable_helper.hpp"
 #include "logger.hpp"
 
 void LeanStoreLogger::reset()
@@ -19,7 +18,9 @@ void LeanStoreLogger::writeOutAll()
    db.buffer_manager->writeAllBufferFrames();
 }
 
-std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::summarizeStats(long elapsed_or_tput, ColumnName column_name, int tx_count)
+std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::summarizeStats(long elapsed_or_tput,
+                                                                                              ColumnName column_name,
+                                                                                              int tx_count)
 {
    std::vector<std::string> tx_console_header;
    std::vector<std::string> tx_console_data;
@@ -77,7 +78,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
    return {tx_console_header, tx_console_data};
 }
 
-void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::string csv_dir)
+void LeanStoreLogger::log_template(std::string csv_dir, std::function<std::pair<std::vector<std::string>, std::vector<std::string>>()> main_stats_cb)
 {
    u64 config_hash = configs_table.hash();
    std::vector<std::ofstream> csvs;
@@ -107,9 +108,7 @@ void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::st
       csv.close();
    }
 
-   int tx_count = csv_dir == "point-query" ? FLAGS_pq_count : FLAGS_mt_count;
-
-   auto [tx_console_header, tx_console_data] = summarizeStats(elapsed_or_tput, columne_name, tx_count);
+   auto [tx_console_header, tx_console_data] = main_stats_cb();
    std::ofstream csv_sum;
    csv_sum.open(csv_dir_abs + ".csv", std::ios::app);
    if (csv_sum.tellp() == 0) {  // no header
@@ -125,6 +124,18 @@ void LeanStoreLogger::log(long elapsed_or_tput, ColumnName columne_name, std::st
 
    std::vector<std::vector<std::string>> rows = {tx_console_header, tx_console_data};
    printTable(rows);
+}
+
+void LeanStoreLogger::log(long tput, std::string csv_dir, int tx_count) {
+   log_template(csv_dir, [&]() {
+      return summarizeStats(tput, ColumnName::TPUT, tx_count);
+   });
+}
+
+void LeanStoreLogger::log(long elapsed, std::string csv_dir) {
+   log_template(csv_dir, [&]() {
+      return summarizeStats(elapsed, ColumnName::ELAPSED, 1);
+   });
 }
 
 void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
@@ -148,7 +159,7 @@ void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
 void LeanStoreLogger::logLoading()
 {
    std::cout << "Loading" << std::endl;
-   log(0, ColumnName::ELAPSED, "load");
+   log(0, "load");
 }
 
 void LeanStoreLogger::prepare()
