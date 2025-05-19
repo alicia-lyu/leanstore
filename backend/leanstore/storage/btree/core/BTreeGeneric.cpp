@@ -4,6 +4,7 @@
 #include "leanstore/profiling/counters/WorkerCounters.hpp"
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
 #include "leanstore/sync-primitives/PageGuard.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 #include "leanstore/utils/RandomGenerator.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -325,7 +326,7 @@ bool BTreeGeneric::tryMerge(BufferFrame& to_merge, bool swizzle_sibling)
          }
       }
    }
-   jumpmuCatch() { WorkerCounters::myCounters().dt_merge_fail[dt_id]++; }
+   jumpmuCatchNoPrint() { WorkerCounters::myCounters().dt_merge_fail[dt_id]++; }
    // -------------------------------------------------------------------------------------
    COUNTERS_BLOCK()
    {

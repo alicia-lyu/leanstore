@@ -3,6 +3,7 @@
 #include "BTreeIteratorInterface.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/sync-primitives/Latch.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -739,7 +740,7 @@ class BTreeExclusiveIterator : public BTreePessimisticIterator
          {
             btree.tryMerge(*leaf.bf);
          }
-         jumpmuCatch()
+         jumpmuCatchNoPrint()
          {
             // nothing, it is fine not to merge
          }

@@ -144,7 +144,7 @@ class BasicJoin
       std::cout << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, ColumnName::ELAPSED, "query-view");
+      logger.log(t, "query-view");
    }
 
    // TXs: Measure end-to-end time
@@ -161,7 +161,7 @@ class BasicJoin
 
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::milliseconds>(merged_end - merged_start).count();
-      logger.log(merged_t, ColumnName::ELAPSED, "query-merged");
+      logger.log(merged_t, "query-merged");
    }
 
    void queryByBase()
@@ -184,7 +184,7 @@ class BasicJoin
 
       auto index_end = std::chrono::high_resolution_clock::now();
       auto index_t = std::chrono::duration_cast<std::chrono::milliseconds>(index_end - index_start).count();
-      logger.log(index_t, ColumnName::ELAPSED, "query-base");
+      logger.log(index_t, "query-base");
    }
 
    // --------------------------------------------------------------
