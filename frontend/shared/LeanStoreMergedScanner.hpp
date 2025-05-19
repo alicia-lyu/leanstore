@@ -59,24 +59,19 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
    }
 
    template <typename RecordType>
-   bool seek(const typename RecordType::Key& k)
+   void seek(const typename RecordType::Key& k)
       requires std::disjunction_v<std::is_same<RecordType, Records>...>
    // not guaranteed to land on RecordType
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       unsigned pos = RecordType::foldKey(keyBuffer, k);
       leanstore::Slice keySlice(keyBuffer, pos);
-      const leanstore::OP_RESULT res = it->seek(keySlice);  // keySlice as lowerbound
-      if (res != leanstore::OP_RESULT::OK) {
-         it->seekForPrev(keySlice);  // last key
-         return false;
-      } else {
-         return true;
-      }
+      [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);  // keySlice as lowerbound
+      // if (res != leanstore::OP_RESULT::OK) // last key, next will return std::nullopt
    }
 
    template <typename RecordType>
-   bool seekForPrev(const typename RecordType::Key& k)
+   void seekForPrev(const typename RecordType::Key& k)
       requires std::disjunction_v<std::is_same<RecordType, Records>...>
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
@@ -84,10 +79,7 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       leanstore::Slice keySlice(keyBuffer, pos);
       const leanstore::OP_RESULT res = it->seekForPrev(keySlice);
       if (res != leanstore::OP_RESULT::OK) {
-         it->seek(keySlice);  // first key
-         return false;
-      } else {
-         return true;
+         it->reset();  // next() will return first key
       }
    }
 
@@ -110,18 +102,12 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
    }
 
    template <typename JK>
-   bool seekJK(const JK& jk)
+   void seekJK(const JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
       unsigned pos = JK::keyfold(keyBuffer, jk);
       leanstore::Slice keySlice(keyBuffer, pos);
-      const leanstore::OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) {
-         it->seekForPrev(keySlice);  // last key
-         return false;
-      } else {
-         return true;
-      }
+      [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
    }
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current()
@@ -143,5 +129,11 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       joiner.run();
    }
 
-   
+   template <typename JK, typename JoinedRec>
+   std::tuple<JK, long> next_jk(std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined = [](const typename JoinedRec::Key&, const JoinedRec&) {})
+   {
+      PremergedJoin<JK, JoinedRec, Records...> joiner(*this, consume_joined);
+      joiner.next_jk();
+      return std::make_tuple(joiner.current_jk, joiner.produced);
+   }
 };
