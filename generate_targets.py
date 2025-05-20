@@ -199,7 +199,7 @@ def generate_lldb_rules() -> None:
         for structure in STRUCTURE_OPTIONS[exe]:
             print(f"{exe}_lldb_{structure}: {img_temp}")
             print(
-                f"\tlldb -b -o run -- "
+                f"\tlldb -o run -- "
                 f"{exe_path} {cfg.leanstore_flags} "
                 f"--storage_structure={structure} "
                 f"--csv_path={rd} --recover_file={recover} "

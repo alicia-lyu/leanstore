@@ -77,7 +77,7 @@ class GeoJoin
       std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "view");
+      logger.log(t, "query", "view", get_view_size());
    }
 
    void query_by_merged()
@@ -91,7 +91,7 @@ class GeoJoin
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "merged");
+      logger.log(t, "query", "merged", get_merged_size());
    }
 
    void query_by_base()
@@ -106,7 +106,7 @@ class GeoJoin
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "base");
+      logger.log(t, "query", "base", get_indexes_size());
    }
 
    // -------------------------------------------------------------
@@ -150,7 +150,9 @@ class GeoJoin
       city_t::Key* cik = nullptr;
       city_t* civ = nullptr;
 
-      scanner->template seekTyped<city_t>(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
+      bool ret = scanner->template seekTyped<city_t>(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
+      if (!ret)
+         return;
       auto kv = scanner->current();
       cik = std::get_if<city_t::Key>(&kv->first);
       civ = std::get_if<city_t>(&kv->second);
@@ -180,19 +182,17 @@ class GeoJoin
    {
       std::optional<city_t::Key> cik = std::nullopt;
       std::optional<city_t> civ = std::nullopt;
-
       city.scan(
           city_t::Key{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()},
           [&](const city_t::Key& k, const city_t& v) {
-             std::cout << k << " " << v << std::endl;
              cik = k;
              civ = v;
              return false;
           },
           []() {});
+      if (!cik.has_value() || !civ.has_value())  // no record is scanned (too large a key)
+         return;
 
-      while (!cik.has_value() || civ.has_value()) {
-      }
       std::optional<nation2_t> nv = std::nullopt;
       std::optional<states_t> sv = std::nullopt;
       std::optional<county_t> cv = std::nullopt;
@@ -200,10 +200,10 @@ class GeoJoin
       states.lookup1(states_t::Key{cik->nationkey, cik->statekey}, [&](const states_t& s) { sv = s; });
       county.lookup1(county_t::Key{cik->nationkey, cik->statekey, cik->countykey}, [&](const county_t& c) { cv = c; });
 
-      while (!nv.has_value() || !sv.has_value() || !cv.has_value()) {
-      }
-      view_t::Key vk = view_t::Key{cik->nationkey, cik->statekey, cik->countykey, cik->citykey};
-      view_t vv = view_t{*nv, *sv, *cv, *civ};
+      // while (!nv.has_value() || !sv.has_value() || !cv.has_value()) {
+      // }
+      [[maybe_unused]] view_t::Key vk = view_t::Key{cik->nationkey, cik->statekey, cik->countykey, cik->citykey};
+      [[maybe_unused]] view_t vv = view_t{*nv, *sv, *cv, *civ};
    }
 
    // -------------------------------------------------------------
@@ -232,7 +232,7 @@ class GeoJoin
                 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "range-query", "view");
+      logger.log(t, "range-query", "view", get_view_size());
    }
 
    void range_query_by_merged()
@@ -255,7 +255,7 @@ class GeoJoin
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "range-query", "merged");
+      logger.log(t, "range-query", "merged", get_merged_size());
    }
 
    void range_query_by_base()
@@ -278,7 +278,7 @@ class GeoJoin
                 << " records------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "range-query", "base");
+      logger.log(t, "range-query", "base", get_indexes_size());
    }
 
    // -------------------------------------------------------------
@@ -378,16 +378,22 @@ class GeoJoin
          for (int s = 1; s <= state_cnt; s++) {
             std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
             int county_cnt = urand(1, COUNTY_MAX);
-            states.insert(states_t::Key{n, s}, states_t::generateRandomRecord(county_cnt));
-            merged.insert(states_t::Key{n, s}, states_t::generateRandomRecord(county_cnt));
+            auto sk = states_t::Key{n, s};
+            auto sv = states_t::generateRandomRecord(county_cnt);
+            states.insert(sk, sv);
+            merged.insert(sk, sv);
             for (int c = 1; c <= county_cnt; c++) {
                int city_cnt = urand(1, CITY_MAX);
-               county.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
-               merged.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
+               auto ck = county_t::Key{n, s, c};
+               auto cv = county_t::generateRandomRecord(city_cnt);
+               county.insert(ck, cv);
+               merged.insert(ck, cv);
                for (int ci = 1; ci <= city_cnt; ci++) {
-                  city.insert(city_t::Key{n, s, c, ci}, city_t::generateRandomRecord());
-                  merged.insert(city_t::Key{n, s, c, ci}, city_t::generateRandomRecord());
-                  view.insert(view_t::Key{n, s, c, ci}, view_t::generateRandomRecord(state_cnt, county_cnt, city_cnt));
+                  auto cik = city_t::Key{n, s, c, ci};
+                  auto civ = city_t::generateRandomRecord();
+                  city.insert(cik, civ);
+                  merged.insert(cik, civ);
+                  view.insert(view_t::Key{n, s, c, ci}, view_t{nv, sv, cv, civ});
                }
             }
          }
@@ -395,17 +401,32 @@ class GeoJoin
       log_sizes();
    }
 
+   double get_view_size()
+   {
+      double indexes_size = get_indexes_size();
+      return indexes_size + view.size();
+   }
+
+   double get_indexes_size()
+   {
+      return nation.size() + states.size() + county.size() + city.size();
+   }
+
+   double get_merged_size()
+   {
+      return merged.size();
+   }
+
    void log_sizes()
    {
       workload.log_sizes();
-      double indexes_size = nation.size() + states.size() + county.size() + city.size();
-      std::map<std::string, double> sizes = {{"view", view.size() + indexes_size},
-                                             {"base", indexes_size},
+      std::map<std::string, double> sizes = {{"view", get_view_size()},
+                                             {"base", get_indexes_size()},
                                              {"nation", nation.size()},
                                              {"states", states.size()},
                                              {"county", county.size()},
                                              {"city", city.size()},
-                                             {"merged", merged.size()}};
+                                             {"merged", get_merged_size()}};
       logger.log_sizes(sizes);
    }
 };

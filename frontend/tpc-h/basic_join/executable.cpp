@@ -83,7 +83,8 @@ int main(int argc, char** argv)
                                                              std::bind(&BJ::maintainBase, &tpchBasicJoin)};
 
          WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForBase(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base");
+             tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForBase(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base",
+             [&]() { return tpchBasicJoin.get_base_size(); });
       } else if (FLAGS_storage_structure == 1) {
          std::cout << "TPC-H with materialized views" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_view = {std::bind(&BJ::queryByView, &tpchBasicJoin)};
@@ -92,7 +93,8 @@ int main(int argc, char** argv)
                                                              std::bind(&BJ::maintainView, &tpchBasicJoin)};
 
          WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForView(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view");
+             tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForView(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view",
+             [&]() { return tpchBasicJoin.get_view_size(); });
       } else if (FLAGS_storage_structure == 2) {
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&BJ::queryByMerged, &tpchBasicJoin)};
@@ -102,7 +104,7 @@ int main(int argc, char** argv)
 
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchBasicJoin.pointLookupsForMerged(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
-             "merged");
+             "merged", [&]() { return tpchBasicJoin.get_merged_size(); });
       } else {
          std::cerr << "Invalid storage structure: " << FLAGS_storage_structure << std::endl;
          return -1;

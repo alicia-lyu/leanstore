@@ -107,7 +107,7 @@ class BasicJoinGroup
       std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "view");
+      logger.log(t, "query", "view", get_view_size());
    }
 
    void query_by_merged()  // jump through the merged for the view
@@ -133,7 +133,7 @@ class BasicJoinGroup
       std::cout << "\rEnumerating merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "merged");
+      logger.log(t, "query", "merged", get_merged_size());
    }
 
    // -----------------------------------------------------------------------------------
@@ -160,7 +160,7 @@ class BasicJoinGroup
       std::cout << "\rJumping through view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query-external-select", "view");
+      logger.log(t, "query-external-select", "view", get_view_size());
    }
 
    void query_by_merged_external_select()
@@ -201,7 +201,7 @@ class BasicJoinGroup
       std::cout << "\rJumping through merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query-external-select", "merged");
+      logger.log(t, "query-external-select", "merged", get_merged_size());
    }
 
    // ---------------------------------------------------------------
@@ -341,10 +341,14 @@ class BasicJoinGroup
       log_sizes();
    }
 
+   double get_view_size() { return view.size() + orders.size() + lineitem.size(); }
+
+   double get_merged_size() { return merged.size(); }
+
    void log_sizes()
    {
       workload.log_sizes();
-      std::map<std::string, double> sizes = {{"view", view.size() + orders.size() + lineitem.size()}, {"merged", merged.size()}};
+      std::map<std::string, double> sizes = {{"view", get_view_size()}, {"merged", get_merged_size()}};
       logger.log_sizes(sizes);
    }
 };

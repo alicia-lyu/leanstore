@@ -80,6 +80,7 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
 
 void LeanStoreLogger::log_template(std::string tx,
                                    std::string method,
+                                   double size,
                                    ColumnName column_name,
                                    std::function<std::pair<std::vector<std::string>, std::vector<std::string>>()> main_stats_cb)
 {
@@ -115,33 +116,35 @@ void LeanStoreLogger::log_template(std::string tx,
    auto [tx_console_header, tx_console_data] = main_stats_cb();
    
    std::filesystem::path csv_db = csv_runtime.parent_path();
+   std::filesystem::path csv_sum_path = csv_db / (tx + ".csv");
+   bool csv_sum_exists = std::filesystem::exists(csv_sum_path);
    std::ofstream csv_sum;
-   csv_sum.open(csv_db / (tx + ".csv"), std::ios::app);
-   if (csv_sum.tellp() == 0) {  // no header
+   csv_sum.open(csv_sum_path, std::ios::app);
+   if (!csv_sum_exists) {  // no header
+      csv_sum << "method,tx,dram,scale," << to_string(column_name) << ",";
       for (auto& h : tx_console_header) {
-         csv_sum << "method,tx,dram,scale," << to_string(column_name) << ",";
          csv_sum << h << ",";
       }
-      csv_sum << endl;
+      csv_sum << "size (MiB)" << endl;
    }
+   csv_sum << method << "," << tx << "," << FLAGS_dram_gib << "," << FLAGS_tpch_scale_factor << ",";
    for (auto& d : tx_console_data) {
-      csv_sum << method << "," << tx << "," << FLAGS_dram_gib << "," << FLAGS_tpch_scale_factor << ",";
       csv_sum << d << ",";
    }
-   csv_sum << endl;
+   csv_sum << size << endl;
 
    std::vector<std::vector<std::string>> rows = {tx_console_header, tx_console_data};
    printTable(rows);
 }
 
-void LeanStoreLogger::log(long tput, std::string tx, std::string method, int tx_count)
+void LeanStoreLogger::log(long tput, std::string tx, std::string method, double size, int tx_count)
 {
-   log_template(tx, method, ColumnName::TPUT, [&]() { return summarizeStats(tput, ColumnName::TPUT, tx_count); });
+   log_template(tx, method, size, ColumnName::TPUT, [&]() { return summarizeStats(tput, ColumnName::TPUT, tx_count); });
 }
 
-void LeanStoreLogger::log(long elapsed, std::string tx, std::string method)
+void LeanStoreLogger::log(long elapsed, std::string tx, std::string method, double size)
 {
-   log_template(tx, method, ColumnName::ELAPSED, [&]() { return summarizeStats(elapsed, ColumnName::ELAPSED, 1); });
+   log_template(tx, method, size, ColumnName::ELAPSED, [&]() { return summarizeStats(elapsed, ColumnName::ELAPSED, 1); });
 }
 
 void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
@@ -165,7 +168,7 @@ void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
 void LeanStoreLogger::logLoading()
 {
    std::cout << "Loading" << std::endl;
-   log(0, "load", "");
+   log(0, "load", "", 0);
 }
 
 void LeanStoreLogger::prepare()
