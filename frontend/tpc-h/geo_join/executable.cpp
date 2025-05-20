@@ -85,7 +85,7 @@ int main(int argc, char** argv)
       case 0: {
          std::cout << "TPC-H with traditional indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_base = {
-            std::bind(&GJ::query_by_base, &tpchGeoJoin),                             
+            // std::bind(&GJ::query_by_base, &tpchGeoJoin),                              
             std::bind(&GJ::range_query_by_base, &tpchGeoJoin)};
          std::vector<std::function<void()>> tput_cbs_base = {
             std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
@@ -111,7 +111,7 @@ int main(int argc, char** argv)
       case 2: {
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
-            std::bind(&GJ::query_by_merged, &tpchGeoJoin),
+            // std::bind(&GJ::query_by_merged, &tpchGeoJoin),
             std::bind(&GJ::range_query_by_merged, &tpchGeoJoin)};
          std::vector<std::function<void()>> tput_cbs_merged = {
             std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),

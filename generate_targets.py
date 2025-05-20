@@ -33,6 +33,7 @@ class Config:
 
 cfg = Config()
 
+#### ================== helper functions================== ####
 
 def print_section(title: str) -> None:
     """Prints a styled section header."""
@@ -62,7 +63,12 @@ def image_file(exe: str) -> Path:
     """Returns the path to the SSD image file for a given executable."""
     return cfg.image_dir / exe / f"{cfg.scale}.image"
 
+#### ================== makefile generation functions ================== ####
+
+sep = "=" * 20
+
 def generate_build_rules() -> None:
+    """Generates the build rules for the executables."""
     print_section("build executables")
     executables = []
     for bd in cfg.build_dirs:
@@ -70,7 +76,7 @@ def generate_build_rules() -> None:
             exe_path = executable_path(bd, exe)
             executables.append(exe_path)
             print(f"{exe_path}: check_perf_event_paranoid") # check_perf_event_paranoid is PHONY, force rebuild
-            print(f'\t@echo "Building {exe_path}"')
+            print(f'\t@echo "{sep} Building {exe_path} {sep}"')
             print(
                 f'\tcd {bd}/frontend && {cmake_cmd(bd)} {cfg.cmake_options} '
                 f'&& make {exe} -j{cfg.numjobs}\n'
@@ -78,12 +84,13 @@ def generate_build_rules() -> None:
     print(f"executables: {' '.join([str(e) for e in executables])}\n")
 
 def generate_runtime_dirs() -> None:
+    """Generates the runtime directories for CSV/log output."""
     print_section("runtime directories")
     for bd in cfg.build_dirs:
         for exe in cfg.exec_names:
             rd = runtime_dir(bd, exe)
             print(f"{rd}:")
-            print(f'\t@echo "Creating CSV runtime dir {rd}"')
+            print(f'\t@echo "{sep} Creating CSV runtime dir {rd} {sep}"')
             print(f"\tmkdir -p {rd}\n")
 
 def clean_runtime_dirs() -> None:
@@ -95,21 +102,23 @@ def clean_runtime_dirs() -> None:
     print()
 
 def generate_image_files() -> None:
+    """Generates the image files for database recovery."""
     print_section("image files")
     print(f"FORCE:;")
     for exe in cfg.exec_names:
         img = image_file(exe)
         print(f"{img}:")
-        print(f'\t@echo "Touching image file {img}"')
+        print(f'\t@echo "{sep} Touching a new image file {img} {sep}"')
         print(f"\tmkdir -p {img.parent} && touch {img}")
         print(f"{img}_temp: {img} FORCE") # force duplicate
-        print(f'\t@echo "Duplicating temporary image file {img} for transactions"')
+        print(f'\t@echo "{sep} Duplicating temporary image file {img} for transactions {sep}"')
         print(f"\tmkdir -p {img.parent} && cp -f {img} {img}_temp")
         print()
 
 LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
 
 def loading_files(exe) -> str:
+    """Returns the path to the loading files for a given executable."""
     # strip variant if any
     # return f"./frontend/tpc-h/{exe}/workload.hpp"
     pattern = r"^(.+)_variant$"
@@ -125,6 +134,7 @@ def loading_files(exe) -> str:
     return " ".join(files)
 
 def generate_recover_rules() -> None:
+    """Generates the recovery rules for a database version/storage."""
     print_section("recover files")
     for bd in cfg.build_dirs:
         for exe in cfg.exec_names:
@@ -136,7 +146,7 @@ def generate_recover_rules() -> None:
             print(f"{recover}: {LOADING_META_FILE} {loading_files(exe)} {img}")
             # for f in [recover, LOADING_META_FILE, loading_file(exe), img]:
                 # print(f'\techo {f}; stat -c %y "{f}"')
-            print(f'\techo "Persisting data to {recover}"')
+            print(f'\techo "{sep} Persisting data to {recover} {sep}"')
             print(f"\tmkdir -p {rd}")
             print(
                 f"\t{exe_path} {cfg.leanstore_flags} "
@@ -153,6 +163,7 @@ STRUCTURE_OPTIONS = {
 }            
 
 def generate_run_rules() -> None:
+    """Generates the run rules for the experiments."""
     print_section("run experiments")
     bd = cfg.build_dirs[0]
     for exe in cfg.exec_names:
@@ -161,11 +172,11 @@ def generate_run_rules() -> None:
         recover = Path(bd) / exe / f"{cfg.scale}.json"
         img = f"{image_file(exe)}"
         separate_runs = " ".join([f"{exe}_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
-        print(f"{exe}: {rd} {exe_path} {recover} check_perf_event_paranoid {separate_runs}")
+        print(f"{exe}: check_perf_event_paranoid {separate_runs}")
         
         img_temp = f"{img}_temp"
         for structure in STRUCTURE_OPTIONS[exe]:
-            print(f"{exe}_{structure}: {img_temp}")
+            print(f"{exe}_{structure}: {img_temp} {rd} {exe_path} {recover}")
             print(f"\ttouch {rd}/log")
             print(
                 f'\tscript -q -c "{exe_path} {cfg.leanstore_flags} '
@@ -178,6 +189,7 @@ def generate_run_rules() -> None:
     print()
 
 def generate_lldb_rules() -> None:
+    """Generates the LLDB rules and vscode launch configurations for the experiments."""
     print_section("run with LLDB")
     bd = cfg.build_dirs[1]
     for exe in cfg.exec_names:

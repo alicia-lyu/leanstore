@@ -116,7 +116,8 @@ struct PremergedJoin {
 
    int next()
    {
-      auto kv = merged_scanner.next();
+      std::optional<std::pair<std::variant<typename Rs::Key...>, std::variant<Rs...>>> kv =
+          merged_scanner.produced == 0 ? merged_scanner.current() : merged_scanner.next();
       if (!kv) {
          return -1;
       }

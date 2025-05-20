@@ -22,9 +22,10 @@ struct BaseJoiner {
          states_scanner(states.getScanner()),
          county_scanner(county.getScanner()),
          city_scanner(city.getScanner()),
-         joiner_ns([&] { return nation_scanner->next(); }, [&] { return states_scanner->next(); }),
-         joiner_nsc([&] { return joiner_ns.next(); }, [&] { return county_scanner->next(); }),
-         final_joiner([&] { return joiner_nsc.next(); }, [&] { return city_scanner->next(); })
+         joiner_ns([&] { return nation_scanner->produced == 0 ? nation_scanner->current() : nation_scanner->next(); },
+                   [&] { return states_scanner->produced == 0 ? states_scanner->current() : states_scanner->next(); }),
+         joiner_nsc([&] { return joiner_ns.next(); }, [&] { return county_scanner->produced == 0 ? county_scanner->current() : county_scanner->next(); }),
+         final_joiner([&] { return joiner_nsc.next(); }, [&] { return city_scanner->produced == 0 ? city_scanner->current() : city_scanner->next(); })
    {
    }
 
@@ -38,14 +39,10 @@ struct BaseJoiner {
 
    void seek(const sort_key_t& sk)
    {
-      nation_scanner->seekForPrev(nation2_t::Key{sk.nationkey});
-      nation_scanner->prev();
-      states_scanner->seekForPrev(states_t::Key{sk.nationkey, sk.statekey});
-      states_scanner->prev();
-      county_scanner->seekForPrev(county_t::Key{sk.nationkey, sk.statekey, sk.countykey});
-      county_scanner->prev();
-      city_scanner->seekForPrev(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
-      city_scanner->prev();
+      nation_scanner->seek(nation2_t::Key{sk.nationkey});
+      states_scanner->seek(states_t::Key{sk.nationkey, sk.statekey});
+      county_scanner->seek(county_t::Key{sk.nationkey, sk.statekey, sk.countykey});
+      city_scanner->seek(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
    }
 };
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -57,16 +54,14 @@ struct MergedJoiner {
 
    void run() { joiner.run(); }
 
-    void next() { joiner.next(); }
+   void next() { joiner.next(); }
 
-    sort_key_t current_jk() const { return joiner.current_jk; }
+   sort_key_t current_jk() const { return joiner.current_jk; }
 
-    long produced() const { return joiner.produced; }
+   long produced() const { return joiner.produced; }
 
-    void seek(const sort_key_t& sk)
-    {
-        merged_scanner->template seekForPrev<nation2_t>(nation2_t::Key{sk.nationkey});
-        merged_scanner->prev();
-    }
+   long consumed() const { return merged_scanner->produced; }
+
+   void seek(const sort_key_t& sk) { merged_scanner->template seek<nation2_t>(nation2_t::Key{sk.nationkey}); }
 };
 }  // namespace geo_join
