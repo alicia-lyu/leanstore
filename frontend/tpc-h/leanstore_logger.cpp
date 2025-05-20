@@ -121,7 +121,7 @@ void LeanStoreLogger::log_template(std::string tx,
    std::ofstream csv_sum;
    csv_sum.open(csv_sum_path, std::ios::app);
    if (!csv_sum_exists) {  // no header
-      csv_sum << "method,tx,dram,scale," << to_string(column_name) << ",";
+      csv_sum << "method,tx,DRAM (GiB),scale," << to_string(column_name) << ",";
       for (auto& h : tx_console_header) {
          csv_sum << h << ",";
       }
