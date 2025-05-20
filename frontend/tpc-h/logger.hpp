@@ -13,7 +13,7 @@ inline std::string to_string(ColumnName column)
       case ColumnName::ELAPSED:
          return "Elapsed (ms)";
       case ColumnName::TPUT:
-         return "Tput (tx/s)";
+         return "TPut (TX/s)";
       default:
          return "Unknown";
    }
