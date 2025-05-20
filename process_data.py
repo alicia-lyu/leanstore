@@ -29,7 +29,7 @@ def collect_data(exec):
                 continue
             tx = match.group(1)
             method = match.group(2)
-            if tx == "query" or tx == "query-external-select":
+            if tx == "query" or tx == "query-external-select" or tx == "range-query":
                 sum_f = sum_queries
             else:
                 sum_f = sum_txs
@@ -48,3 +48,4 @@ if __name__ == "__main__":
     collect_data("basic_group")
     collect_data("basic_join_group")
     collect_data("basic_group_variant")
+    collect_data("geo_join")

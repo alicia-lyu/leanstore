@@ -11,18 +11,19 @@ DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
 DECLARE_int32(tx_seconds);
 
-#define WARMUP_THEN_TXS(tpch, crm, isolation_level, lookup_cb, elapsed_cbs, tput_cbs, tput_prefixes, suffix)                                       \
-   {                                                                                                                                               \
-      atomic<u64> keep_running = true;                                                                                                             \
-      atomic<u64> lookup_count = 0;                                                                                                                \
-      atomic<u64> running_threads_counter = 0;                                                                                                     \
-      crm.scheduleJobAsync(0, [&]() { runLookupPhase(lookup_cb, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); });   \
-      sleep(FLAGS_warmup_seconds);                                                                                                                                   \
-      crm.scheduleJobSync(1, [&]() { runTXPhase(crm, elapsed_cbs, tput_cbs, tput_prefixes, running_threads_counter, isolation_level, tpch, suffix); }); \
-      keep_running = false;                                                                                                                        \
-      while (running_threads_counter) {                                                                                                            \
-      }                                                                                                                                            \
-      crm.joinAll();                                                                                                                               \
+#define WARMUP_THEN_TXS(tpch, crm, isolation_level, lookup_cb, elapsed_cbs, tput_cbs, tput_prefixes, suffix)                                         \
+   {                                                                                                                                                 \
+      atomic<u64> keep_running = true;                                                                                                               \
+      atomic<u64> lookup_count = 0;                                                                                                                  \
+      atomic<u64> running_threads_counter = 0;                                                                                                       \
+      crm.scheduleJobAsync(0, [&]() { runLookupPhase(lookup_cb, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); });     \
+      sleep(FLAGS_warmup_seconds);                                                                                                                   \
+      crm.scheduleJobSync(1,                                                                                                                         \
+                          [&]() { runTXPhase(elapsed_cbs, tput_cbs, tput_prefixes, running_threads_counter, isolation_level, tpch, suffix); }); \
+      keep_running = false;                                                                                                                          \
+      while (running_threads_counter) {                                                                                                              \
+      }                                                                                                                                              \
+      crm.joinAll();                                                                                                                                 \
    }
 
 inline void runLookupPhase(std::function<void()> lookupCallback,
@@ -55,16 +56,19 @@ inline void runLookupPhase(std::function<void()> lookupCallback,
    running_threads_counter--;
 }
 
-inline void run_tput(cr::CRManager& crm, std::function<void()> cb, leanstore::TX_ISOLATION_LEVEL isolation_level, TPCHWorkload<LeanStoreAdapter>& tpch, std::string msg)
+inline void run_tput(std::function<void()> cb,
+                     leanstore::TX_ISOLATION_LEVEL isolation_level,
+                     TPCHWorkload<LeanStoreAdapter>& tpch,
+                     std::string msg)
 {
    auto start = std::chrono::high_resolution_clock::now();
    atomic<int> count = 0;
    std::cout << "Running " << msg << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
    atomic<u64> keep_running = true;
-   crm.scheduleJobAsync(0, [&]() {
+   std::thread([&] {
       std::this_thread::sleep_for(std::chrono::seconds(FLAGS_tx_seconds));
       keep_running = false;
-   });
+   }).detach();
    while (keep_running) {
       jumpmuTry()
       {
@@ -84,7 +88,7 @@ inline void run_tput(cr::CRManager& crm, std::function<void()> cb, leanstore::TX
    auto end = std::chrono::high_resolution_clock::now();
    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
    double tput = (double)count.load() / duration * 1e6;
-   tpch.logger.log(static_cast<long>(tput), msg, count.load());
+   tpch.logger.log(static_cast<long>(round(tput)), msg, count.load());
 }
 
 inline void run_elapsed(std::function<void()> cb, leanstore::TX_ISOLATION_LEVEL isolation_level)
@@ -94,7 +98,7 @@ inline void run_elapsed(std::function<void()> cb, leanstore::TX_ISOLATION_LEVEL 
    cr::Worker::my().commitTX();
 }
 
-inline void runTXPhase(cr::CRManager& crm, std::vector<std::function<void()>> elapsed_cbs,
+inline void runTXPhase(std::vector<std::function<void()>> elapsed_cbs,
                        std::vector<std::function<void()>> tput_cbs,
                        std::vector<std::string> tput_prefixes,
                        atomic<u64>& running_threads_counter,
@@ -111,7 +115,7 @@ inline void runTXPhase(cr::CRManager& crm, std::vector<std::function<void()>> el
    assert(tput_cbs.size() == tput_prefixes.size());
 
    for (size_t i = 0; i < tput_cbs.size(); i++) {
-      run_tput(crm, tput_cbs[i], isolation_level, tpch, tput_prefixes[i] + "-" + suffix);
+      run_tput(tput_cbs[i], isolation_level, tpch, tput_prefixes[i] + "-" + suffix);
    }
 
    cr::Worker::my().shutdown();
