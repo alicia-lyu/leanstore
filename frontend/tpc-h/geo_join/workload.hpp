@@ -3,8 +3,8 @@
 #include <chrono>
 
 #include "../../shared/Adapter.hpp"
-#include "../merge.hpp"
 #include "../tpch_workload.hpp"
+#include "joiners.hpp"
 #include "views.hpp"
 
 namespace geo_join
@@ -85,8 +85,9 @@ class GeoJoin
       logger.reset();
       std::cout << "GeoJoin::query_by_merged()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
-      auto scanner = merged.getScanner();
-      scanner->template scanJoin<sort_key_t, view_t>();
+      
+      MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged);
+      merged_joiner.run();
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -98,21 +99,10 @@ class GeoJoin
       logger.reset();
       std::cout << "GeoJoin::query_by_base()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
-      auto nation_scanner = nation.getScanner();
-      auto states_scanner = states.getScanner();
-      auto county_scanner = county.getScanner();
-      auto city_scanner = city.getScanner();
 
-      BinaryMergeJoin<sort_key_t, ns_t, nation2_t, states_t> binary_join_ns([&]() { return nation_scanner->next(); },
-                                                                            [&]() { return states_scanner->next(); });
+      BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city);
 
-      BinaryMergeJoin<sort_key_t, nsc_t, ns_t, county_t> binary_join_nsc([&]() { return binary_join_ns.next(); },
-                                                                         [&]() { return county_scanner->next(); });
-
-      BinaryMergeJoin<sort_key_t, view_t, nsc_t, city_t> binary_join([&]() { return binary_join_nsc.next(); },
-                                                                     [&]() { return city_scanner->next(); });
-
-      binary_join.run();
+      base_joiner.run();
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -149,9 +139,6 @@ class GeoJoin
              return true;
           },
           []() {});
-      // if (produced != 2) {
-      //    __builtin_debugtrap();
-      // }
    }
 
    void point_query_by_merged()
@@ -168,7 +155,6 @@ class GeoJoin
       cik = std::get_if<city_t::Key>(&kv->first);
       civ = std::get_if<city_t>(&kv->second);
       assert(cik != nullptr && civ != nullptr);
-
 
       county_t* cv = nullptr;
       scanner->template seek<county_t>(county_t::Key{cik->nationkey, cik->statekey, cik->countykey});
@@ -194,22 +180,11 @@ class GeoJoin
    {
       sort_key_t sk = sort_key_t{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()};
 
-      auto nation_scanner = nation.getScanner();
-      nation_scanner->seekForPrev(nation2_t::Key{sk.nationkey});
-      auto states_scanner = states.getScanner();
-      states_scanner->seekForPrev(states_t::Key{sk.nationkey, sk.statekey});
-      auto county_scanner = county.getScanner();
-      county_scanner->seekForPrev(county_t::Key{sk.nationkey, sk.statekey, sk.countykey});
-      auto city_scanner = city.getScanner();
-      city_scanner->seekForPrev(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
+      BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city);
 
-      BinaryMergeJoin<sort_key_t, ns_t, nation2_t, states_t> binary_join_ns([&]() { return nation_scanner->next(); },
-                                                                            [&]() { return states_scanner->next(); });
-      BinaryMergeJoin<sort_key_t, nsc_t, ns_t, county_t> binary_join_nsc([&]() { return binary_join_ns.next(); },
-                                                                         [&]() { return county_scanner->next(); });
-      BinaryMergeJoin<sort_key_t, view_t, nsc_t, city_t> binary_join([&]() { return binary_join_nsc.next(); },
-                                                                     [&]() { return city_scanner->next(); });
-      binary_join.next();
+      base_joiner.seek(sk);
+
+      base_joiner.next();
    }
 
    // -------------------------------------------------------------
@@ -247,22 +222,17 @@ class GeoJoin
       std::cout << "GeoJoin::range_query_by_merged()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
 
-      auto scanner = merged.getScanner();
-      int n = workload.getNationID();
-      scanner->template seekForPrev<nation2_t>(nation2_t::Key{n});
-      scanner->prev();
-      scanner->prev();
+      MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged);
 
-      sort_key_t curr_jk = sort_key_t{n, 0, 0, 0};
-      long produced = 0;
-      long curr_produced = 0;
-      int jk_cnt = 0;
-      while (curr_jk.nationkey == n) {
-         std::tie(curr_jk, curr_produced) = scanner->template next_jk<sort_key_t, view_t>();
-         produced += curr_produced;
-         jk_cnt++;
+      auto n = workload.getNationID();
+      merged_joiner.seek(sort_key_t{n, 0, 0, 0});
+
+      while (merged_joiner.current_jk().nationkey == n || merged_joiner.current_jk() == sort_key_t::max()) {
+         merged_joiner.next();
       }
-      std::cout << "\rRange querying merged for nation " << n << " : jk_cnt " << jk_cnt << ", produced " << produced << " records------------------------------------" << std::endl;
+
+      std::cout << "\rRange querying merged for nation " << n << " : produced " << merged_joiner.produced()
+                << " records------------------------------------" << std::endl;
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -277,31 +247,16 @@ class GeoJoin
 
       auto n = workload.getNationID();
 
-      auto nation_scanner = nation.getScanner();
-      nation_scanner->seekForPrev(nation2_t::Key{n});
-      nation_scanner->prev();
-      auto states_scanner = states.getScanner();
-      states_scanner->seekForPrev(states_t::Key{n, 0});
-      states_scanner->prev();
-      auto county_scanner = county.getScanner();
-      county_scanner->seekForPrev(county_t::Key{n, 0, 0});
-      county_scanner->prev();
-      auto city_scanner = city.getScanner();
-      city_scanner->seekForPrev(city_t::Key{n, 0, 0, 0});
-      city_scanner->prev();
+      BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city);
 
-      BinaryMergeJoin<sort_key_t, ns_t, nation2_t, states_t> binary_join_ns([&]() { return nation_scanner->next(); },
-                                                                            [&]() { return states_scanner->next(); });
-      BinaryMergeJoin<sort_key_t, nsc_t, ns_t, county_t> binary_join_nsc([&]() { return binary_join_ns.next(); },
-                                                                         [&]() { return county_scanner->next(); });
-      BinaryMergeJoin<sort_key_t, view_t, nsc_t, city_t> binary_join([&]() { return binary_join_nsc.next(); },
-                                                                     [&]() { return city_scanner->next(); });
-      while (binary_join.current_jk.nationkey == n || binary_join.current_jk == sort_key_t::max()) {
-         binary_join.next();
+      base_joiner.seek(sort_key_t{n, 0, 0, 0});
+
+      while (base_joiner.current_jk().nationkey == n || base_joiner.current_jk() == sort_key_t::max()) {
+         base_joiner.next();
       }
 
-      std::cout << "\rRange querying base for nation " << n << " produced " << binary_join.produced << " records------------------------------------"
-                << std::endl;
+      std::cout << "\rRange querying base for nation " << n << " produced " << base_joiner.produced()
+                << " records------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
       logger.log(t, "range-query-base");
@@ -426,7 +381,7 @@ class GeoJoin
       workload.log_sizes();
       double indexes_size = nation.size() + states.size() + county.size() + city.size();
       std::map<std::string, double> sizes = {{"view", view.size() + indexes_size},
-                                             {"indexes", indexes_size},
+                                             {"base", indexes_size},
                                              {"nation", nation.size()},
                                              {"states", states.size()},
                                              {"county", county.size()},

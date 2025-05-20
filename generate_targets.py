@@ -155,11 +155,12 @@ def generate_run_rules() -> None:
         recover = Path(bd) / exe / f"{cfg.scale}.json"
         img = f"{image_file(exe)}"
         separate_runs = " ".join([f"{exe}_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
-        print(f"{exe}: {exe_path} {recover} check_perf_event_paranoid {separate_runs}")
+        print(f"{exe}: {rd} {exe_path} {recover} check_perf_event_paranoid {separate_runs}")
         
         img_temp = f"{img}_temp"
         for structure in STRUCTURE_OPTIONS[exe]:
             print(f"{exe}_{structure}: {img_temp}")
+            print(f"\ttouch {rd}/log")
             print(
                 f'\tscript -q -c "{exe_path} {cfg.leanstore_flags} '
                 f"--storage_structure={structure} "
