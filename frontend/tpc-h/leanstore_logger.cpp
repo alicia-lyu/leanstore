@@ -78,16 +78,20 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
    return {tx_console_header, tx_console_data};
 }
 
-void LeanStoreLogger::log_template(std::string csv_dir, std::function<std::pair<std::vector<std::string>, std::vector<std::string>>()> main_stats_cb)
+void LeanStoreLogger::log_template(std::string tx,
+                                   std::string method,
+                                   ColumnName column_name,
+                                   std::function<std::pair<std::vector<std::string>, std::vector<std::string>>()> main_stats_cb)
 {
    u64 config_hash = configs_table.hash();
    std::vector<std::ofstream> csvs;
-   std::string csv_dir_abs = FLAGS_csv_path + "/" + csv_dir;
-   std::filesystem::create_directories(csv_dir_abs);
+   std::filesystem::path csv_runtime(FLAGS_csv_path);
+   std::filesystem::path csv_tx = csv_runtime / tx / method;
+   std::filesystem::create_directories(csv_tx);
    for (u64 t_i = 0; t_i < tables.size(); t_i++) {
       csvs.emplace_back();
       auto& csv = csvs.back();
-      csv.open(csv_dir_abs + "/" + tables[t_i]->getName() + ".csv", std::ios::app);
+      csv.open(csv_tx / (tables[t_i]->getName() + ".csv"), std::ios::app);
       csv << std::setprecision(2) << std::fixed;  // TODO change precision by data type
 
       if (csv.tellp() == 0) {  // no header
@@ -109,15 +113,19 @@ void LeanStoreLogger::log_template(std::string csv_dir, std::function<std::pair<
    }
 
    auto [tx_console_header, tx_console_data] = main_stats_cb();
+   
+   std::filesystem::path csv_db = csv_runtime.parent_path();
    std::ofstream csv_sum;
-   csv_sum.open(csv_dir_abs + ".csv", std::ios::app);
+   csv_sum.open(csv_db / (tx + ".csv"), std::ios::app);
    if (csv_sum.tellp() == 0) {  // no header
       for (auto& h : tx_console_header) {
+         csv_sum << "method,tx,dram,scale," << to_string(column_name) << ",";
          csv_sum << h << ",";
       }
       csv_sum << endl;
    }
    for (auto& d : tx_console_data) {
+      csv_sum << method << "," << tx << "," << FLAGS_dram_gib << "," << FLAGS_tpch_scale_factor << ",";
       csv_sum << d << ",";
    }
    csv_sum << endl;
@@ -126,16 +134,14 @@ void LeanStoreLogger::log_template(std::string csv_dir, std::function<std::pair<
    printTable(rows);
 }
 
-void LeanStoreLogger::log(long tput, std::string csv_dir, int tx_count) {
-   log_template(csv_dir, [&]() {
-      return summarizeStats(tput, ColumnName::TPUT, tx_count);
-   });
+void LeanStoreLogger::log(long tput, std::string tx, std::string method, int tx_count)
+{
+   log_template(tx, method, ColumnName::TPUT, [&]() { return summarizeStats(tput, ColumnName::TPUT, tx_count); });
 }
 
-void LeanStoreLogger::log(long elapsed, std::string csv_dir) {
-   log_template(csv_dir, [&]() {
-      return summarizeStats(elapsed, ColumnName::ELAPSED, 1);
-   });
+void LeanStoreLogger::log(long elapsed, std::string tx, std::string method)
+{
+   log_template(tx, method, ColumnName::ELAPSED, [&]() { return summarizeStats(elapsed, ColumnName::ELAPSED, 1); });
 }
 
 void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
@@ -159,7 +165,7 @@ void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
 void LeanStoreLogger::logLoading()
 {
    std::cout << "Loading" << std::endl;
-   log(0, "load");
+   log(0, "load", "");
 }
 
 void LeanStoreLogger::prepare()

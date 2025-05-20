@@ -130,7 +130,7 @@ class BasicGroup
       std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query-view");
+      logger.log(t, "query", "view");
    }
 
    void queryByMerged()
@@ -168,7 +168,7 @@ class BasicGroup
       std::cout << "\rEnumerating merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query-merged");
+      logger.log(t, "query", "merged");
    }
 
    // ----------------------------------------------------------------------------------

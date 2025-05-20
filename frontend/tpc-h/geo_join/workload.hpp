@@ -77,7 +77,7 @@ class GeoJoin
       std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query-view");
+      logger.log(t, "query", "view");
    }
 
    void query_by_merged()
@@ -85,13 +85,13 @@ class GeoJoin
       logger.reset();
       std::cout << "GeoJoin::query_by_merged()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
-      
+
       MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged);
       merged_joiner.run();
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query-merged");
+      logger.log(t, "query", "merged");
    }
 
    void query_by_base()
@@ -106,7 +106,7 @@ class GeoJoin
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query-base");
+      logger.log(t, "query", "base");
    }
 
    // -------------------------------------------------------------
@@ -178,13 +178,32 @@ class GeoJoin
 
    void point_query_by_base()
    {
-      sort_key_t sk = sort_key_t{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()};
+      std::optional<city_t::Key> cik = std::nullopt;
+      std::optional<city_t> civ = std::nullopt;
 
-      BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city);
+      city.scan(
+          city_t::Key{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()},
+          [&](const city_t::Key& k, const city_t& v) {
+             std::cout << k << " " << v << std::endl;
+             cik = k;
+             civ = v;
+             return false;
+          },
+          []() {});
 
-      base_joiner.seek(sk);
+      while (!cik.has_value() || civ.has_value()) {
+      }
+      std::optional<nation2_t> nv = std::nullopt;
+      std::optional<states_t> sv = std::nullopt;
+      std::optional<county_t> cv = std::nullopt;
+      nation.lookup1(nation2_t::Key{cik->nationkey}, [&](const nation2_t& n) { nv = n; });
+      states.lookup1(states_t::Key{cik->nationkey, cik->statekey}, [&](const states_t& s) { sv = s; });
+      county.lookup1(county_t::Key{cik->nationkey, cik->statekey, cik->countykey}, [&](const county_t& c) { cv = c; });
 
-      base_joiner.next();
+      while (!nv.has_value() || !sv.has_value() || !cv.has_value()) {
+      }
+      view_t::Key vk = view_t::Key{cik->nationkey, cik->statekey, cik->countykey, cik->citykey};
+      view_t vv = view_t{*nv, *sv, *cv, *civ};
    }
 
    // -------------------------------------------------------------
@@ -213,7 +232,7 @@ class GeoJoin
                 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "range-query-view");
+      logger.log(t, "range-query", "view");
    }
 
    void range_query_by_merged()
@@ -236,7 +255,7 @@ class GeoJoin
 
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "range-query-merged");
+      logger.log(t, "range-query", "merged");
    }
 
    void range_query_by_base()
@@ -259,7 +278,7 @@ class GeoJoin
                 << " records------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "range-query-base");
+      logger.log(t, "range-query", "base");
    }
 
    // -------------------------------------------------------------

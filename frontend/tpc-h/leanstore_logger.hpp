@@ -1,7 +1,5 @@
 #pragma once
 #include <string>
-#include "logger.hpp"
-#include "tpch_workload.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
@@ -9,9 +7,9 @@
 #include "leanstore/profiling/tables/ConfigsTable.hpp"
 #include "leanstore/profiling/tables/DTTable.hpp"
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
+#include "logger.hpp"
 #include "tabulate/table.hpp"
-
-
+#include "tpch_workload.hpp"
 
 class LeanStoreLogger : public Logger
 {
@@ -41,9 +39,12 @@ class LeanStoreLogger : public Logger
    void writeOutAll();
    std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed_or_tput, ColumnName column_name, int tx_count);
    void reset();
-   void log(long tput, std::string csv_dir, int tx_count);
-   void log(long elapsed, std::string csv_dir);
-   void log_template(std::string csv_dir, std::function<std::pair<std::vector<std::string>, std::vector<std::string>>()> main_stats_cb);
+   void log(long tput, std::string tx, std::string method, int tx_count);
+   void log(long elapsed, std::string tx, std::string method);
+   void log_template(std::string tx,
+                     std::string method,
+                     ColumnName column_name,
+                     std::function<std::pair<std::vector<std::string>, std::vector<std::string>>()> main_stats_cb);
 
    void log_sizes(std::map<std::string, double> sizes);
 
@@ -82,7 +83,7 @@ class LeanStoreLogger : public Logger
    static inline std::string to_fixed(double value)
    {
       std::ostringstream oss;
-      if (value >= 0 && value <=1) {
+      if (value >= 0 && value <= 1) {
          oss << std::defaultfloat << std::setprecision(4) << value;
       } else {
          oss << std::fixed << std::setprecision(2) << value;
