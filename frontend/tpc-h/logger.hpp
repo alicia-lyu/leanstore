@@ -24,8 +24,8 @@ class Logger
 {
   public:
    virtual void reset() = 0;
-   virtual void log(long tput, std::string csv_dir, int tx_count) = 0;
-   virtual void log(long elapsed, std::string csv_dir) = 0;
+   virtual void log(long tput, std::string tx, std::string method, int tx_count) = 0;
+   virtual void log(long elapsed, std::string tx, std::string method) = 0;
    virtual void log_sizes(std::map<std::string, double> sizes) = 0;
    virtual void prepare() = 0;
 };
