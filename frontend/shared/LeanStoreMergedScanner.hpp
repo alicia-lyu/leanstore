@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <variant>
 #include "../tpc-h/merge.hpp"
 #include "MergedScanner.hpp"
@@ -36,8 +35,6 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       return std::make_pair(result_key, result_rec);
    }
 
-   uint64_t produced = 0;
-
    LeanStoreMergedScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
    ~LeanStoreMergedScanner() = default;
@@ -45,7 +42,7 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
    void reset()
    {
       it->reset();
-      produced = 0;
+      this->produced = 0;
    }
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next()
@@ -54,7 +51,7 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       if (res != leanstore::OP_RESULT::OK) {
          return std::nullopt;
       }
-      produced++;
+      this->produced++;
       return this->current();
    }
 
@@ -64,7 +61,6 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       if (res != leanstore::OP_RESULT::OK) {
          return std::nullopt;
       }
-      produced--;
       return this->current();
    }
 
@@ -128,6 +124,7 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();
+      this->produced++;
       return toType(key, payload);
    }
 

@@ -2,9 +2,8 @@
 #include <optional>
 
 template <class Record>
-class Scanner
+struct Scanner
 {
-  public:
   virtual ~Scanner() = default;
   virtual void reset() = 0;
 

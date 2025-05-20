@@ -8,16 +8,14 @@
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
 template <class Record>
-class LeanStoreScanner : public Scanner<Record>
+struct LeanStoreScanner : public Scanner<Record>
 {
-  protected:
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
 
    std::unique_ptr<BTreeIt> it;
    uint64_t produced = 0;
 
-  public:
    LeanStoreScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
    ~LeanStoreScanner() = default;
@@ -81,7 +79,6 @@ class LeanStoreScanner : public Scanner<Record>
       leanstore::OP_RESULT res = it->prev();
       if (res != leanstore::OP_RESULT::OK)
          return std::nullopt;
-      this->produced--;
       return this->current();
    }
 
@@ -99,6 +96,7 @@ class LeanStoreScanner : public Scanner<Record>
 
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
+      this->produced++;
       return std::make_pair(typed_key, typed_payload);
    }
 };

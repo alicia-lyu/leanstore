@@ -32,7 +32,7 @@ struct HeapMergeHelper {
    std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...> cached_records;
    std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<>> heap;
    long sifted = 0;
-   JK current_jk;
+   JK current_jk = JK::max();
    HeapEntry<JK> current_entry;
 
    HeapMergeHelper(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
@@ -97,25 +97,25 @@ struct HeapMergeHelper {
    }
 
    template <template <typename> class ScannerType, typename RecordType>
-   static std::function<HeapEntry<JK>()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
+   std::function<HeapEntry<JK>()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
    {
-      return [source, &scanner]() {
-         auto kv = scanner.next();
+      return [source, this, &scanner]() {
+         auto kv = current_jk == JK::max() ? scanner.current() : scanner.next();
          if (!kv)
             return HeapEntry<JK>();
          auto& [k, v] = *kv;
-         return HeapEntry<JK>(SKBuilder<JK>::create(k, v), RecordType::toBytes(k), RecordType::toBytes(v), source);
+         return HeapEntry<JK>(current_jk, RecordType::toBytes(k), RecordType::toBytes(v), source);
       };
    }
 
    template <template <typename> class ScannerType, size_t... Is, typename... SourceRecords>
-   static std::vector<std::function<HeapEntry<JK>()>> getHeapSources(std::index_sequence<Is...>, ScannerType<SourceRecords>&... scanners)
+   std::vector<std::function<HeapEntry<JK>()>> getHeapSources(std::index_sequence<Is...>, ScannerType<SourceRecords>&... scanners)
    {
       return {getHeapSource(scanners, Is)...};
    }
 
    template <template <typename> class ScannerType, typename... SourceRecords>
-   static std::vector<std::function<HeapEntry<JK>()>> getHeapSources(ScannerType<SourceRecords>&... scanners)
+   std::vector<std::function<HeapEntry<JK>()>> getHeapSources(ScannerType<SourceRecords>&... scanners)
    {
       return getHeapSources(std::index_sequence_for<SourceRecords...>{}, scanners...);
    }
