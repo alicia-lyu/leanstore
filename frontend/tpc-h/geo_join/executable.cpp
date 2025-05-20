@@ -91,7 +91,8 @@ int main(int argc, char** argv)
             std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
             std::bind(&GJ::maintain_base, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base");
+             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base",
+             [&]() { return tpchGeoJoin.get_indexes_size(); });
          break;
       }
       case 1: {
@@ -103,7 +104,8 @@ int main(int argc, char** argv)
             [&]() { tpchGeoJoin.point_query_by_view(); },
             std::bind(&GJ::maintain_view, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view");
+             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view",
+             [&]() { return tpchGeoJoin.get_view_size(); });
          break;
       }
       case 2: {
@@ -116,7 +118,7 @@ int main(int argc, char** argv)
             std::bind(&GJ::maintain_merged, &tpchGeoJoin)};
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
-             "merged");
+             "merged", [&]() { return tpchGeoJoin.get_merged_size(); });
          break;
       }
       default: {

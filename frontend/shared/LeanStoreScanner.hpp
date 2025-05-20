@@ -88,7 +88,9 @@ class LeanStoreScanner : public Scanner<Record>
    std::optional<std::pair<typename Record::Key, Record>> current()
    {
       if (it->cur == -1)
+      {
          return std::nullopt;
+      }
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();

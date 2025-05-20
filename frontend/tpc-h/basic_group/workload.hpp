@@ -130,7 +130,7 @@ class BasicGroup
       std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "view");
+      logger.log(t, "query", "view", get_view_size());
    }
 
    void queryByMerged()
@@ -168,7 +168,7 @@ class BasicGroup
       std::cout << "\rEnumerating merged: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "merged");
+      logger.log(t, "query", "merged", get_merged_size());
    }
 
    // ----------------------------------------------------------------------------------
@@ -323,6 +323,9 @@ class BasicGroup
       loadAllOptions();
       log_sizes();
    }
+
+   double get_view_size() { return view.size() + partsupp.size(); }
+   double get_merged_size() { return mergedBasicGroup.size(); }
 
    void log_sizes()
    {

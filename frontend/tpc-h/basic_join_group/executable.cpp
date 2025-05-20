@@ -80,7 +80,7 @@ int main(int argc, char** argv)
 
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&tpchBasicJoinGroup]() { tpchBasicJoinGroup.point_lookups_for_view(); }, elapsed_cbs_view, tput_cbs_view,
-             tput_prefixes, "view");
+             tput_prefixes, "view", [&]() { return tpchBasicJoinGroup.get_view_size(); });
       } else if (FLAGS_storage_structure == 2) {
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {std::bind(&BJG::query_by_merged, &tpchBasicJoinGroup),
@@ -90,7 +90,7 @@ int main(int argc, char** argv)
 
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&tpchBasicJoinGroup]() { tpchBasicJoinGroup.point_lookups_for_merged(); }, elapsed_cbs_merged,
-             tput_cbs_merged, tput_prefixes, "merged");
+             tput_cbs_merged, tput_prefixes, "merged", [&]() { return tpchBasicJoinGroup.get_merged_size(); });
       } else {
          std::cerr << "Invalid storage structure: " << FLAGS_storage_structure << std::endl;
          return -1;

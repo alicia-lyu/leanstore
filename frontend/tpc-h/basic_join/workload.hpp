@@ -144,7 +144,7 @@ class BasicJoin
       std::cout << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-      logger.log(t, "query", "view");
+      logger.log(t, "query", "view", get_view_size());
    }
 
    // TXs: Measure end-to-end time
@@ -161,7 +161,7 @@ class BasicJoin
 
       auto merged_end = std::chrono::high_resolution_clock::now();
       auto merged_t = std::chrono::duration_cast<std::chrono::milliseconds>(merged_end - merged_start).count();
-      logger.log(merged_t, "query", "merged");
+      logger.log(merged_t, "query", "merged", get_merged_size());
    }
 
    void queryByBase()
@@ -184,7 +184,7 @@ class BasicJoin
 
       auto index_end = std::chrono::high_resolution_clock::now();
       auto index_t = std::chrono::duration_cast<std::chrono::milliseconds>(index_end - index_start).count();
-      logger.log(index_t, "query", "base");
+      logger.log(index_t, "query", "base", get_base_size());
    }
 
    // --------------------------------------------------------------
@@ -427,13 +427,15 @@ class BasicJoin
       log_sizes();
    }
 
+   double get_view_size() { return joinedPPsL.size() + get_base_size(); }
+   double get_merged_size() { return mergedPPsL.size(); }
+   double get_base_size() { return part.size() + partsupp.size() + sortedLineitem.size(); }
+
    void log_sizes()
    {
       workload.log_sizes();
-      std::map<std::string, double> sizes = {{"view", joinedPPsL.size()},
-                                             {"sortedLineitem", sortedLineitem.size()},
-                                             {"merged", mergedPPsL.size()},
-                                             {"base", part.size() + partsupp.size() + sortedLineitem.size()}};
+      std::map<std::string, double> sizes = {
+          {"view", get_view_size()}, {"merged", get_merged_size()}, {"sortedLineitem", sortedLineitem.size()}, {"base", get_base_size()}};
 
       logger.log_sizes(sizes);
    }
