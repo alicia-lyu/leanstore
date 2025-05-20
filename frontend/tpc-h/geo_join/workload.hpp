@@ -5,6 +5,7 @@
 #include "../../shared/Adapter.hpp"
 #include "../tpch_workload.hpp"
 #include "joiners.hpp"
+#include "load.hpp"
 #include "views.hpp"
 
 namespace geo_join
@@ -116,9 +117,9 @@ class GeoJoin
    void point_query_by_view()
    {
       auto nationkey = workload.getNationID();
-      auto statekey = getStateKey();
-      auto countykey = getCountyKey();
-      auto citykey = getCityKey();
+      auto statekey = params::getStateKey();
+      auto countykey = params::getCountyKey();
+      auto citykey = params::getCityKey();
 
       point_query_by_view(nationkey, statekey, countykey, citykey);
    }
@@ -143,7 +144,7 @@ class GeoJoin
 
    void point_query_by_merged()
    {
-      sort_key_t sk = sort_key_t{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()};
+      sort_key_t sk = sort_key_t{workload.getNationID(), params::getStateKey(), params::getCountyKey(), params::getCityKey()};
 
       auto scanner = merged.getScanner();
 
@@ -183,7 +184,7 @@ class GeoJoin
       std::optional<city_t::Key> cik = std::nullopt;
       std::optional<city_t> civ = std::nullopt;
       city.scan(
-          city_t::Key{workload.getNationID(), getStateKey(), getCountyKey(), getCityKey()},
+          city_t::Key{workload.getNationID(), params::getStateKey(), params::getCountyKey(), params::getCityKey()},
           [&](const city_t::Key& k, const city_t& v) {
              cik = k;
              civ = v;
@@ -293,7 +294,7 @@ class GeoJoin
       UpdateDescriptorGenerator1(states_update_desc, states_t, last_countykey);
       int c;
       states.update1(states_t::Key{n, s}, [&](states_t& s) { c = ++s.last_countykey; }, states_update_desc);
-      int city_cnt = urand(1, CITY_MAX);
+      int city_cnt = params::getCityKey();
       county.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
       for (int i = 1; i <= city_cnt; i++) {
          city.insert(city_t::Key{n, s, c, i}, city_t::generateRandomRecord());
@@ -310,7 +311,7 @@ class GeoJoin
       int c;
       UpdateDescriptorGenerator1(states_update_desc, states_t, last_countykey);
       merged.template update1<states_t>(states_t::Key{n, s}, [&](states_t& s) { c = ++s.last_countykey; }, states_update_desc);
-      int city_cnt = urand(1, CITY_MAX);
+      int city_cnt = params::getCityKey();
       merged.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
       for (int i = 1; i <= city_cnt; i++) {
          merged.insert(city_t::Key{n, s, c, i}, city_t::generateRandomRecord());
@@ -348,86 +349,15 @@ class GeoJoin
    // -------------------------------------------------------------
    // ---------------------- LOADING -----------------------------
 
-   static constexpr size_t STATE_MAX = 80;   // in a nation
-   static constexpr size_t COUNTY_MAX = 50;  // in a state
-   static constexpr size_t CITY_MAX = 20;    // in a county
+   void load();
 
-   static int getStateKey() { return urand(1, STATE_MAX); }
+   double get_view_size();
 
-   static int getCountyKey() { return urand(1, COUNTY_MAX); }
+   double get_indexes_size();
 
-   static int getCityKey() { return urand(1, CITY_MAX); }
+   double get_merged_size();
 
-   void load()
-   {
-      workload.load();
-      // county id starts from 1 in each s tate
-      // city id starts from 1 in each county
-      for (int n = 1; n <= workload.NATION_COUNT; n++) {
-         // state id starts from 1 in each nation
-         int state_cnt = urand(1, STATE_MAX);
-         UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
-         auto nk = nation2_t::Key{n};
-         nation2_t nv;
-         auto update_fn = [&](nation2_t& n) {
-            n.last_statekey = state_cnt;
-            nv = n;
-         };
-         nation.update1(nk, update_fn, nation_update_desc);
-         merged.insert(nk, nv);
-         for (int s = 1; s <= state_cnt; s++) {
-            std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
-            int county_cnt = urand(1, COUNTY_MAX);
-            auto sk = states_t::Key{n, s};
-            auto sv = states_t::generateRandomRecord(county_cnt);
-            states.insert(sk, sv);
-            merged.insert(sk, sv);
-            for (int c = 1; c <= county_cnt; c++) {
-               int city_cnt = urand(1, CITY_MAX);
-               auto ck = county_t::Key{n, s, c};
-               auto cv = county_t::generateRandomRecord(city_cnt);
-               county.insert(ck, cv);
-               merged.insert(ck, cv);
-               for (int ci = 1; ci <= city_cnt; ci++) {
-                  auto cik = city_t::Key{n, s, c, ci};
-                  auto civ = city_t::generateRandomRecord();
-                  city.insert(cik, civ);
-                  merged.insert(cik, civ);
-                  view.insert(view_t::Key{n, s, c, ci}, view_t{nv, sv, cv, civ});
-               }
-            }
-         }
-      }
-      log_sizes();
-   }
-
-   double get_view_size()
-   {
-      double indexes_size = get_indexes_size();
-      return indexes_size + view.size();
-   }
-
-   double get_indexes_size()
-   {
-      return nation.size() + states.size() + county.size() + city.size();
-   }
-
-   double get_merged_size()
-   {
-      return merged.size();
-   }
-
-   void log_sizes()
-   {
-      workload.log_sizes();
-      std::map<std::string, double> sizes = {{"view", get_view_size()},
-                                             {"base", get_indexes_size()},
-                                             {"nation", nation.size()},
-                                             {"states", states.size()},
-                                             {"county", county.size()},
-                                             {"city", city.size()},
-                                             {"merged", get_merged_size()}};
-      logger.log_sizes(sizes);
-   }
+   void log_sizes();
 };
 }  // namespace geo_join
+#include "load.tpp" // IWYU pragma: keep
