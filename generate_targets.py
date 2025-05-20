@@ -109,14 +109,20 @@ def generate_image_files() -> None:
 
 LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
 
-def loading_file(exe) -> str:
+def loading_files(exe) -> str:
     # strip variant if any
     # return f"./frontend/tpc-h/{exe}/workload.hpp"
     pattern = r"^(.+)_variant$"
     match = re.match(pattern, exe)
     if match:
         exe = match.group(1)
-    return f"./frontend/tpc-h/{exe}/workload.hpp"
+    file_base = f"./frontend/tpc-h/{exe}/load"
+    files = []
+    for ext in ['tpp', 'hpp']:
+        file = f"{file_base}.{ext}"
+        if Path(file).exists():
+            files.append(file)
+    return " ".join(files)
 
 def generate_recover_rules() -> None:
     print_section("recover files")
@@ -127,7 +133,7 @@ def generate_recover_rules() -> None:
             recover = Path(bd) / exe / f"{cfg.scale}.json"
             img = image_file(exe)
 
-            print(f"{recover}: {LOADING_META_FILE} {loading_file(exe)} {img}")
+            print(f"{recover}: {LOADING_META_FILE} {loading_files(exe)} {img}")
             # for f in [recover, LOADING_META_FILE, loading_file(exe), img]:
                 # print(f'\techo {f}; stat -c %y "{f}"')
             print(f'\techo "Persisting data to {recover}"')

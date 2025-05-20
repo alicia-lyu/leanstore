@@ -278,61 +278,18 @@ class BasicGroup
    // ---------------------------------------------------------
    // ---------------------- LOAD -----------------------------
 
-   void loadBaseTables() { workload.load(); }
+   void loadBaseTables();
 
-   void loadAllOptions()
-   {
-      auto partsupp_scanner = workload.partsupp.getScanner();
-      Integer count = 0;
-      Numeric supplycost_sum = 0;
-      Integer curr_partkey = 0;
-      int num_part_keys = 0;
-      while (true) {
-         auto kv = partsupp_scanner->next();
-         if (kv == std::nullopt) {
-            insert_agg(curr_partkey, count, supplycost_sum);
-            break;
-         }
-         auto& [k, v] = *kv;
-         mergedBasicGroup.insert(typename merged_partsupp_option_t::Key(k), merged_partsupp_option_t(v));
-         if (k.ps_partkey == curr_partkey) {
-            count++;
-            supplycost_sum += v.ps_supplycost;
-         } else {
-            if (curr_partkey != 0) {
-               insert_agg(curr_partkey, count, supplycost_sum);
-               std::cout << "\rLoading views and indexes for " << num_part_keys++ << " part keys------------------------------------";
-            }
+   void loadAllOptions();
 
-            curr_partkey = k.ps_partkey;
-            count = 1;
-            supplycost_sum = v.ps_supplycost;
-         }
-      }
-   }
+   void insert_agg(Integer curr_partkey, Integer count, Numeric supplycost_sum);
 
-   void insert_agg(Integer curr_partkey, Integer count, Numeric supplycost_sum)
-   {
-      view.insert(view_t::Key({curr_partkey}), view_t({count, supplycost_sum}));
-      mergedBasicGroup.insert(typename merged_view_option_t::Key(curr_partkey), merged_view_option_t(view_t{count, supplycost_sum}));
-   }
+   void load();
 
-   void load()
-   {
-      loadBaseTables();
-      loadAllOptions();
-      log_sizes();
-   }
+   double get_view_size();
+   double get_merged_size();
 
-   double get_view_size() { return view.size() + partsupp.size(); }
-   double get_merged_size() { return mergedBasicGroup.size(); }
-
-   void log_sizes()
-   {
-      workload.log_sizes();
-      std::map<std::string, double> sizes = {{"view", view.size() + partsupp.size()}, {"merged", mergedBasicGroup.size()}};
-
-      logger.log_sizes(sizes);
-   }
+   void log_sizes();
 };
 }  // namespace basic_group
+#include "load.tpp"  // IWYU pragma: keep
