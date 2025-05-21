@@ -176,7 +176,7 @@ def generate_run_rules() -> None:
         
         img_temp = f"{img}_temp"
         for structure in STRUCTURE_OPTIONS[exe]:
-            print(f"{exe}_{structure}: {img_temp} {rd} {exe_path} {recover}")
+            print(f"{exe}_{structure}: {rd} {exe_path} {recover} {img_temp}")
             print(f"\ttouch {rd}/log")
             print(
                 f'\tscript -q -c "{exe_path} {cfg.leanstore_flags} '
