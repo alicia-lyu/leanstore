@@ -269,16 +269,9 @@ class GeoJoin
       BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city);
 
       base_joiner.seek(sort_key_t{n, 0, 0, 0});
-      bool s = true;
       while (base_joiner.current_jk().nationkey == n || base_joiner.current_jk() == sort_key_t::max()) {
          base_joiner.next();
-         if (s) {
-            std::cout << base_joiner.current_jk() << std::endl;
-            s = false;
-         }
       }
-
-      std::cout << base_joiner.current_jk() << std::endl;
 
       std::cout << "\rRange querying base for nation " << n << " produced " << base_joiner.produced()
                 << " records------------------------------------" << std::endl;

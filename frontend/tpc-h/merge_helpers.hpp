@@ -100,7 +100,7 @@ struct HeapMergeHelper {
    std::function<HeapEntry<JK>()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
    {
       return [source, this, &scanner]() {
-         auto kv = current_jk == JK::max() ? scanner.current() : scanner.next();
+         auto kv = scanner.next();
          if (!kv)
             return HeapEntry<JK>();
          auto& [k, v] = *kv;

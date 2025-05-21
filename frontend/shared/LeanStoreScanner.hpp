@@ -15,6 +15,7 @@ struct LeanStoreScanner : public Scanner<Record>
 
    std::unique_ptr<BTreeIt> it;
    uint64_t produced = 0;
+   bool after_seek = false;
 
    LeanStoreScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
@@ -40,7 +41,8 @@ struct LeanStoreScanner : public Scanner<Record>
       RecordType::foldKey(keyBuffer, k);
       leanstore::Slice keySlice(keyBuffer, RecordType::maxFoldLength());
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
-      // if (res != leanstore::OP_RESULT::OK) // last key, next will return std::nullopt
+      if (res != leanstore::OP_RESULT::OK) return; // last key, next will return std::nullopt
+      after_seek = true;
    }
 
    template <typename RecordType>
@@ -52,7 +54,9 @@ struct LeanStoreScanner : public Scanner<Record>
       const leanstore::OP_RESULT res = it->seekForPrev(keySlice);
       if (res != leanstore::OP_RESULT::OK) {
          it->reset();  // next() will return first key
+         return;
       }
+      after_seek = true;
    }
    
 
@@ -63,19 +67,30 @@ struct LeanStoreScanner : public Scanner<Record>
       unsigned pos = JK::keyfold(keyBuffer, jk);
       leanstore::Slice keySlice(keyBuffer, pos);
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) return; // last key, next will return std::nullopt
+      after_seek = true;
    }
 
    std::optional<std::pair<typename Record::Key, Record>> next()
    {
+      if (after_seek)
+      {
+         after_seek = false;
+         return this->current();
+      }
       leanstore::OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK)
          return std::nullopt;
-      this->produced++;
       return this->current();
    }
 
    std::optional<std::pair<typename Record::Key, Record>> prev()
    {
+      if (after_seek)
+      {
+         after_seek = false;
+         return this->current();
+      }
       leanstore::OP_RESULT res = it->prev();
       if (res != leanstore::OP_RESULT::OK)
          return std::nullopt;

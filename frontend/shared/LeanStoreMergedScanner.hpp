@@ -14,6 +14,8 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
    using BTree = leanstore::storage::btree::BTreeGeneric;
    std::unique_ptr<BTreeIt> it;
 
+   bool after_seek = false;
+
    static std::pair<std::variant<typename Records::Key...>, std::variant<Records...>> toType(leanstore::Slice& k, leanstore::Slice& v)
    {
       bool matched = false;
@@ -47,6 +49,10 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next()
    {
+      if (after_seek) {
+         after_seek = false;
+         return current();
+      }
       const leanstore::OP_RESULT res = it->next();
       if (res != leanstore::OP_RESULT::OK) {
          return std::nullopt;
@@ -57,6 +63,10 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> prev()
    {
+      if (after_seek) {
+         after_seek = false;
+         return current();
+      }
       const leanstore::OP_RESULT res = it->prev();
       if (res != leanstore::OP_RESULT::OK) {
          return std::nullopt;
@@ -73,7 +83,8 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       unsigned pos = RecordType::foldKey(keyBuffer, k);
       leanstore::Slice keySlice(keyBuffer, pos);
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);  // keySlice as lowerbound
-      // if (res != leanstore::OP_RESULT::OK) // last key, next will return std::nullopt
+      if (res != leanstore::OP_RESULT::OK) return; // last key, next will return std::nullopt
+      after_seek = true;
    }
 
    template <typename RecordType>
@@ -86,7 +97,9 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       const leanstore::OP_RESULT res = it->seekForPrev(keySlice);
       if (res != leanstore::OP_RESULT::OK) {
          it->reset();  // next() will return first key
+         return;
       }
+      after_seek = true;
    }
 
    template <typename RecordType>
@@ -97,6 +110,7 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       while (true) {
          auto kv = current().value();
          if (std::holds_alternative<RecordType>(kv.second)) {
+            after_seek = true;
             return true;
          }
          leanstore::OP_RESULT ret = it->next();
@@ -114,6 +128,8 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       unsigned pos = JK::keyfold(keyBuffer, jk);
       leanstore::Slice keySlice(keyBuffer, pos);
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
+      if (res != leanstore::OP_RESULT::OK) return; // last key, next will return std::nullopt
+      after_seek = true;
    }
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current()
@@ -124,7 +140,6 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();
-      this->produced++;
       return toType(key, payload);
    }
 

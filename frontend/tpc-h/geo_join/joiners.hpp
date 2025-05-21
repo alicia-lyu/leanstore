@@ -22,10 +22,9 @@ struct BaseJoiner {
          states_scanner(states.getScanner()),
          county_scanner(county.getScanner()),
          city_scanner(city.getScanner()),
-         joiner_ns([&] { return nation_scanner->produced == 0 ? nation_scanner->current() : nation_scanner->next(); },
-                   [&] { return states_scanner->produced == 0 ? states_scanner->current() : states_scanner->next(); }),
-         joiner_nsc([&] { return joiner_ns.next(); }, [&] { return county_scanner->produced == 0 ? county_scanner->current() : county_scanner->next(); }),
-         final_joiner([&] { return joiner_nsc.next(); }, [&] { return city_scanner->produced == 0 ? city_scanner->current() : city_scanner->next(); })
+         joiner_ns([&] { return nation_scanner->next(); }, [&] { return states_scanner->next(); }),
+         joiner_nsc([&] { return joiner_ns.next(); }, [&] { return county_scanner->next(); }),
+         final_joiner([&] { return joiner_nsc.next(); }, [&] { return city_scanner->next(); })
    {
    }
 
