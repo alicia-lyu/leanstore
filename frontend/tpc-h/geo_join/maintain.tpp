@@ -3,6 +3,8 @@
 
 #include "../../shared/Adapter.hpp"
 
+namespace geo_join
+{
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
@@ -80,3 +82,4 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
       view.insert(view_t::Key{n, s, c, i}, view_t::generateRandomRecord(s, c, i));
    }
 }
+} // namespace geo_join

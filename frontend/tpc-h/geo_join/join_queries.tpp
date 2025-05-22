@@ -4,7 +4,8 @@
 #include "workload.hpp"
 #include "joiners.hpp"
 
-
+namespace geo_join
+{
 // -------------------------------------------------------------
 // ------------------------ QUERIES -----------------------------
 
@@ -267,3 +268,4 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
    logger.log(t, "range-query", "base", get_indexes_size());
 }
+} // namespace geo_join
