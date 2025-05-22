@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <optional>
 
 #include "../../shared/Adapter.hpp"
 #include "../tpch_workload.hpp"
@@ -30,6 +31,8 @@ class GeoJoin
 
    Logger& logger;
 
+   int range_join_n;
+
   public:
    GeoJoin(TPCH& workload, MergedTree& m, AdapterType<view_t>& v, AdapterType<states_t>& s, AdapterType<county_t>& c, AdapterType<city_t>& ci)
        : workload(workload),
@@ -39,8 +42,10 @@ class GeoJoin
          states(s),
          county(c),
          city(ci),
-         logger(workload.logger)
+         logger(workload.logger),
+         range_join_n(workload.getNationID())
    {
+      std::cout << "GeoJoin::GeoJoin(): range_join_n = " << range_join_n << std::endl;
    }
 
    // -------------------------------------------------------------
@@ -217,19 +222,19 @@ class GeoJoin
       std::cout << "GeoJoin::range_query_by_view()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
 
-      auto nationkey = workload.getNationID();
+      // auto nationkey = workload.getNationID();
       [[maybe_unused]] long produced = 0;
       view.scan(
-          view_t::Key{nationkey, 0, 0, 0},
+          view_t::Key{range_join_n, 0, 0, 0},
           [&](const view_t::Key& k, const view_t&) {
-             if (k.jk.nationkey != nationkey)
+             if (k.jk.nationkey != range_join_n)
                 return false;
              TPCH::inspect_produced("Range querying materialized view: ", produced);
              return true;
           },
           []() {});
 
-      std::cout << "\rRange querying materialized view for nation " << nationkey << " : " << (double)produced / 1000
+      std::cout << "\rRange querying materialized view for nation " << range_join_n << " : " << (double)produced / 1000
                 << "k------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -241,16 +246,16 @@ class GeoJoin
       logger.reset();
       std::cout << "GeoJoin::range_query_by_merged()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
+      sort_key_t seek_key{range_join_n, 0, 0, 0};
 
-      MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged);
-
-      auto n = workload.getNationID();
-      merged_joiner.seek(sort_key_t{n, 0, 0, 0});
-      while (merged_joiner.current_jk().nationkey == n || merged_joiner.current_jk() == sort_key_t::max()) {
-         merged_joiner.next();
+      MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged, seek_key);
+      while (merged_joiner.current_jk().nationkey == range_join_n || merged_joiner.current_jk() == sort_key_t::max()) {
+         auto ret = merged_joiner.next();
+         if (ret == -1)
+            break;
       }
 
-      std::cout << "\rRange querying merged for nation " << n << " : produced " << merged_joiner.produced()
+      std::cout << "\rRange querying merged for nation " << range_join_n << " : produced " << merged_joiner.produced()
                 << " records------------------------------------" << std::endl;
 
       auto end = std::chrono::high_resolution_clock::now();
@@ -264,16 +269,17 @@ class GeoJoin
       std::cout << "GeoJoin::range_query_by_base()" << std::endl;
       auto start = std::chrono::high_resolution_clock::now();
 
-      auto n = workload.getNationID();
+      sort_key_t seek_key{range_join_n, 0, 0, 0};
 
-      BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city);
+      BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city, seek_key);
 
-      base_joiner.seek(sort_key_t{n, 0, 0, 0});
-      while (base_joiner.current_jk().nationkey == n || base_joiner.current_jk() == sort_key_t::max()) {
-         base_joiner.next();
+      while (base_joiner.current_jk().nationkey == range_join_n || base_joiner.current_jk() == sort_key_t::max()) {
+         auto ret = base_joiner.next();
+         if (ret == std::nullopt)
+            break;
       }
 
-      std::cout << "\rRange querying base for nation " << n << " produced " << base_joiner.produced()
+      std::cout << "\rRange querying base for nation " << range_join_n << " produced " << base_joiner.produced()
                 << " records------------------------------------" << std::endl;
       auto end = std::chrono::high_resolution_clock::now();
       auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();

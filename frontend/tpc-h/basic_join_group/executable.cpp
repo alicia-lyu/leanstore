@@ -68,7 +68,6 @@ int main(int argc, char** argv)
       });
    } else {
       tpch.recover_last_ids();
-      tpchBasicJoinGroup.log_sizes();
       std::vector<std::string> tput_prefixes = {"point-query", "maintain"};
 
       if (FLAGS_storage_structure == 0) {

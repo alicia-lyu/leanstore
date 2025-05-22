@@ -16,10 +16,12 @@ DECLARE_int32(tx_seconds);
       atomic<u64> keep_running = true;                                                                                                           \
       atomic<u64> lookup_count = 0;                                                                                                              \
       atomic<u64> running_threads_counter = 0;                                                                                                   \
+      double size = size_cb();                                                                                                                   \
+      std::cout << std::endl << suffix << "," << size << std::endl;                                                                              \
       crm.scheduleJobAsync(0, [&]() { runLookupPhase(lookup_cb, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); }); \
       sleep(FLAGS_warmup_seconds);                                                                                                               \
       crm.scheduleJobSync(                                                                                                                       \
-          1, [&]() { runTXPhase(elapsed_cbs, tput_cbs, tput_prefixes, running_threads_counter, isolation_level, tpch, suffix, size_cb()); });    \
+          1, [&]() { runTXPhase(elapsed_cbs, tput_cbs, tput_prefixes, running_threads_counter, isolation_level, tpch, suffix, size); });         \
       keep_running = false;                                                                                                                      \
       while (running_threads_counter) {                                                                                                          \
       }                                                                                                                                          \
@@ -71,7 +73,7 @@ inline void run_tput(std::function<void()> cb,
       std::this_thread::sleep_for(std::chrono::seconds(FLAGS_tx_seconds));
       keep_running = false;
    }).detach();
-   while (keep_running) {
+   while (keep_running || count.load() < 10) {
       jumpmuTry()
       {
          cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, isolation_level);
@@ -84,7 +86,8 @@ inline void run_tput(std::function<void()> cb,
       {
          std::cerr << "#" << count.load() << " " << tx << "for " << method << " failed." << std::endl;
       }
-      std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
+      if (count.load() % 100 == 1)
+         std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
    }
    std::cout << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
@@ -110,6 +113,8 @@ inline void runTXPhase(std::vector<std::function<void()>> elapsed_cbs,
                        double size)
 {
    running_threads_counter++;
+
+   std::cout << method << "," << size << std::endl;
 
    for (auto& cb : elapsed_cbs) {
       run_elapsed(cb, isolation_level);

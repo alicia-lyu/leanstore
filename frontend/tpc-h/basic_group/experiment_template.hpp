@@ -62,7 +62,6 @@ int run()
       });
    } else {
       tpch.recover_last_ids();
-      tpchBasicGroup.log_sizes();
 
       std::vector<std::string> tput_prefixes = {"point-query", "maintain"};
 
