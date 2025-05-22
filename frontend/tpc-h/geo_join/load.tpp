@@ -1,6 +1,7 @@
 #pragma once
 #include "load.hpp"
 #include "workload.hpp"
+#include "../../shared/Adapter.hpp"
 
 namespace geo_join
 {
