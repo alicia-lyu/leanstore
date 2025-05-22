@@ -71,7 +71,6 @@ int main(int argc, char** argv)
       });
    } else {
       tpch.recover_last_ids();
-      tpchBasicJoin.log_sizes();
 
       std::vector<std::string> tput_prefixes = {"point-query", "range-query", "maintain"};
 

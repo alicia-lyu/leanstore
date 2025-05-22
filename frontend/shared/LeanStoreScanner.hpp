@@ -73,6 +73,7 @@ struct LeanStoreScanner : public Scanner<Record>
 
    std::optional<std::pair<typename Record::Key, Record>> next()
    {
+      this->produced++;
       if (after_seek)
       {
          after_seek = false;
@@ -111,7 +112,6 @@ struct LeanStoreScanner : public Scanner<Record>
 
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
-      this->produced++;
       return std::make_pair(typed_key, typed_payload);
    }
 };
