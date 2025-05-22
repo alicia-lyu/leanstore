@@ -54,7 +54,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::up
                                                                                                    std::function<void(states_t&)> update_fn)
 {
    std::vector<view_t::Key> keys;
-   view.scan(
+   join_view.scan(
        view_t::Key{n, s, 0, 0},
        [&](const view_t::Key& k, const view_t&) {
           if (k.jk.nationkey != n || k.jk.statekey != s)
@@ -64,7 +64,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::up
        },
        []() {});
    for (auto& k : keys) {
-      view.update1(k, [&](view_t& v) { update_fn(std::get<1>(v.payloads)); });
+      join_view.update1(k, [&](view_t& v) { update_fn(std::get<1>(v.payloads)); });
    }
 }
 
@@ -79,7 +79,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    std::function<void(states_t&)> update_fn = [&](states_t& s) { s.last_countykey = c; };
    update_state_in_view(n, s, update_fn);
    for (int i = 1; i <= city_cnt; i++) {
-      view.insert(view_t::Key{n, s, c, i}, view_t::generateRandomRecord(s, c, i));
+      join_view.insert(view_t::Key{n, s, c, i}, view_t::generateRandomRecord(s, c, i));
    }
 }
 } // namespace geo_join

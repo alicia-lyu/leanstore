@@ -13,21 +13,21 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::query_by_view()  // scan through the view
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::query_by_view()  // scan through the join_view
 {
    logger.reset();
    std::cout << "GeoJoin::query_by_view()" << std::endl;
    auto start = std::chrono::high_resolution_clock::now();
    [[maybe_unused]] long produced = 0;
    sort_key_t start_sk = sort_key_t{0, 0, 0, 0};
-   view.scan(
+   join_view.scan(
        view_t::Key{start_sk},
        [&](const view_t::Key&, const view_t&) {
-          TPCH::inspect_produced("Enumerating materialized view: ", produced);
+          TPCH::inspect_produced("Enumerating materialized join_view: ", produced);
           return true;
        },
        [&]() {});
-   std::cout << "\rEnumerating materialized view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
+   std::cout << "\rEnumerating materialized join_view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
    logger.log(t, "query", "view", get_view_size());
@@ -96,7 +96,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::po
 {
    sort_key_t sk = sort_key_t{0, 0, 0, 0};
    [[maybe_unused]] int produced = 0;
-   view.scan(
+   join_view.scan(
        view_t::Key{nationkey, statekey, countykey, citykey},
        [&](const view_t::Key& vk, const view_t&) {
           produced++;
@@ -199,17 +199,17 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
 
    // auto nationkey = workload.getNationID();
    [[maybe_unused]] long produced = 0;
-   view.scan(
+   join_view.scan(
        view_t::Key{range_join_n, 0, 0, 0},
        [&](const view_t::Key& k, const view_t&) {
           if (k.jk.nationkey != range_join_n)
              return false;
-          TPCH::inspect_produced("Range querying materialized view: ", produced);
+          TPCH::inspect_produced("Range querying materialized join_view: ", produced);
           return true;
        },
        []() {});
 
-   std::cout << "\rRange querying materialized view for nation " << range_join_n << " : " << (double)produced / 1000
+   std::cout << "\rRange querying materialized join_view for nation " << range_join_n << " : " << (double)produced / 1000
              << "k------------------------------------" << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
