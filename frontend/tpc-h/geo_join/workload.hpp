@@ -122,9 +122,9 @@ class GeoJoin
    void point_query_by_view()
    {
       auto nationkey = workload.getNationID();
-      auto statekey = params::getStateKey();
-      auto countykey = params::getCountyKey();
-      auto citykey = params::getCityKey();
+      auto statekey = params::get_statekey();
+      auto countykey = params::get_countykey();
+      auto citykey = params::get_citykey();
 
       point_query_by_view(nationkey, statekey, countykey, citykey);
    }
@@ -149,7 +149,7 @@ class GeoJoin
 
    void point_query_by_merged()
    {
-      sort_key_t sk = sort_key_t{workload.getNationID(), params::getStateKey(), params::getCountyKey(), params::getCityKey()};
+      sort_key_t sk = sort_key_t{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()};
 
       auto scanner = merged.getScanner();
 
@@ -189,7 +189,7 @@ class GeoJoin
       std::optional<city_t::Key> cik = std::nullopt;
       std::optional<city_t> civ = std::nullopt;
       city.scan(
-          city_t::Key{workload.getNationID(), params::getStateKey(), params::getCountyKey(), params::getCityKey()},
+          city_t::Key{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()},
           [&](const city_t::Key& k, const city_t& v) {
              cik = k;
              civ = v;
@@ -288,7 +288,7 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
-   // insert a new county and multiple cities // TODO: no new state
+   // insert a new county and multiple cities // TODO: update group view
 
    auto maintain_base()
    {
@@ -298,7 +298,7 @@ class GeoJoin
       UpdateDescriptorGenerator1(states_update_desc, states_t, last_countykey);
       int c;
       states.update1(states_t::Key{n, s}, [&](states_t& s) { c = ++s.last_countykey; }, states_update_desc);
-      int city_cnt = params::getCityKey();
+      int city_cnt = params::get_city_cnt();
       county.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
       for (int i = 1; i <= city_cnt; i++) {
          city.insert(city_t::Key{n, s, c, i}, city_t::generateRandomRecord());
@@ -315,7 +315,7 @@ class GeoJoin
       int c;
       UpdateDescriptorGenerator1(states_update_desc, states_t, last_countykey);
       merged.template update1<states_t>(states_t::Key{n, s}, [&](states_t& s) { c = ++s.last_countykey; }, states_update_desc);
-      int city_cnt = params::getCityKey();
+      int city_cnt = params::get_city_cnt();
       merged.insert(county_t::Key{n, s, c}, county_t::generateRandomRecord(city_cnt));
       for (int i = 1; i <= city_cnt; i++) {
          merged.insert(city_t::Key{n, s, c, i}, city_t::generateRandomRecord());
@@ -352,6 +352,7 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- LOADING -----------------------------
+   // TODO: load group view
 
    void load();
 
@@ -362,6 +363,12 @@ class GeoJoin
    double get_merged_size();
 
    void log_sizes();
+
+   // -------------------------------------------------------------
+   // ---------------------- JOIN + GROUP-By ----------------------
+
+   // --------------------------------------------------------------
+   // ---------------------- GROUP-BY ------------------------------
 };
 }  // namespace geo_join
 #include "load.tpp" // IWYU pragma: keep

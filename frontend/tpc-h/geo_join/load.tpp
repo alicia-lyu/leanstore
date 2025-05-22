@@ -16,7 +16,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    // city id starts from 1 in each county
    for (int n = 1; n <= workload.NATION_COUNT; n++) {
       // state id starts from 1 in each nation
-      int state_cnt = params::getStateKey();
+      int state_cnt = params::get_state_cnt();
       UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
       auto nk = nation2_t::Key{n};
       nation2_t nv;
@@ -28,13 +28,13 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       merged.insert(nk, nv);
       for (int s = 1; s <= state_cnt; s++) {
          std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
-         int county_cnt = params::getCountyKey();
+         int county_cnt = params::get_county_cnt();
          auto sk = states_t::Key{n, s};
          auto sv = states_t::generateRandomRecord(county_cnt);
          states.insert(sk, sv);
          merged.insert(sk, sv);
          for (int c = 1; c <= county_cnt; c++) {
-            int city_cnt = params::getCityKey();
+            int city_cnt = params::get_city_cnt();
             auto ck = county_t::Key{n, s, c};
             auto cv = county_t::generateRandomRecord(city_cnt);
             county.insert(ck, cv);
