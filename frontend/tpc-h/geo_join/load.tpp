@@ -40,12 +40,13 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
             auto cv = county_t::generateRandomRecord(city_cnt);
             county.insert(ck, cv);
             merged.insert(ck, cv);
+            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_cnt);
             for (int ci = 1; ci <= city_cnt; ci++) {
                auto cik = city_t::Key{n, s, c, ci};
                auto civ = city_t::generateRandomRecord();
                city.insert(cik, civ);
                merged.insert(cik, civ);
-               view.insert(view_t::Key{n, s, c, ci}, view_t{nv, sv, cv, civ});
+               join_view.insert(view_t::Key{n, s, c, ci}, view_t{nv, sv, cv, civ});
             }
          }
       }
@@ -60,7 +61,7 @@ template <template <typename> class AdapterType,
 double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_view_size()
 {
    double indexes_size = get_indexes_size();
-   return indexes_size + view.size();
+   return indexes_size + join_view.size() + city_count_per_county.size();
 };
 
 template <template <typename> class AdapterType,

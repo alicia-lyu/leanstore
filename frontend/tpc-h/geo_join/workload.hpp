@@ -16,7 +16,8 @@ class GeoJoin
    TPCH& workload;
    using MergedTree = MergedAdapterType<nation2_t, states_t, county_t, city_t>;
    MergedTree& merged;
-   AdapterType<view_t>& view;
+   AdapterType<view_t>& join_view;
+   AdapterType<city_count_per_county_t>& city_count_per_county;
 
    AdapterType<nation2_t>& nation;
    AdapterType<states_t>& states;
@@ -28,14 +29,15 @@ class GeoJoin
    int range_join_n;
 
   public:
-   GeoJoin(TPCH& workload, MergedTree& m, AdapterType<view_t>& v, AdapterType<states_t>& s, AdapterType<county_t>& c, AdapterType<city_t>& ci)
+   GeoJoin(TPCH& workload, MergedTree& m, AdapterType<view_t>& v, AdapterType<city_count_per_county_t>& g)
        : workload(workload),
          merged(m),
-         view(v),
+         join_view(v),
+         city_count_per_county(g),
          nation(reinterpret_cast<AdapterType<nation2_t>&>(workload.nation)),
-         states(s),
-         county(c),
-         city(ci),
+         states(workload.states),
+         county(workload.county),
+         city(workload.city),
          logger(workload.logger),
          range_join_n(workload.getNationID())
    {
@@ -117,10 +119,20 @@ class GeoJoin
    // -------------------------------------------------------------
    // ---------------------- JOIN + GROUP-BY ----------------------
 
+   void mixed_query_by_view();
+   void mixed_query_by_merged();
+   void mixed_query_by_base();
+
    // --------------------------------------------------------------
    // ---------------------- GROUP-BY ------------------------------
+
+   void agg_in_view();
+   void agg_by_merged();
+   void agg_by_base();
 };
 }  // namespace geo_join
-#include "load.tpp" // IWYU pragma: keep
-#include "join_queries.tpp" // IWYU pragma: keep
-#include "maintain.tpp" // IWYU pragma: keep
+#include "groupby_query.tpp"  // IWYU pragma: keep
+#include "join_queries.tpp"   // IWYU pragma: keep
+#include "load.tpp"           // IWYU pragma: keep
+#include "maintain.tpp"       // IWYU pragma: keep
+#include "mixed_query.tpp"    // IWYU pragma: keep

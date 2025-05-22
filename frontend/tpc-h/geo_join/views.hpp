@@ -98,7 +98,7 @@ struct ns_t : public joined_t<21, sort_key_t, nation2_t, states_t> {
    {
    }
    struct Key : public joined_t::Key {
-      Key() = default;
+      Key() : joined_t::Key() {}
       Key(const nation2_t::Key& nk, const states_t::Key& sk) : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0}, std::make_tuple(nk, sk)} {}
 
       std::tuple<nation2_t::Key, states_t::Key> flatten() const { return keys; }
@@ -171,6 +171,69 @@ struct city_t {
    ADD_RECORD_TRAITS(city_t)
 
    static city_t generateRandomRecord() { return city_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
+};
+
+template <int id>
+struct group_key_t {
+   Integer nationkey;
+   Integer statekey;
+   Integer countykey;
+   using Key = group_key_t<id>;
+   ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey, &Key::countykey)
+
+   group_key_t() = default;
+   group_key_t(Integer n, Integer s, Integer c) : nationkey(n), statekey(s), countykey(c) {}
+   group_key_t(const county_t::Key& ck) : nationkey(ck.nationkey), statekey(ck.statekey), countykey(ck.countykey) {}
+   group_key_t(const city_t::Key& cik) : nationkey(cik.nationkey), statekey(cik.statekey), countykey(cik.countykey) {}
+   group_key_t(const county_t::Key& ck, const group_key_t<17>&) : nationkey(ck.nationkey), statekey(ck.statekey), countykey(ck.countykey) {}
+
+   auto operator<=>(const Key&) const = default;
+
+   group_key_t get_jk() const { return *this; }
+   Key get_pk() const { return *this; }
+
+   static group_key_t max()
+   {
+      return group_key_t{std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()};
+   }
+
+   friend int operator%(const group_key_t& jk, const int& n) { return (jk.nationkey + jk.statekey + jk.countykey) % n; }
+
+   int match(const group_key_t& other) const
+   {
+      if (nationkey != 0 && other.nationkey != 0 && nationkey != other.nationkey)
+         return nationkey - other.nationkey;
+      if (statekey != 0 && other.statekey != 0 && statekey != other.statekey)
+         return statekey - other.statekey;
+      if (countykey != 0 && other.countykey != 0 && countykey != other.countykey)
+         return countykey - other.countykey;
+      return 0;
+   }
+};
+
+struct city_count_per_county_t {
+   static constexpr int id = 17;
+
+   Integer city_count;
+
+   using Key = group_key_t<17>;
+
+   ADD_RECORD_TRAITS(city_count_per_county_t)
+};
+
+struct mixed_view_t {
+   static constexpr int id = 18;
+
+   Varchar<25> name;
+   Integer city_count;
+
+   mixed_view_t() = default;
+
+   mixed_view_t(const Varchar<25>& n_name, Integer city_count) : name(n_name), city_count(city_count) {}
+
+   mixed_view_t(const county_t& c, const city_count_per_county_t& cc) : name(c.name), city_count(cc.city_count) {}
+
+   using Key = group_key_t<18>;
 };
 
 struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, city_t> {

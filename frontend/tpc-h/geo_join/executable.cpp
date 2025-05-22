@@ -41,6 +41,7 @@ int main(int argc, char** argv)
    // Views
    LeanStoreAdapter<view_t> view;
    LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t> mergedGeoJoin;
+   LeanStoreAdapter<city_count_per_county_t> city_count_per_county;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -57,13 +58,14 @@ int main(int argc, char** argv)
       city = LeanStoreAdapter<city_t>(db, "city");
       mergedGeoJoin = LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t>(db, "mergedGeoJoin");
       view = LeanStoreAdapter<view_t>(db, "view");
+      city_count_per_county = LeanStoreAdapter<city_count_per_county_t>(db, "city_count_per_county");
    });
    db.registerConfigEntry("tpch_scale_factor", FLAGS_tpch_scale_factor);
    leanstore::TX_ISOLATION_LEVEL isolation_level = leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE;
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, states, county, city);
+   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, city_count_per_county);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
