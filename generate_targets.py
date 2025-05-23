@@ -199,7 +199,7 @@ def generate_lldb_rules() -> None:
         img = image_file(exe)
         separate_runs = " ".join([f"{exe}_lldb_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
         
-        print(f"{exe}_lldb: {exe_path} {recover} check_perf_event_paranoid {separate_runs}")
+        print(f"{exe}_lldb: {separate_runs}")
         
         img_temp = f"{img}_temp"
         args = list(cfg.leanstore_flags.split()) + [
@@ -215,7 +215,7 @@ def generate_lldb_rules() -> None:
         
         # separate runs
         for structure in STRUCTURE_OPTIONS[exe]:
-            print(f"{exe}_lldb_{structure}: {img_temp}")
+            print(f"{exe}_lldb_{structure}: {exe_path} {recover} check_perf_event_paranoid {img_temp}")
             print(
                 f"\tlldb -o run -- "
                 f"{exe_path} {cfg.leanstore_flags} "

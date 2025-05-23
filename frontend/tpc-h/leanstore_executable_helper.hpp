@@ -93,7 +93,7 @@ inline void run_tput(std::function<void()> cb,
    auto end = std::chrono::high_resolution_clock::now();
    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
    double tput = (double)count.load() / duration * 1e6;
-   tpch.logger.log(static_cast<long>(round(tput)), tx, method, size, count.load());
+   tpch.logger.log(static_cast<long>(std::round(tput)), tx, method, size, count.load());
 }
 
 inline void run_elapsed(std::function<void()> cb, leanstore::TX_ISOLATION_LEVEL isolation_level)
