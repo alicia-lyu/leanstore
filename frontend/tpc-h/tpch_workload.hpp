@@ -85,6 +85,7 @@ struct TPCHWorkload {
 
    void recover_last_ids()
    {
+      std::cout << "Recovering last ids..." << std::endl;
       part.scanDesc(
           part_t::Key{std::numeric_limits<Integer>::max()},
           [&](const part_t::Key& k, const part_t&) {
@@ -113,7 +114,7 @@ struct TPCHWorkload {
              return false;
           },
           []() {});
-      std::cout << "Recovered last_part_id: " << last_part_id << ", last_supplier_id: " << last_supplier_id
+      std::cout << "last_part_id: " << last_part_id << ", last_supplier_id: " << last_supplier_id
                 << ", last_customer_id: " << last_customer_id << ", last_order_id: " << last_order_id << std::endl;
    }
 
