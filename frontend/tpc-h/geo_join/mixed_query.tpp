@@ -1,11 +1,19 @@
 #pragma once
 
+#include <iostream>
 #include <optional>
 #include "../merge.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
-// county name + city count per county
+// SELECT nationkey, statekey, countykey, county_name, COUNT(citykey) AS city_count
+// FROM county, city
+// WHERE county.nationkey = city.nationkey
+// AND county.statekey = city.statekey
+// AND county.countykey = city.countykey
+// GROUP BY nationkey, statekey, countykey, county_name
+
+// county name + city count per county, include empty counties TODO outer join
 
 namespace geo_join
 {
@@ -86,6 +94,7 @@ struct BaseMixedJoiner {
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
 struct MergedMixedJoiner {
    std::unique_ptr<MergedScannerType<nation2_t, states_t, county_t, city_t>> scanner;
+   long long produced = 0;
 
    MergedMixedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t>& merged, const mixed_view_t::Key& seek_key = mixed_view_t::Key::max())
        : scanner(merged.getScanner())
@@ -129,11 +138,13 @@ struct MergedMixedJoiner {
                                [&](const city_t&) { curr_city_cnt++; }},
                     kv->second);
          if (vk.has_value() && vv.has_value() && vv->city_count > 0) {
+            produced++;
             return std::make_pair(vk.value(), vv.value());
          }
       }
       if (curr_city_cnt > 0) {
          // curr_key and curr_county_name must be valid from a previous county record
+         produced++;
          return std::make_pair(curr_key.value(), mixed_view_t{curr_county_name.value(), curr_city_cnt});
       }
       return std::nullopt;
@@ -164,7 +175,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    joiner.run();
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "query", "view", get_view_size());
+   logger.log(t, "mixed-query", "view", get_view_size());
 }
 
 template <template <typename> class AdapterType,
@@ -189,9 +200,10 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    auto start = std::chrono::high_resolution_clock::now();
    MergedMixedJoiner<MergedAdapterType, MergedScannerType> joiner(merged);
    joiner.run();
+   std::cout << "produced: " << joiner.produced << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "query", "merged", get_merged_size());
+   logger.log(t, "mixed-query", "merged", get_merged_size());
 }
 
 template <template <typename> class AdapterType,
@@ -220,7 +232,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
 
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "query", "base", get_indexes_size());
+   logger.log(t, "mixed-query", "base", get_indexes_size());
 }
 
 template <template <typename> class AdapterType,

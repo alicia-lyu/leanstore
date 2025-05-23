@@ -1,8 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <variant>
-#include <chrono>
 #include "load.hpp"
 #include "views.hpp"
 #include "workload.hpp"
@@ -71,7 +71,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ag
          break;
       std::visit(overloaded{[&](const nation2_t::Key&) {}, [&](const states_t::Key&) {},
                             [&](const county_t::Key&) {
-                               TPCH::inspect_produced("Scaning agg merged: ", produced);
+                               if (curr_city_cnt > 0)
+                                  TPCH::inspect_produced("Scaning agg merged: ", produced);
                                curr_city_cnt = 0;
                             },
                             [&](const city_t::Key&) { curr_city_cnt++; }},
@@ -147,7 +148,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::po
    city.scan(
        city_t::Key{curr_key.nationkey, curr_key.statekey, curr_key.countykey, 0},
        [&](const city_t::Key& k, const city_t&) {
-          if (start) { // land on the first city of a county
+          if (start) {  // land on the first city of a county
              curr_key = city_count_per_county_t::Key{k};
              start = false;
           } else if (curr_key != city_count_per_county_t::Key{k}) {
