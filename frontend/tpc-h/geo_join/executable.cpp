@@ -87,10 +87,16 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with traditional indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_base = {
             std::bind(&GJ::query_by_base, &tpchGeoJoin),                              
-            std::bind(&GJ::range_query_by_base, &tpchGeoJoin)};
+            std::bind(&GJ::range_query_by_base, &tpchGeoJoin),
+            std::bind(&GJ::agg_by_base, &tpchGeoJoin),
+            std::bind(&GJ::mixed_query_by_base, &tpchGeoJoin)
+         };
          std::vector<std::function<void()>> tput_cbs_base = {
             std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
-            std::bind(&GJ::maintain_base, &tpchGeoJoin)};
+            std::bind(&GJ::maintain_base, &tpchGeoJoin),
+            std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
+            std::bind(&GJ::point_mixed_query_by_base, &tpchGeoJoin)
+         };
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base",
              [&]() { return tpchGeoJoin.get_indexes_size(); });
@@ -100,10 +106,15 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with materialized views" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_view = {
             std::bind(&GJ::query_by_view, &tpchGeoJoin),     
-            std::bind(&GJ::range_query_by_view, &tpchGeoJoin)};
+            std::bind(&GJ::agg_in_view, &tpchGeoJoin),
+            std::bind(&GJ::mixed_query_by_view, &tpchGeoJoin)
+         };
          std::vector<std::function<void()>> tput_cbs_view = {
             [&]() { tpchGeoJoin.point_query_by_view(); },
-            std::bind(&GJ::maintain_view, &tpchGeoJoin)};
+            std::bind(&GJ::maintain_view, &tpchGeoJoin),
+            std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
+            std::bind(&GJ::point_mixed_query_by_view, &tpchGeoJoin)
+         };
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view",
              [&]() { return tpchGeoJoin.get_view_size(); });
@@ -113,10 +124,16 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
             std::bind(&GJ::query_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::range_query_by_merged, &tpchGeoJoin)};
+            std::bind(&GJ::range_query_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
+         };
          std::vector<std::function<void()>> tput_cbs_merged = {
             std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::maintain_merged, &tpchGeoJoin)};
+            std::bind(&GJ::maintain_merged, &tpchGeoJoin),
+            std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)
+         };
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
              "merged", [&]() { return tpchGeoJoin.get_merged_size(); });

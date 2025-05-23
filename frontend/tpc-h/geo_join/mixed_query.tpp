@@ -147,8 +147,14 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mixed_query_by_view()
 {
+   logger.reset();
+   std::cout << "GeoJoin::mixed_query_by_view()" << std::endl;
+   auto start = std::chrono::high_resolution_clock::now();
    ViewMixedJoiner<ScannerType, AdapterType> joiner(city, city_count_per_county);
    joiner.run();
+   auto end = std::chrono::high_resolution_clock::now();
+   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+   logger.log(t, "query", "view", get_view_size());
 }
 
 template <template <typename> class AdapterType,
@@ -168,8 +174,14 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mixed_query_by_merged()
 {
+   logger.reset();
+   std::cout << "GeoJoin::mixed_query_by_merged()" << std::endl;
+   auto start = std::chrono::high_resolution_clock::now();
    MergedMixedJoiner<MergedAdapterType, MergedScannerType> joiner(merged);
    joiner.run();
+   auto end = std::chrono::high_resolution_clock::now();
+   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+   logger.log(t, "query", "merged", get_merged_size());
 }
 
 template <template <typename> class AdapterType,
@@ -189,8 +201,16 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mixed_query_by_base()
 {
+   logger.reset();
+   std::cout << "GeoJoin::mixed_query_by_base()" << std::endl;
+   auto start = std::chrono::high_resolution_clock::now();
+
    BaseMixedJoiner<ScannerType, AdapterType> joiner(county, city);
    joiner.run();
+
+   auto end = std::chrono::high_resolution_clock::now();
+   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+   logger.log(t, "query", "base", get_indexes_size());
 }
 
 template <template <typename> class AdapterType,
