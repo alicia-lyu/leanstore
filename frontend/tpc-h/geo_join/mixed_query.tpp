@@ -95,11 +95,12 @@ struct MergedMixedJoiner {
       }
    }
 
+   std::optional<mixed_view_t::Key> curr_key = std::nullopt;
+   std::optional<Varchar<25>> curr_county_name = std::nullopt;
+
    std::optional<std::pair<mixed_view_t::Key, mixed_view_t>> next()
    {
       int curr_city_cnt = 0;
-      mixed_view_t::Key curr_key{0, 0, 0};  // updated once encountered a new county
-      Varchar<25> curr_county_name;
       while (true) {
          auto kv = scanner->next();
          if (kv == std::nullopt)
@@ -118,20 +119,22 @@ struct MergedMixedJoiner {
          std::visit(overloaded{[&](const nation2_t&) {}, [&](const states_t&) {},
                                [&](const county_t& av) {
                                   vk = curr_key;
-                                  vv = {curr_county_name, curr_city_cnt};
+                                  if (curr_county_name.has_value()) {
+                                     vv = {curr_county_name.value(), curr_city_cnt};
+                                  }
                                   curr_county_name = av.name;
-                                  curr_city_cnt = 0;
+                                 //  curr_city_cnt = 0; // automatically reset in the next next()
                                   curr_key = next_key.value();
                                },
                                [&](const city_t&) { curr_city_cnt++; }},
                     kv->second);
-         if (vk != std::nullopt && vv != std::nullopt && vk.value() != mixed_view_t::Key{0, 0, 0} && vv->city_count > 0) {
-            auto ret = std::make_pair(vk.value(), vv.value());
-            return ret;
+         if (vk.has_value() && vv.has_value() && vv->city_count > 0) {
+            return std::make_pair(vk.value(), vv.value());
          }
       }
       if (curr_city_cnt > 0) {
-         return std::make_pair(curr_key, mixed_view_t{curr_county_name, curr_city_cnt});
+         // curr_key and curr_county_name must be valid from a previous county record
+         return std::make_pair(curr_key.value(), mixed_view_t{curr_county_name.value(), curr_city_cnt});
       }
       return std::nullopt;
    }
