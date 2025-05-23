@@ -65,7 +65,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, city_count_per_county);
+   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, city_count_per_county, states, county, city);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;

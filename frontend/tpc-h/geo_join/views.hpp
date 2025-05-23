@@ -298,6 +298,20 @@ struct SKBuilder<sort_key_t> {
    }
 };
 
+template <int id>
+struct SKBuilder<group_key_t<id>> {
+   static group_key_t<id> inline create(const county_t::Key& k, const county_t&) { return group_key_t<id>{k.nationkey, k.statekey, k.countykey}; }
+   static group_key_t<id> inline create(const city_t::Key& k, const city_t&) { return group_key_t<id>{k.nationkey, k.statekey, k.countykey}; }
+   static group_key_t<id> inline create(const city_count_per_county_t::Key& k, const city_count_per_county_t&) { return group_key_t<id>{k.nationkey, k.statekey, k.countykey}; }
+   static group_key_t<id> inline create(const mixed_view_t::Key& k, const mixed_view_t&) { return group_key_t<id>{k.nationkey, k.statekey, k.countykey}; }
+
+   template <typename Record>
+   static group_key_t<id> inline get(const group_key_t<id>& k)
+   {
+      return k;
+   }
+};
+
 template <>
 inline sort_key_t SKBuilder<sort_key_t>::get<nation2_t>(const sort_key_t& jk)
 {
