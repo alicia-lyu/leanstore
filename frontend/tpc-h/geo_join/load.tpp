@@ -1,8 +1,8 @@
 #pragma once
+#include "../../shared/Adapter.hpp"
 #include "load.hpp"
 #include "views.hpp"
 #include "workload.hpp"
-#include "../../shared/Adapter.hpp"
 
 namespace geo_join
 {
@@ -44,7 +44,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
             if (city_cnt == 0) {
                continue;
             }
-            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt}); // not including empty counties
+            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt});  // not including empty counties
             for (int ci = 1; ci <= city_cnt; ci++) {
                auto cik = city_t::Key{n, s, c, ci};
                auto civ = city_t::generateRandomRecord();
@@ -93,9 +93,20 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes()
 {
    workload.log_sizes();
-   std::map<std::string, double> sizes = {{"view", get_view_size()},    {"base", get_indexes_size()}, {"nation", nation.size()},
-                                          {"states", states.size()},    {"county", county.size()},    {"city", city.size()},
+   log_sizes_other();
+   std::map<std::string, double> sizes = {{"view", get_view_size()},    {"base", get_indexes_size()},
                                           {"merged", get_merged_size()}};
+   logger.log_sizes(sizes);
+};
+
+template <template <typename> class AdapterType,
+          template <typename...> class MergedAdapterType,
+          template <typename> class ScannerType,
+          template <typename...> class MergedScannerType>
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes_other()
+{
+   workload.log_sizes();
+   std::map<std::string, double> sizes = {{"nation", nation.size()}, {"states", states.size()}, {"county", county.size()}, {"city", city.size()}};
    logger.log_sizes(sizes);
 };
 }  // namespace geo_join

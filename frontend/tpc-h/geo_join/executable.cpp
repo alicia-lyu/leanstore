@@ -79,6 +79,7 @@ int main(int argc, char** argv)
       return 0;
    } else {
       tpch.recover_last_ids();
+      tpchGeoJoin.log_sizes_other();
    }
    std::vector<std::string> tput_prefixes = {"point-query", "maintain", "point-agg", "point-mixed-query"};
    
