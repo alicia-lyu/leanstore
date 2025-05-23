@@ -17,7 +17,7 @@ struct ViewMixedJoiner {
 
    ViewMixedJoiner(AdapterType<county_t>& county,
                    AdapterType<city_count_per_county_t>& city_count_per_county,
-                   mixed_view_t::Key seek_key = mixed_view_t::Key::max())
+                   const mixed_view_t::Key& seek_key = mixed_view_t::Key::max())
        : county_scanner(county.getScanner()), city_count_scanner(city_count_per_county.getScanner())
    {
       if (seek_key != mixed_view_t::Key::max()) {
@@ -43,7 +43,7 @@ struct BaseMixedJoiner {
    std::unique_ptr<ScannerType<city_t>> city_scanner;
    std::optional<BinaryMergeJoin<mixed_view_t::Key, mixed_view_t, county_t, city_count_per_county_t>> joiner;
 
-   BaseMixedJoiner(AdapterType<county_t>& county, AdapterType<city_t>& city, mixed_view_t::Key seek_key = mixed_view_t::Key::max())
+   BaseMixedJoiner(AdapterType<county_t>& county, AdapterType<city_t>& city, const mixed_view_t::Key& seek_key = mixed_view_t::Key::max())
        : county_scanner(county.getScanner()), city_scanner(city.getScanner())
    {
       if (seek_key != mixed_view_t::Key::max()) {
@@ -84,7 +84,7 @@ template <template <typename...> class MergedAdapterType, template <typename...>
 struct MergedMixedJoiner {
    std::unique_ptr<MergedScannerType<nation2_t, states_t, county_t, city_t>> scanner;
 
-   MergedMixedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t>& merged, mixed_view_t::Key seek_key = mixed_view_t::Key::max())
+   MergedMixedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t>& merged, const mixed_view_t::Key& seek_key = mixed_view_t::Key::max())
        : scanner(merged.getScanner())
    {
       if (seek_key != mixed_view_t::Key::max()) {
@@ -138,7 +138,7 @@ struct MergedMixedJoiner {
       }
    }
 
-   void seek(const mixed_view_t::Key& sk) { scanner->seek(county_t::Key{sk.nationkey, sk.statekey, sk.countykey}); }
+   void seek(const mixed_view_t::Key& sk) { scanner->template seek<county_t>(county_t::Key{sk.nationkey, sk.statekey, sk.countykey}); }
 };
 
 template <template <typename> class AdapterType,
@@ -150,7 +150,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    logger.reset();
    std::cout << "GeoJoin::mixed_query_by_view()" << std::endl;
    auto start = std::chrono::high_resolution_clock::now();
-   ViewMixedJoiner<ScannerType, AdapterType> joiner(city, city_count_per_county);
+   ViewMixedJoiner<ScannerType, AdapterType> joiner(county, city_count_per_county);
    joiner.run();
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -163,7 +163,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_view()
 {
-   ViewMixedJoiner<ScannerType, AdapterType> joiner(city, city_count_per_county,
+   ViewMixedJoiner<ScannerType, AdapterType> joiner(county, city_count_per_county,
                                                     mixed_view_t::Key{workload.getNationID(), params::get_statekey(), params::get_countykey()});
    [[maybe_unused]] auto kv = joiner.next();
 }

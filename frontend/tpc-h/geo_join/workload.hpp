@@ -29,15 +29,21 @@ class GeoJoin
    int range_join_n;
 
   public:
-   GeoJoin(TPCH& workload, MergedTree& m, AdapterType<view_t>& v, AdapterType<city_count_per_county_t>& g)
+   GeoJoin(TPCH& workload,
+           MergedTree& m,
+           AdapterType<view_t>& v,
+           AdapterType<city_count_per_county_t>& g,
+           AdapterType<states_t>& s,
+           AdapterType<county_t>& c,
+           AdapterType<city_t>& ci)
        : workload(workload),
          merged(m),
          join_view(v),
          city_count_per_county(g),
          nation(reinterpret_cast<AdapterType<nation2_t>&>(workload.nation)),
-         states(workload.states),
-         county(workload.county),
-         city(workload.city),
+         states(s),
+         county(c),
+         city(ci),
          logger(workload.logger),
          range_join_n(workload.getNationID())
    {

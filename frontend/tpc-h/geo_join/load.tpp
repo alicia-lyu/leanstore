@@ -1,5 +1,6 @@
 #pragma once
 #include "load.hpp"
+#include "views.hpp"
 #include "workload.hpp"
 #include "../../shared/Adapter.hpp"
 
@@ -40,7 +41,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
             auto cv = county_t::generateRandomRecord(city_cnt);
             county.insert(ck, cv);
             merged.insert(ck, cv);
-            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_cnt);
+            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt});
             for (int ci = 1; ci <= city_cnt; ci++) {
                auto cik = city_t::Key{n, s, c, ci};
                auto civ = city_t::generateRandomRecord();
