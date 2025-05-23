@@ -123,12 +123,20 @@ class GeoJoin
    void mixed_query_by_merged();
    void mixed_query_by_base();
 
+   void point_mixed_query_by_view();
+   void point_mixed_query_by_merged();
+   void point_mixed_query_by_base();
+
    // --------------------------------------------------------------
    // ---------------------- GROUP-BY ------------------------------
 
    void agg_in_view();
    void agg_by_merged();
    void agg_by_base();
+
+   void point_agg_by_view();
+   void point_agg_by_merged();
+   void point_agg_by_base();
 };
 }  // namespace geo_join
 #include "groupby_query.tpp"  // IWYU pragma: keep
