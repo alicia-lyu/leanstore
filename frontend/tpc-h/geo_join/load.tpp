@@ -106,7 +106,8 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes_other()
 {
    workload.log_sizes();
-   std::map<std::string, double> sizes = {{"nation", nation.size()}, {"states", states.size()}, {"county", county.size()}, {"city", city.size()}};
+   std::map<std::string, double> sizes = {{"nation", nation.size()}, {"states", states.size()}, {"county", county.size()}, {"city", city.size()},
+                                          {"city_count_per_county", city_count_per_county.size()}, {"join_view", join_view.size()}};
    logger.log_sizes(sizes);
 };
 }  // namespace geo_join
