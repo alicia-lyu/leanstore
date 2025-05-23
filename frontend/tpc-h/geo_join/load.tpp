@@ -41,7 +41,10 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
             auto cv = county_t::generateRandomRecord(city_cnt);
             county.insert(ck, cv);
             merged.insert(ck, cv);
-            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt});
+            if (city_cnt == 0) {
+               continue;
+            }
+            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt}); // not including empty counties
             for (int ci = 1; ci <= city_cnt; ci++) {
                auto cik = city_t::Key{n, s, c, ci};
                auto civ = city_t::generateRandomRecord();

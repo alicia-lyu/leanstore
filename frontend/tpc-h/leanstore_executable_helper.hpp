@@ -17,7 +17,7 @@ DECLARE_int32(tx_seconds);
       atomic<u64> lookup_count = 0;                                                                                                              \
       atomic<u64> running_threads_counter = 0;                                                                                                   \
       double size = size_cb();                                                                                                                   \
-      std::cout << std::endl << suffix << "," << size << std::endl;                                                                              \
+      std::cout << std::endl << std::string(20, '=') << suffix << "," << size << std::string(20, '=') << std::endl;                                                      \
       crm.scheduleJobAsync(0, [&]() { runLookupPhase(lookup_cb, lookup_count, running_threads_counter, keep_running, tpch, isolation_level); }); \
       sleep(FLAGS_warmup_seconds);                                                                                                               \
       crm.scheduleJobSync(                                                                                                                       \

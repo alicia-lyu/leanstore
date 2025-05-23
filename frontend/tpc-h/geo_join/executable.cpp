@@ -80,14 +80,13 @@ int main(int argc, char** argv)
    } else {
       tpch.recover_last_ids();
    }
-   std::vector<std::string> tput_prefixes = {"point-query", "maintain"};
+   std::vector<std::string> tput_prefixes = {"point-query", "maintain", "point-agg", "point-mixed-query"};
    
    switch (FLAGS_storage_structure) {
       case 0: {
          std::cout << "TPC-H with traditional indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_base = {
             std::bind(&GJ::query_by_base, &tpchGeoJoin),                              
-            std::bind(&GJ::range_query_by_base, &tpchGeoJoin),
             std::bind(&GJ::agg_by_base, &tpchGeoJoin),
             std::bind(&GJ::mixed_query_by_base, &tpchGeoJoin)
          };
@@ -124,7 +123,6 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
             std::bind(&GJ::query_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::range_query_by_merged, &tpchGeoJoin),
             std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
             std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
          };
