@@ -31,9 +31,9 @@ struct BaseJoiner {
       if (seek_key != sort_key_t::max()) {
          seek(seek_key);
       }
-      joiner_ns.emplace([&]() { return nation_scanner->next(); }, [&]() { return states_scanner->next(); });
-      joiner_nsc.emplace([&]() { return joiner_ns->next(); }, [&]() { return county_scanner->next(); });
-      final_joiner.emplace([&]() { return joiner_nsc->next(); }, [&]() { return city_scanner->next(); });
+      joiner_ns.emplace([this]() { return nation_scanner->next(); }, [&]() { return states_scanner->next(); });
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [&]() { return county_scanner->next(); });
+      final_joiner.emplace([this]() { return joiner_nsc->next(); }, [&]() { return city_scanner->next(); });
    }
 
    void run() { final_joiner->run(); }

@@ -23,7 +23,7 @@ struct ViewMixedJoiner {
       if (seek_key != mixed_view_t::Key::max()) {
          seek(seek_key);
       }
-      joiner.emplace([&]() { return county_scanner->next(); }, [&]() { return city_count_scanner->next(); });
+      joiner.emplace([this]() { return county_scanner->next(); }, [&]() { return city_count_scanner->next(); });
    }
 
    std::optional<std::pair<mixed_view_t::Key, mixed_view_t>> next() { return joiner->next(); }
@@ -49,8 +49,8 @@ struct BaseMixedJoiner {
       if (seek_key != mixed_view_t::Key::max()) {
          seek(seek_key);
       }
-      joiner.emplace([&]() { return county_scanner->next(); },
-                     [&]() {
+      joiner.emplace([this]() { return county_scanner->next(); },
+                     [this]() -> std::optional<std::pair<city_count_per_county_t::Key, city_count_per_county_t>> {
                         auto cnt = 0;
                         city_count_per_county_t::Key curr_key{0, 0, 0};
                         while (true) {
@@ -61,11 +61,14 @@ struct BaseMixedJoiner {
                            if (cnt == 0)
                               curr_key = city_count_per_county_t::Key{k};
                            else if (curr_key != city_count_per_county_t::Key{k}) {
-                              city_scanner->prev();  // go back so that this key is not skipped
-                              return std::make_optional(std::make_pair(curr_key, city_count_per_county_t{cnt}));
+                              city_scanner->after_seek = true; // so that this key is not skipped
+                              return std::make_pair(curr_key, city_count_per_county_t{cnt});
                            }
                            cnt++;
                         }
+                        if (cnt > 0)
+                           return std::make_pair(curr_key, city_count_per_county_t{cnt});
+                        return std::nullopt;
                      });
    }
 
@@ -122,11 +125,15 @@ struct MergedMixedJoiner {
                                },
                                [&](const city_t&) { curr_city_cnt++; }},
                     kv->second);
-         if (vk != std::nullopt && vv != std::nullopt && vk.value() != mixed_view_t::Key{0, 0, 0}) {
+         if (vk != std::nullopt && vv != std::nullopt && vk.value() != mixed_view_t::Key{0, 0, 0} && vv->city_count > 0) {
             auto ret = std::make_pair(vk.value(), vv.value());
             return ret;
          }
       }
+      if (curr_city_cnt > 0) {
+         return std::make_pair(curr_key, mixed_view_t{curr_county_name, curr_city_cnt});
+      }
+      return std::nullopt;
    }
 
    void run()
