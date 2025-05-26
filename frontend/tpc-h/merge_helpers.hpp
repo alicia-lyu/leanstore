@@ -29,7 +29,7 @@ struct JoinState {
 
    JoinState(
        const std::string& msg,
-       std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
+       const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
        : consume_joined(consume_joined), msg(msg)
    {
    }
@@ -49,14 +49,14 @@ struct JoinState {
    template <size_t... Is>
    void assemble_joined_records(std::vector<std::tuple<std::pair<typename Rs::Key, Rs>...>>& cartesian_product,
                                 unsigned long* batch_size,
-                                int len_cartesian_product,
+                                size_t len_cartesian_product,
                                 std::index_sequence<Is...>)
    {
       (..., ([&] {
           auto& vec = std::get<Is>(cached_records);
-          int repeat = *batch_size / vec.size(), batch = len_cartesian_product / *batch_size;
-          for (int b = 0; b < batch; ++b)
-             for (int r = 0; r < repeat; ++r)
+          size_t repeat = *batch_size / vec.size(), batch = len_cartesian_product / *batch_size;
+          for (size_t b = 0; b < batch; ++b)
+             for (size_t r = 0; r < repeat; ++r)
                 for (size_t j = 0; j < vec.size(); ++j)
                    std::get<Is>(cartesian_product[b * *batch_size + j * repeat + r]) = vec.at(j);
           *batch_size /= vec.size();
@@ -65,15 +65,15 @@ struct JoinState {
 
    int join_current()
    {
-      int len_cartesian_product = 1;  // how many records the cached records can join and produce
+      size_t len_cartesian_product = 1;  // how many records the cached records can join and produce
       for_each(cached_records, [&](const auto& v) { len_cartesian_product *= v.size(); });
       if (len_cartesian_product == 0)
          return 0;
 
       // assign the cached records to the cartesian product to be joined
-      std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>> cartesian_product(len_cartesian_product);
+      std::vector<std::tuple<std::pair<typename Rs::Key, Rs>...>> cartesian_product(len_cartesian_product);
       unsigned long batch_size = len_cartesian_product;
-      assemble_joined_records<Rs...>(cached_records, cartesian_product, &batch_size, len_cartesian_product, std::index_sequence_for<Rs...>{});
+      assemble_joined_records(cartesian_product, &batch_size, len_cartesian_product, std::index_sequence_for<Rs...>{});
 
       // actually joining the records
       for (auto& cartesian_product_instance : cartesian_product) {
@@ -86,7 +86,7 @@ struct JoinState {
              },
              cartesian_product_instance);
       }
-      return len_cartesian_product;
+      return static_cast<int>(len_cartesian_product);
    }
 
    std::optional<std::pair<typename JR::Key, JR>> next() 
@@ -113,9 +113,8 @@ struct JoinState {
           using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
           using RecordType = std::tuple_element_t<1, VecElem>;
           if (next_jk.match(SKBuilder<JK>::template get<RecordType>(cached_jk)) != 0) {
-             joined_cnt += join_current<JK, JR, Rs...>(cached_records, consume_joined);
+             joined_cnt += join_current();
              vec.clear();
-             cached_joined_records.clear();
           }
        }()));
       cached_jk = next_jk;
@@ -128,6 +127,9 @@ struct JoinState {
       if (cached_jk % 10 == 0) {
          double progress = (double)joined / 1000;
          std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
+      }
+      if (cached_joined_records.size() > 1000) {
+         throw std::runtime_error("JoinState: too many joined records in the queue. Are you calling JoinState::next()? JoinState is only supposed to be a pipeline instead of a storage!");
       }
    }
 

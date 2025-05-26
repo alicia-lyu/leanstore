@@ -40,9 +40,9 @@ struct BaseJoiner {
 
    std::optional<std::pair<view_t::Key, view_t>> next() { return final_joiner->next(); }
 
-   sort_key_t current_jk() const { return final_joiner->current_jk; }
+   sort_key_t current_jk() const { return final_joiner->current_jk(); }
 
-   long produced() const { return final_joiner->produced; }
+   long produced() const { return final_joiner->produced(); }
 
    void seek(const sort_key_t& sk)
    {
@@ -68,11 +68,11 @@ struct MergedJoiner {
 
    void run() { joiner->run(); }
 
-   int next() { return joiner->next(); }
+   std::optional<std::pair<view_t::Key, view_t>> next() { return joiner->next(); }
 
-   sort_key_t current_jk() const { return joiner->current_jk; }
+   sort_key_t current_jk() const { return joiner->current_jk(); }
 
-   long produced() const { return joiner->produced; }
+   long produced() const { return joiner->produced(); }
 
    long consumed() const { return merged_scanner->produced; }
 

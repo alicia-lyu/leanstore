@@ -75,14 +75,17 @@ struct MergeJoin {
       }
       return join_state.next();
    }
+
+   JK current_jk() const { return join_state.cached_jk; }
+
+   long produced() const { return join_state.joined; }
 };
 
 // merged_scanner -> join_state -> yield joined records
 template <typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
-   JoinState<JK, JR, Rs...> join_state;
-
    MergedScanner<Rs...>& merged_scanner;
+   JoinState<JK, JR, Rs...> join_state;
 
    using K = std::variant<typename Rs::Key...>;
    using V = std::variant<Rs...>;
@@ -109,7 +112,7 @@ struct PremergedJoin {
          if (join_state.cached_jk != jk)
             join_state.refresh(jk);
          // add the new record to the fcache
-         join_state.emplate(k, v);
+         join_state.emplace(k, v);
       }
       return join_state.next();
    }
@@ -134,6 +137,10 @@ struct PremergedJoin {
          }
       }
    }
+
+   JK current_jk() const { return join_state.cached_jk; }
+
+   long produced() const { return join_state.joined; }
 };
 
 template <typename JK, typename... Rs>
@@ -188,16 +195,20 @@ struct Merge {
          heap_merge.next();
       }
    }
+
+   JK current_jk() const { return heap_merge.current_jk; }
+
+   long produced() const { return heap_merge.sifted; }
 };
 
 // sources -> join_state -> yield joined records
 template <typename JK, typename JR, typename R1, typename R2>
 struct BinaryMergeJoin {
    JoinState<JK, JR, R1, R2> join_state;
-   std::optional<std::pair<typename R1::Key, R1>> next_left;
-   std::optional<std::pair<typename R2::Key, R2>> next_right;
    std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left;
    std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right;
+   std::optional<std::pair<typename R1::Key, R1>> next_left;
+   std::optional<std::pair<typename R2::Key, R2>> next_right;
 
    BinaryMergeJoin(std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left_func,
                    std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right_func)
@@ -213,11 +224,11 @@ struct BinaryMergeJoin {
    {
       auto curr_jk = join_state.cached_jk;
       while (next_left && SKBuilder<JK>::create(next_left->first, next_left->second).match(curr_jk) == 0) {
-         join_state.emplace<1>(next_left->first, next_left->second);
+         join_state.template emplace<R1, 0>(next_left->first, next_left->second);
          next_left = fetch_left();
       }
       while (next_right && SKBuilder<JK>::create(next_right->first, next_right->second).match(curr_jk) == 0) {
-         join_state.emplace<2>(next_right->first, next_right->second);
+         join_state.template emplace<R2, 1>(next_right->first, next_right->second);
          next_right = fetch_right();
       }
    }
@@ -246,4 +257,7 @@ struct BinaryMergeJoin {
       }
       return join_state.next();
    }
+
+   JK current_jk() const { return join_state.cached_jk; }
+   long produced() const { return join_state.joined; }
 };

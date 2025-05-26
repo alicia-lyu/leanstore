@@ -177,12 +177,12 @@ def generate_run_rules() -> None:
         img_temp = f"{img}_temp"
         for structure in STRUCTURE_OPTIONS[exe]:
             print(f"{exe}_{structure}: {rd} {exe_path} {recover} {img_temp}")
-            print(f"\ttouch {rd}/log")
+            print(f"\ttouch {rd}/structure{structure}.log")
             print(
                 f'\tscript -q -c "{exe_path} {cfg.leanstore_flags} '
                 f"--storage_structure={structure} "
                 f'--csv_path={rd} --recover_file={recover} '
-                f'--ssd_path={img_temp} --dram_gib=$(dram) 2>{rd}/stderr.txt" {rd}/log'
+                f'--ssd_path={img_temp} --dram_gib=$(dram) 2>{rd}/stderr.txt" {rd}/structure{structure}.log'
             )
         print()
     print("run_all: " + " ".join(cfg.exec_names))
