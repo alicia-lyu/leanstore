@@ -1,11 +1,156 @@
 #pragma once
+#include <cstddef>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <queue>
+#include <variant>
 #include <vector>
 #include "Exceptions.hpp"
 #include "Units.hpp"
 #include "view_templates.hpp"
+
+template <typename JK, typename JR, typename... Rs>
+struct JoinState {
+   template <typename Tuple, typename Func>
+   static void for_each(Tuple& tup, Func func)
+   {
+      std::apply([&](auto&... elems) { (..., func(elems)); }, tup);
+   }
+
+   JK cached_jk = JK::max();
+   std::tuple<std::vector<std::pair<typename Rs::Key, Rs>>...> cached_records = {};
+   std::queue<std::pair<typename JR::Key, JR>> cached_joined_records = {};
+
+   long joined = 0;
+
+   const std::function<void(const typename JR::Key&, const JR&)>& consume_joined;
+   const std::string msg;
+
+   JoinState(
+       const std::string& msg,
+       std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
+       : consume_joined(consume_joined), msg(msg)
+   {
+   }
+
+   ~JoinState()
+   {
+      if (joined > 1000)
+         std::cout << "\rJoinState: joined " << (double)joined / 1000 << "k records------------------------------------" << std::endl;
+   }
+
+   void refresh(const JK& next_jk)
+   {
+      int curr_joined = join_and_clear(next_jk, std::index_sequence_for<Rs...>{});
+      update_print_produced(curr_joined);
+   }
+
+   template <size_t... Is>
+   void assemble_joined_records(std::vector<std::tuple<std::pair<typename Rs::Key, Rs>...>>& cartesian_product,
+                                unsigned long* batch_size,
+                                int len_cartesian_product,
+                                std::index_sequence<Is...>)
+   {
+      (..., ([&] {
+          auto& vec = std::get<Is>(cached_records);
+          int repeat = *batch_size / vec.size(), batch = len_cartesian_product / *batch_size;
+          for (int b = 0; b < batch; ++b)
+             for (int r = 0; r < repeat; ++r)
+                for (size_t j = 0; j < vec.size(); ++j)
+                   std::get<Is>(cartesian_product[b * *batch_size + j * repeat + r]) = vec.at(j);
+          *batch_size /= vec.size();
+       })());
+   }
+
+   int join_current()
+   {
+      int len_cartesian_product = 1;  // how many records the cached records can join and produce
+      for_each(cached_records, [&](const auto& v) { len_cartesian_product *= v.size(); });
+      if (len_cartesian_product == 0)
+         return 0;
+
+      // assign the cached records to the cartesian product to be joined
+      std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>> cartesian_product(len_cartesian_product);
+      unsigned long batch_size = len_cartesian_product;
+      assemble_joined_records<Rs...>(cached_records, cartesian_product, &batch_size, len_cartesian_product, std::index_sequence_for<Rs...>{});
+
+      // actually joining the records
+      for (auto& cartesian_product_instance : cartesian_product) {
+         std::apply(
+             [&](auto&... pairs) {
+                typename JR::Key joined_key{std::get<0>(pairs)...};
+                JR joined_rec{std::get<1>(pairs)...};
+                consume_joined(joined_key, joined_rec);
+                cached_joined_records.emplace(joined_key, joined_rec);
+             },
+             cartesian_product_instance);
+      }
+      return len_cartesian_product;
+   }
+
+   std::optional<std::pair<typename JR::Key, JR>> next() 
+   {
+      if (cached_joined_records.empty()) {
+         return std::nullopt;
+      }
+      auto joined_pair = cached_joined_records.front();
+      cached_joined_records.pop();
+      return joined_pair;
+   }
+
+   bool has_next() const
+   {
+      return !cached_joined_records.empty();
+   }
+
+   template <size_t... Is>
+   int join_and_clear(const JK& next_jk, std::index_sequence<Is...>)
+   {
+      int joined_cnt = 0;
+      (..., ([&] {
+          auto& vec = std::get<Is>(cached_records);
+          using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
+          using RecordType = std::tuple_element_t<1, VecElem>;
+          if (next_jk.match(SKBuilder<JK>::template get<RecordType>(cached_jk)) != 0) {
+             joined_cnt += join_current<JK, JR, Rs...>(cached_records, consume_joined);
+             vec.clear();
+             cached_joined_records.clear();
+          }
+       }()));
+      cached_jk = next_jk;
+      return joined_cnt;
+   }
+
+   void update_print_produced(int curr_joined)
+   {
+      joined += curr_joined;
+      if (cached_jk % 10 == 0) {
+         double progress = (double)joined / 1000;
+         std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
+      }
+   }
+
+   template <typename Record, size_t I>
+   void emplace(const typename Record::Key& key, const Record& rec)
+   {
+      std::get<I>(cached_records).emplace_back(key, rec);
+   }
+
+   template <size_t... Is>
+   void emplace(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec, std::index_sequence<Is...>)
+   {
+      (([&]() {
+          if (std::holds_alternative<typename Rs::Key>(key)) {
+             assert(std::holds_alternative<Rs>(rec));
+             emplace<Rs, Is>(std::get<typename Rs::Key>(key), std::get<Rs>(rec));
+          }
+       })(),
+       ...);
+   }
+
+   void emplace(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec) { emplace(key, rec, std::index_sequence_for<Rs...>{}); }
+};
 
 template <typename JK>
 struct HeapEntry {
@@ -17,23 +162,15 @@ struct HeapEntry {
    bool operator>(const HeapEntry& other) const { return jk > other.jk; }
 };
 
-template <typename Tuple, typename Func>
-inline void forEach(Tuple& tup, Func func)
-{
-   std::apply([&](auto&... elems) { (..., func(elems)); }, tup);
-}
-
 template <typename JK, typename... Rs>
 struct HeapMergeHelper {
    static constexpr size_t nways = sizeof...(Rs);
 
    std::vector<std::function<HeapEntry<JK>()>> sources;
    std::vector<std::function<void(HeapEntry<JK>&)>> consumes;
-   std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...> cached_records;
+
    std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<>> heap;
    long sifted = 0;
-   JK current_jk = JK::max();
-   HeapEntry<JK> current_entry;
 
    HeapMergeHelper(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
        : sources(sources), consumes(consumes)
@@ -68,14 +205,6 @@ struct HeapMergeHelper {
       }
    }
 
-   void next_jk()
-   {
-      auto current_jk_copy = current_jk;
-      while (!heap.empty() && current_jk_copy == current_jk) {
-         next();
-      }
-   }
-
    void next()
    {
       HeapEntry<JK> entry = heap.top();
@@ -96,6 +225,11 @@ struct HeapMergeHelper {
          heap.push(next);
    }
 
+   bool has_next() const
+   {
+      return !heap.empty();
+   }
+
    template <template <typename> class ScannerType, typename RecordType>
    std::function<HeapEntry<JK>()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
    {
@@ -104,7 +238,7 @@ struct HeapMergeHelper {
          if (!kv)
             return HeapEntry<JK>();
          auto& [k, v] = *kv;
-         return HeapEntry<JK>(current_jk, RecordType::toBytes(k), RecordType::toBytes(v), source);
+         return HeapEntry<JK>(SKBuilder<JK>(k, v), RecordType::toBytes(k), RecordType::toBytes(v), source);
       };
    }
 
@@ -120,61 +254,3 @@ struct HeapMergeHelper {
       return getHeapSources(std::index_sequence_for<SourceRecords...>{}, scanners...);
    }
 };
-
-template <typename... Rs, size_t... Is>
-inline void assignRecords(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                          std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>>& output,
-                          unsigned long* batch_size,
-                          int total,
-                          std::index_sequence<Is...>)
-{
-   (..., ([&] {
-       auto& vec = std::get<Is>(cached_records);
-       int repeat = *batch_size / vec.size(), batch = total / *batch_size;
-       for (int b = 0; b < batch; ++b)
-          for (int r = 0; r < repeat; ++r)
-             for (size_t j = 0; j < vec.size(); ++j)
-                std::get<Is>(output[b * *batch_size + j * repeat + r]) = vec.at(j);
-       *batch_size /= vec.size();
-    })());
-}
-
-template <typename JK, typename JR, typename... Rs>
-inline int join_current(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                        std::function<void(const typename JR::Key&, const JR&)>& consume_joined)
-{
-   int count = 1;
-   forEach(cached_records, [&](const auto& v) { count *= v.size(); });
-   if (count == 0)
-      return 0;
-
-   std::vector<std::tuple<std::tuple<typename Rs::Key, Rs>...>> output(count);
-   unsigned long batch_size = count;
-   assignRecords<Rs...>(cached_records, output, &batch_size, count, std::index_sequence_for<Rs...>{});
-
-   for (auto& rec : output) {
-      std::apply([&](auto&... pairs) { consume_joined(typename JR::Key{std::get<0>(pairs)...}, JR{std::get<1>(pairs)...}); }, rec);
-   }
-   return count;
-}
-
-template <typename JK, typename JR, typename... Rs, std::size_t... Is>
-inline int joinAndClear(std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...>& cached_records,
-                        JK& current_jk,
-                        JK& current_entry_jk,
-                        std::function<void(const typename JR::Key&, const JR&)>& consume_joined,
-                        std::index_sequence<Is...>)
-{
-   int joined_cnt = 0;
-   (..., ([&] {
-       auto& vec = std::get<Is>(cached_records);
-       using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
-       using RecordType = std::tuple_element_t<1, VecElem>;
-       if (current_entry_jk.match(SKBuilder<JK>::template get<RecordType>(current_jk)) != 0) {
-          joined_cnt += join_current<JK, JR, Rs...>(cached_records, consume_joined);
-          vec.clear();
-       }
-    }()));
-   current_jk = current_entry_jk;
-   return joined_cnt;
-}

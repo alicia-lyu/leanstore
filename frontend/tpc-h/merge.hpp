@@ -5,65 +5,46 @@
 #include "merge_helpers.hpp"
 #include "view_templates.hpp"
 
+// source -> heap -> join_state (consume) -> yield joined records
 template <typename JK, typename JR, typename... Rs>
 struct MergeJoin {
    HeapMergeHelper<JK, Rs...> heap_merge;
-   long produced = 0;
-
-   std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {};
+   JoinState<JK, JR, Rs...> join_state;
 
    template <template <typename> class ScannerType>
-   MergeJoin(ScannerType<Rs>&... scanners)
-       : heap_merge(getHeapConsumesToBeJoined(), scanners...), consume_joined([](const typename JR::Key&, const JR&) {})
+   MergeJoin(
+       ScannerType<Rs>&... scanners,
+       std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
+       : heap_merge(getHeapConsumesToBeJoined(), scanners...), join_state("MergeJoin", consume_joined)
    {
       heap_merge.init();
    }
 
-   MergeJoin(std::vector<std::function<HeapEntry<JK>()>>& sources)
-       : heap_merge(sources, getHeapConsumesToBeJoined()), consume_joined([](const typename JR::Key&, const JR&) {})
+   MergeJoin(
+       std::vector<std::function<HeapEntry<JK>()>>& sources,
+       std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
+       : heap_merge(sources, getHeapConsumesToBeJoined()), join_state("MergeJoin", consume_joined)
    {
       heap_merge.init();
    }
 
    template <template <typename> class AdapterType, template <typename> class ScannerType>
    MergeJoin(AdapterType<JR>& joinedAdapter, ScannerType<Rs>&... scanners)
-       : heap_merge(getHeapConsumesToBeJoined(), scanners...), consume_joined([&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
+       : heap_merge(getHeapConsumesToBeJoined(), scanners...),
+         join_state("MergeJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
       heap_merge.init();
    }
 
-   MergeJoin(std::function<void(const typename JR::Key&, const JR&)>& consume_joined, std::vector<std::function<HeapEntry<JK>()>>& sources)
-       : heap_merge(sources, getHeapConsumesToBeJoined()), consume_joined(consume_joined)
-   {
-      heap_merge.init();
-   }
-
-   ~MergeJoin()
-   {
-      if (produced > 1000)
-         std::cout << "\r~MergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
-   }
-
-   void updateAndPrintProduced(int curr_joined)
-   {
-      produced += curr_joined;
-      if (heap_merge.current_jk % 10 == 0) {
-         double progress = (double)produced / 1000;
-         std::cout << "\rMergeJoin: produced " << progress << "k records------------------------------------";
-      }
-   }
-
-   template <typename CurrRec, size_t I>
+   template <typename R, size_t I>
    auto getHeapConsumeToBeJoined()
    {
       return [this](HeapEntry<JK>& entry) {
-         heap_merge.current_entry = entry;
-         int joined_cnt = joinAndClear<JK, JR, Rs...>(heap_merge.cached_records, heap_merge.current_jk, heap_merge.current_entry.jk, consume_joined,
-                                                      std::index_sequence_for<Rs...>{});
-         updateAndPrintProduced(joined_cnt);
-         std::get<I>(heap_merge.cached_records)
-             .emplace_back(typename CurrRec::Key(CurrRec::template fromBytes<typename CurrRec::Key>(entry.k)),
-                           CurrRec(CurrRec::template fromBytes<CurrRec>(entry.v)));
+         // heap_merge.current_entry = entry;
+         if (entry.jk != join_state.cached_jk) {
+            join_state.refresh(entry.jk);
+         }
+         join_state.emplace<I>(typename R::Key(R::template fromBytes<typename R::Key>(entry.k)), CurrRec(R::template fromBytes<R>(entry.v)));
       };
    }
 
@@ -80,98 +61,78 @@ struct MergeJoin {
 
    void run() { heap_merge.run(); }
 
-   void next_jk() { heap_merge.next_jk(); }
+   void next_jk()
+   {
+      JK start_jk = join_state.cached_jk;
+      while (join_state.cached_jk == start_jk && heap_merge.has_next()) {
+         heap_merge.next();
+      }
+   }
+
+   std::optional<std::pair<typename JR::Key, JR>> next()
+   {
+      while (!join_state.has_next() && heap_merge.has_next()) {
+         heap_merge.next();
+      }
+      return join_state.next();
+   }
 };
 
 template <typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
-   long produced = 0;
-   JK current_jk = JK::max();
-   std::tuple<std::vector<std::tuple<typename Rs::Key, Rs>>...> cached_records;
-   std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {};
+   JoinState<JK, JR, Rs...> join_state;
 
    MergedScanner<Rs...>& merged_scanner;
+
+   using K = std::variant<typename Rs::Key...>;
+   using V = std::variant<Rs...>;
 
    PremergedJoin(
        MergedScanner<Rs...>& merged_scanner,
        std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
-       : consume_joined(consume_joined), merged_scanner(merged_scanner)
+       : merged_scanner(merged_scanner), join_state("PremergedJoin", consume_joined)
    {
    }
 
-   ~PremergedJoin()
+   std::optional<std::pair<typename JR::Key, JR>> next()
    {
-      if (produced > 1000)
-         std::cout << "\r~PremergedJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
-   }
-
-   void updateAndPrintProduced(int curr_joined)
-   {
-      produced += curr_joined;
-      if (current_jk % 10 == 0) {
-         double progress = (double)produced / 1000;
-         std::cout << "\rPremergedJoin: produced " << progress << "k records------------------------------------";
+      while (!join_state.has_next()) {
+         std::optional<std::pair<K, V>> kv = merged_scanner.next();
+         if (!kv) {
+            return std::nullopt;
+         }
+         auto& k = kv->first;
+         auto& v = kv->second;
+         JK jk;
+         std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
+         // if (current_jk != jk) join the cached records
+         if (join_state.cached_jk != jk)
+            join_state.refresh(jk);
+         // add the new record to the fcache
+         join_state.emplate(k, v);
       }
+      return join_state.next();
    }
 
-   int next()
+   void next_jk()
    {
-      std::optional<std::pair<std::variant<typename Rs::Key...>, std::variant<Rs...>>> kv = merged_scanner.next();
-      if (!kv) {
-         return -1;
-      }
-      auto& k = kv->first;
-      auto& v = kv->second;
-      JK jk;
-      std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
-      // if (current_jk != jk) join the cached records
-      int curr_joined;
-      if (current_jk != jk)
-         curr_joined = joinAndClear<JK, JR, Rs...>(cached_records, current_jk, jk, consume_joined, std::index_sequence_for<Rs...>{});
-      else
-         curr_joined = 0;
-      updateAndPrintProduced(curr_joined);
-      // add the new record to the fcache
-      match_emplace_tuple(k, v, std::index_sequence_for<Rs...>{});
-      return curr_joined;
-   }
-
-   int next_jk()
-   {
-      while (true) {
-         int res = next();
-         if (res == 0)
-            continue;
-         return res;
+      JK start_jk = join_state.cached_jk;
+      while (join_state.cached_jk == start_jk) {
+         auto ret = next();
+         if (!ret.has_value()) {
+            break;
+         }
       }
    }
 
    void run()
    {
       while (true) {
-         int curr_joined = next();
-         if (curr_joined == -1) {
+         auto ret = next();
+         if (!ret.has_value()) {
             break;
          }
       }
-   }
-
-   template <typename Record, size_t I>
-   void emplace_tuple(const typename Record::Key& key, const Record& rec)
-   {
-      std::get<I>(cached_records).emplace_back(key, rec);
-   }
-
-   template <size_t... Is>
-   void match_emplace_tuple(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec, std::index_sequence<Is...>)
-   {
-      (([&]() {
-          if (std::holds_alternative<typename Rs::Key>(key)) {
-             assert(std::holds_alternative<Rs>(rec));
-             emplace_tuple<Rs, Is>(std::get<typename Rs::Key>(key), std::get<Rs>(rec));
-          }
-       })(),
-       ...);
    }
 };
 
@@ -220,121 +181,119 @@ struct Merge {
 
    void run() { heap_merge.run(); }
 
-   void next_jk() { heap_merge.next_jk(); }
+   void next_jk()
+   {
+      JK start_jk = heap_merge.current_jk;
+      while (heap_merge.current_jk == start_jk && heap_merge.has_next()) {
+         heap_merge.next();
+      }
+   }
 };
 
 template <typename JK, typename JR, typename R1, typename R2>
 struct BinaryMergeJoin {
-   long produced = 0;
-   JK current_jk = JK::max();
-   std::tuple<std::vector<std::tuple<typename R1::Key, R1>>, std::vector<std::tuple<typename R2::Key, R2>>> cached_records = {
-       std::vector<std::tuple<typename R1::Key, R1>>(),
-       std::vector<std::tuple<typename R2::Key, R2>>(),
-   };
-   std::vector<std::tuple<typename R1::Key, R1>>& cached_r1s = std::get<0>(cached_records);
-   std::vector<std::tuple<typename R2::Key, R2>>& cached_r2s = std::get<1>(cached_records);
-   std::optional<std::pair<typename R1::Key, R1>> cutoff_r1 = std::nullopt;  // larger than current_jk
-   std::optional<std::pair<typename R2::Key, R2>> cutoff_r2 = std::nullopt;  // larger than current_jk
-
-   std::queue<std::pair<typename JR::Key, JR>> joined_records;
+   JoinState<JK, JR, R1, R2> join_state;
+   std::optional<std::pair<typename R1::Key, R1>> next_r1 = std::nullopt;  // larger than current_jk
+   std::optional<std::pair<typename R2::Key, R2>> next_r2 = std::nullopt;  // larger than current_jk
 
    std::function<std::optional<std::pair<typename R1::Key, R1>>()> next_left_func;
    std::function<std::optional<std::pair<typename R2::Key, R2>>()> next_right_func;
 
-   std::function<void(const typename JR::Key&, const JR&)> consume_joined = [this](const typename JR::Key& k, const JR& v) {
-      std::pair<typename JR::Key, JR> joined_record = {k, v};
-      joined_records.push(joined_record);
-   };
-
    BinaryMergeJoin(std::function<std::optional<std::pair<typename R1::Key, R1>>()> next_left_func,
                    std::function<std::optional<std::pair<typename R2::Key, R2>>()> next_right_func)
-       : next_left_func(next_left_func), next_right_func(next_right_func)
+       : join_state("BinaryMergeJoin"), next_left_func(next_left_func), next_right_func(next_right_func)
    {
-      cutoff_r1 = next_left_func();
+      next_r1 = next_left_func();
    }
 
-   ~BinaryMergeJoin()
-   {
-      if (produced > 1000)
-         std::cout << "\r~BinaryMergeJoin: produced " << (double)produced / 1000 << "k records------------------------------------" << std::endl;
-   }
-
-   void updateAndPrintProduced(int curr_joined)
-   {
-      produced += curr_joined;
-      if (current_jk % 10 == 0) {
-         double progress = (double)produced / 1000;
-         std::cout << "\rBinaryMergeJoin: produced " << progress << "k records------------------------------------";
-      }
-   }
-
-   int join_current_and_clear(JK current_entry_jk)  // also updated current_jk
-   {
-      auto joined_cnt = joinAndClear<JK, JR, R1, R2>(cached_records, current_jk, current_entry_jk, consume_joined, std::index_sequence_for<R1, R2>{});
-      updateAndPrintProduced(joined_cnt);
-      return joined_cnt;
-   }
-
-   int join_update_cutoff(std::pair<typename R1::Key, R1>& r1, std::pair<typename R2::Key, R2>& r2)
+   void join_update_cutoff(std::pair<typename R1::Key, R1>& r1, std::pair<typename R2::Key, R2>& r2)
    {
       // join the cached records
       auto r1_jk = SKBuilder<JK>::create(r1.first, r1.second);
       auto r2_jk = SKBuilder<JK>::create(r2.first, r2.second);
       auto match_ret = r1_jk.match(r2_jk);
-      auto joined_cnt = join_current_and_clear(match_ret <= 0 ? r1_jk : r2_jk);
+      join_state.refresh(match_ret <= 0 ? r1_jk : r2_jk);
 
       // update cutoff
-      if (match_ret < 0) {
-         cutoff_r1 = std::nullopt;
-         cached_r1s.emplace_back(r1.first, r1.second);
-         cutoff_r2 = r2;
-      } else if (match_ret > 0) {
-         cutoff_r2 = std::nullopt;
-         cached_r2s.emplace_back(r2.first, r2.second);
-         cutoff_r1 = r1;
-      } else {
-         cached_r1s.emplace_back(r1.first, r1.second);
-         cached_r2s.emplace_back(r2.first, r2.second);
-         cutoff_r1 = next_left_func();
-         cutoff_r2 = std::nullopt;
+      if (match_ret < 0) {  // r1_jk < r2_jk
+         next_r1 = std::nullopt;
+         join_state.emplace<1>(r1.first, r1.second);
+         next_r2 = r2;
+      } else if (match_ret > 0) {  // r1_jk > r2_jk
+         next_r2 = std::nullopt;
+         join_state.emplace<2>(r2.first, r2.second);
+         next_r1 = r1;
+      } else {  // r1_jk == r2_jk
+         join_state.emplace<1>(r1.first, r1.second);
+         join_state.emplace<2>(r2.first, r2.second);
+
+         auto current_jk = join_state.cached_jk;  // = r1_jk = r2_jk
+         // exhaust left branch of current jk
+         while (true) {
+            auto kv = next_left_func();
+            if (!kv) {
+               next_r1 = std::nullopt;
+               // exhaust right branch of current jk
+               while (true) {
+                  kv = next_right_func();
+                  if (!kv) {
+                     next_r2 = std::nullopt;
+                     break;  // exhausted both branches
+                     if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {
+                        join_state.emplace<2>(kv->first, kv->second);
+                     } else {
+                        next_r2 = *kv;
+                        break;
+                     }
+                  }
+                  break;
+               }
+               if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {
+                  join_state.emplace<1>(kv->first, kv->second);
+               } else {
+                  next_r1 = *kv;
+                  break;
+               }
+            }
+         }
       }
-      return joined_cnt;
    }
 
-   int next_jk()
+   // fill cached records until we have seen all of the current jk, in that case, join the cached records
+   void next_jk()
    {
-      if (cutoff_r1.has_value() && !cutoff_r2.has_value()) {
+      auto current_jk = join_state.cached_jk;
+      if (next_r1.has_value()         // exhausted all records of current jk from left
+          && !next_r2.has_value()) {  // not exhausted all records of current jk from right
          auto kv = next_right_func();
-         if (!kv) {  // last batch of joins
-            cutoff_r1 = std::nullopt;
-            cutoff_r2 = std::nullopt;
-            return join_current_and_clear(SKBuilder<JK>::create(cutoff_r1->first, cutoff_r1->second));
+         if (!kv) {  // Nearing the end, last batch of joins
+            next_r1 = std::nullopt;
+            next_r2 = std::nullopt;
+            return join_state.refresh(SKBuilder<JK>::create(next_r1->first, next_r1->second));
          } else {
-            if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {  // fill cached records
-               cached_r2s.emplace_back(kv->first, kv->second);
+            if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {  // not exhausted all records of current jk from right
+               join_state.emplace<2>(kv->first, kv->second);
                return next_jk();
-            } else {  // cached records are cutoff, with competing cutoffs
-               return join_update_cutoff(*cutoff_r1, *kv);
+            } else {                                      // exhausted all records of current jk from right
+               return join_update_cutoff(*next_r1, *kv);  // with placeholder next_r1 at first, it goes here
             }
          }
-      } else if (!cutoff_r1.has_value() && cutoff_r2.has_value()) {
+      } else if (!next_r1.has_value() && next_r2.has_value()) {
          auto kv = next_left_func();
          if (!kv) {  // last batch of joins
-            cutoff_r1 = std::nullopt;
-            cutoff_r2 = std::nullopt;
-            return join_current_and_clear(SKBuilder<JK>::create(cutoff_r2->first, cutoff_r2->second));
-            // proceed to join
+            next_r1 = std::nullopt;
+            next_r2 = std::nullopt;
+            return join_state.refresh(SKBuilder<JK>::create(next_r2->first, next_r2->second));
          } else {
-            if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {  // fill cached records
-               cached_r1s.emplace_back(kv->first, kv->second);
+            if (SKBuilder<JK>::create(kv->first, kv->second).match(current_jk) == 0) {
+               join_state.emplace<1>(kv->first, kv->second);
                return next_jk();
-            } else {  // cached records are cutoff, with competing cutoffs
-               return join_update_cutoff(*kv, *cutoff_r2);
+            } else {
+               return join_update_cutoff(*kv, *next_r2);
             }
          }
-      } else if (!cutoff_r1.has_value() && !cutoff_r2.has_value()) {
-         // either scanner_r1 or scanner_r2 is empty
-         return -1;
+      } else if (!next_r1.has_value() && !next_r2.has_value()) {  // both exhausted, which only happens at the end
+         return join_state.refresh(JK::max());
       } else {
          UNREACHABLE();
       }
@@ -343,35 +302,21 @@ struct BinaryMergeJoin {
    void run()
    {
       while (true) {
-         int curr_joined = next_jk();
-         clear_cached_joined_records();
-         if (curr_joined == -1) {
-            break;
+         next_jk();
+         if (!join_state.has_next() && !next_r1.has_value() && !next_r2.has_value()) {
+            break;  // exhausted all records
          }
-      }
-   }
-
-   void clear_cached_joined_records()
-   {
-      while (!joined_records.empty()) {
-         joined_records.pop();
       }
    }
 
    std::optional<std::pair<typename JR::Key, JR>> next()
    {
-      if (joined_records.empty()) {
-         while (true) {
-            auto curr_joined = next_jk();
-            if (curr_joined == -1) {
-               return std::nullopt;
-            } else if (curr_joined > 0) {
-               break;
-            }
+      while (!join_state.has_next()) {
+         if (!next_r1.has_value() && !next_r2.has_value()) {
+            return std::nullopt;  // exhausted all records
          }
+         next_jk();
       }
-      auto kv = joined_records.front();
-      joined_records.pop();
-      return std::make_optional(kv);
+      return join_state.next();
    }
 };
