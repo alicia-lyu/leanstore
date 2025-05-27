@@ -48,17 +48,17 @@ std::pair<std::vector<std::string>, std::vector<std::string>> LeanStoreLogger::s
          break;
       case ColumnName::TPUT:
          tx_console_header.push_back("W MiB / TX");
-         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "w_mib")) / tx_count));
+         tx_console_data.push_back(tx_count > 0 ? to_fixed(stod(bm_table.get("0", "w_mib")) / tx_count) : "NaN");
 
          tx_console_header.push_back("R MiB / TX");
-         tx_console_data.push_back(to_fixed(stod(bm_table.get("0", "r_mib")) / tx_count));
+         tx_console_data.push_back(tx_count > 0 ? to_fixed(stod(bm_table.get("0", "r_mib")) / tx_count) : "NaN");
 
          for (auto& [t_name, worker_e] : cpu_table.workers_events) {
             long cycles = static_cast<long>(worker_e.at("cycle"));
             if (cycles == 0)
                continue;
             tx_console_header.push_back(t_name + " Cycles / TX");
-            tx_console_data.push_back(std::to_string(cycles / tx_count));
+            tx_console_data.push_back(tx_count > 0 ? std::to_string(cycles / tx_count) : "NaN");
          }
          break;
       default:

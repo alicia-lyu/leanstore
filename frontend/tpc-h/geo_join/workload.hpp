@@ -26,8 +26,6 @@ class GeoJoin
 
    Logger& logger;
 
-   int range_join_n;
-
   public:
    GeoJoin(TPCH& workload,
            MergedTree& m,
@@ -44,10 +42,8 @@ class GeoJoin
          states(s),
          county(c),
          city(ci),
-         logger(workload.logger),
-         range_join_n(workload.getNationID())
+         logger(workload.logger)
    {
-      std::cout << "GeoJoin::GeoJoin(): range_join_n = " << range_join_n << std::endl;
    }
 
    // -------------------------------------------------------------

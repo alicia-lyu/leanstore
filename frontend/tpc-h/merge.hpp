@@ -245,7 +245,7 @@ struct BinaryMergeJoin {
    void run()
    {
       while (next_left || next_right) {
-         next_jk();
+         next();
       }
       join_state.refresh(JK::max());
    }

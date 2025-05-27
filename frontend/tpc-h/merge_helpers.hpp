@@ -24,7 +24,7 @@ struct JoinState {
 
    long joined = 0;
 
-   const std::function<void(const typename JR::Key&, const JR&)>& consume_joined;
+   const std::function<void(const typename JR::Key&, const JR&)> consume_joined;
    const std::string msg;
 
    JoinState(
@@ -37,7 +37,7 @@ struct JoinState {
    ~JoinState()
    {
       if (joined > 1000)
-         std::cout << "\rJoinState: joined " << (double)joined / 1000 << "k records------------------------------------" << std::endl;
+         std::cout << "\r~JoinState: joined " << (double)joined / 1000 << "k records." << std::endl;
    }
 
    void refresh(const JK& next_jk)
@@ -57,8 +57,10 @@ struct JoinState {
           size_t repeat = *batch_size / vec.size(), batch = len_cartesian_product / *batch_size;
           for (size_t b = 0; b < batch; ++b)
              for (size_t r = 0; r < repeat; ++r)
-                for (size_t j = 0; j < vec.size(); ++j)
-                   std::get<Is>(cartesian_product[b * *batch_size + j * repeat + r]) = vec.at(j);
+                for (size_t j = 0; j < vec.size(); ++j) {
+                   auto& pairs = cartesian_product.at(b * *batch_size + j * repeat + r);
+                   std::get<Is>(pairs) = vec.at(j);
+                }
           *batch_size /= vec.size();
        })());
    }
@@ -77,32 +79,31 @@ struct JoinState {
 
       // actually joining the records
       for (auto& cartesian_product_instance : cartesian_product) {
+         typename JR::Key joined_key;
+         JR joined_rec;
          std::apply(
-             [&](auto&... pairs) {
-                typename JR::Key joined_key{std::get<0>(pairs)...};
-                JR joined_rec{std::get<1>(pairs)...};
-                consume_joined(joined_key, joined_rec);
-                cached_joined_records.emplace(joined_key, joined_rec);
+             [&joined_key, &joined_rec](auto&... pairs) {
+                joined_key = typename JR::Key{std::get<0>(pairs)...};
+                joined_rec = JR{std::get<1>(pairs)...};
              },
              cartesian_product_instance);
+         cached_joined_records.emplace(joined_key, joined_rec);
       }
       return static_cast<int>(len_cartesian_product);
    }
 
-   std::optional<std::pair<typename JR::Key, JR>> next() 
+   std::optional<std::pair<typename JR::Key, JR>> next()
    {
       if (cached_joined_records.empty()) {
          return std::nullopt;
       }
       auto joined_pair = cached_joined_records.front();
       cached_joined_records.pop();
+      consume_joined(joined_pair.first, joined_pair.second);
       return joined_pair;
    }
 
-   bool has_next() const
-   {
-      return !cached_joined_records.empty();
-   }
+   bool has_next() const { return !cached_joined_records.empty(); }
 
    template <size_t... Is>
    int join_and_clear(const JK& next_jk, std::index_sequence<Is...>)
@@ -129,7 +130,9 @@ struct JoinState {
          std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
       }
       if (cached_joined_records.size() > 1000) {
-         throw std::runtime_error("JoinState: too many joined records in the queue. Are you calling JoinState::next()? JoinState is only supposed to be a pipeline instead of a storage!");
+         throw std::runtime_error(
+             "JoinState: too many joined records in the queue. Are you calling JoinState::next()? JoinState is only supposed to be a pipeline "
+             "instead of a storage!");
       }
    }
 
@@ -227,10 +230,7 @@ struct HeapMergeHelper {
          heap.push(next);
    }
 
-   bool has_next() const
-   {
-      return !heap.empty();
-   }
+   bool has_next() const { return !heap.empty(); }
 
    template <template <typename> class ScannerType, typename RecordType>
    std::function<HeapEntry<JK>()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
