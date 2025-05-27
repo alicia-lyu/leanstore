@@ -1,9 +1,9 @@
 #pragma once
 #include <chrono>
 
+#include "../merge.hpp"
 #include "load.hpp"
 #include "workload.hpp"
-#include "../merge.hpp"
 
 namespace geo_join
 {
@@ -260,7 +260,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::po
 
 // -------------------------------------------------------------
 // ---------------------- RANGE QUERIES ------------------------
-// Find all joined rows for the same nationkey
+// Find all joined rows for the same nationkey, statekey
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
@@ -268,27 +268,23 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view()
 {
-   logger.reset();
-   std::cout << "GeoJoin::range_query_by_view()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-
-   // auto nationkey = workload.getNationID();
-   [[maybe_unused]] long produced = 0;
+   auto nationkey = workload.getNationID();
+   auto statekey = params::get_statekey();
+   bool start = true;
    join_view.scan(
-       view_t::Key{range_join_n, 0, 0, 0},
+       view_t::Key{nationkey, statekey, 0, 0},
        [&](const view_t::Key& k, const view_t&) {
-          if (k.jk.nationkey != range_join_n)
+          if (start) {
+             nationkey = k.jk.nationkey;
+             statekey = k.jk.statekey;
+             start = false;
+          }
+          if (k.jk.nationkey != nationkey || k.jk.statekey != statekey) {
              return false;
-          TPCH::inspect_produced("Range querying materialized join_view: ", produced);
+          }
           return true;
        },
        []() {});
-
-   std::cout << "\rRange querying materialized join_view for nation " << range_join_n << " : " << (double)produced / 1000
-             << "k------------------------------------" << std::endl;
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "range-query", "view", get_view_size());
 }
 
 template <template <typename> class AdapterType,
@@ -297,24 +293,17 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged()
 {
-   logger.reset();
-   std::cout << "GeoJoin::range_query_by_merged()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-   sort_key_t seek_key{range_join_n, 0, 0, 0};
+   auto nationkey = workload.getNationID();
+   auto statekey = params::get_statekey();
+   sort_key_t seek_key{nationkey, statekey, 0, 0};
 
    MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged, seek_key);
-   while (merged_joiner.current_jk().nationkey == range_join_n || merged_joiner.current_jk() == sort_key_t::max()) {
+   while ((merged_joiner.current_jk().nationkey == nationkey && merged_joiner.current_jk().statekey == statekey) ||
+          merged_joiner.current_jk() == sort_key_t::max()) {
       auto ret = merged_joiner.next();
-      if (ret == -1)
+      if (ret == std::nullopt)
          break;
    }
-
-   std::cout << "\rRange querying merged for nation " << range_join_n << " : produced " << merged_joiner.produced()
-             << " records------------------------------------" << std::endl;
-
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "range-query", "merged", get_merged_size());
 }
 
 template <template <typename> class AdapterType,
@@ -323,24 +312,18 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base()
 {
-   logger.reset();
-   std::cout << "GeoJoin::range_query_by_base()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
+   auto nationkey = workload.getNationID();
+   auto statekey = params::get_statekey();
 
-   sort_key_t seek_key{range_join_n, 0, 0, 0};
+   sort_key_t seek_key{nationkey, statekey, 0, 0};
 
    BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city, seek_key);
 
-   while (base_joiner.current_jk().nationkey == range_join_n || base_joiner.current_jk() == sort_key_t::max()) {
+   while ((base_joiner.current_jk().nationkey == nationkey && base_joiner.current_jk().statekey == statekey) ||
+          base_joiner.current_jk() == sort_key_t::max()) {
       auto ret = base_joiner.next();
       if (ret == std::nullopt)
          break;
    }
-
-   std::cout << "\rRange querying base for nation " << range_join_n << " produced " << base_joiner.produced()
-             << " records------------------------------------" << std::endl;
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "range-query", "base", get_indexes_size());
 }
 }  // namespace geo_join

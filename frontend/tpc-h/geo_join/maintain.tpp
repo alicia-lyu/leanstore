@@ -1,4 +1,5 @@
 #pragma once
+#include "views.hpp"
 #include "workload.hpp"
 
 #include "../../shared/Adapter.hpp"
@@ -81,5 +82,6 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    for (int i = 1; i <= city_cnt; i++) {
       join_view.insert(view_t::Key{n, s, c, i}, view_t::generateRandomRecord(s, c, i));
    }
+   city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt});
 }
 } // namespace geo_join

@@ -93,6 +93,7 @@ int main(int argc, char** argv)
          };
          std::vector<std::function<void()>> tput_cbs_base = {
             std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
+            std::bind(&GJ::range_query_by_base, &tpchGeoJoin),
             std::bind(&GJ::maintain_base, &tpchGeoJoin),
             std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
             std::bind(&GJ::point_mixed_query_by_base, &tpchGeoJoin)
@@ -111,6 +112,7 @@ int main(int argc, char** argv)
          };
          std::vector<std::function<void()>> tput_cbs_view = {
             [&]() { tpchGeoJoin.point_query_by_view(); },
+            std::bind(&GJ::range_query_by_view, &tpchGeoJoin),
             std::bind(&GJ::maintain_view, &tpchGeoJoin),
             std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
             std::bind(&GJ::point_mixed_query_by_view, &tpchGeoJoin)
@@ -129,6 +131,7 @@ int main(int argc, char** argv)
          };
          std::vector<std::function<void()>> tput_cbs_merged = {
             std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::range_query_by_merged, &tpchGeoJoin),
             std::bind(&GJ::maintain_merged, &tpchGeoJoin),
             std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
             std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)
