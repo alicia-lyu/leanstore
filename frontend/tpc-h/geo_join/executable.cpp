@@ -81,7 +81,8 @@ int main(int argc, char** argv)
       tpch.recover_last_ids();
       tpchGeoJoin.log_sizes_other();
    }
-   std::vector<std::string> tput_prefixes = {"point-query", "maintain", "point-agg", "point-mixed-query"};
+   std::vector<std::string> tput_prefixes = {"point-query",  "ns", "nsc",
+      "maintain", "point-agg", "point-mixed-query"};
    
    switch (FLAGS_storage_structure) {
       case 0: {
@@ -93,7 +94,8 @@ int main(int argc, char** argv)
          };
          std::vector<std::function<void()>> tput_cbs_base = {
             std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
-            std::bind(&GJ::range_query_by_base, &tpchGeoJoin),
+            std::bind(&GJ::ns_base, &tpchGeoJoin),
+            std::bind(&GJ::nsc_base, &tpchGeoJoin),
             std::bind(&GJ::maintain_base, &tpchGeoJoin),
             std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
             std::bind(&GJ::point_mixed_query_by_base, &tpchGeoJoin)
@@ -112,7 +114,8 @@ int main(int argc, char** argv)
          };
          std::vector<std::function<void()>> tput_cbs_view = {
             [&]() { tpchGeoJoin.point_query_by_view(); },
-            std::bind(&GJ::range_query_by_view, &tpchGeoJoin),
+            std::bind(&GJ::ns_view, &tpchGeoJoin),
+            std::bind(&GJ::nsc_view, &tpchGeoJoin),
             std::bind(&GJ::maintain_view, &tpchGeoJoin),
             std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
             std::bind(&GJ::point_mixed_query_by_view, &tpchGeoJoin)
@@ -131,7 +134,8 @@ int main(int argc, char** argv)
          };
          std::vector<std::function<void()>> tput_cbs_merged = {
             std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::range_query_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::ns_merged, &tpchGeoJoin),
+            std::bind(&GJ::nsc_merged, &tpchGeoJoin),
             std::bind(&GJ::maintain_merged, &tpchGeoJoin),
             std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
             std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)

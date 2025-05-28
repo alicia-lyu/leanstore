@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../tpch_workload.hpp"
+#include "load.hpp"
 #include "views.hpp"
 
 namespace geo_join
@@ -86,11 +87,19 @@ class GeoJoin
    // ---------------------- RANGE JOIN QUERIES ------------------------
    // Find all joined rows for the same nationkey
 
-   void range_query_by_view();
+   void range_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   void range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   void range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
-   void range_query_by_merged();
-
-   void range_query_by_base();
+   // Find all joined rows for the same nationkey, statekey
+   void ns_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0); }
+   void ns_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), 0, 0); }
+   void ns_base() { return range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0); }
+   
+   // Find all joined rows for the same nationkey, statekey, countykey
+   void nsc_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
+   void nsc_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
+   void nsc_base() { return range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
 
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------

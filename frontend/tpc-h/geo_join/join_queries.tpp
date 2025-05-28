@@ -87,6 +87,10 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::query_by_view()  // scan through the join_view
 {
+   // warm up group-by view which is later used
+   std::cout << "Warming up group-by view..." << std::endl;
+   city_count_per_county.scan(
+       city_count_per_county_t::Key{0, 0, 0}, [&](const city_count_per_county_t::Key&, const city_count_per_county_t&) { return true; }, []() {});
    logger.reset();
    std::cout << "GeoJoin::query_by_view()" << std::endl;
    auto start = std::chrono::high_resolution_clock::now();
@@ -260,26 +264,32 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::po
 
 // -------------------------------------------------------------
 // ---------------------- RANGE QUERIES ------------------------
-// Find all joined rows for the same nationkey, statekey
-
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view()
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view(Integer nationkey,
+                                                                                                  Integer statekey,
+                                                                                                  Integer countykey,
+                                                                                                  Integer citykey)
 {
-   auto nationkey = workload.getNationID();
-   auto statekey = params::get_statekey();
+   sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey};
    bool start = true;
    join_view.scan(
-       view_t::Key{nationkey, statekey, 0, 0},
-       [&](const view_t::Key& k, const view_t&) {
+       view_t::Key{sk},
+       [&](const view_t::Key& vk, const view_t&) {
           if (start) {
-             nationkey = k.jk.nationkey;
-             statekey = k.jk.statekey;
+             if (nationkey != 0)
+                nationkey = vk.jk.nationkey;
+             if (statekey != 0)
+                statekey = vk.jk.statekey;
+             if (countykey != 0)
+                countykey = vk.jk.countykey;
+             if (citykey != 0)
+                citykey = vk.jk.citykey;
              start = false;
           }
-          if (k.jk.nationkey != nationkey || k.jk.statekey != statekey) {
+          if (vk.jk.match(sk) != 0) {
              return false;
           }
           return true;
@@ -291,15 +301,20 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged()
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged(Integer nationkey,
+                                                                                                    Integer statekey,
+                                                                                                    Integer countykey,
+                                                                                                    Integer citykey)
 {
-   auto nationkey = workload.getNationID();
-   auto statekey = params::get_statekey();
-   sort_key_t seek_key{nationkey, statekey, 0, 0};
+   sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey};
 
-   MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged, seek_key);
-   while ((merged_joiner.current_jk().nationkey == nationkey && merged_joiner.current_jk().statekey == statekey) ||
-          merged_joiner.current_jk() == sort_key_t::max()) {
+   MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged, sk);
+   auto kv = merged_joiner.next();
+   if (!kv.has_value()) {
+      return;  // no record is scanned (too large a key)
+   }
+   sk = kv->first.jk;
+   while ((merged_joiner.current_jk().match(sk) == 0) || merged_joiner.current_jk() == sort_key_t::max()) {
       auto ret = merged_joiner.next();
       if (ret == std::nullopt)
          break;
@@ -310,17 +325,20 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base()
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base(Integer nationkey,
+                                                                                                  Integer statekey,
+                                                                                                  Integer countykey,
+                                                                                                  Integer citykey)
 {
-   auto nationkey = workload.getNationID();
-   auto statekey = params::get_statekey();
+   sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey};
 
-   sort_key_t seek_key{nationkey, statekey, 0, 0};
-
-   BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city, seek_key);
-
-   while ((base_joiner.current_jk().nationkey == nationkey && base_joiner.current_jk().statekey == statekey) ||
-          base_joiner.current_jk() == sort_key_t::max()) {
+   BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city, sk);
+   auto kv = base_joiner.next();
+   if (!kv.has_value()) {
+      return;  // no record is scanned (too large a key)
+   }
+   sk = kv->first.jk;
+   while ((base_joiner.current_jk().match(sk) == 0) || base_joiner.current_jk() == sort_key_t::max()) {
       auto ret = base_joiner.next();
       if (ret == std::nullopt)
          break;
