@@ -19,6 +19,18 @@ inline std::string to_string(ColumnName column)
    }
 }
 
+inline std::string to_short_string(ColumnName column)
+{
+   switch (column) {
+      case ColumnName::ELAPSED:
+         return "Elapsed";
+      case ColumnName::TPUT:
+         return "TPut";
+      default:
+         return "Unknown";
+   }
+}
+
 // virtual class for logging
 class Logger
 {

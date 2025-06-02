@@ -86,7 +86,6 @@ void LeanStoreLogger::log_template(std::string tx,
 {
    u64 config_hash = configs_table.hash();
    std::vector<std::ofstream> csvs;
-   std::filesystem::path csv_runtime(FLAGS_csv_path);
    std::filesystem::path csv_tx = csv_runtime / tx / method;
    std::filesystem::create_directories(csv_tx);
    for (u64 t_i = 0; t_i < tables.size(); t_i++) {
@@ -114,9 +113,16 @@ void LeanStoreLogger::log_template(std::string tx,
    }
 
    auto [tx_console_header, tx_console_data] = main_stats_cb();
+
+   std::filesystem::path csv_sum_path;
+   if (tx == "load") {
+      csv_sum_path = csv_runtime / "load.csv";
+   } else {
+      csv_sum_path = csv_db / (to_short_string(column_name) + ".csv");
+   }
+
+   std::cout << "Summary logging to " << csv_sum_path << std::endl;
    
-   std::filesystem::path csv_db = csv_runtime.parent_path();
-   std::filesystem::path csv_sum_path = csv_db / (tx + ".csv");
    bool csv_sum_exists = std::filesystem::exists(csv_sum_path);
    std::ofstream csv_sum;
    csv_sum.open(csv_sum_path, std::ios::app);
@@ -150,8 +156,7 @@ void LeanStoreLogger::log(long elapsed, std::string tx, std::string method, doub
 void LeanStoreLogger::log_sizes(std::map<std::string, double> sizes)
 {
    std::ofstream size_csv;
-   std::filesystem::create_directories(FLAGS_csv_path);
-   size_csv.open(FLAGS_csv_path + "/size.csv", std::ios::app);
+   size_csv.open(csv_db / "size.csv", std::ios::app);
    if (size_csv.tellp() == 0) {
       size_csv << "table,size (MiB)" << std::endl;
    }

@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <string>
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
@@ -21,11 +22,15 @@ class LeanStoreLogger : public Logger
    leanstore::profiling::CRTable cr_table;
    leanstore::profiling::ConfigsTable configs_table;
    std::vector<leanstore::profiling::ProfilingTable*> tables;
+   std::filesystem::path csv_runtime;
+   std::filesystem::path csv_db;
 
   public:
    LeanStoreLogger(leanstore::LeanStore& db)
-       : db(db), bm_table(*db.buffer_manager.get()), dt_table(*db.buffer_manager.get()), tables({&bm_table, &dt_table, &cpu_table, &cr_table})
+       : db(db), bm_table(*db.buffer_manager.get()), dt_table(*db.buffer_manager.get()), tables({&bm_table, &dt_table, &cpu_table, &cr_table}), csv_runtime(FLAGS_csv_path), csv_db(csv_runtime.parent_path())
    {
+      std::filesystem::create_directories(csv_runtime);
+
       static fLS::clstring tpch_scale_factor_str = std::to_string(FLAGS_tpch_scale_factor);
       leanstore::LeanStore::addStringFlag("TPCH_SCALE", &tpch_scale_factor_str);
       for (auto& t : tables) {

@@ -175,7 +175,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    joiner.run();
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "mixed-query", "view", get_view_size());
+   logger.log(t, "mixed", "view", get_view_size());
 }
 
 template <template <typename> class AdapterType,
@@ -203,7 +203,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    std::cout << "produced: " << joiner.produced << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "mixed-query", "merged", get_merged_size());
+   logger.log(t, "mixed", "merged", get_merged_size());
 }
 
 template <template <typename> class AdapterType,
@@ -232,7 +232,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
 
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "mixed-query", "base", get_indexes_size());
+   logger.log(t, "mixed", "base", get_indexes_size());
 }
 
 template <template <typename> class AdapterType,
