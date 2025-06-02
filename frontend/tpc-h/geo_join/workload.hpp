@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+#include <variant>
 #include "../tpch_workload.hpp"
 #include "load.hpp"
 #include "views.hpp"
@@ -15,7 +17,7 @@ class GeoJoin
 {
    using TPCH = TPCHWorkload<AdapterType>;
    TPCH& workload;
-   using MergedTree = MergedAdapterType<nation2_t, states_t, county_t, city_t>;
+   using MergedTree = MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>;
    MergedTree& merged;
    AdapterType<view_t>& join_view;
    AdapterType<city_count_per_county_t>& city_count_per_county;
@@ -24,6 +26,7 @@ class GeoJoin
    AdapterType<states_t>& states;
    AdapterType<county_t>& county;
    AdapterType<city_t>& city;
+   AdapterType<customer2_t>& customer2;
 
    Logger& logger;
 
@@ -34,7 +37,8 @@ class GeoJoin
            AdapterType<city_count_per_county_t>& g,
            AdapterType<states_t>& s,
            AdapterType<county_t>& c,
-           AdapterType<city_t>& ci)
+           AdapterType<city_t>& ci,
+           AdapterType<customer2_t>& customer2)
        : workload(workload),
          merged(m),
          join_view(v),
@@ -43,8 +47,75 @@ class GeoJoin
          states(s),
          county(c),
          city(ci),
+         customer2(customer2),
          logger(workload.logger)
    {
+   }
+
+   std::optional<sort_key_t> find_random_geo_key_in_base()
+   {
+      int n = workload.getNationID();
+      int s = params::get_statekey();
+      int c = params::get_countykey();
+      int ci = params::get_citykey();
+
+      bool found = false;
+
+      city.scan(
+          city_t::Key{n, s, c, ci},
+          [&](const city_t::Key& k, const city_t&) {
+             n = k.nationkey;
+             s = k.statekey;
+             c = k.countykey;
+             ci = k.citykey;
+             found = true;
+             return false;  // stop after the first match
+          },
+          []() {});
+      if (!found) return std::nullopt;
+
+      return std::make_optional(sort_key_t{n, s, c, ci, 0});
+   }
+
+   std::optional<sort_key_t> find_random_geo_key_in_view()
+   {
+      int n = workload.getNationID();
+      int s = params::get_statekey();
+      int c = params::get_countykey();
+      int ci = params::get_citykey();
+      bool found = false;
+      join_view.scan(
+          view_t::Key{n, s, c, ci, 0},
+          [&](const view_t::Key& k, const view_t&) {
+             n = k.jk.nationkey;
+             s = k.jk.statekey;
+             c = k.jk.countykey;
+             ci = k.jk.citykey;
+             found = true;
+             return false;  // stop after the first match
+          },
+          []() {});
+      if (!found) return std::nullopt;
+
+      return sort_key_t{n, s, c, ci, 0};
+   }
+
+   std::optional<sort_key_t> find_random_geo_key_in_merged()
+   {
+      int n = workload.getNationID();
+      int s = params::get_statekey();
+      int c = params::get_countykey();
+      int ci = params::get_citykey();
+
+      auto scanner = merged.template getScanner<sort_key_t, view_t>();
+      bool ret = scanner->template seekTyped<city_t>(city_t::Key{n, s, c, ci});
+      if (!ret) return std::nullopt;
+      
+      auto kv = scanner->next();
+      assert(kv.has_value());
+      city_t::Key* cik = std::get_if<city_t::Key>(&kv->first);
+      assert(cik != nullptr);
+      return sort_key_t{cik->nationkey, cik->statekey, cik->countykey, cik->citykey, 0};
    }
 
    // -------------------------------------------------------------
@@ -95,7 +166,7 @@ class GeoJoin
    void ns_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0); }
    void ns_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), 0, 0); }
    void ns_base() { return range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0); }
-   
+
    // Find all joined rows for the same nationkey, statekey, countykey
    void nsc_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
    void nsc_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
@@ -103,13 +174,10 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
-   // insert a new county and multiple cities // TODO: update group view
 
    auto maintain_base();
 
    void maintain_merged();
-
-   void update_state_in_view(int n, int s, std::function<void(states_t&)> update_fn);
 
    void maintain_view();
 

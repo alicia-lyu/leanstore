@@ -7,8 +7,8 @@
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
-template <typename... Records>
-struct LeanStoreMergedScanner : public MergedScanner<Records...>
+template <typename JK, typename JR, typename... Records>
+struct LeanStoreMergedScanner : public MergedScanner<JK, JR, Records...>
 {
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
@@ -121,7 +121,6 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       }
    }
 
-   template <typename JK>
    void seekJK(const JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
@@ -143,18 +142,16 @@ struct LeanStoreMergedScanner : public MergedScanner<Records...>
       return toType(key, payload);
    }
 
-   template <typename JK, typename JoinedRec>
-   void scanJoin(std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined = [](const typename JoinedRec::Key&, const JoinedRec&) {})
+   void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
    {
       reset();
-      PremergedJoin<JK, JoinedRec, Records...> joiner(*this, consume_joined);
+      PremergedJoin<JK, JR, Records...> joiner(*this, consume_joined);
       joiner.run();
    }
 
-   template <typename JK, typename JoinedRec>
-   std::tuple<JK, long> next_jk(std::function<void(const typename JoinedRec::Key&, const JoinedRec&)> consume_joined = [](const typename JoinedRec::Key&, const JoinedRec&) {})
+   std::tuple<JK, long> next_jk(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
    {
-      PremergedJoin<JK, JoinedRec, Records...> joiner(*this, consume_joined);
+      PremergedJoin<JK, JR, Records...> joiner(*this, consume_joined);
       joiner.next_jk();
       return std::make_tuple(joiner.current_jk, joiner.produced);
    }

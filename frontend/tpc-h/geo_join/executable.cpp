@@ -38,9 +38,10 @@ int main(int argc, char** argv)
    LeanStoreAdapter<states_t> states;
    LeanStoreAdapter<county_t> county;
    LeanStoreAdapter<city_t> city;
+   LeanStoreAdapter<customer2_t> customer2;
    // Views
    LeanStoreAdapter<view_t> view;
-   LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t> mergedGeoJoin;
+   LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t, customer2_t> mergedGeoJoin;
    LeanStoreAdapter<city_count_per_county_t> city_count_per_county;
 
    auto& crm = db.getCRManager();
@@ -56,7 +57,8 @@ int main(int argc, char** argv)
       states = LeanStoreAdapter<states_t>(db, "states");
       county = LeanStoreAdapter<county_t>(db, "county");
       city = LeanStoreAdapter<city_t>(db, "city");
-      mergedGeoJoin = LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t>(db, "mergedGeoJoin");
+      customer2 = LeanStoreAdapter<customer2_t>(db, "customer2");
+      mergedGeoJoin = LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t, customer2_t>(db, "mergedGeoJoin");
       view = LeanStoreAdapter<view_t>(db, "view");
       city_count_per_county = LeanStoreAdapter<city_count_per_county_t>(db, "city_count_per_county");
    });
@@ -65,7 +67,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, city_count_per_county, states, county, city);
+   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, city_count_per_county, states, county, city, customer2);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
@@ -89,16 +91,16 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with traditional indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_base = {
             std::bind(&GJ::query_by_base, &tpchGeoJoin),                              
-            std::bind(&GJ::agg_by_base, &tpchGeoJoin),
-            std::bind(&GJ::mixed_query_by_base, &tpchGeoJoin)
+            // std::bind(&GJ::agg_by_base, &tpchGeoJoin),
+            // std::bind(&GJ::mixed_query_by_base, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_base = {
             std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
             std::bind(&GJ::ns_base, &tpchGeoJoin),
             std::bind(&GJ::nsc_base, &tpchGeoJoin),
             std::bind(&GJ::maintain_base, &tpchGeoJoin),
-            std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
-            std::bind(&GJ::point_mixed_query_by_base, &tpchGeoJoin)
+            // std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
+            // std::bind(&GJ::point_mixed_query_by_base, &tpchGeoJoin)
          };
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base",
@@ -109,16 +111,16 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with materialized views" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_view = {
             std::bind(&GJ::query_by_view, &tpchGeoJoin),     
-            std::bind(&GJ::agg_in_view, &tpchGeoJoin),
-            std::bind(&GJ::mixed_query_by_view, &tpchGeoJoin)
+            // std::bind(&GJ::agg_in_view, &tpchGeoJoin),
+            // std::bind(&GJ::mixed_query_by_view, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_view = {
             [&]() { tpchGeoJoin.point_query_by_view(); },
             std::bind(&GJ::ns_view, &tpchGeoJoin),
             std::bind(&GJ::nsc_view, &tpchGeoJoin),
             std::bind(&GJ::maintain_view, &tpchGeoJoin),
-            std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
-            std::bind(&GJ::point_mixed_query_by_view, &tpchGeoJoin)
+            // std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
+            // std::bind(&GJ::point_mixed_query_by_view, &tpchGeoJoin)
          };
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view",
@@ -129,16 +131,16 @@ int main(int argc, char** argv)
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
             std::bind(&GJ::query_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
+            // std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
+            // std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_merged = {
             std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),
             std::bind(&GJ::ns_merged, &tpchGeoJoin),
             std::bind(&GJ::nsc_merged, &tpchGeoJoin),
             std::bind(&GJ::maintain_merged, &tpchGeoJoin),
-            std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)
+            // std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
+            // std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)
          };
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,

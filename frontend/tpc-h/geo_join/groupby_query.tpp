@@ -63,7 +63,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ag
    std::cout << "GeoJoin::agg_by_merged()" << std::endl;
    auto start = std::chrono::high_resolution_clock::now();
    [[maybe_unused]] long produced = 0;
-   auto scanner = merged.getScanner();
+   auto scanner = merged.template getScanner<sort_key_t, view_t>();
    [[maybe_unused]] int curr_city_cnt = 0;
    while (true) {
       auto kv = scanner->next();
@@ -90,7 +90,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_agg_by_merged()
 {
-   auto scanner = merged.getScanner();
+   auto scanner = merged.template getScanner<sort_key_t, view_t>();
    // land on the first city of a county and then scan
    scanner->template seekTyped<city_t>(city_t::Key{workload.getNationID(), params::get_statekey(), params::get_countykey(), 0});
    [[maybe_unused]] int curr_city_cnt = 0;
