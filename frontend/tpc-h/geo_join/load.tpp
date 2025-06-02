@@ -14,6 +14,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
 {
    workload.load();
+   // --------------------------------------- load geo tables ---------------------------------------
    // county id starts from 1 in each s tate
    // city id starts from 1 in each county
    for (int n = 1; n <= workload.NATION_COUNT; n++) {
@@ -50,11 +51,37 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
                auto civ = city_t::generateRandomRecord();
                city.insert(cik, civ);
                merged.insert(cik, civ);
-               join_view.insert(view_t::Key{n, s, c, ci}, view_t{nv, sv, cv, civ});
             }
          }
       }
    }
+   // --------------------------------------- load customer2 table ---------------------------------------
+   auto cust_scanner = workload.customer.getScanner();
+   while (true) {
+      auto kv = cust_scanner->next();
+      if (kv == std::nullopt)
+         break;
+      customerh_t::Key& k = kv->first;
+      customerh_t& v = kv->second;
+      customer2_t new_v{v};
+      int statekey, countykey, citykey;
+      city.scan(
+          city_t::Key{v.c_nationkey, params::get_statekey(), params::get_countykey(), params::get_citykey()},
+          [&](const city_t::Key& k, const city_t&) {
+             statekey = k.statekey;
+             countykey = k.countykey;
+             citykey = k.citykey;
+             return false;  // stop after the first match
+          },
+          []() {});
+      customer2_t::Key new_k{k, v.c_nationkey, statekey, countykey, citykey};
+      customer2.insert(new_k, new_v);
+      merged.insert(new_k, new_v);
+   }
+   // --------------------------------------- load view ---------------------------------------
+   auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
+   PremergedJoin<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
+   joiner.run();
    log_sizes();
 };
 

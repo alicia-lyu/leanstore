@@ -6,14 +6,16 @@
 #include "views.hpp"
 #include "workload.hpp"
 
-// SELECT nationkey, statekey, countykey, county_name, COUNT(citykey) AS city_count
-// FROM county, city
-// WHERE county.nationkey = city.nationkey
-// AND county.statekey = city.statekey
-// AND county.countykey = city.countykey
-// GROUP BY nationkey, statekey, countykey, county_name
+// TODO: change query definition
+// SELECT nationkey, statekey, countykey, citykey, city_name, COUNT(*) as customer_count
+// FROM city, customer
+// WHERE city.nationkey = customer.nationkey
+// AND city.statekey = customer.statekey
+// AND city.countykey = customer.countykey
+// AND city.citykey = customer.citykey
+// GROUP BY nationkey, statekey, countykey, citykey, city_name
 
-// county name + city count per county, include empty counties TODO outer join
+// include empty cities TODO outer join
 
 namespace geo_join
 {
@@ -97,7 +99,7 @@ struct MergedMixedJoiner {
    long long produced = 0;
 
    MergedMixedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t>& merged, const mixed_view_t::Key& seek_key = mixed_view_t::Key::max())
-       : scanner(merged.getScanner())
+       : scanner(merged.template getScanner<sort_key_t, view_t>())
    {
       if (seek_key != mixed_view_t::Key::max()) {
          seek(seek_key);

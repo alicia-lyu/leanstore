@@ -240,11 +240,12 @@ struct LeanStoreMergedAdapter {
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
 
-   std::unique_ptr<LeanStoreMergedScanner<Records...>> getScanner() {
+   template <typename JK, typename JR>
+   std::unique_ptr<LeanStoreMergedScanner<JK, JR, Records...>> getScanner() {
       if (FLAGS_vi) {
-         return std::make_unique<LeanStoreMergedScanner<Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+         return std::make_unique<LeanStoreMergedScanner<JK, JR, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
       } else {
-         return std::make_unique<LeanStoreMergedScanner<Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+         return std::make_unique<LeanStoreMergedScanner<JK, JR, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
    }
 };

@@ -84,25 +84,31 @@ struct MergeJoin {
 // merged_scanner -> join_state -> yield joined records
 template <typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
-   MergedScanner<Rs...>& merged_scanner;
+   MergedScanner<JK, JR, Rs...>& merged_scanner;
    JoinState<JK, JR, Rs...> join_state;
 
    using K = std::variant<typename Rs::Key...>;
    using V = std::variant<Rs...>;
 
    PremergedJoin(
-       MergedScanner<Rs...>& merged_scanner,
-       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
+       MergedScanner<JK, JR, Rs...>& merged_scanner,
+       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {}
+      )
        : merged_scanner(merged_scanner), join_state("PremergedJoin", consume_joined)
    {
    }
 
-   std::optional<std::pair<typename JR::Key, JR>> next()
+   template <template <typename> class AdapterType>
+   PremergedJoin(MergedScanner<JK, JR, Rs...>& merged_scanner, AdapterType<JR>& joinedAdapter)
+       : merged_scanner(merged_scanner), join_state("PremergedJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
-      while (!join_state.has_next()) {
-         std::optional<std::pair<K, V>> kv = merged_scanner.next();
+   }
+
+   bool scan_next()
+   {
+      std::optional<std::pair<K, V>> kv = merged_scanner.next();
          if (!kv) {
-            return std::nullopt;
+            return false;
          }
          auto& k = kv->first;
          auto& v = kv->second;
@@ -113,6 +119,30 @@ struct PremergedJoin {
             join_state.refresh(jk);
          // add the new record to the fcache
          join_state.emplace(k, v);
+         return true;
+   }
+
+   template <typename R>
+   bool lookup_next(const JK& lookup_jk)
+   {
+      JK jk = SKBuilder<JK>::template get<R>(lookup_jk);
+      merged_scanner.seekJK(jk);
+      return scan_next();
+   }
+
+   std::optional<std::pair<typename JR::Key, JR>> next(const JK& lookup_jk = JK::max())
+   {
+      while (!join_state.has_next()) {
+         bool ret = true;
+         if (lookup_jk != JK::max() && (join_state.cached_jk == JK::max() || join_state.cached_jk < lookup_jk) ) {
+            (( (join_state.cached_jk == JK::max() || join_state.cached_jk < lookup_jk) // lookup until the first 0 of lookup_jk
+               ? (ret = ret && lookup_next<Rs>(lookup_jk)) : true), ...);  
+         } else {
+            ret = scan_next();
+         }
+         if (!ret) {
+            return std::nullopt;  // no more records to scan
+         }
       }
       return join_state.next();
    }
