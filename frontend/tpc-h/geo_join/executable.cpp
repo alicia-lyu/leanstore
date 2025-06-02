@@ -81,8 +81,8 @@ int main(int argc, char** argv)
       tpch.recover_last_ids();
       tpchGeoJoin.log_sizes_other();
    }
-   std::vector<std::string> tput_prefixes = {"point-query",  "ns", "nsc",
-      "maintain", "point-agg", "point-mixed-query"};
+   std::vector<std::string> tput_prefixes = {"join-nscci",  "join-ns", "join-nsc",
+      "maintain", "group-point", "mixed-point"};
    
    switch (FLAGS_storage_structure) {
       case 0: {
