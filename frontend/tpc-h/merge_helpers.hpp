@@ -37,7 +37,7 @@ struct JoinState {
    ~JoinState()
    {
       if (joined > 1000)
-         std::cout << "\r~JoinState: joined " << (double)joined / 1000 << "k records." << std::endl;
+         std::cout << "~JoinState: joined " << (double)joined / 2000 << "k records." << std::endl;
    }
 
    void refresh(const JK& next_jk)
@@ -129,7 +129,7 @@ struct JoinState {
          double progress = (double)joined / 1000;
          std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
       }
-      if (cached_joined_records.size() > 1000) {
+      if (cached_joined_records.size() > 1000 && cached_joined_records.size() > static_cast<size_t>(curr_joined)) {
          throw std::runtime_error(
              "JoinState: too many joined records in the queue. Are you calling JoinState::next()? JoinState is only supposed to be a pipeline "
              "instead of a storage!");

@@ -271,6 +271,7 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
          return OP_RESULT::OK;
       }
    }
+   // TODO: seek_random
    // -------------------------------------------------------------------------------------
 
    void gotoMinPage()

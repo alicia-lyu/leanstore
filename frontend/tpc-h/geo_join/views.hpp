@@ -74,7 +74,7 @@ struct customer2_t {
       Integer countykey;
       Integer citykey;
       Integer custkey;
-      ADD_KEY_TRAITS(&Key::custkey)
+      ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey, &Key::countykey, &Key::citykey, &Key::custkey)
 
       Key() = default;
       Key(Integer nationkey, Integer statekey, Integer countykey, Integer citykey, Integer custkey)
@@ -104,7 +104,7 @@ struct customer2_t {
    Varchar<10> c_mktsegment;
    Varchar<117> c_comment;
 
-   ADD_RECORD_TRAITS(customerh_t)
+   ADD_RECORD_TRAITS(customer2_t)
 
    static customer2_t generateRandomRecord()
    {
@@ -126,6 +126,10 @@ struct nation2_t {
       Integer nationkey;
       ADD_KEY_TRAITS(&Key::nationkey)
 
+      Key() = default;
+      Key(Integer nationkey) : nationkey(nationkey) {}
+      Key(const sort_key_t& sk) : nationkey(sk.nationkey) {}
+
       sort_key_t get_jk() const { return sort_key_t{nationkey, 0, 0, 0, 0}; }
       Key get_pk() const { return *this; }
    };
@@ -146,6 +150,10 @@ struct states_t {
       Integer nationkey;
       Integer statekey;
       ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey)
+
+      Key() = default;
+      Key(Integer nationkey, Integer statekey) : nationkey(nationkey), statekey(statekey) {}
+      Key(const sort_key_t& sk) : nationkey(sk.nationkey), statekey(sk.statekey) {}
 
       sort_key_t get_jk() const { return sort_key_t{nationkey, statekey, 0, 0, 0}; }
       Key get_pk() const { return *this; }
@@ -181,6 +189,10 @@ struct county_t {
       Integer statekey;
       Integer countykey;
       ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey, &Key::countykey)
+
+      Key() = default;
+      Key(Integer nationkey, Integer statekey, Integer countykey) : nationkey(nationkey), statekey(statekey), countykey(countykey) {}
+      Key(const sort_key_t& sk) : nationkey(sk.nationkey), statekey(sk.statekey), countykey(sk.countykey) {}
 
       sort_key_t get_jk() const { return sort_key_t{nationkey, statekey, countykey, 0, 0}; }
       Key get_pk() const { return *this; }
@@ -228,6 +240,14 @@ struct city_t {
       Integer countykey;
       Integer citykey;
       ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey, &Key::countykey, &Key::citykey)
+
+      Key() = default;
+      Key(Integer nationkey, Integer statekey, Integer countykey, Integer citykey)
+          : nationkey(nationkey), statekey(statekey), countykey(countykey), citykey(citykey)
+      {
+      }
+
+      Key(const sort_key_t& sk) : nationkey(sk.nationkey), statekey(sk.statekey), countykey(sk.countykey), citykey(sk.citykey) {}
 
       sort_key_t get_jk() const { return sort_key_t{nationkey, statekey, countykey, citykey, 0}; }
       Key get_pk() const { return *this; }

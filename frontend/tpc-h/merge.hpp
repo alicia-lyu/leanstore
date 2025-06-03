@@ -1,6 +1,5 @@
 #pragma once
 #include <variant>
-#include "../shared/MergedScanner.hpp"
 #include "merge_helpers.hpp"
 #include "view_templates.hpp"
 
@@ -82,16 +81,16 @@ struct MergeJoin {
 };
 
 // merged_scanner -> join_state -> yield joined records
-template <typename JK, typename JR, typename... Rs>
+template <template <typename...> class MergedScannerType, typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
-   MergedScanner<JK, JR, Rs...>& merged_scanner;
+   MergedScannerType<JK, JR, Rs...>& merged_scanner;
    JoinState<JK, JR, Rs...> join_state;
 
    using K = std::variant<typename Rs::Key...>;
    using V = std::variant<Rs...>;
 
    PremergedJoin(
-       MergedScanner<JK, JR, Rs...>& merged_scanner,
+       MergedScannerType<JK, JR, Rs...>& merged_scanner,
        std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {}
       )
        : merged_scanner(merged_scanner), join_state("PremergedJoin", consume_joined)
@@ -99,7 +98,7 @@ struct PremergedJoin {
    }
 
    template <template <typename> class AdapterType>
-   PremergedJoin(MergedScanner<JK, JR, Rs...>& merged_scanner, AdapterType<JR>& joinedAdapter)
+   PremergedJoin(MergedScannerType<JK, JR, Rs...>& merged_scanner, AdapterType<JR>& joinedAdapter)
        : merged_scanner(merged_scanner), join_state("PremergedJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
    }
@@ -122,11 +121,24 @@ struct PremergedJoin {
          return true;
    }
 
+   template <auto JK::*... Members>
+   bool jump(const JK& to_jk)
+   {
+      JK current_jk = join_state.cached_jk;
+      if (join_state.cached_jk == JK::max()) {
+         current_jk = JK(); // all 0
+      }
+      int diff = 0;
+      ((diff == 0 ? (diff = to_jk.*Members - join_state.cached_jk.*Members) : true), ...);
+      if (diff <= 1) return false; // to the very next key, no jump
+      else return true; // jump
+   }
+
    template <typename R>
    bool lookup_next(const JK& lookup_jk)
    {
       JK jk = SKBuilder<JK>::template get<R>(lookup_jk);
-      merged_scanner.seekJK(jk);
+      merged_scanner.template seek<R>(typename R::Key(jk));
       return scan_next();
    }
 
@@ -134,8 +146,8 @@ struct PremergedJoin {
    {
       while (!join_state.has_next()) {
          bool ret = true;
-         if (lookup_jk != JK::max() && (join_state.cached_jk == JK::max() || join_state.cached_jk < lookup_jk) ) {
-            (( (join_state.cached_jk == JK::max() || join_state.cached_jk < lookup_jk) // lookup until the first 0 of lookup_jk
+         if (lookup_jk != JK::max() && jump(lookup_jk) ) {
+            (( (jump(lookup_jk)) // lookup until the first 0 of lookup_jk
                ? (ret = ret && lookup_next<Rs>(lookup_jk)) : true), ...);  
          } else {
             ret = scan_next();
