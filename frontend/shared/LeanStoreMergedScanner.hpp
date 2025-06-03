@@ -145,13 +145,13 @@ struct LeanStoreMergedScanner : public MergedScanner<JK, JR, Records...>
    void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
    {
       reset();
-      PremergedJoin<JK, JR, Records...> joiner(*this, consume_joined);
+      PremergedJoin<LeanStoreMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
       joiner.run();
    }
 
    std::tuple<JK, long> next_jk(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
    {
-      PremergedJoin<JK, JR, Records...> joiner(*this, consume_joined);
+      PremergedJoin<LeanStoreMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
       joiner.next_jk();
       return std::make_tuple(joiner.current_jk, joiner.produced);
    }

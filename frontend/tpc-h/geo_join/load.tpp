@@ -17,6 +17,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    // --------------------------------------- load geo tables ---------------------------------------
    // county id starts from 1 in each s tate
    // city id starts from 1 in each county
+   long county_sum = 0;
+   long city_sum = 0; 
    for (int n = 1; n <= workload.NATION_COUNT; n++) {
       // state id starts from 1 in each nation
       int state_cnt = params::get_state_cnt();
@@ -32,12 +34,14 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       for (int s = 1; s <= state_cnt; s++) {
          std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
          int county_cnt = params::get_county_cnt();
+         county_sum += county_cnt;
          auto sk = states_t::Key{n, s};
          auto sv = states_t::generateRandomRecord(county_cnt);
          states.insert(sk, sv);
          merged.insert(sk, sv);
          for (int c = 1; c <= county_cnt; c++) {
             int city_cnt = params::get_city_cnt();
+            city_sum += city_cnt;
             auto ck = county_t::Key{n, s, c};
             auto cv = county_t::generateRandomRecord(city_cnt);
             county.insert(ck, cv);
@@ -55,6 +59,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
          }
       }
    }
+   std::cout << std::endl << "Loaded " << county_sum << " counties and " << city_sum << " cities." << std::endl;
    // --------------------------------------- load customer2 table ---------------------------------------
    auto cust_scanner = workload.customer.getScanner();
    while (true) {
@@ -64,8 +69,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       customerh_t::Key& k = kv->first;
       customerh_t& v = kv->second;
       customer2_t new_v{v};
-      int statekey, countykey, citykey;
-      city.scan(
+      int statekey = 0, countykey = 0, citykey = 0;
+      while (statekey == 0 || countykey == 0 || citykey == 0) {
+         city.scan(
           city_t::Key{v.c_nationkey, params::get_statekey(), params::get_countykey(), params::get_citykey()},
           [&](const city_t::Key& k, const city_t&) {
              statekey = k.statekey;
@@ -74,13 +80,15 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
              return false;  // stop after the first match
           },
           []() {});
+      }
+      TPCH::printProgress("customer2", k.c_custkey, 1, workload.last_customer_id);
       customer2_t::Key new_k{k, v.c_nationkey, statekey, countykey, citykey};
       customer2.insert(new_k, new_v);
       merged.insert(new_k, new_v);
    }
    // --------------------------------------- load view ---------------------------------------
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
-   PremergedJoin<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
+   PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
    joiner.run();
    log_sizes();
 };
@@ -101,7 +109,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_indexes_size()
 {
-   return nation.size() + states.size() + county.size() + city.size();
+   return nation.size() + states.size() + county.size() + city.size() + customer2.size();
 };
 
 template <template <typename> class AdapterType,
@@ -119,8 +127,6 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes()
 {
-   workload.log_sizes();
-   log_sizes_other();
    std::map<std::string, double> sizes = {{"view", get_view_size()},    {"base", get_indexes_size()},
                                           {"merged", get_merged_size()}};
    logger.log_sizes(sizes);
@@ -130,11 +136,12 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes_other()
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes_sep()
 {
    workload.log_sizes();
    std::map<std::string, double> sizes = {{"nation", nation.size()}, {"states", states.size()}, {"county", county.size()}, {"city", city.size()},
-                                          {"city_count_per_county", city_count_per_county.size()}, {"join_view", join_view.size()}};
+                                          {"city_count_per_county", city_count_per_county.size()}, {"join_view", join_view.size()},
+                                          {"customer2", customer2.size()}};
    logger.log_sizes(sizes);
 };
 }  // namespace geo_join

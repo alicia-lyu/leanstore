@@ -81,10 +81,16 @@ int main(int argc, char** argv)
       return 0;
    } else {
       tpch.recover_last_ids();
-      tpchGeoJoin.log_sizes_other();
+      tpchGeoJoin.log_sizes_sep();
    }
-   std::vector<std::string> tput_prefixes = {"join-nscci",  "join-ns", "join-nsc",
-      "maintain", "group-point", "mixed-point"};
+   std::vector<std::string> tput_prefixes = {
+      "join-nscci",  
+      "join-ns", 
+      "join-nsc",
+      "maintain", 
+      // "group-point", 
+      // "mixed-point"
+   };
    
    switch (FLAGS_storage_structure) {
       case 0: {
@@ -130,7 +136,7 @@ int main(int argc, char** argv)
       case 2: {
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
-            std::bind(&GJ::query_by_merged, &tpchGeoJoin),
+            // std::bind(&GJ::query_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
          };

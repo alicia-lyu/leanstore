@@ -50,6 +50,7 @@ class GeoJoin
          customer2(customer2),
          logger(workload.logger)
    {
+      TPCH::CUSTOMER_SCALE *= 200;
    }
 
    std::optional<sort_key_t> find_random_geo_key_in_base()
@@ -72,7 +73,8 @@ class GeoJoin
              return false;  // stop after the first match
           },
           []() {});
-      if (!found) return std::nullopt;
+      if (!found)
+         return std::nullopt;
 
       return std::make_optional(sort_key_t{n, s, c, ci, 0});
    }
@@ -95,7 +97,8 @@ class GeoJoin
              return false;  // stop after the first match
           },
           []() {});
-      if (!found) return std::nullopt;
+      if (!found)
+         return std::nullopt;
 
       return sort_key_t{n, s, c, ci, 0};
    }
@@ -109,8 +112,9 @@ class GeoJoin
 
       auto scanner = merged.template getScanner<sort_key_t, view_t>();
       bool ret = scanner->template seekTyped<city_t>(city_t::Key{n, s, c, ci});
-      if (!ret) return std::nullopt;
-      
+      if (!ret)
+         return std::nullopt;
+
       auto kv = scanner->next();
       assert(kv.has_value());
       city_t::Key* cik = std::get_if<city_t::Key>(&kv->first);
@@ -146,13 +150,11 @@ class GeoJoin
    // ---------------------- POINT JOIN QUERIES --------------------------
    // Find all joined rows for the same join key
 
-   void point_query_by_view();
+   void point_query_by_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
 
-   void point_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   void point_query_by_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
 
-   void point_query_by_merged();
-
-   void point_query_by_base();
+   void point_query_by_base() { return range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
 
    // -------------------------------------------------------------------
    // ---------------------- RANGE JOIN QUERIES ------------------------
@@ -195,7 +197,7 @@ class GeoJoin
 
    void log_sizes();
 
-   void log_sizes_other();
+   void log_sizes_sep();
 
    // -------------------------------------------------------------
    // ---------------------- JOIN + GROUP-BY ----------------------
