@@ -59,9 +59,9 @@ def runtime_dir(build_dir: str, exe: str) -> Path:
     return Path(build_dir) / exe / f"{cfg.scale}-in-{cfg.dram}"
 
 
-def image_file(exe: str) -> Path:
+def image_file(build_dir:str, exe: str) -> Path:
     """Returns the path to the SSD image file for a given executable."""
-    return cfg.image_dir / exe / f"{cfg.scale}.image"
+    return cfg.image_dir / build_dir / exe / f"{cfg.scale}.image"
 
 #### ================== makefile generation functions ================== ####
 
@@ -105,15 +105,16 @@ def generate_image_files() -> None:
     """Generates the image files for database recovery."""
     print_section("image files")
     print(f"FORCE:;")
-    for exe in cfg.exec_names:
-        img = image_file(exe)
-        print(f"{img}:")
-        print(f'\t@echo "{sep} Touching a new image file {img} {sep}"')
-        print(f"\tmkdir -p {img.parent} && touch {img}")
-        print(f"{img}_temp: {img} FORCE") # force duplicate
-        print(f'\t@echo "{sep} Duplicating temporary image file {img} for transactions {sep}"')
-        print(f"\tmkdir -p {img.parent} && cp -f {img} {img}_temp")
-        print()
+    for dir in cfg.build_dirs:
+        for exe in cfg.exec_names:
+            img = image_file(dir, exe)
+            print(f"{img}:")
+            print(f'\t@echo "{sep} Touching a new image file {img} {sep}"')
+            print(f"\tmkdir -p {img.parent} && touch {img}")
+            print(f"{img}_temp: {img} FORCE") # force duplicate
+            print(f'\t@echo "{sep} Duplicating temporary image file {img} for transactions {sep}"')
+            print(f"\tmkdir -p {img.parent} && cp -f {img} {img}_temp")
+            print()
 
 LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
 
@@ -141,7 +142,7 @@ def generate_recover_rules() -> None:
             exe_path = executable_path(bd, exe)
             rd = runtime_dir(bd, exe)
             recover = Path(bd) / exe / f"{cfg.scale}.json"
-            img = image_file(exe)
+            img = image_file(bd, exe)
 
             print(f"{recover}: {LOADING_META_FILE} {loading_files(exe)} {img}")
             # for f in [recover, LOADING_META_FILE, loading_file(exe), img]:
@@ -170,7 +171,7 @@ def generate_run_rules() -> None:
         exe_path = executable_path(bd, exe)
         rd = runtime_dir(bd, exe)
         recover = Path(bd) / exe / f"{cfg.scale}.json"
-        img = f"{image_file(exe)}"
+        img = f"{image_file(bd, exe)}"
         separate_runs = " ".join([f"{exe}_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
         print(f"{exe}: check_perf_event_paranoid {separate_runs}")
         
@@ -196,7 +197,7 @@ def generate_lldb_rules() -> None:
         exe_path = executable_path(bd, exe)
         rd = runtime_dir(bd, exe)
         recover = Path(bd) / exe / f"{cfg.scale}.json"
-        img = image_file(exe)
+        img = image_file(bd, exe)
         separate_runs = " ".join([f"{exe}_lldb_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
         
         print(f"{exe}_lldb: {separate_runs}")

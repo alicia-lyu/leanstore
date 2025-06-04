@@ -91,8 +91,7 @@ struct PremergedJoin {
 
    PremergedJoin(
        MergedScannerType<JK, JR, Rs...>& merged_scanner,
-       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {}
-      )
+       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
        : merged_scanner(merged_scanner), join_state("PremergedJoin", consume_joined)
    {
    }
@@ -106,39 +105,42 @@ struct PremergedJoin {
    bool scan_next()
    {
       std::optional<std::pair<K, V>> kv = merged_scanner.next();
-         if (!kv) {
-            return false;
-         }
-         auto& k = kv->first;
-         auto& v = kv->second;
-         JK jk;
-         std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
-         // if (current_jk != jk) join the cached records
-         if (join_state.cached_jk != jk)
-            join_state.refresh(jk);
-         // add the new record to the fcache
-         join_state.emplace(k, v);
-         return true;
+      if (!kv) {
+         return false;
+      }
+      auto& k = kv->first;
+      auto& v = kv->second;
+      JK jk;
+      std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
+      // if (current_jk != jk) join the cached records
+      if (join_state.cached_jk != jk)
+         join_state.refresh(jk);
+      // add the new record to the fcache
+      join_state.emplace(k, v);
+      return true;
    }
 
-   template <auto JK::*... Members>
    bool jump(const JK& to_jk)
    {
-      JK current_jk = join_state.cached_jk;
-      if (join_state.cached_jk == JK::max()) {
-         current_jk = JK(); // all 0
-      }
       int diff = 0;
-      ((diff == 0 ? (diff = to_jk.*Members - join_state.cached_jk.*Members) : true), ...);
-      if (diff <= 1) return false; // to the very next key, no jump
-      else return true; // jump
+      if (join_state.cached_jk == JK::max()) {
+         assert(join_state.joined == 0);
+         diff = to_jk.first_diff(JK());
+      } else {
+         diff = to_jk.first_diff(join_state.cached_jk);
+      }
+      return diff > 1;
    }
 
    template <typename R>
    bool lookup_next(const JK& lookup_jk)
    {
       JK jk = SKBuilder<JK>::template get<R>(lookup_jk);
-      merged_scanner.template seek<R>(typename R::Key(jk));
+      if (!jump(jk)) {
+         return true;  // skip this R
+      }
+      typename R::Key k{lookup_jk};
+      merged_scanner.template seek<R>(k);
       return scan_next();
    }
 
@@ -146,9 +148,8 @@ struct PremergedJoin {
    {
       while (!join_state.has_next()) {
          bool ret = true;
-         if (lookup_jk != JK::max() && jump(lookup_jk) ) {
-            (( (jump(lookup_jk)) // lookup until the first 0 of lookup_jk
-               ? (ret = ret && lookup_next<Rs>(lookup_jk)) : true), ...);  
+         if (lookup_jk != JK::max() && jump(lookup_jk)) {
+            ((ret = ret && lookup_next<Rs>(lookup_jk)), ...);
          } else {
             ret = scan_next();
          }
