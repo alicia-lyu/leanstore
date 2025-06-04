@@ -49,19 +49,19 @@ struct sort_key_t {
       return 0;
    }
 
-   int first_diff(const sort_key_t& other) const
+   std::pair<int, int> first_diff(const sort_key_t& base) const
    {
-      if (nationkey != other.nationkey)
-         return nationkey - other.nationkey;
-      if (statekey != other.statekey)
-         return statekey - other.statekey;
-      if (countykey != other.countykey)
-         return countykey - other.countykey;
-      if (citykey != other.citykey)
-         return citykey - other.citykey;
-      if (custkey != other.custkey)
-         return custkey - other.custkey;
-      return 0;
+      if (nationkey != base.nationkey)
+         return std::make_pair(base.nationkey, nationkey - base.nationkey);
+      if (statekey != base.statekey)
+         return std::make_pair(base.statekey, statekey - base.statekey);
+      if (countykey != base.countykey)
+         return std::make_pair(base.countykey, countykey - base.countykey);
+      if (citykey != base.citykey)
+         return std::make_pair(base.citykey, citykey - base.citykey);
+      if (custkey != base.custkey)
+         return std::make_pair(base.custkey, custkey - base.custkey);
+      return std::make_pair(0, 0);  // no difference
    }
 };
 

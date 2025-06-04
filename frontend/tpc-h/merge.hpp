@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 #include <variant>
 #include "merge_helpers.hpp"
 #include "view_templates.hpp"
@@ -85,6 +86,9 @@ template <template <typename...> class MergedScannerType, typename JK, typename 
 struct PremergedJoin {
    MergedScannerType<JK, JR, Rs...>& merged_scanner;
    JoinState<JK, JR, Rs...> join_state;
+   size_t seek_cnt = 0;
+   size_t scan_filter_cnt = 0;
+   size_t emplace_cnt = 0;  // not necessarily equal to merged_scanner.produced
 
    using K = std::variant<typename Rs::Key...>;
    using V = std::variant<Rs...>;
@@ -102,6 +106,13 @@ struct PremergedJoin {
    {
    }
 
+   ~PremergedJoin()
+   {
+      if (seek_cnt > 0)
+         std::cout << "\r~PremergedJoin: seek count = " << seek_cnt << ", scan filter count = " << scan_filter_cnt
+                   << ", emplace count = " << emplace_cnt << ", joined = " << join_state.joined << ".";
+   }
+
    bool scan_next()
    {
       std::optional<std::pair<K, V>> kv = merged_scanner.next();
@@ -117,39 +128,95 @@ struct PremergedJoin {
          join_state.refresh(jk);
       // add the new record to the fcache
       join_state.emplace(k, v);
+      emplace_cnt++;
       return true;
    }
 
-   bool jump(const JK& to_jk)
+   std::pair<int, int> distance(const JK& to_jk)
    {
-      int diff = 0;
       if (join_state.cached_jk == JK::max()) {
          assert(join_state.joined == 0);
-         diff = to_jk.first_diff(JK());
+         return to_jk.first_diff(JK());
       } else {
-         diff = to_jk.first_diff(join_state.cached_jk);
+         return to_jk.first_diff(join_state.cached_jk);
       }
-      return diff > 1;
    }
 
-   template <typename R>
-   bool lookup_next(const JK& lookup_jk)
+   template <typename R, size_t I>
+   bool get_next(const JK& seek_jk)
    {
-      JK jk = SKBuilder<JK>::template get<R>(lookup_jk);
-      if (!jump(jk)) {
-         return true;  // skip this R
+      JK jk = SKBuilder<JK>::template get<R>(seek_jk);
+      auto [base, dist] = distance(jk);
+      if (dist < 0) {          // scanned and passed
+         return false;         // no required record (type R)
+      } else if (dist == 0) {  // scanned and cached
+      // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
+         return true;          // skip this R
+      } else if (dist <= 1) {  // right next record
+         assert(base == 0);
+         // go to the end
+      } else if (dist <= 15 &&              // HARDCODED, at most acorss 1 page
+                 I == sizeof...(Rs) - 1) {  // last R
+         return scan_filter_next(seek_jk);
+      } else {  // across multiple pages
+         typename R::Key k{seek_jk};
+         merged_scanner.template seek<R>(k);
+         seek_cnt++;
+         // go to the end
       }
-      typename R::Key k{lookup_jk};
-      merged_scanner.template seek<R>(k);
-      return scan_next();
+      scan_next();
+      auto cmp = join_state.cached_jk.match(jk); // cached_jk is just cached in scan_next()
+      assert(cmp >= 0);
+      if (cmp > 0) {
+         return false;  // no more records to scan, all records are after the seek_jk
+      } else {
+         return true;  // found the right record, but not yet added to the fcache
+      }
    }
 
-   std::optional<std::pair<typename JR::Key, JR>> next(const JK& lookup_jk = JK::max())
+   bool scan_filter_next(const JK& seek_jk)
    {
+      // scan until we find the first record with the right jk
+      scan_filter_cnt++;
+      while (true) {
+         std::optional<std::pair<K, V>> kv = merged_scanner.next();
+         if (!kv) {
+            return false;  // no more records to scan
+         }
+         auto& k = kv->first;
+         auto& v = kv->second;
+         JK jk;
+         std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
+         int cmp = jk.match(seek_jk);
+         if (cmp < 0) {
+            continue;  // skip this record, it is before the seek_jk
+         } else if (cmp > 0) {
+            return false;  // no more records to scan, all records are after the seek_jk
+         } else {  // cmp == 0, found the right record
+            if (join_state.cached_jk != jk)
+               join_state.refresh(jk);
+            // add the new record to the fcache
+            join_state.emplace(k, v);
+            emplace_cnt++;
+            return true;
+         }  // else continue scanning
+      }
+   }
+
+   template <size_t... Is>
+   bool get_next_all(const JK& seek_jk, std::index_sequence<Is...>)
+   {
+      return ((get_next<Rs, Is>(seek_jk) && ...));
+   }
+
+   std::optional<std::pair<typename JR::Key, JR>> next(const JK& seek_jk = JK::max())
+   {
+      bool start = true;
       while (!join_state.has_next()) {
-         bool ret = true;
-         if (lookup_jk != JK::max() && jump(lookup_jk)) {
-            ((ret = ret && lookup_next<Rs>(lookup_jk)), ...);
+         bool ret;
+         if (seek_jk != JK::max() && start) {
+            ret = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
+            start = false; // if still no next, scan
          } else {
             ret = scan_next();
          }
