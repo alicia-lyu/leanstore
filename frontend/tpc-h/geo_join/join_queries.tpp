@@ -1,6 +1,7 @@
 #pragma once
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 
 #include "../merge.hpp"
 #include "views.hpp"
@@ -177,13 +178,14 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view(Integer nationkey,
+size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view(Integer nationkey,
                                                                                                   Integer statekey,
                                                                                                   Integer countykey,
                                                                                                   Integer citykey)
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
    bool start = true;
+   size_t produced = 0;
    join_view.scan(
        view_t::Key{sk},
        [&](const view_t::Key& vk, const view_t&) {
@@ -194,16 +196,19 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
           if (vk.jk.match(sk) != 0) {
              return false;
           }
+          produced++;
           return true;
        },
        []() {});
+   std::cout << "range_query_by_view produced " << produced << " records for sk: " << sk << std::endl;
+   return produced;
 }
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged(Integer nationkey,
+size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged(Integer nationkey,
                                                                                                     Integer statekey,
                                                                                                     Integer countykey,
                                                                                                     Integer citykey)
@@ -213,7 +218,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged, sk);
    auto kv = merged_joiner.next();
    if (!kv.has_value()) {
-      return;  // no record is scanned (too large a key)
+      return 0;  // no record is scanned (too large a key)
    }
    update_sk(sk, kv->first.jk);
 
@@ -222,13 +227,16 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
       if (ret == std::nullopt)
          break;
    }
+   size_t produced = merged_joiner.produced();
+   std::cout << "range_query_by_merged produced " << produced << " records for sk: " << sk << std::endl;
+   return produced;
 }
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base(Integer nationkey,
+size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base(Integer nationkey,
                                                                                                   Integer statekey,
                                                                                                   Integer countykey,
                                                                                                   Integer citykey)
@@ -238,7 +246,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city, customer2, sk);
    auto kv = base_joiner.next();
    if (!kv.has_value()) {
-      return;  // no record is scanned (too large a key)
+      return 0;  // no record is scanned (too large a key)
    }
    update_sk(sk, kv->first.jk);
 
@@ -247,5 +255,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
       if (ret == std::nullopt)
          break;
    }
+   size_t produced = base_joiner.produced();
+   std::cout << "range_query_by_base produced " << produced << " records for sk: " << sk << std::endl;
+   return produced;
 }
 }  // namespace geo_join

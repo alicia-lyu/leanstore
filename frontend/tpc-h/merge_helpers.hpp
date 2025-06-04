@@ -37,7 +37,7 @@ struct JoinState {
    ~JoinState()
    {
       if (joined > 1000)
-         std::cout << "~JoinState: joined " << (double)joined / 2000 << "k records." << std::endl;
+         std::cout << "\r~JoinState: joined " << (double)joined / 2000 << "k records.";
    }
 
    void refresh(const JK& next_jk)

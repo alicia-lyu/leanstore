@@ -89,7 +89,7 @@ inline void run_tput(std::function<void()> cb,
       if (count.load() % 100 == 1)
          std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
    }
-   std::cout << std::endl;
+   std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
    double tput = (double)count.load() / duration * 1e6;
