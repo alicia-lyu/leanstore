@@ -150,29 +150,29 @@ class GeoJoin
    // ---------------------- POINT JOIN QUERIES --------------------------
    // Find all joined rows for the same join key
 
-   void point_query_by_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
+   void point_query_by_view() { range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
 
-   void point_query_by_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
+   void point_query_by_merged() { range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
 
-   void point_query_by_base() { return range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
+   void point_query_by_base() { range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
 
    // -------------------------------------------------------------------
    // ---------------------- RANGE JOIN QUERIES ------------------------
    // Find all joined rows for the same nationkey
 
-   void range_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
-   void range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
-   void range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   size_t range_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   size_t range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   size_t range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
    // Find all joined rows for the same nationkey, statekey
-   void ns_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0); }
-   void ns_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), 0, 0); }
-   void ns_base() { return range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0); }
+   void ns_view() { range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0); }
+   void ns_merged() { range_query_by_merged(workload.getNationID(), params::get_statekey(), 0, 0); }
+   void ns_base() { range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0); }
 
    // Find all joined rows for the same nationkey, statekey, countykey
-   void nsc_view() { return range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
-   void nsc_merged() { return range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
-   void nsc_base() { return range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
+   void nsc_view() { range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
+   void nsc_merged() { range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
+   void nsc_base() { range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
 
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
