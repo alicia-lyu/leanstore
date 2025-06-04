@@ -73,11 +73,14 @@ struct MergedJoiner {
 
    void run() { joiner->run(); }
 
-   std::optional<std::pair<view_t::Key, view_t>> next() { 
-      if (produced() == 0)
-         return joiner->next(seek_key); // seek before the first result
-      else
-         return joiner->next();
+   std::optional<std::pair<view_t::Key, view_t>> next()
+   {
+      if (produced() == 0) {
+         auto ret = joiner->next(seek_key);  // seek before the first result
+         if (ret != std::nullopt)
+            return ret;
+      }
+      return joiner->next();
    }
 
    sort_key_t current_jk() const { return joiner->current_jk(); }
