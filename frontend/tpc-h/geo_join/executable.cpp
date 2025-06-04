@@ -136,7 +136,7 @@ int main(int argc, char** argv)
       case 2: {
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
-            // std::bind(&GJ::query_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::query_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
          };

@@ -48,6 +48,21 @@ struct sort_key_t {
          return custkey - other.custkey;
       return 0;
    }
+
+   int first_diff(const sort_key_t& other) const
+   {
+      if (nationkey != other.nationkey)
+         return nationkey - other.nationkey;
+      if (statekey != other.statekey)
+         return statekey - other.statekey;
+      if (countykey != other.countykey)
+         return countykey - other.countykey;
+      if (citykey != other.citykey)
+         return citykey - other.citykey;
+      if (custkey != other.custkey)
+         return custkey - other.custkey;
+      return 0;
+   }
 };
 
 struct customer2_t {

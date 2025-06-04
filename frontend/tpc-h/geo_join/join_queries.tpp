@@ -3,7 +3,6 @@
 #include <chrono>
 
 #include "../merge.hpp"
-#include "load.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -74,7 +73,12 @@ struct MergedJoiner {
 
    void run() { joiner->run(); }
 
-   std::optional<std::pair<view_t::Key, view_t>> next() { return joiner->next(seek_key); }
+   std::optional<std::pair<view_t::Key, view_t>> next() { 
+      if (produced() == 0)
+         return joiner->next(seek_key); // seek before the first result
+      else
+         return joiner->next();
+   }
 
    sort_key_t current_jk() const { return joiner->current_jk(); }
 
