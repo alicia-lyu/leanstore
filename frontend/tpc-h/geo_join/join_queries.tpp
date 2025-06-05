@@ -200,7 +200,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
           return true;
        },
        []() {});
-   std::cout << "range_query_by_view produced " << produced << " records for sk: " << sk << std::endl;
+   // std::cout << "range_query_by_view produced " << produced << " records for sk: " << sk << std::endl;
    return produced;
 }
 
@@ -228,7 +228,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
          break;
    }
    size_t produced = merged_joiner.produced();
-   std::cout << "range_query_by_merged produced " << produced << " records for sk: " << sk << std::endl;
+   // std::cout << "range_query_by_merged produced " << produced << " records for sk: " << sk << std::endl;
    return produced;
 }
 
@@ -256,7 +256,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
          break;
    }
    size_t produced = base_joiner.produced();
-   std::cout << "range_query_by_base produced " << produced << " records for sk: " << sk << std::endl;
+   // std::cout << "range_query_by_base produced " << produced << " records for sk: " << sk << std::endl;
    return produced;
 }
 }  // namespace geo_join

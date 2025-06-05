@@ -57,7 +57,16 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
             }
             city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt});  // not including empty counties
             for (int ci = 1; ci <= city_cnt; ci++) {
+               auto cik = city_t::Key{n, s, c, ci};
+               auto civ = city_t::generateRandomRecord();
+               city.insert(cik, civ);
+               merged.insert(cik, civ);
+               // insert customer2
                size_t customer_end = customer_idx + params::get_customer_cnt();
+               if (customer_end >= custkeys.size() && customer_idx < custkeys.size()) {
+                  std::cout << "WARNING: No customer since nation " << n << ", state " << s << ", county " << c << ", city " << ci << ". "
+                            << std::endl;
+               }
                for (; customer_idx < customer_end && customer_idx < custkeys.size(); customer_idx++) {
                   auto custkey = custkeys[customer_idx];
                   customer2_t::Key cust_key{n, s, c, ci, custkey};
@@ -66,15 +75,30 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
                   customer2.insert(cust_key, cuv);
                   merged.insert(cust_key, cuv);
                }
-               auto cik = city_t::Key{n, s, c, ci};
-               auto civ = city_t::generateRandomRecord();
-               city.insert(cik, civ);
-               merged.insert(cik, civ);
             }
          }
       }
    }
-   std::cout << std::endl << "Loaded " << county_sum << " counties and " << city_sum << " cities." << std::endl;
+   if (customer_idx < custkeys.size()) {
+      std::cout << std::endl << "Assigning " << custkeys.size() - customer_idx << " remaining customers..." << std::endl;
+      for (; customer_idx < custkeys.size(); customer_idx++) {
+         auto custkey = custkeys[customer_idx];
+         sort_key_t sk;
+         while (true) {
+            auto found = find_random_geo_key_in_merged();
+            if (found.has_value()) {
+               sk = *found;
+               break;
+            }
+         }
+         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, custkey};
+         customer2_t cuv;
+         workload.customer.lookup1(customerh_t::Key{custkey}, [&](const customerh_t& v) { cuv = customer2_t{v}; });
+         customer2.insert(cust_key, cuv);
+         merged.insert(cust_key, cuv);
+      }
+   }
+   std::cout << "Loaded " << county_sum << " counties and " << city_sum << " cities." << std::endl;
    // --------------------------------------- load view ---------------------------------------
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
    PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
