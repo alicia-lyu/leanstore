@@ -28,6 +28,15 @@ class GeoJoin
    AdapterType<city_t>& city;
    AdapterType<customer2_t>& customer2;
 
+   long long ns_sum = 0;
+   long long ns_count = 0;
+
+   long long nsc_sum = 0;
+   long long nsc_count = 0;
+
+   long long nscci_sum = 0;
+   long long nscci_count = 0;
+
    Logger& logger;
 
   public:
@@ -51,6 +60,12 @@ class GeoJoin
          logger(workload.logger)
    {
       TPCH::CUSTOMER_SCALE *= 200;
+   }
+   
+   ~GeoJoin() {
+      std::cout << "Average ns produced: " << (ns_count > 0 ? (double)ns_sum / ns_count : 0) << std::endl;
+      std::cout << "Average nsc produced: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
+      std::cout << "Average nscci produced: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
    }
 
    std::optional<sort_key_t> find_random_geo_key_in_base()
@@ -150,11 +165,23 @@ class GeoJoin
    // ---------------------- POINT JOIN QUERIES --------------------------
    // Find all joined rows for the same join key
 
-   void point_query_by_view() { range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
+   void nscci_by_view()
+   {
+      nscci_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_count++;
+   }
 
-   void point_query_by_merged() { range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
+   void nscci_by_merged()
+   {
+      nscci_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_count++;
+   }
 
-   void point_query_by_base() { range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey()); }
+   void nscci_by_base()
+   {
+      nscci_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_count++;
+   }
 
    // -------------------------------------------------------------------
    // ---------------------- RANGE JOIN QUERIES ------------------------
@@ -165,14 +192,38 @@ class GeoJoin
    size_t range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
    // Find all joined rows for the same nationkey, statekey
-   void ns_view() { range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0); }
-   void ns_merged() { range_query_by_merged(workload.getNationID(), params::get_statekey(), 0, 0); }
-   void ns_base() { range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0); }
+   void ns_view()
+   {
+      ns_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_count++;
+   }
+   void ns_merged()
+   {
+      ns_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_count++;
+   }
+   void ns_base()
+   {
+      ns_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_count++;
+   }
 
    // Find all joined rows for the same nationkey, statekey, countykey
-   void nsc_view() { range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
-   void nsc_merged() { range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
-   void nsc_base() { range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0); }
+   void nsc_view()
+   {
+      nsc_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_count++;
+   }
+   void nsc_merged()
+   {
+      nsc_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_count++;
+   }
+   void nsc_base()
+   {
+      nsc_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_count++;
+   }
 
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------

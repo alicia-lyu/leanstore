@@ -12,6 +12,7 @@
 
 template <typename JK, typename JR, typename... Rs>
 struct JoinState {
+   bool logging = false;
    template <typename Tuple, typename Func>
    static void for_each(Tuple& tup, Func func)
    {
@@ -36,8 +37,8 @@ struct JoinState {
 
    ~JoinState()
    {
-      if (joined > 1000)
-         std::cout << "\r~JoinState: joined " << (double)joined / 2000 << "k records.";
+      if (cached_jk % 100 == 0 || joined > 10000) // sampling
+         std::cout << "~JoinState: joined " << (double)joined / 2000 << "k records." << std::endl;
    }
 
    void refresh(const JK& next_jk)
@@ -125,7 +126,7 @@ struct JoinState {
    void update_print_produced(int curr_joined)
    {
       joined += curr_joined;
-      if (cached_jk % 10 == 0) {
+      if (logging && cached_jk % 1000 == 0) {
          double progress = (double)joined / 1000;
          std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
       }

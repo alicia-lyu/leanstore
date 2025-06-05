@@ -58,7 +58,9 @@ struct MergeJoin {
       return getHeapConsumesToBeJoined(std::index_sequence_for<Rs...>{});
    }
 
-   void run() { heap_merge.run(); }
+   void run() { 
+      join_state.logging = true;
+      heap_merge.run(); }
 
    void next_jk()
    {
@@ -110,7 +112,7 @@ struct PremergedJoin {
    {
       if (seek_cnt > 0)
          std::cout << "\r~PremergedJoin: seek count = " << seek_cnt << ", scan filter count = " << scan_filter_cnt
-                   << ", emplace count = " << emplace_cnt << ", joined = " << join_state.joined << ".";
+                   << ", emplace count = " << emplace_cnt << ", joined = " << join_state.joined << "!";
    }
 
    bool scan_next()
@@ -240,6 +242,7 @@ struct PremergedJoin {
 
    void run()
    {
+      join_state.logging = true;
       while (true) {
          auto ret = next();
          if (!ret.has_value()) {
@@ -256,6 +259,7 @@ struct PremergedJoin {
 template <typename JK, typename... Rs>
 struct Merge {
    HeapMergeHelper<JK, Rs...> heap_merge;
+   bool logging = false;
 
    template <typename MergedAdapterType, template <typename> class ScannerType, typename... SourceRecords>
    Merge(MergedAdapterType& mergedAdapter, ScannerType<SourceRecords>&... scanners)
@@ -296,7 +300,9 @@ struct Merge {
       return {getHeapConsumeToMerged<MergedAdapterType, Rs, SourceRecords>(mergedAdapter)...};
    }
 
-   void run() { heap_merge.run(); }
+   void run() { 
+      logging = true;
+      heap_merge.run(); }
 
    void next_jk()
    {
@@ -354,6 +360,7 @@ struct BinaryMergeJoin {
 
    void run()
    {
+      join_state.logging = true;
       while (next_left || next_right) {
          next();
       }

@@ -86,7 +86,7 @@ inline void run_tput(std::function<void()> cb,
       {
          std::cerr << "#" << count.load() << " " << tx << "for " << method << " failed." << std::endl;
       }
-      if (count.load() % 100 == 1)
+      if (count.load() % 1000 == 1)
          std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
    }
    std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;

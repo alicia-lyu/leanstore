@@ -360,7 +360,7 @@ struct TPCHWorkload {
 
    static void inspect_produced(const std::string& msg, long& produced)
    {
-      if (produced % 100 == 0) {
+      if (produced % 1000 == 0) {
          std::cout << "\r" << msg << (double)produced / 1000 << "k------------------------------------";
       }
       produced++;

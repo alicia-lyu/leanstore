@@ -96,12 +96,12 @@ int main(int argc, char** argv)
       case 0: {
          std::cout << "TPC-H with traditional indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_base = {
-            // std::bind(&GJ::query_by_base, &tpchGeoJoin),                              
+            std::bind(&GJ::query_by_base, &tpchGeoJoin),                              
             // std::bind(&GJ::agg_by_base, &tpchGeoJoin),
             // std::bind(&GJ::mixed_query_by_base, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_base = {
-            std::bind(&GJ::point_query_by_base, &tpchGeoJoin),
+            std::bind(&GJ::nscci_by_base, &tpchGeoJoin),
             std::bind(&GJ::ns_base, &tpchGeoJoin),
             std::bind(&GJ::nsc_base, &tpchGeoJoin),
             std::bind(&GJ::maintain_base, &tpchGeoJoin),
@@ -116,12 +116,12 @@ int main(int argc, char** argv)
       case 1: {
          std::cout << "TPC-H with materialized views" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_view = {
-            // std::bind(&GJ::query_by_view, &tpchGeoJoin),     
+            std::bind(&GJ::query_by_view, &tpchGeoJoin),     
             // std::bind(&GJ::agg_in_view, &tpchGeoJoin),
             // std::bind(&GJ::mixed_query_by_view, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_view = {
-            [&]() { tpchGeoJoin.point_query_by_view(); },
+            [&]() { tpchGeoJoin.nscci_by_view(); },
             std::bind(&GJ::ns_view, &tpchGeoJoin),
             std::bind(&GJ::nsc_view, &tpchGeoJoin),
             std::bind(&GJ::maintain_view, &tpchGeoJoin),
@@ -136,12 +136,12 @@ int main(int argc, char** argv)
       case 2: {
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
-            // std::bind(&GJ::query_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::query_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_merged = {
-            std::bind(&GJ::point_query_by_merged, &tpchGeoJoin),
+            std::bind(&GJ::nscci_by_merged, &tpchGeoJoin),
             std::bind(&GJ::ns_merged, &tpchGeoJoin),
             std::bind(&GJ::nsc_merged, &tpchGeoJoin),
             std::bind(&GJ::maintain_merged, &tpchGeoJoin),
