@@ -276,6 +276,29 @@
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
+    },
+    {
+      "name": "geo_join_3",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_join",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--tpch_scale_factor=10",
+        "--csv_path=build-debug/geo_join/10-in-1",
+        "--recover_file=build-debug/geo_join/10.json",
+        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_join/10.image_temp",
+        "--dram_gib=1",
+        "--storage_structure=3"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
     }
   ]
 }

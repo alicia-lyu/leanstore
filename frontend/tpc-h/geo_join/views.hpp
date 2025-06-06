@@ -182,10 +182,8 @@ struct states_t {
 };
 
 struct ns_t : public joined_t<21, sort_key_t, nation2_t, states_t> {
-   template <typename... Args>
-   explicit ns_t(Args&&... args) : joined_t{std::forward<Args>(args)...}
-   {
-   }
+   ns_t() = default;
+   ns_t(const nation2_t& n, const states_t& s) : joined_t{std::make_tuple(n, s)} {}
    struct Key : public joined_t::Key {
       Key() : joined_t::Key() {}
       Key(const nation2_t::Key& nk, const states_t::Key& sk) : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0, 0}, std::make_tuple(nk, sk)} {}
@@ -272,6 +270,31 @@ struct city_t {
    ADD_RECORD_TRAITS(city_t)
 
    static city_t generateRandomRecord() { return city_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
+};
+
+struct ccc_t : public joined_t<23, sort_key_t, county_t, city_t, customer2_t> {
+   ccc_t() = default;
+   ccc_t(const county_t& c, const city_t& ci, const customer2_t& cu)
+       : joined_t{std::make_tuple(c, ci, cu)}
+   {
+   }
+   struct Key : public joined_t::Key {
+      Key() = default;
+
+      Key(const county_t::Key& ck, const city_t::Key& cik, const customer2_t::Key& cuk)
+          : joined_t::Key{sort_key_t{ck.nationkey, ck.statekey, ck.countykey, cik.citykey, cuk.custkey}, std::make_tuple(ck, cik, cuk)}
+      {
+      }
+
+      std::tuple<county_t::Key, city_t::Key, customer2_t::Key> flatten() const
+      {
+         return this->keys;
+      }
+   };
+   std::tuple<county_t, city_t, customer2_t> flatten() const
+   {
+      return this->payloads;
+   }
 };
 
 struct nscci_t : public joined_t<22, sort_key_t, nsc_t, city_t> {
@@ -372,6 +395,11 @@ struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, c
    {
    }
 
+   view_t(const ns_t& ns, const ccc_t& ccc)
+       : joined_t{std::tuple_cat(ns.flatten(), ccc.flatten())}
+   {
+   }
+
    struct Key : public joined_t::Key {
       Key() = default;
 
@@ -382,6 +410,11 @@ struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, c
 
       Key(const nscci_t::Key& nscci, const customer2_t::Key& cu)
           : joined_t::Key{sort_key_t{cu.get_jk()}, std::tuple_cat(nscci.flatten(), std::make_tuple(cu))}
+      {
+      }
+
+      Key(const ns_t::Key& ns, const ccc_t::Key& ccc)
+          : joined_t::Key{sort_key_t{ns.jk.nationkey, ns.jk.statekey, ccc.jk.countykey, ccc.jk.citykey, ccc.jk.custkey}, std::tuple_cat(ns.flatten(), ccc.flatten())}
       {
       }
 
@@ -416,6 +449,7 @@ struct SKBuilder<sort_key_t> {
    static sort_key_t inline create(const county_t::Key& k, const county_t&) { return sort_key_t{k.nationkey, k.statekey, k.countykey, 0, 0}; }
    static sort_key_t inline create(const nsc_t::Key& k, const nsc_t&) { return k.jk; }
    static sort_key_t inline create(const city_t::Key& k, const city_t&) { return sort_key_t{k.nationkey, k.statekey, k.countykey, k.citykey, 0}; }
+   static sort_key_t inline create(const ccc_t::Key& k, const ccc_t&) { return k.jk; }
    static sort_key_t inline create(const view_t::Key& k, const view_t&) { return k.jk; }
    static sort_key_t inline create(const nscci_t::Key& k, const nscci_t&) { return k.jk; }
    static sort_key_t inline create(const customer2_t::Key& k, const customer2_t&) { return sort_key_t{k.nationkey, k.statekey, k.countykey, k.citykey, k.custkey}; }

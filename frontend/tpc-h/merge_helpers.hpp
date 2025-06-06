@@ -38,7 +38,7 @@ struct JoinState {
    ~JoinState()
    {
       if (cached_jk % 100 == 1 || joined > 10000) // sampling
-         std::cout << "~JoinState: joined " << (double)joined / 2000 << "k records." << std::endl;
+         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records." << std::endl;
    }
 
    void refresh(const JK& next_jk)
@@ -119,16 +119,19 @@ struct JoinState {
              vec.clear();
           }
        }()));
-      // cached_jk = next_jk; // moved to emplace
+      cached_jk = next_jk;
       return joined_cnt;
    }
+
+   long last_logged = 0;
 
    void update_print_produced(int curr_joined)
    {
       joined += curr_joined;
-      if (logging && cached_jk % 1000 == 1) {
+      if (logging && joined > last_logged + 1000) {
          double progress = (double)joined / 1000;
          std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
+         last_logged = joined;
       }
       if (cached_joined_records.size() > 1000 && cached_joined_records.size() > static_cast<size_t>(curr_joined)) {
          throw std::runtime_error(

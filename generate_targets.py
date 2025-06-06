@@ -160,7 +160,7 @@ STRUCTURE_OPTIONS = {
     "basic_group": [0, 2],
     "basic_group_variant": [0, 2],
     "basic_join_group": [0, 2],
-    "geo_join": [0, 1, 2]
+    "geo_join": [0, 1, 2, 3]
 }            
 
 def generate_run_rules() -> None:

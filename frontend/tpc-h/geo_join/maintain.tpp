@@ -57,4 +57,19 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    join_view.insert(vk, vv);
    // TODO: update city_count_per_county
 }
+
+template <template <typename> class AdapterType,
+          template <typename...> class MergedAdapterType,
+          template <typename> class ScannerType,
+          template <typename...> class MergedScannerType>
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_2merged()
+{
+   std::optional<sort_key_t> sk = std::nullopt;
+   while (!sk.has_value()) {
+      sk = find_random_geo_key_in_2merged();
+   }
+   customer2_t::Key cust_key{sk->nationkey, sk->statekey, sk->countykey, sk->citykey, workload.last_customer_id++};
+   customer2_t cust_val = customer2_t::generateRandomRecord();
+   ccc.insert(cust_key, cust_val);
+}
 } // namespace geo_join

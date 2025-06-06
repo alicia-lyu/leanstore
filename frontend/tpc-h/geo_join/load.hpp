@@ -3,6 +3,9 @@
 #include <cstddef>
 #include "../randutils.hpp"
 
+// 1 nation + 1--80 states --- 1--6 pages
+// 1 county + 1--4 cities + 0--8 customers --- 1 page
+
 namespace geo_join
 {
 struct params {
