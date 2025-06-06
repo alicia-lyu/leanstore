@@ -157,7 +157,7 @@ int main(int argc, char** argv)
       case 3 : {
          std::cout << "TPC-H with 2 merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_2merged = {
-            // std::bind(&GJ::query_by_2merged, &tpchGeoJoin),
+            std::bind(&GJ::query_by_2merged, &tpchGeoJoin),
             // std::bind(&GJ::agg_by_2merged, &tpchGeoJoin),
             // std::bind(&GJ::mixed_query_by_2merged, &tpchGeoJoin)
          };
@@ -172,6 +172,7 @@ int main(int argc, char** argv)
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_2merged, tput_cbs_2merged, tput_prefixes,
              "2merged", [&]() { return tpchGeoJoin.get_2merged_size(); });
+         break;
       }
       default: {
          std::cerr << "Invalid storage structure option" << std::endl;
