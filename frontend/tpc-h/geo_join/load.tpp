@@ -14,7 +14,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
 {
-   workload.load();
+   workload.load(); 
    // --------------------------------------- load geo tables ---------------------------------------
    // county id starts from 1 in each s tate
    // city id starts from 1 in each county
@@ -80,7 +80,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       }
    }
    if (customer_idx < custkeys.size()) {
-      std::cout << std::endl << "Assigning " << custkeys.size() - customer_idx << " remaining customers..." << std::endl;
+      std::cout << std::endl << "Assigning " << custkeys.size() - customer_idx << " remaining customers...." << std::endl;
       for (; customer_idx < custkeys.size(); customer_idx++) {
          auto custkey = custkeys[customer_idx];
          sort_key_t sk;

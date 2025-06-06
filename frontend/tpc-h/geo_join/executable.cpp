@@ -81,12 +81,11 @@ int main(int argc, char** argv)
       return 0;
    } else {
       tpch.recover_last_ids();
-      tpchGeoJoin.log_sizes_sep();
    }
    std::vector<std::string> tput_prefixes = {
-      "join-nscci",  
       "join-ns", 
       "join-nsc",
+      "join-nscci",  
       "maintain", 
       // "group-point", 
       // "mixed-point"
@@ -101,9 +100,9 @@ int main(int argc, char** argv)
             // std::bind(&GJ::mixed_query_by_base, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_base = {
-            std::bind(&GJ::nscci_by_base, &tpchGeoJoin),
             std::bind(&GJ::ns_base, &tpchGeoJoin),
             std::bind(&GJ::nsc_base, &tpchGeoJoin),
+            std::bind(&GJ::nscci_by_base, &tpchGeoJoin),
             std::bind(&GJ::maintain_base, &tpchGeoJoin),
             // std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
             // std::bind(&GJ::point_mixed_query_by_base, &tpchGeoJoin)
@@ -121,9 +120,9 @@ int main(int argc, char** argv)
             // std::bind(&GJ::mixed_query_by_view, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_view = {
-            [&]() { tpchGeoJoin.nscci_by_view(); },
             std::bind(&GJ::ns_view, &tpchGeoJoin),
             std::bind(&GJ::nsc_view, &tpchGeoJoin),
+            std::bind(&GJ::nscci_by_view, &tpchGeoJoin),
             std::bind(&GJ::maintain_view, &tpchGeoJoin),
             // std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
             // std::bind(&GJ::point_mixed_query_by_view, &tpchGeoJoin)
@@ -141,9 +140,9 @@ int main(int argc, char** argv)
             // std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_merged = {
-            std::bind(&GJ::nscci_by_merged, &tpchGeoJoin),
             std::bind(&GJ::ns_merged, &tpchGeoJoin),
             std::bind(&GJ::nsc_merged, &tpchGeoJoin),
+            std::bind(&GJ::nscci_by_merged, &tpchGeoJoin),
             std::bind(&GJ::maintain_merged, &tpchGeoJoin),
             // std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)

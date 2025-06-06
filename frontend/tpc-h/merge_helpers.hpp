@@ -37,7 +37,7 @@ struct JoinState {
 
    ~JoinState()
    {
-      if (cached_jk % 100 == 0 || joined > 10000) // sampling
+      if (cached_jk % 100 == 1 || joined > 10000) // sampling
          std::cout << "~JoinState: joined " << (double)joined / 2000 << "k records." << std::endl;
    }
 
@@ -119,14 +119,14 @@ struct JoinState {
              vec.clear();
           }
        }()));
-      cached_jk = next_jk;
+      // cached_jk = next_jk; // moved to emplace
       return joined_cnt;
    }
 
    void update_print_produced(int curr_joined)
    {
       joined += curr_joined;
-      if (logging && cached_jk % 1000 == 0) {
+      if (logging && cached_jk % 1000 == 1) {
          double progress = (double)joined / 1000;
          std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
       }
@@ -140,7 +140,9 @@ struct JoinState {
    template <typename Record, size_t I>
    void emplace(const typename Record::Key& key, const Record& rec)
    {
+      JK jk = SKBuilder<JK>::create(key, rec);
       std::get<I>(cached_records).emplace_back(key, rec);
+      cached_jk = jk;
    }
 
    template <size_t... Is>

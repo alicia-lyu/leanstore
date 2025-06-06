@@ -40,7 +40,7 @@ struct MergeJoin {
    {
       return [this](HeapEntry<JK>& entry) {
          // heap_merge.current_entry = entry;
-         if (entry.jk != join_state.cached_jk) {
+         if (entry.jk.match(join_state.cached_jk) != 0) {
             join_state.refresh(entry.jk);
          }
          join_state.emplace<I>(typename R::Key(R::template fromBytes<typename R::Key>(entry.k)), CurrRec(R::template fromBytes<R>(entry.v)));
@@ -126,7 +126,7 @@ struct PremergedJoin {
       JK jk;
       std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
       // if (current_jk != jk) join the cached records
-      if (join_state.cached_jk != jk)
+      if (join_state.cached_jk.match(jk) != 0)
          join_state.refresh(jk);
       // add the new record to the fcache
       join_state.emplace(k, v);
@@ -195,7 +195,7 @@ struct PremergedJoin {
          } else if (cmp > 0) {
             return false;  // no more records to scan, all records are after the seek_jk
          } else {  // cmp == 0, found the right record
-            if (join_state.cached_jk != jk)
+            if (join_state.cached_jk.match(jk) != 0)
                join_state.refresh(jk);
             // add the new record to the fcache
             join_state.emplace(k, v);

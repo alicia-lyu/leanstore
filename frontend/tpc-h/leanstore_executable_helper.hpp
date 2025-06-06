@@ -65,6 +65,7 @@ inline void run_tput(std::function<void()> cb,
                      std::string method,
                      double size)
 {
+   tpch.logger.reset();
    auto start = std::chrono::high_resolution_clock::now();
    atomic<int> count = 0;
    std::cout << "Running " << tx << " on " << method << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;

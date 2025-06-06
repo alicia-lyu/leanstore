@@ -115,7 +115,7 @@ struct LeanStoreMergedScanner : public MergedScanner<JK, JR, Records...>
          }
          leanstore::OP_RESULT ret = it->next();
          if (ret != leanstore::OP_RESULT::OK) {
-            std::cerr << "seekTyped: " << k << " returns " << (int) ret << std::endl;
+            // std::cerr << "seekTyped: " << k << " returns " << (int) ret << std::endl;
             return false;
          }
       }

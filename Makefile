@@ -38,3 +38,5 @@ include targets.mk
 temp:
 	-$(MAKE) geo_join dram=8 # scale = 10
 	-$(MAKE) geo_join dram=4 # scale = 10
+	-$(MAKE) geo_join dram=2 # scale = 10
+	-$(MAKE) geo_join dram=1 # scale = 10
