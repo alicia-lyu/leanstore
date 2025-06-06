@@ -138,10 +138,6 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                if (pos_in_parent != pos_check) {
                   // std::cerr << "WARNING: pos_in_parent != pos_check" << std::endl;
                }
-               COUNTERS_BLOCK()
-               {
-                  WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
-               }
 
                if (pos_in_parent == p_guard->count) {
                   leaf = HybridPageGuard<BTreeNode>(p_guard, p_guard->upper);
@@ -160,6 +156,10 @@ class BTreePessimisticIterator : public BTreePessimisticIteratorInterface
                   break;
                }
                p_guard = parent_swip_handler.getParentReadPageGuard<BTreeNode>();
+               COUNTERS_BLOCK()
+               {
+                  WorkerCounters::myCounters().dt_inner_page[btree.dt_id]++;
+               }
             }
 
             while (!leaf->is_leaf) {  // go to the smallest page in this subtree

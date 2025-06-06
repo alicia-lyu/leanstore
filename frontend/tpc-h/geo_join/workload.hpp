@@ -191,7 +191,7 @@ class GeoJoin
    size_t range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    size_t range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
-   // Find all joined rows for the same nationkey, statekey
+   // Find all joined rows for the same nationkey, statekeyZ
    void ns_view()
    {
       ns_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0);
