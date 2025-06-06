@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <variant>
 #include "../tpch_workload.hpp"
@@ -18,9 +19,13 @@ class GeoJoin
    using TPCH = TPCHWorkload<AdapterType>;
    TPCH& workload;
    using MergedTree = MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>;
+
    MergedTree& merged;
    AdapterType<view_t>& join_view;
    AdapterType<city_count_per_county_t>& city_count_per_county;
+
+   MergedAdapterType<nation2_t, states_t>& ns;
+   MergedAdapterType<county_t, city_t, customer2_t>& ccc;
 
    AdapterType<nation2_t>& nation;
    AdapterType<states_t>& states;
@@ -44,6 +49,8 @@ class GeoJoin
            MergedTree& m,
            AdapterType<view_t>& v,
            AdapterType<city_count_per_county_t>& g,
+           MergedAdapterType<nation2_t, states_t>& ns,
+           MergedAdapterType<county_t, city_t, customer2_t>& ccc,
            AdapterType<states_t>& s,
            AdapterType<county_t>& c,
            AdapterType<city_t>& ci,
@@ -52,6 +59,8 @@ class GeoJoin
          merged(m),
          join_view(v),
          city_count_per_county(g),
+         ns(ns),
+         ccc(ccc),
          nation(reinterpret_cast<AdapterType<nation2_t>&>(workload.nation)),
          states(s),
          county(c),
@@ -61,8 +70,9 @@ class GeoJoin
    {
       TPCH::CUSTOMER_SCALE *= 200;
    }
-   
-   ~GeoJoin() {
+
+   ~GeoJoin()
+   {
       std::cout << "Average ns produced: " << (ns_count > 0 ? (double)ns_sum / ns_count : 0) << std::endl;
       std::cout << "Average nsc produced: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
       std::cout << "Average nscci produced: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
@@ -94,30 +104,6 @@ class GeoJoin
       return std::make_optional(sort_key_t{n, s, c, ci, 0});
    }
 
-   std::optional<sort_key_t> find_random_geo_key_in_view()
-   {
-      int n = workload.getNationID();
-      int s = params::get_statekey();
-      int c = params::get_countykey();
-      int ci = params::get_citykey();
-      bool found = false;
-      join_view.scan(
-          view_t::Key{n, s, c, ci, 0},
-          [&](const view_t::Key& k, const view_t&) {
-             n = k.jk.nationkey;
-             s = k.jk.statekey;
-             c = k.jk.countykey;
-             ci = k.jk.citykey;
-             found = true;
-             return false;  // stop after the first match
-          },
-          []() {});
-      if (!found)
-         return std::nullopt;
-
-      return sort_key_t{n, s, c, ci, 0};
-   }
-
    std::optional<sort_key_t> find_random_geo_key_in_merged()
    {
       int n = workload.getNationID();
@@ -130,6 +116,24 @@ class GeoJoin
       if (!ret)
          return std::nullopt;
 
+      auto kv = scanner->next();
+      assert(kv.has_value());
+      city_t::Key* cik = std::get_if<city_t::Key>(&kv->first);
+      assert(cik != nullptr);
+      return sort_key_t{cik->nationkey, cik->statekey, cik->countykey, cik->citykey, 0};
+   }
+
+   std::optional<sort_key_t> find_random_geo_key_in_2merged()
+   {
+      int n = workload.getNationID();
+      int s = params::get_statekey();
+      int c = params::get_countykey();
+      int ci = params::get_citykey();
+
+      auto scanner = ccc.template getScanner<sort_key_t, ccc_t>();
+      bool ret = scanner->template seekTyped<city_t>(city_t::Key{n, s, c, ci});
+      if (!ret)
+         return std::nullopt;
       auto kv = scanner->next();
       assert(kv.has_value());
       city_t::Key* cik = std::get_if<city_t::Key>(&kv->first);
@@ -161,27 +165,11 @@ class GeoJoin
 
    void query_by_base();
 
+   void query_by_2merged();
+
    // -------------------------------------------------------------------
    // ---------------------- POINT JOIN QUERIES --------------------------
    // Find all joined rows for the same join key
-
-   void nscci_by_view()
-   {
-      nscci_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
-      nscci_count++;
-   }
-
-   void nscci_by_merged()
-   {
-      nscci_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
-      nscci_count++;
-   }
-
-   void nscci_by_base()
-   {
-      nscci_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
-      nscci_count++;
-   }
 
    // -------------------------------------------------------------------
    // ---------------------- RANGE JOIN QUERIES ------------------------
@@ -190,6 +178,7 @@ class GeoJoin
    size_t range_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    size_t range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    size_t range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   size_t range_query_by_2merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
    // Find all joined rows for the same nationkey, statekeyZ
    void ns_view()
@@ -205,6 +194,11 @@ class GeoJoin
    void ns_base()
    {
       ns_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_count++;
+   }
+
+   void ns_by_2merged() {
+      ns_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), 0, 0);
       ns_count++;
    }
 
@@ -225,6 +219,34 @@ class GeoJoin
       nsc_count++;
    }
 
+   void nsc_by_2merged() {
+      nsc_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_count++;
+   }
+
+   void nscci_by_view()
+   {
+      nscci_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_count++;
+   }
+
+   void nscci_by_merged()
+   {
+      nscci_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_count++;
+   }
+
+   void nscci_by_base()
+   {
+      nscci_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_count++;
+   }
+
+   void nscci_by_2merged() {
+      nscci_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_count++;
+   }
+
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
 
@@ -233,6 +255,8 @@ class GeoJoin
    void maintain_merged();
 
    void maintain_view();
+
+   void maintain_2merged();
 
    // -------------------------------------------------------------
    // ---------------------- LOADING -----------------------------
@@ -246,9 +270,9 @@ class GeoJoin
 
    double get_merged_size();
 
-   void log_sizes();
+   double get_2merged_size();
 
-   void log_sizes_sep();
+   void log_sizes();
 
    // -------------------------------------------------------------
    // ---------------------- JOIN + GROUP-BY ----------------------
@@ -256,10 +280,12 @@ class GeoJoin
    void mixed_query_by_view();
    void mixed_query_by_merged();
    void mixed_query_by_base();
+   // TODO 2merged
 
    void point_mixed_query_by_view();
    void point_mixed_query_by_merged();
    void point_mixed_query_by_base();
+   // TODO 2merged
 
    // --------------------------------------------------------------
    // ---------------------- GROUP-BY ------------------------------

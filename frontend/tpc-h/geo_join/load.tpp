@@ -37,6 +37,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       };
       nation.update1(nk, update_fn, nation_update_desc);
       merged.insert(nk, nv);
+      ns.insert(nk, nv);
       for (int s = 1; s <= state_cnt; s++) {
          std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
          int county_cnt = params::get_county_cnt();
@@ -45,6 +46,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
          auto sv = states_t::generateRandomRecord(county_cnt);
          states.insert(sk, sv);
          merged.insert(sk, sv);
+         ns.insert(sk, sv);
          for (int c = 1; c <= county_cnt; c++) {
             int city_cnt = params::get_city_cnt();
             city_sum += city_cnt;
@@ -52,6 +54,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
             auto cv = county_t::generateRandomRecord(city_cnt);
             county.insert(ck, cv);
             merged.insert(ck, cv);
+            ccc.insert(ck, cv);
             if (city_cnt == 0) {
                continue;
             }
@@ -61,6 +64,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
                auto civ = city_t::generateRandomRecord();
                city.insert(cik, civ);
                merged.insert(cik, civ);
+               ccc.insert(cik, civ);
                // insert customer2
                size_t customer_end = customer_idx + params::get_customer_cnt();
                if (customer_end >= custkeys.size() && customer_idx < custkeys.size()) {
@@ -74,29 +78,30 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
                   workload.customer.lookup1(customerh_t::Key{custkey}, [&](const customerh_t& v) { cuv = customer2_t{v}; });
                   customer2.insert(cust_key, cuv);
                   merged.insert(cust_key, cuv);
+                  ccc.insert(cust_key, cuv);
                }
             }
          }
       }
    }
-   if (customer_idx < custkeys.size()) {
-      std::cout << std::endl << "Assigning " << custkeys.size() - customer_idx << " remaining customers...." << std::endl;
-      for (; customer_idx < custkeys.size(); customer_idx++) {
-         auto custkey = custkeys[customer_idx];
-         sort_key_t sk;
-         while (true) {
-            auto found = find_random_geo_key_in_merged();
-            if (found.has_value()) {
-               sk = *found;
-               break;
-            }
+   assert (customer_idx < custkeys.size()); // create hot keys
+   std::cout << std::endl << "Assigning " << custkeys.size() - customer_idx << " remaining customers...." << std::endl;
+   for (; customer_idx < custkeys.size(); customer_idx++) {
+      auto custkey = custkeys[customer_idx];
+      sort_key_t sk;
+      while (true) {
+         auto found = find_random_geo_key_in_merged();
+         if (found.has_value()) {
+            sk = *found;
+            break;
          }
-         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, custkey};
-         customer2_t cuv;
-         workload.customer.lookup1(customerh_t::Key{custkey}, [&](const customerh_t& v) { cuv = customer2_t{v}; });
-         customer2.insert(cust_key, cuv);
-         merged.insert(cust_key, cuv);
       }
+      customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, custkey};
+      customer2_t cuv;
+      workload.customer.lookup1(customerh_t::Key{custkey}, [&](const customerh_t& v) { cuv = customer2_t{v}; });
+      customer2.insert(cust_key, cuv);
+      merged.insert(cust_key, cuv);
+      ccc.insert(cust_key, cuv);
    }
    std::cout << "Loaded " << county_sum << " counties and " << city_sum << " cities." << std::endl;
    // --------------------------------------- load view ---------------------------------------
@@ -138,26 +143,46 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes()
+double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_2merged_size()
 {
-   std::map<std::string, double> sizes = {{"view", get_view_size()}, {"base", get_indexes_size()}, {"merged", get_merged_size()}};
-   logger.log_sizes(sizes);
+   return ns.size() + ccc.size();
 };
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes_sep()
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes()
 {
    workload.log_sizes();
-   std::map<std::string, double> sizes = {{"nation", nation.size()},
-                                          {"states", states.size()},
-                                          {"county", county.size()},
-                                          {"city", city.size()},
-                                          {"city_count_per_county", city_count_per_county.size()},
-                                          {"join_view", join_view.size()},
-                                          {"customer2", customer2.size()}};
+   double nation_size = nation.size();
+   double states_size = states.size();
+   double county_size = county.size();
+   double city_size = city.size();
+   double customer2_size = customer2.size();
+   double indexes_size = nation_size + states_size + county_size + city_size + customer2_size;
+
+   double join_view_size = join_view.size();
+   double city_count_per_county_size = city_count_per_county.size();
+   double view_size = join_view_size + city_count_per_county_size;
+
+   double merged_size = merged.size();
+   double ns_size = ns.size();
+   double ccc_size = ccc.size();
+
+   std::map<std::string, double> sizes = {
+      {"nation", nation_size},
+      {"states", states_size},
+      {"county", county_size},
+      {"city", city_size},
+      {"customer2", customer2_size},
+      {"indexes", indexes_size},
+      {"view", view_size},
+      {"city_count_per_county", city_count_per_county_size},
+      {"merged", merged_size},
+      {"ns", ns_size},
+      {"ccc", ccc_size}
+   };
    logger.log_sizes(sizes);
 };
 }  // namespace geo_join
