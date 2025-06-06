@@ -69,7 +69,8 @@ struct MergedJoiner {
    MergedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, sort_key_t seek_key = sort_key_t::max())
        : merged_scanner(merged.template getScanner<sort_key_t, view_t>()), seek_key(seek_key)
    {
-      merged_scanner->template seek<nation2_t>(nation2_t::Key{seek_key.nationkey});
+      if (seek_key != sort_key_t::max())
+         merged_scanner->template seek<nation2_t>(nation2_t::Key{seek_key.nationkey});
       joiner.emplace(*merged_scanner);
    }
 
@@ -105,10 +106,13 @@ struct Merged2Joiner {
                  sort_key_t seek_key = sort_key_t::max())
        : merged_scanner_ns(merged_ns.template getScanner<sort_key_t, ns_t>()),
          merged_scanner_ccc(merged_ccc.template getScanner<sort_key_t, ccc_t>()),
-         seek_key(seek_key), seek_max(sort_key_t::max())
+         seek_key(seek_key),
+         seek_max(sort_key_t::max())
    {
-      merged_scanner_ns->template seek<nation2_t>(nation2_t::Key{seek_key.nationkey});
-      merged_scanner_ccc->template seek<county_t>(county_t::Key{seek_key.nationkey, seek_key.statekey, seek_key.countykey});
+      if (seek_key != seek_max) {
+         merged_scanner_ns->template seek<nation2_t>(nation2_t::Key{seek_key.nationkey});
+         merged_scanner_ccc->template seek<county_t>(county_t::Key{seek_key.nationkey, seek_key.statekey, seek_key.countykey});
+      }
       joiner_ns.emplace(*merged_scanner_ns);
       joiner_ccc.emplace(*merged_scanner_ccc);
       joiner_view.emplace([this]() { return joiner_ns->next(this->seek_key); }, [this]() { return joiner_ccc->next(this->seek_key); });
@@ -116,7 +120,7 @@ struct Merged2Joiner {
 
    void run()
    {
-      next(); // update seek_key
+      next();  // update seek_key
       joiner_view->run();
    }
 
