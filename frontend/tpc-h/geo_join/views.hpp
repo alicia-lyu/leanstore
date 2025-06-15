@@ -1,10 +1,11 @@
 #pragma once
 
+#include <variant>
 #include "../tables.hpp"
+#include "../variant_tuple_utils.hpp"
 #include "../view_templates.hpp"
 
 // id range: 10s + 20s (only one such namespace are included in each executable)
-
 namespace geo_join
 {
 using namespace randutils;
@@ -78,7 +79,12 @@ struct customer2_t {
    {
    }
    customer2_t(const customerh_t& old_v)
-       : c_name(old_v.c_name), c_address(old_v.c_address), c_phone(old_v.c_phone), c_acctbal(old_v.c_acctbal), c_mktsegment(old_v.c_mktsegment), c_comment(old_v.c_comment)
+       : c_name(old_v.c_name),
+         c_address(old_v.c_address),
+         c_phone(old_v.c_phone),
+         c_acctbal(old_v.c_acctbal),
+         c_mktsegment(old_v.c_mktsegment),
+         c_comment(old_v.c_comment)
    {
    }
 
@@ -100,15 +106,9 @@ struct customer2_t {
           : nationkey(nationkey), statekey(statekey), countykey(countykey), citykey(citykey), custkey(old_k.c_custkey)
       {
       }
-      Key(const sort_key_t& sk)
-          : nationkey(sk.nationkey), statekey(sk.statekey), countykey(sk.countykey), citykey(sk.citykey), custkey(sk.custkey)
-      {
-      }
+      Key(const sort_key_t& sk) : nationkey(sk.nationkey), statekey(sk.statekey), countykey(sk.countykey), citykey(sk.citykey), custkey(sk.custkey) {}
 
-      sort_key_t get_jk() const
-      {
-         return sort_key_t{nationkey, statekey, countykey, citykey, custkey};
-      }
+      sort_key_t get_jk() const { return sort_key_t{nationkey, statekey, countykey, citykey, custkey}; }
       Key get_pk() const { return *this; }
    };
 
@@ -186,7 +186,9 @@ struct ns_t : public joined_t<21, sort_key_t, nation2_t, states_t> {
    ns_t(const nation2_t& n, const states_t& s) : joined_t{std::make_tuple(n, s)} {}
    struct Key : public joined_t::Key {
       Key() : joined_t::Key() {}
-      Key(const nation2_t::Key& nk, const states_t::Key& sk) : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0, 0}, std::make_tuple(nk, sk)} {}
+      Key(const nation2_t::Key& nk, const states_t::Key& sk) : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0, 0}, std::make_tuple(nk, sk)}
+      {
+      }
 
       std::tuple<nation2_t::Key, states_t::Key> flatten() const { return keys; }
    };
@@ -274,10 +276,7 @@ struct city_t {
 
 struct ccc_t : public joined_t<23, sort_key_t, county_t, city_t, customer2_t> {
    ccc_t() = default;
-   ccc_t(const county_t& c, const city_t& ci, const customer2_t& cu)
-       : joined_t{std::make_tuple(c, ci, cu)}
-   {
-   }
+   ccc_t(const county_t& c, const city_t& ci, const customer2_t& cu) : joined_t{std::make_tuple(c, ci, cu)} {}
    struct Key : public joined_t::Key {
       Key() = default;
 
@@ -286,15 +285,9 @@ struct ccc_t : public joined_t<23, sort_key_t, county_t, city_t, customer2_t> {
       {
       }
 
-      std::tuple<county_t::Key, city_t::Key, customer2_t::Key> flatten() const
-      {
-         return this->keys;
-      }
+      std::tuple<county_t::Key, city_t::Key, customer2_t::Key> flatten() const { return this->keys; }
    };
-   std::tuple<county_t, city_t, customer2_t> flatten() const
-   {
-      return this->payloads;
-   }
+   std::tuple<county_t, city_t, customer2_t> flatten() const { return this->payloads; }
 };
 
 struct nscci_t : public joined_t<22, sort_key_t, nsc_t, city_t> {
@@ -322,67 +315,17 @@ struct nscci_t : public joined_t<22, sort_key_t, nsc_t, city_t> {
    }
 };
 
-template <int id>
-struct group_key_t {
-   Integer nationkey;
-   Integer statekey;
-   Integer countykey;
-   using Key = group_key_t<id>;
-   ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey, &Key::countykey)
-
-   group_key_t() = default;
-   group_key_t(Integer n, Integer s, Integer c) : nationkey(n), statekey(s), countykey(c) {}
-   group_key_t(const county_t::Key& ck) : nationkey(ck.nationkey), statekey(ck.statekey), countykey(ck.countykey) {}
-   group_key_t(const city_t::Key& cik) : nationkey(cik.nationkey), statekey(cik.statekey), countykey(cik.countykey) {}
-   group_key_t(const county_t::Key& ck, const group_key_t<17>&) : nationkey(ck.nationkey), statekey(ck.statekey), countykey(ck.countykey) {}
-
-   auto operator<=>(const Key&) const = default;
-
-   group_key_t get_jk() const { return *this; }
-   Key get_pk() const { return *this; }
-
-   static group_key_t max()
-   {
-      return group_key_t{std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()};
-   }
-
-   friend int operator%(const group_key_t& jk, const int& n) { return (jk.nationkey + jk.statekey + jk.countykey) % n; }
-
-   int match(const group_key_t& other) const
-   {
-      if (nationkey != 0 && other.nationkey != 0 && nationkey != other.nationkey)
-         return nationkey - other.nationkey;
-      if (statekey != 0 && other.statekey != 0 && statekey != other.statekey)
-         return statekey - other.statekey;
-      if (countykey != 0 && other.countykey != 0 && countykey != other.countykey)
-         return countykey - other.countykey;
-      return 0;
-   }
-};
-
-struct city_count_per_county_t {
-   static constexpr int id = 17;
-
-   Integer city_count;
-
-   using Key = group_key_t<17>;
-
-   ADD_RECORD_TRAITS(city_count_per_county_t)
-};
-
 struct mixed_view_t {
    static constexpr int id = 18;
 
-   Varchar<25> name;
-   Integer city_count;
+   Varchar<25> city_name;
+   Integer customer_count;
 
    mixed_view_t() = default;
 
-   mixed_view_t(const Varchar<25>& n_name, Integer city_count) : name(n_name), city_count(city_count) {}
+   mixed_view_t(const Varchar<25>& city_name, Integer customer_count) : city_name(city_name), customer_count(customer_count) {}
 
-   mixed_view_t(const county_t& c, const city_count_per_county_t& cc) : name(c.name), city_count(cc.city_count) {}
-
-   using Key = group_key_t<18>;
+   using Key = sort_key_t;  // shouldn't require id
 };
 
 struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, city_t, customer2_t> {
@@ -395,10 +338,7 @@ struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, c
    {
    }
 
-   view_t(const ns_t& ns, const ccc_t& ccc)
-       : joined_t{std::tuple_cat(ns.flatten(), ccc.flatten())}
-   {
-   }
+   view_t(const ns_t& ns, const ccc_t& ccc) : joined_t{std::tuple_cat(ns.flatten(), ccc.flatten())} {}
 
    struct Key : public joined_t::Key {
       Key() = default;
@@ -414,18 +354,24 @@ struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, c
       }
 
       Key(const ns_t::Key& ns, const ccc_t::Key& ccc)
-          : joined_t::Key{sort_key_t{ns.jk.nationkey, ns.jk.statekey, ccc.jk.countykey, ccc.jk.citykey, ccc.jk.custkey}, std::tuple_cat(ns.flatten(), ccc.flatten())}
+          : joined_t::Key{sort_key_t{ns.jk.nationkey, ns.jk.statekey, ccc.jk.countykey, ccc.jk.citykey, ccc.jk.custkey},
+                          std::tuple_cat(ns.flatten(), ccc.flatten())}
       {
       }
 
       Key(int n, int s, int c, int ci, int cu)
-          : joined_t::Key{sort_key_t{n, s, c, ci, cu}, nation2_t::Key{n}, states_t::Key{n, s}, county_t::Key{n, s, c}, city_t::Key{n, s, c, ci}, customer2_t::Key{n, s, c, ci, cu}}
+          : joined_t::Key{sort_key_t{n, s, c, ci, cu}, nation2_t::Key{n},        states_t::Key{n, s},
+                          county_t::Key{n, s, c},      city_t::Key{n, s, c, ci}, customer2_t::Key{n, s, c, ci, cu}}
       {
       }
 
       Key(const sort_key_t& jk)
-          : joined_t::Key{jk, nation2_t::Key{jk.nationkey}, states_t::Key{jk.nationkey, jk.statekey},
-                          county_t::Key{jk.nationkey, jk.statekey, jk.countykey}, city_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey}, customer2_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, jk.custkey}}
+          : joined_t::Key{jk,
+                          nation2_t::Key{jk.nationkey},
+                          states_t::Key{jk.nationkey, jk.statekey},
+                          county_t::Key{jk.nationkey, jk.statekey, jk.countykey},
+                          city_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey},
+                          customer2_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, jk.custkey}}
       {
       }
    };
@@ -452,30 +398,55 @@ struct SKBuilder<sort_key_t> {
    static sort_key_t inline create(const ccc_t::Key& k, const ccc_t&) { return k.jk; }
    static sort_key_t inline create(const view_t::Key& k, const view_t&) { return k.jk; }
    static sort_key_t inline create(const nscci_t::Key& k, const nscci_t&) { return k.jk; }
-   static sort_key_t inline create(const customer2_t::Key& k, const customer2_t&) { return sort_key_t{k.nationkey, k.statekey, k.countykey, k.citykey, k.custkey}; }
+   static sort_key_t inline create(const customer2_t::Key& k, const customer2_t&)
+   {
+      return sort_key_t{k.nationkey, k.statekey, k.countykey, k.citykey, k.custkey};
+   }
+   static sort_key_t inline create(const std::variant<nation2_t::Key, states_t::Key, county_t::Key, city_t::Key, customer2_t::Key>& k,
+                                   const std::variant<nation2_t, states_t, county_t, city_t, customer2_t>& v)
+   {
+      return std::visit(overloaded{[&](const nation2_t::Key& nk) {
+                                      const nation2_t* n = std::get_if<nation2_t>(&v);
+                                      return create(nk, *n);
+                                   },
+                                   [&](const states_t::Key& sk) {
+                                      const states_t* s = std::get_if<states_t>(&v);
+                                      return create(sk, *s);
+                                   },
+                                   [&](const county_t::Key& ck) {
+                                      const county_t* c = std::get_if<county_t>(&v);
+                                      return create(ck, *c);
+                                   },
+                                   [&](const city_t::Key& ci) {
+                                      const city_t* c = std::get_if<city_t>(&v);
+                                      return create(ci, *c);
+                                   },
+                                   [&](const customer2_t::Key& cu) {
+                                      const customer2_t* c = std::get_if<customer2_t>(&v);
+                                      return create(cu, *c);
+                                   }},
+                        k);
+   }
+   static sort_key_t inline create(const std::variant<county_t::Key, city_t::Key, customer2_t::Key>& k,
+                                   const std::variant<county_t, city_t, customer2_t>& v)
+   {
+      return std::visit(overloaded{[&](const county_t::Key& ck) {
+                                      const county_t* c = std::get_if<county_t>(&v);
+                                      return create(ck, *c);
+                                   },
+                                   [&](const city_t::Key& ci) {
+                                      const city_t* c = std::get_if<city_t>(&v);
+                                      return create(ci, *c);
+                                   },
+                                   [&](const customer2_t::Key& cu) {
+                                      const customer2_t* c = std::get_if<customer2_t>(&v);
+                                      return create(cu, *c);
+                                   }},
+                        k);
+   }
 
    template <typename Record>
    static sort_key_t inline get(const sort_key_t& k)
-   {
-      return k;
-   }
-};
-
-template <int id>
-struct SKBuilder<group_key_t<id>> {
-   static group_key_t<id> inline create(const county_t::Key& k, const county_t&) { return group_key_t<id>{k.nationkey, k.statekey, k.countykey}; }
-   static group_key_t<id> inline create(const city_t::Key& k, const city_t&) { return group_key_t<id>{k.nationkey, k.statekey, k.countykey}; }
-   static group_key_t<id> inline create(const city_count_per_county_t::Key& k, const city_count_per_county_t&)
-   {
-      return group_key_t<id>{k.nationkey, k.statekey, k.countykey};
-   }
-   static group_key_t<id> inline create(const mixed_view_t::Key& k, const mixed_view_t&)
-   {
-      return group_key_t<id>{k.nationkey, k.statekey, k.countykey};
-   }
-
-   template <typename Record>
-   static group_key_t<id> inline get(const group_key_t<id>& k)
    {
       return k;
    }

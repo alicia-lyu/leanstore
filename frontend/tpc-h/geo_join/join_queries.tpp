@@ -146,8 +146,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::qu
 {
    // warm up group-by view which is later used
    std::cout << "Warming up group-by view..." << std::endl;
-   city_count_per_county.scan(
-       city_count_per_county_t::Key{0, 0, 0}, [&](const city_count_per_county_t::Key&, const city_count_per_county_t&) { return true; }, []() {});
+   // city_count_per_county.scan(
+   //     city_count_per_county_t::Key{0, 0, 0}, [&](const city_count_per_county_t::Key&, const city_count_per_county_t&) { return true; }, []() {});
    logger.reset();
    std::cout << "GeoJoin::query_by_view()" << std::endl;
    auto start = std::chrono::high_resolution_clock::now();
