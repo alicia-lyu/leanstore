@@ -58,7 +58,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
             if (city_cnt == 0) {
                continue;
             }
-            city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt});  // not including empty counties
+            // city_count_per_county.insert(city_count_per_county_t::Key{n, s, c}, city_count_per_county_t{city_cnt});  // not including empty counties
             for (int ci = 1; ci <= city_cnt; ci++) {
                auto cik = city_t::Key{n, s, c, ci};
                auto civ = city_t::generateRandomRecord();
@@ -118,7 +118,7 @@ template <template <typename> class AdapterType,
 double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_view_size()
 {
    double indexes_size = get_indexes_size();
-   return indexes_size + join_view.size() + city_count_per_county.size();
+   return indexes_size + join_view.size(); // + city_count_per_county.size();
 };
 
 template <template <typename> class AdapterType,
@@ -163,8 +163,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    double indexes_size = nation_size + states_size + county_size + city_size + customer2_size;
 
    double join_view_size = join_view.size();
-   double city_count_per_county_size = city_count_per_county.size();
-   double view_size = join_view_size + city_count_per_county_size;
+   // double city_count_per_county_size = city_count_per_county.size();
+   double view_size = join_view_size; // + city_count_per_county_size;
 
    double merged_size = merged.size();
    double ns_size = ns.size();
@@ -178,7 +178,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       {"customer2", customer2_size},
       {"indexes", indexes_size},
       {"view", view_size},
-      {"city_count_per_county", city_count_per_county_size},
+      // {"city_count_per_county", city_count_per_county_size},
       {"merged", merged_size},
       {"ns", ns_size},
       {"ccc", ccc_size}

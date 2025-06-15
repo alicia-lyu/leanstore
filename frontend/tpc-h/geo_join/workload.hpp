@@ -22,7 +22,6 @@ class GeoJoin
 
    MergedTree& merged;
    AdapterType<view_t>& join_view;
-   AdapterType<city_count_per_county_t>& city_count_per_county;
 
    MergedAdapterType<nation2_t, states_t>& ns;
    MergedAdapterType<county_t, city_t, customer2_t>& ccc;
@@ -48,7 +47,6 @@ class GeoJoin
    GeoJoin(TPCH& workload,
            MergedTree& m,
            AdapterType<view_t>& v,
-           AdapterType<city_count_per_county_t>& g,
            MergedAdapterType<nation2_t, states_t>& ns,
            MergedAdapterType<county_t, city_t, customer2_t>& ccc,
            AdapterType<states_t>& s,
@@ -58,7 +56,6 @@ class GeoJoin
        : workload(workload),
          merged(m),
          join_view(v),
-         city_count_per_county(g),
          ns(ns),
          ccc(ccc),
          nation(reinterpret_cast<AdapterType<nation2_t>&>(workload.nation)),
@@ -102,6 +99,25 @@ class GeoJoin
          return std::nullopt;
 
       return std::make_optional(sort_key_t{n, s, c, ci, 0});
+   }
+
+   std::optional<sort_key_t> find_random_geo_key_in_view()
+   {
+      auto sk = {workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0};
+
+      bool found = false;
+      join_view.scan(
+          sk,
+          [&](const view_t::Key& k, const view_t&) {
+             sk = k.jk;
+             sk.custkey = 0;
+             found = true;
+             return false;  // stop after the first match
+          },
+          []() {});
+      if (!found) // too large a key
+         return std::nullopt;
+      return std::make_optional(sk);
    }
 
    std::optional<sort_key_t> find_random_geo_key_in_merged()
@@ -280,12 +296,12 @@ class GeoJoin
    void mixed_query_by_view();
    void mixed_query_by_merged();
    void mixed_query_by_base();
-   // TODO 2merged
+   void mixed_query_by_2merged();
 
    void point_mixed_query_by_view();
    void point_mixed_query_by_merged();
    void point_mixed_query_by_base();
-   // TODO 2merged
+   void point_mixed_query_by_2merged();
 
    // --------------------------------------------------------------
    // ---------------------- GROUP-BY ------------------------------
@@ -293,13 +309,15 @@ class GeoJoin
    void agg_in_view();
    void agg_by_merged();
    void agg_by_base();
+   void agg_by_2merged();
 
    void point_agg_by_view();
    void point_agg_by_merged();
    void point_agg_by_base();
+   void point_agg_by_2merged();
 };
 }  // namespace geo_join
-#include "groupby_query.tpp"  // IWYU pragma: keep
+// #include "groupby_query.tpp"  // IWYU pragma: keep
 #include "join_queries.tpp"   // IWYU pragma: keep
 #include "load.tpp"           // IWYU pragma: keep
 #include "maintain.tpp"       // IWYU pragma: keep

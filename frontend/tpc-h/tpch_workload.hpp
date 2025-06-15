@@ -13,13 +13,6 @@
 
 DECLARE_int32(tpch_scale_factor);
 
-template <class... Ts>
-struct overloaded : Ts... {
-   using Ts::operator()...;
-};
-template <class... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
-
 template <template <typename> class AdapterType>
 struct TPCHWorkload {
    Logger& logger;
