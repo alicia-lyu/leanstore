@@ -33,6 +33,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
        [&](const view_t::Key& vk, const view_t& vv) {
           if (curr_sk != vk.jk) {
              produced++;
+             if (produced % 10000 == 0) {
+                std::cout << "\rmixed_query_by_view() produced: " << produced;
+             }
              city_t c = std::get<3>(vv.payloads);
              [[maybe_unused]] mixed_view_t mv{c.name, customer_count};
              curr_sk = vk.jk;
@@ -78,7 +81,7 @@ struct MergedCounter {
        : scanner(merged.template getScanner<sort_key_t, view_t>())
    {
       if (sk != sort_key_t::max()) {
-         scanner->seek(view_t::Key{sk});
+         scanner->seekJK(sk);
       }
    }
 
@@ -103,6 +106,7 @@ struct MergedCounter {
                return next();  // TODO outer join?
             }
          }
+         sk = curr_sk;
          std::visit(overloaded{[&](const nation2_t::Key&) {}, [&](const states_t::Key&) {}, [&](const county_t::Key&) {}, [&](const city_t::Key&) {},
                                [&](const customer2_t::Key&) { customer_count++; }},
                     kv->first);
@@ -112,12 +116,17 @@ struct MergedCounter {
       }
    }
 
+   long long last_logged = 0;
    void run()
    {
       while (true) {
          auto kv = next();
          if (kv == std::nullopt)
             break;
+         if (produced - last_logged > 10000) {
+            std::cout << "\rMergedCounter::run() produced: " << produced;
+            last_logged = produced;
+         }
       }
       std::cout << "MergedCounter::run() produced: " << produced << std::endl;
    }
@@ -134,7 +143,6 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    auto start = std::chrono::high_resolution_clock::now();
    MergedCounter<MergedAdapterType, MergedScannerType> counter(merged);
    counter.run();
-   std::cout << "produced: " << counter.produced << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
    logger.log(t, "mixed", "merged", get_merged_size());
@@ -147,7 +155,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_merged()
 {
    MergedCounter<MergedAdapterType, MergedScannerType> counter(
-       merged, mixed_view_t::Key{workload.getNationID(), params::get_statekey(), params::get_countykey()});
+       merged, sort_key_t{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0});
    [[maybe_unused]] auto kv = counter.next();
 }
 
@@ -180,6 +188,7 @@ struct BaseCounter {
          sort_key_t cu_sk = SKBuilder<sort_key_t>::create(cuk, cuv);
          if (ci_sk.match(cu_sk) != 0) {
             customer_scanner->after_seek = true;  // rescan this customer
+            break;
          } else {
             customer_count++;
          }
@@ -192,12 +201,17 @@ struct BaseCounter {
       }
    }
 
+   long long last_logged = 0;
    void run()
    {
       while (true) {
          auto kv = next();
          if (kv == std::nullopt)
             break;
+         if (produced - last_logged > 10000) {
+            std::cout << "\rBaseCounter::run() produced: " << produced;
+            last_logged = produced;
+         }
       }
       std::cout << "BaseCounter::run() produced: " << produced << std::endl;
    }
@@ -228,7 +242,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_base()
 {
    BaseCounter<AdapterType, ScannerType> counter(
-       city, customer2, mixed_view_t::Key{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0});
+       city, customer2, sort_key_t{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0});
    [[maybe_unused]] auto kv = counter.next();
 }
 
@@ -265,6 +279,8 @@ struct Merged2Counter {
                return next();  // TODO outer join?
             }
          }
+         
+         sk = curr_sk;
 
          std::visit(
              overloaded{[&](const county_t&) {}, [&](const city_t& cv) { city_name = cv.name; }, [&](const customer2_t&) { customer_count++; }},
@@ -272,12 +288,17 @@ struct Merged2Counter {
       }
    }
 
+   long long last_logged = 0;
    void run()
    {
       while (true) {
          auto kv = next();
          if (kv == std::nullopt)
             break;
+         if (produced - last_logged > 10000) {
+            std::cout << "\rMerged2Counter::run() produced: " << produced;
+            last_logged = produced;
+         }
       }
       std::cout << "Merged2Counter::run() produced: " << produced << std::endl;
    }
@@ -294,7 +315,6 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    auto start = std::chrono::high_resolution_clock::now();
    Merged2Counter<MergedAdapterType, MergedScannerType> counter(ccc);
    counter.run();
-   std::cout << "produced: " << counter.produced << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
    logger.log(t, "mixed", "2merged", get_2merged_size());

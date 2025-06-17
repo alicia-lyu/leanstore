@@ -36,7 +36,5 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	-$(MAKE) geo_join dram=4 # scale = 10
-	-$(MAKE) geo_join dram=2 # scale = 10
 	-$(MAKE) geo_join dram=1 # scale = 10
 	-$(MAKE) geo_join dram=0.6 # scale = 10
