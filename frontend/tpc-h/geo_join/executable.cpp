@@ -135,17 +135,17 @@ int main(int argc, char** argv)
       case 2: {
          std::cout << "TPC-H with merged indexes" << std::endl;
          std::vector<std::function<void()>> elapsed_cbs_merged = {
-            std::bind(&GJ::query_by_merged, &tpchGeoJoin),
+            // std::bind(&GJ::query_by_merged, &tpchGeoJoin),
             // std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
-            // std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
+            std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
          };
          std::vector<std::function<void()>> tput_cbs_merged = {
-            std::bind(&GJ::ns_merged, &tpchGeoJoin),
-            std::bind(&GJ::nsc_merged, &tpchGeoJoin),
-            std::bind(&GJ::nscci_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::maintain_merged, &tpchGeoJoin),
+            // std::bind(&GJ::ns_merged, &tpchGeoJoin),
+            // std::bind(&GJ::nsc_merged, &tpchGeoJoin),
+            // std::bind(&GJ::nscci_by_merged, &tpchGeoJoin),
+            // std::bind(&GJ::maintain_merged, &tpchGeoJoin),
             // std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
-            // std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)
+            std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)
          };
          WARMUP_THEN_TXS(
              tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
