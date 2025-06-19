@@ -1,6 +1,18 @@
-add_library(LeanStoreLogger OBJECT tpc-h/leanstore_logger.cpp tpc-h/leanstore_logger.hpp)
-target_link_libraries(LeanStoreLogger leanstore Threads::Threads)
+add_library(Logger STATIC tpc-h/logger.cpp)
+target_link_libraries(Logger leanstore Threads::Threads)
+target_include_directories(Logger PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+
+add_library(LeanStoreLogger STATIC tpc-h/leanstore_logger.cpp)
+target_link_libraries(LeanStoreLogger Logger leanstore Threads::Threads)
 target_include_directories(LeanStoreLogger PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+
+add_library(rocksdb_executable STATIC shared/rocksdb.cpp)
+target_link_libraries(rocksdb_executable rocksdb zstd uring leanstore Threads::Threads)
+target_include_directories(rocksdb_executable PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+
+add_library(RocksDBLogger STATIC tpc-h/rocksdb_logger.cpp)
+target_link_libraries(RocksDBLogger Logger leanstore Threads::Threads rocksdb)
+target_include_directories(RocksDBLogger PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 
 add_executable(basic_join tpc-h/basic_join/executable.cpp)
 target_link_libraries(basic_join LeanStoreLogger leanstore Threads::Threads)
@@ -19,5 +31,5 @@ target_link_libraries(basic_join_group LeanStoreLogger leanstore Threads::Thread
 target_include_directories(basic_join_group PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 
 add_executable(geo_join tpc-h/geo_join/executable.cpp)
-target_link_libraries(geo_join rocksdb LeanStoreLogger leanstore Threads::Threads)
+target_link_libraries(geo_join rocksdb_executable LeanStoreLogger leanstore Threads::Threads)
 target_include_directories(geo_join PRIVATE ${SHARED_INCLUDE_DIRECTORY})
