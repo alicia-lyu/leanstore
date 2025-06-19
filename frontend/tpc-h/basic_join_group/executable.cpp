@@ -63,7 +63,7 @@ int main(int argc, char** argv)
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
          logger.reset();
          tpchBasicJoinGroup.load();
-         logger.logLoading();
+         logger.log_loading();
          cr::Worker::my().commitTX();
       });
    } else {
