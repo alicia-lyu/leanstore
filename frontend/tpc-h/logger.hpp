@@ -1,11 +1,14 @@
 #pragma once
+#include <filesystem>
 #include <map>
 #include <string>
-enum class ColumnName
-{
-   ELAPSED,
-   TPUT
-};
+#include "Units.hpp"
+#include "leanstore/Config.hpp"
+#include "leanstore/profiling/tables/CPUTable.hpp"
+#include "leanstore/profiling/tables/ConfigsTable.hpp"
+#include "tabulate/table.hpp"
+
+enum class ColumnName { ELAPSED, TPUT };
 
 inline std::string to_string(ColumnName column)
 {
@@ -31,13 +34,128 @@ inline std::string to_short_string(ColumnName column)
    }
 }
 
+struct SumStats {
+   long elapsed_or_tput;
+   int tx_count;
+   std::string tx;
+   std::string method;
+   double size;
+   ColumnName column_name;
+   std::vector<std::string> header;
+   std::vector<std::string> data;
+
+   SumStats() = default;
+
+   SumStats(std::string tx, std::string method, double size, ColumnName column_name)
+       : tx(std::move(tx)), method(std::move(method)), size(size), column_name(column_name)
+   {
+      header.reserve(20);
+      data.reserve(20);
+   }
+
+   void reset()
+   {
+      tx.clear();
+      method.clear();
+      size = 0;
+      header.clear();
+      data.clear();
+   }
+
+   void log(std::ostream& csv_sum, bool csv_sum_exists);
+
+   static void print(tabulate::Table& table)
+   {
+      std::stringstream ss;
+      table.print(ss);
+      std::string str = ss.str();
+      for (u64 i = 0; i < str.size(); i++) {
+         std::cout << str[i];
+      }
+      std::cout << std::endl;
+   }
+
+   void print();
+
+   void init(long tput, int tx_count, std::string tx, std::string method, double size)
+   {
+      elapsed_or_tput = tput;
+      this->tx_count = tx_count;
+      this->tx = std::move(tx);
+      this->method = std::move(method);
+      this->size = size;
+   }
+
+   void init(long elapsed, std::string tx, std::string method, double size)
+   {
+      elapsed_or_tput = elapsed;
+      this->tx_count = 1;
+      this->tx = std::move(tx);
+      this->method = std::move(method);
+      this->size = size;
+   }
+};
+
 // virtual class for logging
 class Logger
 {
+  protected:
+   leanstore::profiling::ConfigsTable configs_table;
+   leanstore::profiling::CPUTable cpu_table;
+   std::filesystem::path csv_runtime;
+   std::filesystem::path csv_db;
+
+   SumStats stats;
+
+   virtual void summarize_other_stats() = 0;
+   void summarize_shared_stats();
+
+   virtual void log_details() = 0;
+
+   void log_summary();
+
+   static inline std::string to_fixed(double value)
+   {
+      std::ostringstream oss;
+      if (value >= 0 && value <= 1) {
+         oss << std::defaultfloat << std::setprecision(4) << value;
+      } else {
+         oss << std::fixed << std::setprecision(2) << value;
+      }
+      return oss.str();
+   }
+
+   void log_detail_table(leanstore::profiling::ProfilingTable& t);
+
   public:
-   virtual void reset() = 0;
-   virtual void log(long tput, std::string tx, std::string method, double size, int tx_count) = 0;
-   virtual void log(long elapsed, std::string tx, std::string method, double size) = 0;
-   virtual void log_sizes(std::map<std::string, double> sizes) = 0;
+   Logger() : csv_runtime(FLAGS_csv_path), csv_db(csv_runtime.parent_path()), stats()
+   {
+      std::filesystem::create_directories(csv_runtime);
+      std::filesystem::create_directories(csv_db);
+   }
+   virtual void reset()
+   {
+      stats.reset();
+      cpu_table.next();
+   }
+
+   void log(long tput, int tx_count, std::string tx, std::string method, double size)
+   {
+      stats.init(tput, tx_count, tx, method, size);
+      summarize_shared_stats();
+      summarize_other_stats();
+      log_details();
+   }
+   void log(long elapsed, std::string tx, std::string method, double size)
+   {
+      stats.init(elapsed, tx, method, size);
+      summarize_shared_stats();
+      summarize_other_stats();
+      log_details();
+   }
+   void log_sizes(std::map<std::string, double> sizes);
+
    virtual void prepare() = 0;
+
+   void log_loading() { log(0, "load", "", 0); }
 };

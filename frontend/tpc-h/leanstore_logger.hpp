@@ -3,13 +3,10 @@
 #include <string>
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
-#include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/profiling/tables/CRTable.hpp"
-#include "leanstore/profiling/tables/ConfigsTable.hpp"
 #include "leanstore/profiling/tables/DTTable.hpp"
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
 #include "logger.hpp"
-#include "tabulate/table.hpp"
 #include "tpch_workload.hpp"
 
 class LeanStoreLogger : public Logger
@@ -18,16 +15,34 @@ class LeanStoreLogger : public Logger
 
    leanstore::profiling::BMTable bm_table;
    leanstore::profiling::DTTable dt_table;
-   leanstore::profiling::CPUTable cpu_table;
+
    leanstore::profiling::CRTable cr_table;
-   leanstore::profiling::ConfigsTable configs_table;
+
    std::vector<leanstore::profiling::ProfilingTable*> tables;
-   std::filesystem::path csv_runtime;
-   std::filesystem::path csv_db;
+
+   
+
+   void summarize_other_stats() override;
+   void reset() override
+   {
+      Logger::reset();
+      for (auto& t : tables) {
+         t->next();
+      }
+   }
+
+   void log_details() override
+   {
+      for (auto& t : tables) {
+         log_detail_table(*t);
+      }
+   }
+
+   void prepare() override;
 
   public:
    LeanStoreLogger(leanstore::LeanStore& db)
-       : db(db), bm_table(*db.buffer_manager.get()), dt_table(*db.buffer_manager.get()), tables({&bm_table, &dt_table, &cpu_table, &cr_table}), csv_runtime(FLAGS_csv_path), csv_db(csv_runtime.parent_path())
+       : db(db), bm_table(*db.buffer_manager.get()), dt_table(*db.buffer_manager.get()), tables({&bm_table, &dt_table, &cpu_table, &cr_table})
    {
       std::filesystem::create_directories(csv_runtime);
 
@@ -40,60 +55,4 @@ class LeanStoreLogger : public Logger
    };
 
    ~LeanStoreLogger() { std::cout << "Logs written to " << FLAGS_csv_path << std::endl; }
-
-   void writeOutAll();
-   std::pair<std::vector<std::string>, std::vector<std::string>> summarizeStats(long elapsed_or_tput, ColumnName column_name, int tx_count);
-   void reset();
-   void log(long tput, std::string tx, std::string method, double size, int tx_count);
-   void log(long elapsed, std::string tx, std::string method, double size);
-   void log_template(std::string tx,
-                     std::string method,
-                     double size,
-                     ColumnName column_name,
-                     std::function<std::pair<std::vector<std::string>, std::vector<std::string>>()> main_stats_cb);
-
-   void log_sizes(std::map<std::string, double> sizes);
-
-   void prepare();
-   void logLoading();
-
-   static void printTable(tabulate::Table& table)
-   {
-      std::stringstream ss;
-      table.print(ss);
-      string str = ss.str();
-      for (u64 i = 0; i < str.size(); i++) {
-         cout << str[i];
-      }
-      cout << std::endl;
-   }
-
-   static void printTable(const std::vector<std::vector<std::string>>& rows)
-   {
-      tabulate::Table table;
-      for (auto& row : rows) {
-         std::vector<variant<std::string, const char*, tabulate::Table>> cells;
-         for (auto& cell : row) {
-            cells.push_back(cell);
-         }
-         table.add_row(cells);
-      }
-      table.format().width(10);
-      for (size_t c_id = 0; c_id < rows.at(0).size(); c_id++) {
-         auto header = rows.at(0).at(c_id);
-         table.column(c_id).format().width(header.length() + 2);
-      }
-      printTable(table);
-   }
-
-   static inline std::string to_fixed(double value)
-   {
-      std::ostringstream oss;
-      if (value >= 0 && value <= 1) {
-         oss << std::defaultfloat << std::setprecision(4) << value;
-      } else {
-         oss << std::fixed << std::setprecision(2) << value;
-      }
-      return oss.str();
-   }
 };

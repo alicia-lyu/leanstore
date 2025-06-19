@@ -39,7 +39,7 @@ int main(int argc, char** argv)
    gflags::SetUsageMessage("RocksDB TPC-C");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    // -------------------------------------------------------------------------------------
-   RocksDB::DB_TYPE type;
+   
    if (FLAGS_rocks_db == "none") {
       type = RocksDB::DB_TYPE::DB;
    } else if (FLAGS_rocks_db == "pessimistic") {
