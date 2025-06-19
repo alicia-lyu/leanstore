@@ -1,6 +1,7 @@
 #pragma once
 
 #include <variant>
+#include <memory>
 #include "../tpc-h/merge.hpp"
 #include "MergedScanner.hpp"
 #include "leanstore/KVInterface.hpp"

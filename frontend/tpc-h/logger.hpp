@@ -137,20 +137,19 @@ class Logger
    {
       stats.reset();
       cpu_table.next();
+      configs_table.next();
    }
 
    void log(long tput, int tx_count, std::string tx, std::string method, double size)
    {
       stats.init(tput, tx_count, tx, method, size);
-      summarize_shared_stats();
-      summarize_other_stats();
+      log_summary();
       log_details();
    }
    void log(long elapsed, std::string tx, std::string method, double size)
    {
       stats.init(elapsed, tx, method, size);
-      summarize_shared_stats();
-      summarize_other_stats();
+      log_summary();
       log_details();
    }
    void log_sizes(std::map<std::string, double> sizes);

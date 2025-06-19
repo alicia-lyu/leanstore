@@ -1,7 +1,6 @@
 #pragma once
-#include "../shared/RocksDB.hpp"
+#include <rocksdb/db.h>
 #include "logger.hpp"
-#include "rocksdb/db.h"
 
 #include <rocksdb/filter_policy.h>
 #include <rocksdb/options.h>
@@ -10,25 +9,64 @@
 #include <rocksdb/statistics.h>
 #include <rocksdb/table.h>
 #include <rocksdb/wide_columns.h>
-#include "rocksdb/utilities/optimistic_transaction_db.h"
-#include "rocksdb/utilities/transaction_db.h"
+#include "../shared/RocksDB.hpp"
+
+struct RocksDBStats {
+   u64 sst_read_us;
+   u64 sst_write_us;
+   u64 compaction_us;
+
+   RocksDBStats() = default;
+
+   RocksDBStats(rocksdb::Statistics& stats) { update(stats); }
+
+   void update(rocksdb::Statistics& stats)
+   {
+      rocksdb::HistogramData sst_read_hist;
+      stats.histogramData(rocksdb::Histograms::SST_READ_MICROS, &sst_read_hist);
+      sst_read_us = sst_read_hist.sum;
+
+      rocksdb::HistogramData compaction_time;
+      stats.histogramData(rocksdb::Histograms::COMPACTION_TIME, &compaction_time);
+      compaction_us = compaction_time.sum;
+
+      rocksdb::HistogramData sst_write_hist;
+      stats.histogramData(rocksdb::Histograms::SST_WRITE_MICROS, &sst_write_hist);
+      sst_write_us = sst_write_hist.sum;
+   }
+
+   void update()
+   {
+      sst_read_us = 0;
+      sst_write_us = 0;
+      compaction_us = 0;
+   }
+};
 
 struct RocksDBLogger : public Logger {
-   RocksDBLogger(RocksDB& db)
+   RocksDBStats prev_stats;
+   RocksDBStats curr_stats;
+   std::shared_ptr<rocksdb::Statistics> rocksdb_stats_ptr;
+
+   RocksDBLogger(RocksDB& db) : rocksdb_stats_ptr(db.db->GetDBOptions().statistics) { prev_stats = RocksDBStats(*rocksdb_stats_ptr); }
+
+   ~RocksDBLogger() { std::cout << "RocksDB logs written to " << csv_runtime << std::endl; }
+
+   void summarize_other_stats() override;
+   void reset() override
    {
-      uint64_t sst_read_prev = 0, sst_write_prev = 0;
-      std::shared_ptr<rocksdb::Statistics> stats = db->GetDBOptions().statistics;
-      rocksdb::HistogramData sst_read_hist;
-      stats->histogramData(rocksdb::Histograms::SST_READ_MICROS, &sst_read_hist);
-      rocksdb::HistogramData sst_write_hist;
-      stats->histogramData(rocksdb::Histograms::SST_WRITE_MICROS, &sst_write_hist);
-      if (total_aborted + total_committed > 0) {
-         csv << (sst_read_hist.sum - sst_read_prev) / (total_aborted + total_committed) << ","
-             << (sst_write_hist.sum - sst_write_prev) / (total_aborted + total_committed) << ",";
-         sst_read_prev = sst_read_hist.sum;
-         sst_write_prev = sst_write_hist.sum;
-      } else {
-         csv << "0,0,";
-      }
+      Logger::reset();
+      prev_stats.update(*rocksdb_stats_ptr);
+      curr_stats.update();
+   }
+
+   void log_details() override
+   {
+      // no details to log for RocksDBLogger
+   }
+
+   void prepare() override
+   {
+      // No preparation needed for RocksDBLogger
    }
 };
