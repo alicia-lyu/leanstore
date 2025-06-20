@@ -7,6 +7,7 @@
 #include "views.hpp"
 #include <rocksdb/db.h>
 #include "../shared/RocksDBAdapter.hpp"
+#include "workload.hpp"
 
 using namespace leanstore;
 
@@ -49,6 +50,7 @@ int main(int argc, char** argv)
    RocksDBMergedAdapter<nation2_t, states_t> ns;
    RocksDBMergedAdapter<county_t, city_t, customer2_t> ccc;
    // -------------------------------------------------------------------------------------
+   rocks_db.open(); // only after all adapters are created (along with their column families)
    RocksDBLogger logger(db);
    TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, states, county, city, customer2);
