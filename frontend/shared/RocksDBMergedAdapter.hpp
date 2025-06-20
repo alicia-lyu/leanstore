@@ -3,12 +3,11 @@
 #include "Exceptions.hpp"
 #include "Units.hpp"
 
-template <int merged_id>
+template <typename... Records>
 struct RocksDBMergedAdapter {
-   using SEP = u32;  // use 32-bits integer as separator instead of column family
    RocksDB& map;
    RocksDBMergedAdapter(RocksDB& map) : map(map) {
-      std::cout << "RocksDBMergedAdapter::RocksDBMergedAdapter(): merged_id: " << merged_id << std::endl;
+
    }
    // -------------------------------------------------------------------------------------
    template <typename T>

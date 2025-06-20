@@ -25,12 +25,14 @@
 #include <ios>
 #include <unordered_map>
 
+using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
+using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
+
 struct RocksDB {
-   union {
-      rocksdb::DB* db = nullptr;
-      rocksdb::TransactionDB* tx_db;
-      rocksdb::OptimisticTransactionDB* optimistic_transaction_db;
-   };
+   rocksdb::TransactionDB* tx_db;
+   std::vector<ColumnFamilyDescriptor> cf_descs;
+   std::vector<ColumnFamilyHandle*> cf_handles;
+   rocksdb::Options db_options;
    static thread_local rocksdb::Transaction* txn;
    rocksdb::WriteOptions wo;
    rocksdb::ReadOptions ro;
@@ -38,8 +40,10 @@ struct RocksDB {
    enum class DB_TYPE : u8 { DB, TransactionDB, OptimisticDB };
    const DB_TYPE type;
    // -------------------------------------------------------------------------------------
-   RocksDB(DB_TYPE type = DB_TYPE::DB) : type(type)
+   RocksDB(DB_TYPE type = DB_TYPE::TransactionDB) : type(type)
    {
+      assert(type == DB_TYPE::TransactionDB); // only allow TransactionDB for now
+      // PERSIST & RECOVER
       if (FLAGS_trunc == false && std::filesystem::exists(FLAGS_ssd_path)) {
          FLAGS_recover = true;
       } else if (FLAGS_trunc == true && std::filesystem::exists(FLAGS_ssd_path)) {
@@ -51,11 +55,10 @@ struct RocksDB {
       if (FLAGS_persist_file == "./leanstore.json") {
          FLAGS_persist = false;
       }
+      // OPTIONS
       wo.disableWAL = true;
       wo.sync = false;
       iterator_ro.snapshot = nullptr;  // Snapshot from pinning resources
-      // -------------------------------------------------------------------------------------
-      rocksdb::Options db_options;
       db_options.use_direct_reads = true;
       db_options.use_direct_io_for_flush_and_compaction = true;
       db_options.db_write_buffer_size = 0;  // disabled
@@ -72,44 +75,38 @@ struct RocksDB {
       db_options.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(sizeof(u32)));  // ID
       db_options.statistics = rocksdb::CreateDBStatistics();
       db_options.stats_dump_period_sec = 1;
+   }
+
+   void open()
+   {
       rocksdb::Status s;
-      if (type == DB_TYPE::DB) {
-         s = rocksdb::DB::Open(db_options, FLAGS_ssd_path, &db);
-      } else if (type == DB_TYPE::TransactionDB) {
-         s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, &tx_db);
-      } else if (type == DB_TYPE::OptimisticDB) {
-         s = rocksdb::OptimisticTransactionDB::Open(db_options, FLAGS_ssd_path, &optimistic_transaction_db);
-      }
+      s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, cf_descs, &cf_handles, &tx_db);
       if (!s.ok())
          cerr << s.ToString() << endl;
       assert(s.ok());
    }
 
-   ~RocksDB() { 
+   ~RocksDB()
+   {
       std::cout << "RocksDB::~RocksDB() ";
       if (FLAGS_persist) {
          std::cout << "Waiting for compaction to finish" << std::endl;
          rocksdb::WaitForCompactOptions wfc_options;
-         wfc_options.close_db=true;
-         rocksdb::Status s = db->WaitForCompact(wfc_options);
+         wfc_options.close_db = true;
+         rocksdb::Status s = tx_db->WaitForCompact(wfc_options);
          std::ofstream persist_file(FLAGS_persist_file, std::ios::trunc);
          persist_file << "Placeholder. Code logic only needs the file to exist." << std::endl;
       } else {
          std::cout << "FLAGS_persist is false, compaction skipped. Unable to undo changes. You need to manually remove files.";
       }
-      delete db;
+      delete tx_db;
    }
 
    void startTX()
    {
       assert(txn == nullptr);
       rocksdb::Status s;
-      if (type == DB_TYPE::TransactionDB) {
-         txn = tx_db->BeginTransaction(wo, {});
-      } else if (type == DB_TYPE::OptimisticDB) {
-         txn = optimistic_transaction_db->BeginTransaction({}, {});
-      } else {
-      }
+      txn = tx_db->BeginTransaction(wo, {});
    }
    void commitTX()
    {
@@ -166,7 +163,7 @@ struct RocksDB {
             csv << tx << ",";
             csv << total_committed << "," << total_aborted << ",";
 
-            std::shared_ptr<rocksdb::Statistics> stats = db->GetDBOptions().statistics;
+            std::shared_ptr<rocksdb::Statistics> stats = tx_db->GetDBOptions().statistics;
             rocksdb::HistogramData sst_read_hist;
             stats->histogramData(rocksdb::Histograms::SST_READ_MICROS, &sst_read_hist);
             rocksdb::HistogramData sst_write_hist;
