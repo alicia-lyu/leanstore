@@ -37,3 +37,7 @@ target_include_directories(basic_join_group PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 add_executable(geo_join tpc-h/geo_join/executable.cpp)
 target_link_libraries(geo_join rocksdb_executable LeanStoreLogger leanstore Threads::Threads)
 target_include_directories(geo_join PRIVATE ${SHARED_INCLUDE_DIRECTORY})
+
+add_executable(geo_lsm tpc-h/geo_join/executable_rocksdb.cpp)
+target_link_libraries(geo_lsm rocksdb_executable RocksDBLogger leanstore Threads::Threads)
+target_include_directories(geo_lsm PRIVATE ${SHARED_INCLUDE_DIRECTORY})

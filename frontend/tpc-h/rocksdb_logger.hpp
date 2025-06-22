@@ -53,6 +53,7 @@ struct RocksDBLogger : public Logger {
    ~RocksDBLogger() { std::cout << "RocksDB logs written to " << csv_runtime << std::endl; }
 
    void summarize_other_stats() override;
+   
    void reset() override
    {
       Logger::reset();

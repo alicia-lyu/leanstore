@@ -3,20 +3,20 @@
 
 #include <memory>
 #include "../tpc-h/merge.hpp"
-#include "MergedScanner.hpp"
 #include "variant_utils.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
 template <typename JK, typename JR, typename... Records>
-struct LeanStoreMergedScanner : public MergedScanner<JK, JR, Records...>
+struct LeanStoreMergedScanner
 {
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
    std::unique_ptr<BTreeIt> it;
 
    bool after_seek = false;
+   long long produced = 0;
 
    LeanStoreMergedScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 

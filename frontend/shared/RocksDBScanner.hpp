@@ -2,51 +2,46 @@
 
 #include <rocksdb/iterator.h>
 #include <rocksdb/slice.h>
-#include "RocksDBAdapter.hpp"
-#include "Scanner.hpp"
+#include "RocksDB.hpp"
 #include "Units.hpp"
 
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 
 template <class Record>
-class RocksDBScanner : public Scanner<Record>
+class RocksDBScanner
 {
    ColumnFamilyHandle* cf_handle;  // adapter's lifespan must cover scanner's
    std::unique_ptr<rocksdb::Iterator> it;
-   bool afterSeek = false;
-   long long produced = 0;
 
   public:
-   using Base = Scanner<Record>;
+   bool after_seek = false;
+   long long produced = 0;
 
-   RocksDBScanner(RocksDBAdapter<Record>& adapter)
-       : cf_handle(adapter.cf_handle.get()), it(std::unique_ptr<rocksdb::Iterator>(adapter.map.tx_db->NewIterator(adapter.map.iterator_ro, cf_handle)))
-   {
-   }
+   RocksDBScanner(ColumnFamilyHandle* cf_handle, RocksDB& map) : cf_handle(cf_handle), it(map.tx_db->NewIterator(map.iterator_ro, cf_handle)) {}
    ~RocksDBScanner() = default;
 
-   void reset() override
+   void reset()
    {
       it->SeekToFirst();
-      afterSeek = true;
+      after_seek = true;
       produced = 0;
    }
 
-   bool seek(const typename Record::Key key) final
+   bool seek(const typename Record::Key key)
    {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       it->Seek(RSlice(folded_key, folded_key_len));
-      afterSeek = true;
+      after_seek = true;
       return it->Valid();
    }
 
-   void seekForPrev(const typename Record::Key key) final
+   void seekForPrev(const typename Record::Key key)
    {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       it->SeekForPrev(RSlice(folded_key, folded_key_len));
-      afterSeek = true;
+      after_seek = true;
    }
 
    template <typename JK>
@@ -55,11 +50,11 @@ class RocksDBScanner : public Scanner<Record>
       u8 folded_key[JK::maxFoldLength()];
       u16 folded_key_len = JK::keyfold(folded_key, key);
       it->Seek(RSlice(folded_key, folded_key_len));
-      afterSeek = true;
+      after_seek = true;
       return it->Valid();
    }
 
-   std::optional<std::pair<typename Record::Key, Record>> current() override
+   std::optional<std::pair<typename Record::Key, Record>> current() 
    {
       if (!it->Valid()) {
          return std::nullopt;
@@ -70,10 +65,10 @@ class RocksDBScanner : public Scanner<Record>
       return std::make_pair(key, record);
    }
 
-   std::optional<std::pair<typename Record::Key, Record>> next() override
+   std::optional<std::pair<typename Record::Key, Record>> next() 
    {
-      if (afterSeek) {
-         afterSeek = false;
+      if (after_seek) {
+         after_seek = false;
          return current();
       }
       it->Next();
@@ -83,10 +78,10 @@ class RocksDBScanner : public Scanner<Record>
       return current();
    }
 
-   std::optional<std::pair<typename Record::Key, Record>> prev() override
+   std::optional<std::pair<typename Record::Key, Record>> prev()
    {
-      if (afterSeek) {
-         afterSeek = false;
+      if (after_seek) {
+         after_seek = false;
          return current();
       }
       it->Prev();

@@ -8,6 +8,7 @@ namespace geo_join
 template <typename W>
 struct ExeParams {
    W& workload;
+   ExeParams(W& w) : workload(w) {}
    const std::vector<std::string> tput_prefixes = {
        // "join-ns",
        // "join-nsc",

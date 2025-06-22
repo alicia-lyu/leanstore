@@ -17,7 +17,7 @@ vscode_launch_obj = {
 @dataclass(frozen=True)
 class Config:
     build_dirs = ["build", "build-debug"]
-    exec_names = ["basic_join", "basic_group", "basic_group_variant", "basic_join_group", "geo_join"]
+    exec_names = ["basic_join", "basic_group", "basic_group_variant", "basic_join_group", "geo_join", "geo_lsm"]
     numjobs: str = "$(NUMJOBS)"
     cmake_options: str = "$(CMAKE_OPTIONS)"
     cmake_debug: str = "$(CMAKE_DEBUG)"
@@ -118,15 +118,15 @@ def generate_image_files() -> None:
 
 LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
 
+DIFF_DIRS = {
+ "basic_group_variant": "basic_group",
+ "geo_lsm": "geo_join"
+}
+
 def loading_files(exe) -> str:
     """Returns the path to the loading files for a given executable."""
-    # strip variant if any
-    # return f"./frontend/tpc-h/{exe}/workload.hpp"
-    pattern = r"^(.+)_variant$"
-    match = re.match(pattern, exe)
-    if match:
-        exe = match.group(1)
-    file_base = f"./frontend/tpc-h/{exe}/load"
+    src_dir = DIFF_DIRS[exe] if exe in DIFF_DIRS else exe
+    file_base = f"./frontend/tpc-h/{src_dir}/load"
     files = []
     for ext in ['tpp', 'hpp']:
         file = f"{file_base}.{ext}"
@@ -160,7 +160,8 @@ STRUCTURE_OPTIONS = {
     "basic_group": [0, 2],
     "basic_group_variant": [0, 2],
     "basic_join_group": [0, 2],
-    "geo_join": [0, 1, 2, 3]
+    "geo_join": [0, 1, 2, 3],
+    "geo_lsm": [0, 1, 2, 3]
 }            
 
 def generate_run_rules() -> None:

@@ -105,11 +105,7 @@ void Logger::log_summary()
    summarize_shared_stats();
    summarize_other_stats();
    std::filesystem::path csv_sum_path;
-   if (stats.tx == "load") {
-      csv_sum_path = csv_runtime / "load.csv";
-   } else {
-      csv_sum_path = csv_db / (to_short_string(stats.column_name) + ".csv");
-   }
+   csv_sum_path = csv_db / (to_short_string(stats.column_name) + ".csv");
 
    std::cout << "Summary logging to " << csv_sum_path << std::endl;
 

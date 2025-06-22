@@ -84,6 +84,7 @@ struct SumStats {
       this->tx = std::move(tx);
       this->method = std::move(method);
       this->size = size;
+      column_name = ColumnName::TPUT;
    }
 
    void init(long elapsed, std::string tx, std::string method, double size)
@@ -93,6 +94,7 @@ struct SumStats {
       this->tx = std::move(tx);
       this->method = std::move(method);
       this->size = size;
+      column_name = ColumnName::ELAPSED;
    }
 };
 

@@ -53,6 +53,9 @@ struct RocksDBTraits : public DBTraits {
    {
       std::thread([&]() { cb(); }).detach();
    }
+   void cleanup_thread()
+   {  // No cleanup needed for RocksDB threads
+   }
    std::string name() { return "RocksDB"; }
 };
 

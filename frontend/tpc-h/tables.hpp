@@ -8,6 +8,7 @@ using namespace randutils;
 // id range: (0s) 0--7
 
 struct part_t {
+   static constexpr int id = 0;
    Varchar<55> p_name;
    Varchar<25> p_mfgr;
    Varchar<10> p_brand;
