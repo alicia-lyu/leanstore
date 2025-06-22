@@ -11,7 +11,7 @@ using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 template <class Record>
 class RocksDBScanner : public Scanner<Record>
 {
-   ColumnFamilyHandle* cf_handle; // adapter's lifespan must cover scanner's
+   ColumnFamilyHandle* cf_handle;  // adapter's lifespan must cover scanner's
    std::unique_ptr<rocksdb::Iterator> it;
    bool afterSeek = false;
    long long produced = 0;

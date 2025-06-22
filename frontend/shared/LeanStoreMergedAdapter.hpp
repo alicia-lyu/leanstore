@@ -40,30 +40,6 @@ struct LeanStoreMergedAdapter {
    }
 
    void printTreeHeight() { cout << name << " height = " << btree->getHeight() << endl; }
-
-   template <class Record>
-   void scanDesc(const typename Record::Key& key,
-                 const std::function<bool(const typename Record::Key&, const Record&)>& cb,
-                 std::function<void()> undo)
-   {
-      u8 folded_key[Record::maxFoldLength()];
-      u16 folded_key_len = Record::foldKey(folded_key, key);
-      OP_RESULT ret = btree->scanDesc(
-          folded_key, folded_key_len,
-          [&](const u8* key, [[maybe_unused]] u16 key_length, const u8* payload, [[maybe_unused]] u16 payload_length) {
-             if (key_length != folded_key_len) {
-                return false;
-             }
-             typename Record::Key typed_key;
-             Record::unfoldKey(key, typed_key);
-             const Record& typed_payload = *reinterpret_cast<const Record*>(payload);
-             return cb(typed_key, typed_payload);
-          },
-          undo);
-      if (ret == leanstore::OP_RESULT::ABORT_TX) {
-         cr::Worker::my().abortTX();
-      }
-   }
    // -------------------------------------------------------------------------------------
    // Record must be one of the Records
    template <class Record>
