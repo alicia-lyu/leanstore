@@ -1,5 +1,4 @@
 #include <rocksdb/db.h>
-#include "RocksDB.hpp"
 
 using namespace rocksdb;
 

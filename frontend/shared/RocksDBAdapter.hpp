@@ -11,24 +11,30 @@ using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
 using ROCKSDB_NAMESPACE::Status;
+using ROCKSDB_NAMESPACE::Range;
 
 template <class Record>
 struct RocksDBAdapter : public Adapter<Record> {
-   
-   ColumnFamilyHandle* cf_handle;
+   int idx;  // index in RocksDB::cf_handles
+   std::unique_ptr<ColumnFamilyHandle> cf_handle;
    RocksDB& map;
    RocksDBAdapter(RocksDB& map) : map(map)
    {
-      Status s = map.tx_db->CreateColumnFamily(ColumnFamilyOptions(), std::string(Record::id), &cf_handle);
-      assert(s.ok());
       ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(std::string(Record::id), ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
-      map.cf_handles.push_back(cf_handle);
+      map.cf_handles.push_back(nullptr);
+      idx = map.cf_descs.size() - 1;
+   }
+
+   void get_handle()
+   {
+      assert(map.tx_db != nullptr);
+      cf_handle.reset(map.cf_handles.at(idx));
    }
 
    ~RocksDBAdapter()
    {
-      Status s = map.tx_db->DestroyColumnFamilyHandle(cf_handle);
+      Status s = map.tx_db->DestroyColumnFamilyHandle(cf_handle.get());
       cf_handle = nullptr;
       assert(s.ok());
    }
@@ -61,7 +67,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       // -------------------------------------------------------------------------------------
       rocksdb::PinnableSlice value;
       rocksdb::Status s;
-      s = map.txn->Get(map.ro, cf_handle, RSlice(folded_key, folded_key_len), &value);
+      s = map.txn->Get(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
       if (!s.ok()) {
          return false;
       }
@@ -146,4 +152,16 @@ struct RocksDBAdapter : public Adapter<Record> {
    }
 
    std::unique_ptr<Scanner<Record>> getScanner() { return std::make_unique<RocksDBScanner<Record>>(map); }
+
+   double size() {
+      std::array<u64, 1> sizes;
+      std::array<Range, 1> ranges;
+      // min key
+      std::vector<u8> min_key(1, 0);  // min key
+      std::vector<u8> max_key(Record::maxFoldLength(), 255);  // max key
+      ranges[0].start = RSlice(min_key.data(), min_key.size());
+      ranges[0].limit = RSlice(max_key.data(), max_key.size());
+      map.tx_db->GetApproximateSizes(cf_handle.get(), ranges.data(), ranges.size(), sizes.data());
+      return static_cast<double>(sizes[0]) / 1024.0 / 1024.0;  // convert to MB
+   }
 };
