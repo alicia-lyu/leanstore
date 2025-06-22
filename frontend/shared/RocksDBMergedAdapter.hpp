@@ -33,12 +33,6 @@ struct RocksDBMergedAdapter {
       cf_handle.reset(map.cf_handles.at(idx));
    }
    // -------------------------------------------------------------------------------------
-   template <typename T>
-   rocksdb::Slice RSlice(T* ptr, u64 len)
-   {
-      return rocksdb::Slice(reinterpret_cast<const char*>(ptr), len);
-   }
-   // -------------------------------------------------------------------------------------
    template <class Record>
    void insert(const typename Record::Key& key, const Record& record)
    {

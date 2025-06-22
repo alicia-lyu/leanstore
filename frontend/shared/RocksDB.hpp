@@ -23,6 +23,12 @@
 #include <ios>
 #include <iostream>
 
+template <typename T>
+inline rocksdb::Slice RSlice(T* ptr, u64 len)
+{
+   return rocksdb::Slice(reinterpret_cast<const char*>(ptr), len);
+}
+
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
@@ -31,6 +37,7 @@ struct RocksDB {
    rocksdb::TransactionDB* tx_db;
    std::vector<ColumnFamilyDescriptor> cf_descs;
    std::vector<ColumnFamilyHandle*> cf_handles;
+   std::vector<std::function<void()>> get_handle_cbs;
    static thread_local rocksdb::Transaction* txn;
 
    rocksdb::Options db_options;
@@ -86,6 +93,10 @@ struct RocksDB {
       if (!s.ok())
          cerr << s.ToString() << endl;
       assert(s.ok());
+      // Set the column family handles for all adapters
+      for (std::function<void()>& cb : get_handle_cbs) {
+         cb();
+      }
    }
 
    ~RocksDB()

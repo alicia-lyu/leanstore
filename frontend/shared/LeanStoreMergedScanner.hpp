@@ -1,9 +1,10 @@
 #pragma once
 
-#include <variant>
+
 #include <memory>
 #include "../tpc-h/merge.hpp"
 #include "MergedScanner.hpp"
+#include "variant_utils.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
@@ -16,27 +17,6 @@ struct LeanStoreMergedScanner : public MergedScanner<JK, JR, Records...>
    std::unique_ptr<BTreeIt> it;
 
    bool after_seek = false;
-
-   static std::pair<std::variant<typename Records::Key...>, std::variant<Records...>> toType(leanstore::Slice& k, leanstore::Slice& v)
-   {
-      bool matched = false;
-      std::variant<typename Records::Key...> result_key;
-      std::variant<Records...> result_rec;
-
-      (([&]() {
-          if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
-             typename Records::Key key;
-             Records::unfoldKey(k.data(), key);
-             const Records& rec = *reinterpret_cast<const Records*>(v.data());
-             matched = true;
-             result_key = key;
-             result_rec = rec;
-          }
-       })(),
-       ...);
-      assert(matched);
-      return std::make_pair(result_key, result_rec);
-   }
 
    LeanStoreMergedScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }
 
@@ -140,7 +120,7 @@ struct LeanStoreMergedScanner : public MergedScanner<JK, JR, Records...>
       it->assembleKey();
       leanstore::Slice key = it->key();
       leanstore::Slice payload = it->value();
-      return toType(key, payload);
+      return toType<Records...>(key, payload);
    }
 
    void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})

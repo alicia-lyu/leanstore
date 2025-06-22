@@ -48,7 +48,7 @@ struct RocksDBLogger : public Logger {
    RocksDBStats curr_stats;
    std::shared_ptr<rocksdb::Statistics> rocksdb_stats_ptr;
 
-   RocksDBLogger(RocksDB& db) : rocksdb_stats_ptr(db.db->GetDBOptions().statistics) { prev_stats = RocksDBStats(*rocksdb_stats_ptr); }
+   RocksDBLogger(RocksDB& db) : rocksdb_stats_ptr(db.tx_db->GetDBOptions().statistics) { prev_stats = RocksDBStats(*rocksdb_stats_ptr); }
 
    ~RocksDBLogger() { std::cout << "RocksDB logs written to " << csv_runtime << std::endl; }
 
