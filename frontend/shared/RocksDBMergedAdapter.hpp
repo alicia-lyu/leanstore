@@ -2,6 +2,7 @@
 #include <rocksdb/db.h>
 #include "Exceptions.hpp"
 #include "RocksDB.hpp"
+#include "RocksDBMergedScanner.hpp"
 #include "Units.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/utils/JumpMU.hpp"
@@ -20,7 +21,7 @@ struct RocksDBMergedAdapter {
 
    RocksDBMergedAdapter(RocksDB& map) : map(map)
    {
-      std::string merged_id = ((std::string(Records::id) + std::string("-")) + ...);
+      std::string merged_id = ((std::to_string(Records::id) + std::string("-")) + ...);
       ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(merged_id, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
@@ -130,10 +131,16 @@ struct RocksDBMergedAdapter {
       std::array<Range, 1> ranges;
       // min key
       std::vector<u8> min_key(1, 0);                          // min key
-      std::vector<u8> max_key(std::max(Records::maxFoldLength()...), 255);  // max key
+      std::vector<u8> max_key(std::max({Records::maxFoldLength()...}), 255);  // max key
       ranges[0].start = RSlice(min_key.data(), min_key.size());
       ranges[0].limit = RSlice(max_key.data(), max_key.size());
       map.tx_db->GetApproximateSizes(cf_handle.get(), ranges.data(), ranges.size(), sizes.data());
       return static_cast<double>(sizes[0]) / 1024.0 / 1024.0;  // convert to MB
+   }
+
+   template <typename JK, typename JR>
+   std::unique_ptr<RocksDBMergedScanner<JK, JR, Records...>> getScanner()
+   {
+      return std::make_unique<RocksDBMergedScanner<JK, JR, Records...>>(cf_handle.get(), map);
    }
 };

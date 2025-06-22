@@ -2,19 +2,18 @@
 
 #include <sys/types.h>
 #include <optional>
-#include "Scanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
 template <class Record>
-struct LeanStoreScanner : public Scanner<Record>
+struct LeanStoreScanner
 {
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
 
    std::unique_ptr<BTreeIt> it;
-   uint64_t produced = 0;
+   long long produced = 0;
    bool after_seek = false;
 
    LeanStoreScanner(BTree& btree) : it(std::make_unique<leanstore::storage::btree::BTreeSharedIterator>(btree)) { reset(); }

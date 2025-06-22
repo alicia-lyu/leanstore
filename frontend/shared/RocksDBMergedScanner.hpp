@@ -1,26 +1,26 @@
 #pragma once
 
 #include "../tpc-h/merge.hpp"
-#include "MergedScanner.hpp"
-#include "RocksDBMergedAdapter.hpp"
+#include "RocksDB.hpp"
+#include "variant_utils.hpp"
 
 template <typename JK, typename JR, typename... Records>
-struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
+struct RocksDBMergedScanner {
    ColumnFamilyHandle* cf_handle;  // adapter's lifespan must cover scanner's
    std::unique_ptr<rocksdb::Iterator> it;
-   bool afterSeek = false;
+   bool after_seek = false;
    long long produced = 0;
 
-   RocksDBMergedScanner(RocksDBMergedAdapter<Records...>& adapter)
-       : cf_handle(adapter.cf_handle.get()),
-         it(std::unique_ptr<rocksdb::Iterator>(adapter.map.tx_db->NewIterator(adapter.map.iterator_ro, cf_handle)))
+   RocksDBMergedScanner(ColumnFamilyHandle* cf_handle, RocksDB& map)
+       : cf_handle(cf_handle),
+         it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
    {
    }
 
-   void reset() override
+   void reset() 
    {
       it->SeekToFirst();
-      afterSeek = true;
+      after_seek = true;
       this->produced = 0;
    }
 
@@ -31,7 +31,7 @@ struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       it->Seek(RSlice(folded_key, folded_key_len));
-      afterSeek = true;
+      after_seek = true;
    }
 
    template <typename Record>
@@ -41,7 +41,7 @@ struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       it->SeekForPrev(RSlice(folded_key, folded_key_len));
-      afterSeek = true;
+      after_seek = true;
    }
 
    template <typename Record>
@@ -52,7 +52,7 @@ struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
       while (true) {
          auto kv = current().value();
          if (std::holds_alternative<Record>(kv.second)) {
-            afterSeek = true;
+            after_seek = true;
             return true;
          }
          it->Next();
@@ -62,18 +62,18 @@ struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
       }
    }
 
-   void seekJK(const JK& jk) override
+   void seekJK(const JK& jk) 
    {
       u8 folded_jk[JK::maxFoldLength()];
       u16 folded_jk_len = JK::keyfold(folded_jk, jk);
       it->Seek(RSlice(folded_jk, folded_jk_len));
-      afterSeek = true;
+      after_seek = true;
    }
 
-   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next() override
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next() 
    {
-      if (afterSeek) {
-         afterSeek = false;
+      if (after_seek) {
+         after_seek = false;
          return current();  // std::nullopt if !Valid
       }
       it->Next();
@@ -81,10 +81,10 @@ struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
       return this->current();  // std::nullopt if !Valid
    }
 
-   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> prev() override
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> prev()
    {
-      if (afterSeek) {
-         afterSeek = false;
+      if (after_seek) {
+         after_seek = false;
          return current();
       }
       it->Prev();
@@ -92,16 +92,16 @@ struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
       return this->current();  // std::nullopt if !Valid
    }
 
-   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current() override
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current() 
    {
       if (!it->Valid()) {
          return std::nullopt;
       }
-      auto [key, rec] = RocksDBMergedAdapter<Records...>::toType(it->key(), it->value());
+      auto [key, rec] = toType<Records...>(it->key(), it->value());
       return std::make_pair(key, rec);
    }
 
-   void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {}) override
+   void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
    {
       reset();
       PremergedJoin<RocksDBMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
@@ -109,7 +109,7 @@ struct RocksDBMergedScanner : public MergedScanner<JK, JR, Records...> {
    }
 
    std::tuple<JK, long> next_jk(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {
-   }) override
+   })
    {
       PremergedJoin<RocksDBMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
       joiner.next_jk();

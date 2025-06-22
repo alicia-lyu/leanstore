@@ -1,7 +1,6 @@
 #pragma once
 #include "Exceptions.hpp"
 #include "leanstore/KVInterface.hpp"
-#include "Scanner.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 #include <cassert>

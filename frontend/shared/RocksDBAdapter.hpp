@@ -20,7 +20,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    RocksDB& map;
    RocksDBAdapter(RocksDB& map) : map(map)
    {
-      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(std::string(Record::id), ColumnFamilyOptions());
+      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(std::to_string(Record::id), ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
       idx = map.cf_descs.size() - 1;
@@ -152,7 +152,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       return local_f;
    }
 
-   std::unique_ptr<Scanner<Record>> getScanner() { return std::make_unique<RocksDBScanner<Record>>(map); }
+   std::unique_ptr<RocksDBScanner<Record>> getScanner() { return std::make_unique<RocksDBScanner<Record>>(cf_handle.get(), map); }
 
    double size() {
       std::array<u64, 1> sizes;

@@ -32,6 +32,7 @@ struct LeanStoreLogger : public Logger {
    ~LeanStoreLogger() { std::cout << "Logs written to " << csv_runtime << std::endl; }
 
    void summarize_other_stats() override;
+   
    void reset() override
    {
       Logger::reset();
