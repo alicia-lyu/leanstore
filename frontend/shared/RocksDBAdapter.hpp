@@ -24,6 +24,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
       idx = map.cf_descs.size() - 1;
+      map.get_handle_cbs.push_back([this]() { get_handle(); });
    }
 
    void get_handle()
@@ -39,11 +40,6 @@ struct RocksDBAdapter : public Adapter<Record> {
       assert(s.ok());
    }
    // -------------------------------------------------------------------------------------
-   template <typename T>
-   rocksdb::Slice RSlice(T* ptr, u64 len)
-   {
-      return rocksdb::Slice(reinterpret_cast<const char*>(ptr), len);
-   }
    // -------------------------------------------------------------------------------------
    void insert(const typename Record::Key& key, const Record& record) final
    {
@@ -79,9 +75,14 @@ struct RocksDBAdapter : public Adapter<Record> {
    // -------------------------------------------------------------------------------------
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& fn, leanstore::UpdateSameSizeInPlaceDescriptor&) final
    {
+      update1(key, fn);
+   }
+
+   void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb) final
+   {
       Record r;
       lookup1(key, [&](const Record& rec) { r = rec; });
-      fn(r);
+      cb(r);
       insert(key, r);
    }
    // -------------------------------------------------------------------------------------

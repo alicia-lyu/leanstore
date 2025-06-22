@@ -6,8 +6,9 @@
 #include "../tables.hpp"
 #include "views.hpp"
 #include <rocksdb/db.h>
-#include "../shared/RocksDBAdapter.hpp"
+#include "../../shared/RocksDBAdapter.hpp"
 #include "workload.hpp"
+#include "executable_params.hpp"
 
 using namespace leanstore;
 
@@ -30,28 +31,29 @@ int main(int argc, char** argv)
    RocksDB rocks_db(type);
 
    // Tables
-   RocksDBAdapter<part_t> part;
-   RocksDBAdapter<supplier_t> supplier;
-   RocksDBAdapter<partsupp_t> partsupp;
-   RocksDBAdapter<customerh_t> customer;
-   RocksDBAdapter<orders_t> orders;
-   RocksDBAdapter<lineitem_t> lineitem;
-   RocksDBAdapter<nation_t> nation;
-   RocksDBAdapter<region_t> region;
+   RocksDBAdapter<part_t> part(rocks_db);
+   RocksDBAdapter<supplier_t> supplier(rocks_db);
+   RocksDBAdapter<partsupp_t> partsupp(rocks_db);
+   RocksDBAdapter<customerh_t> customer(rocks_db);
+   RocksDBAdapter<orders_t> orders(rocks_db);
+   RocksDBAdapter<lineitem_t> lineitem(rocks_db);
+   RocksDBAdapter<nation_t> nation(rocks_db);
+   RocksDBAdapter<region_t> region(rocks_db);
    // Additional indexes
-   RocksDBAdapter<states_t> states;
-   RocksDBAdapter<county_t> county;
-   RocksDBAdapter<city_t> city;
-   RocksDBAdapter<customer2_t> customer2;
+   RocksDBAdapter<states_t> states(rocks_db);
+   RocksDBAdapter<county_t> county(rocks_db);
+   RocksDBAdapter<city_t> city(rocks_db);
+   RocksDBAdapter<customer2_t> customer2(rocks_db);
    // Views
-   RocksDBAdapter<view_t> view;
+   RocksDBAdapter<view_t> view(rocks_db);
 
-   RocksDBMergedAdapter<nation2_t, states_t, county_t, city_t, customer2_t> mergedGeoJoin;
-   RocksDBMergedAdapter<nation2_t, states_t> ns;
-   RocksDBMergedAdapter<county_t, city_t, customer2_t> ccc;
+   RocksDBMergedAdapter<nation2_t, states_t, county_t, city_t, customer2_t> mergedGeoJoin(rocks_db);
+   RocksDBMergedAdapter<nation2_t, states_t> ns(rocks_db);
+   RocksDBMergedAdapter<county_t, city_t, customer2_t> ccc(rocks_db);
    // -------------------------------------------------------------------------------------
    rocks_db.open(); // only after all adapters are created (along with their column families)
-   RocksDBLogger logger(db);
+
+   RocksDBLogger logger(rocks_db);
    TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, states, county, city, customer2);
 
@@ -64,94 +66,36 @@ int main(int argc, char** argv)
    } else {
       tpch.recover_last_ids();
    }
-   std::vector<std::string> tput_prefixes = {
-      // "join-ns", 
-      // "join-nsc",
-      // "join-nscci",  
-      // "maintain", 
-      // "group-point", 
-      "mixed-point"
-   };
+
+   ExeParams<GJ> params(tpchGeoJoin);
    
    switch (FLAGS_storage_structure) {
       case 0: {
          std::cout << "TPC-H with traditional indexes" << std::endl;
-         std::vector<std::function<void()>> elapsed_cbs_base = {
-            // std::bind(&GJ::query_by_base, &tpchGeoJoin),                              
-            // std::bind(&GJ::agg_by_base, &tpchGeoJoin),
-            std::bind(&GJ::mixed_query_by_base, &tpchGeoJoin)
-         };
-         std::vector<std::function<void()>> tput_cbs_base = {
-            // std::bind(&GJ::ns_base, &tpchGeoJoin),
-            // std::bind(&GJ::nsc_base, &tpchGeoJoin),
-            // std::bind(&GJ::nscci_by_base, &tpchGeoJoin),
-            // std::bind(&GJ::maintain_base, &tpchGeoJoin),
-            // std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
-            std::bind(&GJ::point_mixed_query_by_base, &tpchGeoJoin)
-         };
-         WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_base, tput_cbs_base, tput_prefixes, "base",
-             [&]() { return tpchGeoJoin.get_indexes_size(); });
+         
+         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
+         helper.run();
          break;
       }
       case 1: {
          std::cout << "TPC-H with materialized views" << std::endl;
-         std::vector<std::function<void()>> elapsed_cbs_view = {
-            // std::bind(&GJ::query_by_view, &tpchGeoJoin),     
-            // std::bind(&GJ::agg_in_view, &tpchGeoJoin),
-            std::bind(&GJ::mixed_query_by_view, &tpchGeoJoin)
-         };
-         std::vector<std::function<void()>> tput_cbs_view = {
-            // std::bind(&GJ::ns_view, &tpchGeoJoin),
-            // std::bind(&GJ::nsc_view, &tpchGeoJoin),
-            // std::bind(&GJ::nscci_by_view, &tpchGeoJoin),
-            // std::bind(&GJ::maintain_view, &tpchGeoJoin),
-            // std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
-            std::bind(&GJ::point_mixed_query_by_view, &tpchGeoJoin)
-         };
-         WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_view, tput_cbs_view, tput_prefixes, "view",
-             [&]() { return tpchGeoJoin.get_view_size(); });
+
+         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
+         helper.run();
          break;
       }
       case 2: {
          std::cout << "TPC-H with merged indexes" << std::endl;
-         std::vector<std::function<void()>> elapsed_cbs_merged = {
-            // std::bind(&GJ::query_by_merged, &tpchGeoJoin),
-            // std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::mixed_query_by_merged, &tpchGeoJoin)
-         };
-         std::vector<std::function<void()>> tput_cbs_merged = {
-            // std::bind(&GJ::ns_merged, &tpchGeoJoin),
-            // std::bind(&GJ::nsc_merged, &tpchGeoJoin),
-            // std::bind(&GJ::nscci_by_merged, &tpchGeoJoin),
-            // std::bind(&GJ::maintain_merged, &tpchGeoJoin),
-            // std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
-            std::bind(&GJ::point_mixed_query_by_merged, &tpchGeoJoin)
-         };
-         WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_merged, tput_cbs_merged, tput_prefixes,
-             "merged", [&]() { return tpchGeoJoin.get_merged_size(); });
+
+         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
+         helper.run();
          break;
       }
       case 3 : {
          std::cout << "TPC-H with 2 merged indexes" << std::endl;
-         std::vector<std::function<void()>> elapsed_cbs_2merged = {
-            // std::bind(&GJ::query_by_2merged, &tpchGeoJoin),
-            // std::bind(&GJ::agg_by_2merged, &tpchGeoJoin),
-            std::bind(&GJ::mixed_query_by_2merged, &tpchGeoJoin)
-         };
-         std::vector<std::function<void()>> tput_cbs_2merged = {
-            // std::bind(&GJ::ns_by_2merged, &tpchGeoJoin),
-            // std::bind(&GJ::nsc_by_2merged, &tpchGeoJoin),
-            // std::bind(&GJ::nscci_by_2merged, &tpchGeoJoin),
-            // std::bind(&GJ::maintain_2merged, &tpchGeoJoin),
-            // std::bind(&GJ::point_agg_by_2merged, &tpchGeoJoin),
-            std::bind(&GJ::point_mixed_query_by_2merged, &tpchGeoJoin)
-         };
-         WARMUP_THEN_TXS(
-             tpch, crm, isolation_level, [&]() { tpchGeoJoin.point_lookups_of_rest(); }, elapsed_cbs_2merged, tput_cbs_2merged, tput_prefixes,
-             "2merged", [&]() { return tpchGeoJoin.get_2merged_size(); });
+
+         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
+         helper.run();
          break;
       }
       default: {

@@ -16,17 +16,11 @@ class RocksDBScanner : public Scanner<Record>
    bool afterSeek = false;
    long long produced = 0;
 
-   template <typename T>
-   rocksdb::Slice RSlice(T* ptr, u64 len)
-   {
-      return rocksdb::Slice(reinterpret_cast<const char*>(ptr), len);
-   }
-
   public:
    using Base = Scanner<Record>;
 
    RocksDBScanner(RocksDBAdapter<Record>& adapter)
-       : cf_handle(adapter.cf_handle), it(std::unique_ptr<rocksdb::Iterator>(adapter.map.tx_db->NewIterator(adapter.map.iterator_ro, cf_handle)))
+       : cf_handle(adapter.cf_handle.get()), it(std::unique_ptr<rocksdb::Iterator>(adapter.map.tx_db->NewIterator(adapter.map.iterator_ro, cf_handle)))
    {
    }
    ~RocksDBScanner() = default;
@@ -34,7 +28,7 @@ class RocksDBScanner : public Scanner<Record>
    void reset() override
    {
       it->SeekToFirst();
-      afterSeek = false;
+      afterSeek = true;
       produced = 0;
    }
 
