@@ -20,7 +20,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    RocksDB& map;
    RocksDBAdapter(RocksDB& map) : map(map)
    {
-      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(std::to_string(Record::id), ColumnFamilyOptions());
+      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor("table" + std::to_string(Record::id), ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
       idx = map.cf_descs.size() - 1;
@@ -30,7 +30,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    void get_handle()
    {
       assert(map.tx_db != nullptr);
-      cf_handle.reset(map.cf_handles.at(idx));
+      cf_handle.reset(map.cf_handles.at(idx + 1)); // +1 because cf_handles[0] is the default column family
    }
 
    ~RocksDBAdapter()

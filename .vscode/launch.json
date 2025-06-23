@@ -316,7 +316,7 @@
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
         "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_lsm/10.image_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
         "--dram_gib=1",
         "--storage_structure=0"
       ],
@@ -339,7 +339,7 @@
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
         "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_lsm/10.image_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
         "--dram_gib=1",
         "--storage_structure=1"
       ],
@@ -362,7 +362,7 @@
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
         "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_lsm/10.image_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
         "--dram_gib=1",
         "--storage_structure=2"
       ],
@@ -385,7 +385,7 @@
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
         "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_lsm/10.image_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
         "--dram_gib=1",
         "--storage_structure=3"
       ],

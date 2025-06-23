@@ -68,28 +68,13 @@ struct RocksDB {
 
    void set_options();
 
-   void create_cfs()
-   {
-      assert(tx_db == nullptr);
-      rocksdb::Status s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, &tx_db);  // open without specified column families
-      assert(s.ok());
-      tx_db->CreateColumnFamilies(cf_descs, &cf_handles);
-      for (auto& cf_handle : cf_handles) {
-         tx_db->DestroyColumnFamilyHandle(cf_handle);
-      }
-      delete tx_db;
-   }
-
    void open()
    {
-      if (!FLAGS_recover) {  // cf not present
-         create_cfs();
-      }
       // Add default column family
-      cf_descs.push_back(ColumnFamilyDescriptor(ROCKSDB_NAMESPACE::kDefaultColumnFamilyName, ColumnFamilyOptions()));
-      cf_handles.push_back(nullptr);
+      cf_descs.insert(cf_descs.begin(), ColumnFamilyDescriptor(ROCKSDB_NAMESPACE::kDefaultColumnFamilyName, ColumnFamilyOptions()));
+      cf_handles.insert(cf_handles.begin(), nullptr);
 
-      rocksdb::Status s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, cf_descs, &cf_handles, &tx_db);
+      rocksdb::Status s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, cf_descs, &cf_handles, &tx_db); // will create absent cfs
       if (!s.ok())
          cerr << s.ToString() << endl;
       assert(s.ok());

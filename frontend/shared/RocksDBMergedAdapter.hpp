@@ -21,7 +21,7 @@ struct RocksDBMergedAdapter {
 
    RocksDBMergedAdapter(RocksDB& map) : map(map)
    {
-      std::string merged_id = ((std::to_string(Records::id) + std::string("-")) + ...);
+      std::string merged_id = "merged" + ((std::to_string(Records::id) + std::string("-")) + ...);
       ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(merged_id, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
@@ -31,7 +31,7 @@ struct RocksDBMergedAdapter {
    void get_handle()
    {
       assert(map.tx_db != nullptr);
-      cf_handle.reset(map.cf_handles.at(idx));
+      cf_handle.reset(map.cf_handles.at(idx + 1));  // +1 because cf_handles[0] is the default column family
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
