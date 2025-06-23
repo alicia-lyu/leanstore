@@ -72,7 +72,7 @@ include("${CMAKE_SOURCE_DIR}/libs/rocksdb.cmake")
 #include("${CMAKE_SOURCE_DIR}/libs/psql.cmake")
 #include("${CMAKE_SOURCE_DIR}/libs/gdouble.cmake")
 #include("${CMAKE_SOURCE_DIR}/libs/turbo.cmake")
-#nclude("${CMAKE_SOURCE_DIR}/libs/lz4.cmake")
+#include("${CMAKE_SOURCE_DIR}/libs/lz4.cmake")
 
 # ---------------------------------------------------------------------------
 # Includes
