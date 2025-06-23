@@ -107,8 +107,8 @@ struct TPCHWorkload {
              return false;
           },
           []() {});
-      std::cout << "last_part_id: " << last_part_id << ", last_supplier_id: " << last_supplier_id
-                << ", last_customer_id: " << last_customer_id << ", last_order_id: " << last_order_id << std::endl;
+      std::cout << "last_part_id: " << last_part_id << ", last_supplier_id: " << last_supplier_id << ", last_customer_id: " << last_customer_id
+                << ", last_order_id: " << last_order_id << std::endl;
    }
 
    inline Integer getPartID() { return urand(1, last_part_id); }
@@ -234,7 +234,7 @@ struct TPCHWorkload {
       auto orders_rem_start = current_order_key;
       for (; current_order_key < order_keys.end(); current_order_key++) {
          printProgress("orders of lineitems", current_order_key - orders_rem_start, 0, order_keys.end() - orders_rem_start);
-         loadLineitem(l_insert_func, *current_order_key, *current_order_key);
+         load_lineitems_1order(l_insert_func, *current_order_key);
       }
    }
 
@@ -270,15 +270,30 @@ struct TPCHWorkload {
          auto p = urand(1, last_part_id);
          auto s = urand(1, last_supplier_id);
          auto start_key = partsupp_t::Key{p, s};
+         bool found = false;
          partsupp.scan(
              start_key,
              [&](const partsupp_t::Key& k, const partsupp_t&) {
                 p = k.ps_partkey;
                 s = k.ps_suppkey;
                 // LATER: each ps pair does not have uniform chance of being selected
+                found = true;
                 return false;
              },
              []() {});
+         if (!found) {
+            partsupp.scanDesc(
+                start_key,
+                [&](const partsupp_t::Key& k, const partsupp_t&) {
+                   p = k.ps_partkey;
+                   s = k.ps_suppkey;
+                   // LATER: each ps pair does not have uniform chance of being selected
+                   found = true;
+                   return false;
+                },
+                []() {});
+         }
+         assert(found);
          insert_func(lineitem_t::Key{orderkey, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
       }
       return lineitem_cnt;
@@ -360,19 +375,19 @@ struct TPCHWorkload {
    }
 };
 
-template<template<typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::PART_SCALE = 200;
-template<template <typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::SUPPLIER_SCALE = 10;
-template<template <typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::CUSTOMER_SCALE = 150;
-template<template <typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::ORDERS_SCALE = 1500;
-template<template <typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::LINEITEM_SCALE = 6000;
-template<template <typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::PARTSUPP_SCALE = 800;
-template<template <typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::NATION_COUNT = 25;
-template<template <typename> class AdapterType>
+template <template <typename> class AdapterType>
 Integer TPCHWorkload<AdapterType>::REGION_COUNT = 5;
