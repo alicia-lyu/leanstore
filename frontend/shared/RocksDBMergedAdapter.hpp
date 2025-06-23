@@ -10,19 +10,19 @@
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
-using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::Range;
+using ROCKSDB_NAMESPACE::Status;
 
 template <typename... Records>
 struct RocksDBMergedAdapter {
    int idx;  // index in RocksDB::cf_handles
    std::unique_ptr<ColumnFamilyHandle> cf_handle;
    RocksDB& map;
+   const std::string name = "merged" + ((std::to_string(Records::id) + std::string("-")) + ...);
 
    RocksDBMergedAdapter(RocksDB& map) : map(map)
    {
-      std::string merged_id = "merged" + ((std::to_string(Records::id) + std::string("-")) + ...);
-      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(merged_id, ColumnFamilyOptions());
+      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(name, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
       idx = map.cf_descs.size() - 1;
@@ -45,7 +45,7 @@ struct RocksDBMergedAdapter {
       }
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
-      s = map.txn->Put(RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
+      s = map.txn->Put(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
       if (!s.ok()) {
          map.txn->Rollback();
          jumpmu::jump();
@@ -55,16 +55,7 @@ struct RocksDBMergedAdapter {
    template <class Record>
    void lookup1(const typename Record::Key& key, const std::function<void(const Record&)>& fn)
    {
-      u8 folded_key[Record::maxFoldLength()];
-      const u32 folded_key_len = Record::foldKey(folded_key, key);
-      // -------------------------------------------------------------------------------------
-      rocksdb::PinnableSlice value;
-      rocksdb::Status s;
-      s = map.txn->Get(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
-      assert(s.ok());
-      const Record& record = *reinterpret_cast<const Record*>(value.data());
-      fn(record);
-      value.Reset();
+      assert(tryLookup<Record>(key, fn));
    }
 
    template <class Record>
@@ -75,7 +66,7 @@ struct RocksDBMergedAdapter {
       // -------------------------------------------------------------------------------------
       rocksdb::PinnableSlice value;
       rocksdb::Status s;
-      s = map.txn->Get(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
+      s = map.txn->Get(cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
       if (!s.ok()) {
          return false;
       }
@@ -86,12 +77,25 @@ struct RocksDBMergedAdapter {
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
-   void update1(const typename Record::Key& key, const std::function<void(Record&)>& fn, leanstore::UpdateSameSizeInPlaceDescriptor&)
+   void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb, leanstore::UpdateSameSizeInPlaceDescriptor&)
    {
       Record r;
-      lookup1<Record>(key, [&](const Record& rec) { r = rec; });
-      fn(r);
-      insert<Record>(key, r);
+      u8 folded_key[Record::maxFoldLength()];
+      const auto folded_key_len = Record::foldKey(folded_key, key);
+      rocksdb::PinnableSlice r_slice;
+      r_slice.PinSelf(RSlice(&r, sizeof(r)));
+      Status s = map.txn->GetForUpdate(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &r_slice);
+      if (!s.ok()) {
+         map.txn->Rollback();
+         jumpmu::jump();
+      }
+      Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
+      cb(r_lookedup);
+      s = map.txn->Merge(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&r_lookedup, sizeof(r_lookedup)));
+      if (!s.ok()) {
+         map.txn->Rollback();
+         jumpmu::jump();
+      }
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
@@ -101,7 +105,7 @@ struct RocksDBMergedAdapter {
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
-      s = map.txn->Delete(RSlice(folded_key, folded_key_len));
+      s = map.txn->Delete(cf_handle.get(), RSlice(folded_key, folded_key_len));
       if (!s.ok()) {
          map.txn->Rollback();
          jumpmu::jump();
@@ -127,15 +131,27 @@ struct RocksDBMergedAdapter {
 
    double size()
    {
+      std::vector<u8> min_key(1, 0);  // min key
+      auto start_slice = RSlice(min_key.data(), min_key.size());
+      std::vector<u8> max_key(std::max({Records::maxFoldLength()...}), 255);  // max key
+      auto limit_slice = RSlice(max_key.data(), max_key.size());
+
+      std::cout << "Compacting " << name << "..." << std::endl;
+      auto compact_options = rocksdb::CompactRangeOptions();
+      compact_options.change_level = true;
+      auto ret = map.tx_db->CompactRange(compact_options, cf_handle.get(), &start_slice, &limit_slice);
+      assert(ret.ok());
+
       std::array<u64, 1> sizes;
       std::array<Range, 1> ranges;
-      // min key
-      std::vector<u8> min_key(1, 0);                          // min key
-      std::vector<u8> max_key(std::max({Records::maxFoldLength()...}), 255);  // max key
-      ranges[0].start = RSlice(min_key.data(), min_key.size());
-      ranges[0].limit = RSlice(max_key.data(), max_key.size());
-      map.tx_db->GetApproximateSizes(cf_handle.get(), ranges.data(), ranges.size(), sizes.data());
-      return static_cast<double>(sizes[0]) / 1024.0 / 1024.0;  // convert to MB
+      ranges[0].start = start_slice;
+      ranges[0].limit = limit_slice;
+      rocksdb::SizeApproximationOptions size_options;
+      size_options.include_memtables = true;
+      size_options.include_files = true;
+      size_options.files_size_error_margin = 0.1;
+      map.tx_db->GetApproximateSizes(size_options, cf_handle.get(), ranges.data(), ranges.size(), sizes.data());
+      return (double)sizes[0] / 1024.0 / 1024.0;  // convert to MB
    }
 
    template <typename JK, typename JR>

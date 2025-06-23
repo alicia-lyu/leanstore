@@ -1,4 +1,5 @@
 #pragma once
+#include <rocksdb/db.h>
 #include <functional>
 #include "Adapter.hpp"
 #include "RocksDB.hpp"
@@ -10,17 +11,18 @@
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
-using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::Range;
+using ROCKSDB_NAMESPACE::Status;
 
 template <class Record>
 struct RocksDBAdapter : public Adapter<Record> {
    int idx;  // index in RocksDB::cf_handles
    std::unique_ptr<ColumnFamilyHandle> cf_handle;
    RocksDB& map;
+   const std::string name = "table" + std::to_string(Record::id);
    RocksDBAdapter(RocksDB& map) : map(map)
    {
-      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor("table" + std::to_string(Record::id), ColumnFamilyOptions());
+      ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(name, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
       idx = map.cf_descs.size() - 1;
@@ -30,7 +32,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    void get_handle()
    {
       assert(map.tx_db != nullptr);
-      cf_handle.reset(map.cf_handles.at(idx + 1)); // +1 because cf_handles[0] is the default column family
+      cf_handle.reset(map.cf_handles.at(idx + 1));  // +1 because cf_handles[0] is the default column family
    }
 
    ~RocksDBAdapter()
@@ -46,8 +48,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
-      rocksdb::Status s;
-      s = map.txn->Put(RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
+      rocksdb::Status s = map.txn->Put(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
       if (!s.ok()) {
          map.txn->Rollback();
          jumpmu::jump();
@@ -62,8 +63,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
       rocksdb::PinnableSlice value;
-      rocksdb::Status s;
-      s = map.txn->Get(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
+      rocksdb::Status s = map.txn->Get(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
       if (!s.ok()) {
          return false;
       }
@@ -81,9 +81,22 @@ struct RocksDBAdapter : public Adapter<Record> {
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb) final
    {
       Record r;
-      lookup1(key, [&](const Record& rec) { r = rec; });
-      cb(r);
-      insert(key, r);
+      u8 folded_key[Record::maxFoldLength()];
+      const auto folded_key_len = Record::foldKey(folded_key, key);
+      rocksdb::PinnableSlice r_slice;
+      r_slice.PinSelf(RSlice(&r, sizeof(r)));
+      Status s = map.txn->GetForUpdate(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &r_slice);
+      if (!s.ok()) {
+         map.txn->Rollback();
+         jumpmu::jump();
+      }
+      Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
+      cb(r_lookedup);
+      s = map.txn->Merge(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&r_lookedup, sizeof(r_lookedup)));
+      if (!s.ok()) {
+         map.txn->Rollback();
+         jumpmu::jump();
+      }
    }
    // -------------------------------------------------------------------------------------
    bool erase(const typename Record::Key& key) final
@@ -92,7 +105,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
-      s = map.txn->Delete(RSlice(folded_key, folded_key_len));
+      s = map.txn->Delete(cf_handle.get(), RSlice(folded_key, folded_key_len));
       if (!s.ok()) {
          map.txn->Rollback();
          jumpmu::jump();
@@ -104,11 +117,8 @@ struct RocksDBAdapter : public Adapter<Record> {
    {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
-      if (folded_key_len > Record::maxFoldLength()) {
-         std::cout << "folded_key_len: " << folded_key_len << " Record::maxFoldLength(): " << Record::maxFoldLength() << std::endl;
-      }
       // -------------------------------------------------------------------------------------
-      rocksdb::Iterator* it = map.tx_db->NewIterator(map.iterator_ro);
+      rocksdb::Iterator* it = map.tx_db->NewIterator(map.iterator_ro, cf_handle.get());
       for (it->Seek(RSlice(folded_key, folded_key_len)); it->Valid(); it->Next()) {
          typename Record::Key s_key;
          Record::unfoldKey(reinterpret_cast<const u8*>(it->key().data()), s_key);
@@ -127,7 +137,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = fold(folded_key, Record::id) + Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
-      rocksdb::Iterator* it = map.tx_db->NewIterator(map.iterator_ro);
+      rocksdb::Iterator* it = map.tx_db->NewIterator(map.iterator_ro, cf_handle.get());
       for (it->SeekForPrev(RSlice(folded_key, folded_key_len)); it->Valid(); it->Prev()) {
          typename Record::Key s_key;
          Record::unfoldKey(reinterpret_cast<const u8*>(it->key().data()), s_key);
@@ -154,15 +164,27 @@ struct RocksDBAdapter : public Adapter<Record> {
 
    std::unique_ptr<RocksDBScanner<Record>> getScanner() { return std::make_unique<RocksDBScanner<Record>>(cf_handle.get(), map); }
 
-   double size() {
-      std::array<u64, 1> sizes;
-      std::array<Range, 1> ranges;
-      // min key
+   double size()
+   {
       std::vector<u8> min_key(1, 0);  // min key
+      auto start_slice = RSlice(min_key.data(), min_key.size());
       std::vector<u8> max_key(Record::maxFoldLength(), 255);  // max key
-      ranges[0].start = RSlice(min_key.data(), min_key.size());
-      ranges[0].limit = RSlice(max_key.data(), max_key.size());
-      map.tx_db->GetApproximateSizes(cf_handle.get(), ranges.data(), ranges.size(), sizes.data());
-      return static_cast<double>(sizes[0]) / 1024.0 / 1024.0;  // convert to MB
+      auto limit_slice = RSlice(max_key.data(), max_key.size());
+
+      std::cout << "Compacting " << name << "..." << std::endl;
+      auto compact_options = rocksdb::CompactRangeOptions();
+      compact_options.change_level = true;
+      auto ret = map.tx_db->CompactRange(compact_options, cf_handle.get(), &start_slice, &limit_slice);
+      assert(ret.ok());
+
+      std::array<u64, 1> sizes;
+      std::array<Range, 1> ranges{Range{start_slice, limit_slice}};
+
+      rocksdb::SizeApproximationOptions size_options;
+      size_options.include_memtables = true;
+      size_options.include_files = true;
+      size_options.files_size_error_margin = 0.1;
+      map.tx_db->GetApproximateSizes(size_options, cf_handle.get(), ranges.data(), ranges.size(), sizes.data());
+      return (double)sizes[0] / 1024.0 / 1024.0;  // convert to MB
    }
 };
