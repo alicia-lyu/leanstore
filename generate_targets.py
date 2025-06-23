@@ -28,7 +28,6 @@ class Config:
                        --tpch_scale_factor=$(scale)"
     dram: str = "$(dram)"
     scale: str = "$(scale)"
-    image_dir: Path = Path("/mnt/hdd/leanstore_images")
 
 
 cfg = Config()
@@ -61,7 +60,13 @@ def runtime_dir(build_dir: str, exe: str) -> Path:
 
 def image_file(build_dir:str, exe: str) -> Path:
     """Returns the path to the SSD image file for a given executable."""
-    return cfg.image_dir / build_dir / exe / f"{cfg.scale}.image"
+    if "lsm" in exe:
+        # LSM executables use a different image directory
+        p =  Path("/mnt/hdd/rocksdb_images") / build_dir / exe / f"{cfg.scale}"
+        return p, f"mkdir -p {p}", f"cp -R -f {p} {p}_temp"
+    else:
+        p =  Path("/mnt/hdd/leanstore_images") / build_dir / exe / f"{cfg.scale}.image"
+        return p, f"mkdir -p {p.parent} && touch {p}", f"cp -f {p} {p}_temp"
 
 #### ================== makefile generation functions ================== ####
 
@@ -107,13 +112,13 @@ def generate_image_files() -> None:
     print(f"FORCE:;")
     for dir in cfg.build_dirs:
         for exe in cfg.exec_names:
-            img = image_file(dir, exe)
+            img, create_cmd, copy_cmd = image_file(dir, exe)
             print(f"{img}:")
             print(f'\t@echo "{sep} Touching a new image file {img} {sep}"')
-            print(f"\tmkdir -p {img.parent} && touch {img}")
+            print(f"\t{create_cmd}")
             print(f"{img}_temp: {img} FORCE") # force duplicate
             print(f'\t@echo "{sep} Duplicating temporary image file {img} for transactions {sep}"')
-            print(f"\tmkdir -p {img.parent} && cp -f {img} {img}_temp")
+            print(f"\t{copy_cmd}")
             print()
 
 LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
@@ -142,15 +147,16 @@ def generate_recover_rules() -> None:
             exe_path = executable_path(bd, exe)
             rd = runtime_dir(bd, exe)
             recover = Path(bd) / exe / f"{cfg.scale}.json"
-            img = image_file(bd, exe)
+            img, _, _ = image_file(bd, exe)
 
             print(f"{recover}: {LOADING_META_FILE} {loading_files(exe)} {img}")
             # for f in [recover, LOADING_META_FILE, loading_file(exe), img]:
                 # print(f'\techo {f}; stat -c %y "{f}"')
             print(f'\techo "{sep} Persisting data to {recover} {sep}"')
             print(f"\tmkdir -p {rd}")
+            prefix = "lldb -o run -- " if "debug" in bd else ""
             print(
-                f"\t{exe_path} {cfg.leanstore_flags} "
+                f"\t{prefix}{exe_path} {cfg.leanstore_flags} "
                 f"--csv_path={rd} --persist_file=$@ "
                 f"--trunc=true --ssd_path={img} --dram_gib=8 2>{rd}/stderr.txt\n"
             )
@@ -172,7 +178,7 @@ def generate_run_rules() -> None:
         exe_path = executable_path(bd, exe)
         rd = runtime_dir(bd, exe)
         recover = Path(bd) / exe / f"{cfg.scale}.json"
-        img = f"{image_file(bd, exe)}"
+        img, _, _ = image_file(bd, exe)
         separate_runs = " ".join([f"{exe}_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
         print(f"{exe}: check_perf_event_paranoid {separate_runs}")
         
@@ -198,7 +204,7 @@ def generate_lldb_rules() -> None:
         exe_path = executable_path(bd, exe)
         rd = runtime_dir(bd, exe)
         recover = Path(bd) / exe / f"{cfg.scale}.json"
-        img = image_file(bd, exe)
+        img, _, _ = image_file(bd, exe)
         separate_runs = " ".join([f"{exe}_lldb_{str(i)}" for i in STRUCTURE_OPTIONS[exe]])
         
         print(f"{exe}_lldb: {separate_runs}")

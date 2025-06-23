@@ -11,6 +11,7 @@ void RocksDB::set_options()
    db_options.db_write_buffer_size = 0;  // disabled
    // db_options.write_buffer_size = 64 * 1024 * 1024; keep the default
    db_options.create_if_missing = true;
+   db_options.create_missing_column_families = true;
    // db_options.manual_wal_flush = true;
    db_options.compression = rocksdb::CompressionType::kNoCompression;
    db_options.compaction_style = rocksdb::CompactionStyle::kCompactionStyleLevel;
