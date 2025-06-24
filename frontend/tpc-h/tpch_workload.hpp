@@ -294,6 +294,7 @@ struct TPCHWorkload {
                 []() {});
          }
          assert(found);
+         // std::cout << p << " " << s << " ";
          insert_func(lineitem_t::Key{orderkey, j}, lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; }));
       }
       return lineitem_cnt;

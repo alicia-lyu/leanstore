@@ -32,7 +32,9 @@ struct RocksDBAdapter : public Adapter<Record> {
    void get_handle()
    {
       assert(map.tx_db != nullptr);
-      cf_handle.reset(map.cf_handles.at(idx + 1));  // +1 because cf_handles[0] is the default column family
+      ColumnFamilyHandle* handle = map.cf_handles.at(idx + 1); // +1 because cf_handles[0] is the default column family
+      assert(handle != nullptr);
+      cf_handle.reset(handle); 
    }
 
    ~RocksDBAdapter()
