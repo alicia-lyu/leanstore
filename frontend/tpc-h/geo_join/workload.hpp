@@ -115,7 +115,7 @@ class GeoJoin
              return false;  // stop after the first match
           },
           []() {});
-      if (!found) // too large a key
+      if (!found)  // too large a key
          return std::nullopt;
       return std::make_optional(sk);
    }
@@ -213,7 +213,8 @@ class GeoJoin
       ns_count++;
    }
 
-   void ns_by_2merged() {
+   void ns_by_2merged()
+   {
       ns_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), 0, 0);
       ns_count++;
    }
@@ -235,7 +236,8 @@ class GeoJoin
       nsc_count++;
    }
 
-   void nsc_by_2merged() {
+   void nsc_by_2merged()
+   {
       nsc_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
       nsc_count++;
    }
@@ -258,7 +260,8 @@ class GeoJoin
       nscci_count++;
    }
 
-   void nscci_by_2merged() {
+   void nscci_by_2merged()
+   {
       nscci_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
       nscci_count++;
    }
@@ -276,13 +279,33 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- LOADING -----------------------------
-   // TODO: load group view
+   struct LoadState {
+      std::vector<Integer> custkeys;
+      size_t customer_idx = 0;
+      std::vector<city_t::Key> hot_city_candidates;
+
+      LoadState() = default;
+
+      LoadState(int last_customer_id) : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates()
+      {
+         std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
+         std::random_shuffle(custkeys.begin(), custkeys.end());
+      }
+   };
+
+   LoadState load_state;
 
    void load();
 
-   std::vector<city_t::Key> seq_load(std::vector<Integer>& custkeys, size_t& customer_idx);
+   void seq_load();
 
-   void load_hot_cities(std::vector<Integer>& custkeys, size_t& customer_idx, std::vector<city_t::Key>& hot_city_candidates);
+   void load_1state(int n, int s);
+
+   void load_1county(int n, int s, int c);
+
+   void load_1city(int n, int s, int c, int ci);
+
+   void load_hot_cities();
 
    void load_1customer2(int n, int s, int c, int ci, int cu);
 
@@ -324,7 +347,7 @@ class GeoJoin
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
-#include "join_queries.tpp"   // IWYU pragma: keep
-#include "load.tpp"           // IWYU pragma: keep
-#include "maintain.tpp"       // IWYU pragma: keep
-#include "mixed_query.tpp"    // IWYU pragma: keep
+#include "join_queries.tpp"  // IWYU pragma: keep
+#include "load.tpp"          // IWYU pragma: keep
+#include "maintain.tpp"      // IWYU pragma: keep
+#include "mixed_query.tpp"   // IWYU pragma: keep

@@ -15,14 +15,9 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
 {
    workload.load();
-   std::cout << "Shuffling customer keys..." << std::endl;
-   std::vector<Integer> custkeys(workload.last_customer_id - 1);
-   std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
-   std::random_shuffle(custkeys.begin(), custkeys.end());
-   size_t customer_idx = 0;
-   std::vector<city_t::Key> hot_city_candidates = seq_load(custkeys, customer_idx);
-   load_hot_cities(custkeys, customer_idx, hot_city_candidates);
-   log_sizes();
+   load_state = LoadState(workload.last_customer_id);
+   seq_load();
+   load_hot_cities();
    // load view
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
    PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
@@ -34,15 +29,13 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-std::vector<city_t::Key> GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::seq_load(std::vector<Integer>& custkeys,
-                                                                                                           size_t& customer_idx)
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::seq_load()
 {
    // load geo tables
    // county id starts from 1 in each s tate
    // city id starts from 1 in each county
    long county_sum = 0;
    long city_sum = 0;
-   std::vector<city_t::Key> hot_city_candidates;
    for (int n = 1; n <= workload.NATION_COUNT; n++) {
       // state id starts from 1 in each nation
       int state_cnt = params::get_state_cnt();
@@ -84,24 +77,32 @@ std::vector<city_t::Key> GeoJoin<AdapterType, MergedAdapterType, ScannerType, Me
                ccc.insert(cik, civ);
                int lottery = urand(1, 100);  // 100 is HARDCODED
                if (lottery == 1) {
-                  hot_city_candidates.push_back(cik);
+                  load_state.hot_city_candidates.push_back(cik);
                }
                // insert customer2
-               size_t customer_end = customer_idx + params::get_customer_cnt();
-               if (customer_end >= custkeys.size() && customer_idx < custkeys.size()) {
+               size_t customer_end = load_state.customer_idx + params::get_customer_cnt();
+               if (customer_end >= load_state.custkeys.size() && load_state.customer_idx < load_state.custkeys.size()) {
                   std::cout << "WARNING: No customer since nation " << n << ", state " << s << ", county " << c << ", city " << ci << ". "
                             << std::endl;
                }
-               for (; customer_idx < customer_end && customer_idx < custkeys.size(); customer_idx++) {
-                  load_1customer2(n, s, c, ci, custkeys.at(customer_idx));
+               for (; load_state.customer_idx < customer_end && load_state.customer_idx < load_state.custkeys.size(); load_state.customer_idx++) {
+                  load_1customer2(n, s, c, ci, load_state.custkeys.at(load_state.customer_idx));
                }
             }
          }
       }
    }
    std::cout << std::endl << "Loaded " << county_sum << " counties and " << city_sum << " cities." << std::endl;
-   return hot_city_candidates;
 }
+
+template <template <typename> class AdapterType,
+          template <typename...> class MergedAdapterType,
+          template <typename> class ScannerType,
+          template <typename...> class MergedScannerType>
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load_1state(int n, int s)
+{
+
+};
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
@@ -121,22 +122,20 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load_hot_cities(std::vector<Integer>& custkeys,
-                                                                                              size_t& customer_idx,
-                                                                                              std::vector<city_t::Key>& hot_city_candidates)
+void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load_hot_cities()
 {
-   assert(customer_idx < custkeys.size());  // create hot keys
-   size_t rem_customer_cnt = custkeys.size() - customer_idx;
-   std::cout << "Assigning " << rem_customer_cnt << " remaining customers in " << hot_city_candidates.size() << " hot cities..." << std::endl;
+   assert(load_state.customer_idx < load_state.custkeys.size());  // create hot keys
+   size_t rem_customer_cnt = load_state.custkeys.size() - load_state.customer_idx;
+   std::cout << "Assigning " << rem_customer_cnt << " remaining customers in " << load_state.hot_city_candidates.size() << " hot cities..." << std::endl;
 
    std::cout << "Shuffling hot city candidates..." << std::endl;
-   std::random_shuffle(hot_city_candidates.begin(), hot_city_candidates.end());
+   std::random_shuffle(load_state.hot_city_candidates.begin(), load_state.hot_city_candidates.end());
 
-   auto cust_start = customer_idx;
-   for (; customer_idx < custkeys.size(); customer_idx++) {
-      city_t::Key cik = hot_city_candidates.at(customer_idx % hot_city_candidates.size());
-      load_1customer2(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, custkeys.at(customer_idx));
-      TPCH::printProgress("Assigning customers", customer_idx, cust_start, custkeys.size());
+   auto cust_start = load_state.customer_idx;
+   for (; load_state.customer_idx < load_state.custkeys.size(); load_state.customer_idx++) {
+      city_t::Key cik = load_state.hot_city_candidates.at(load_state.customer_idx % load_state.hot_city_candidates.size());
+      load_1customer2(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, load_state.custkeys.at(load_state.customer_idx));
+      TPCH::printProgress("Assigning customers", load_state.customer_idx, cust_start, load_state.custkeys.size());
    }
 }
 
