@@ -6,15 +6,14 @@
 #include "RocksDB.hpp"
 #include "RocksDBScanner.hpp"
 #include "Types.hpp"
-#include "leanstore/utils/JumpMU.hpp"
+
 // -------------------------------------------------------------------------------------
 
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
-using ROCKSDB_NAMESPACE::PinnableSlice;
+
 using ROCKSDB_NAMESPACE::Range;
-using ROCKSDB_NAMESPACE::Slice;
 using ROCKSDB_NAMESPACE::Status;
 
 template <class Record>
@@ -45,45 +44,15 @@ struct RocksDBAdapter : public Adapter<Record> {
       assert(s.ok());
    }
 
-   bool Put(const Slice& key, const Slice& value)
-   {
-      if (map.txn == nullptr) {
-         Status s = map.tx_db->Put(map.wo, cf_handle.get(), key, value);
-         return s.ok();
-      } else {
-         Status s = map.txn->Put(cf_handle.get(), key, value);
-         if (!s.ok()) {
-            map.txn->Rollback();
-            jumpmu::jump();
-         }
-         return true;
-      }
-   }
-
    void insert(const typename Record::Key& key, const Record& record) final
    {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
-      Put(RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
+      map.Put(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
    }
    // -------------------------------------------------------------------------------------
    void lookup1(const typename Record::Key& key, const std::function<void(const Record&)>& fn) final { assert(tryLookup(key, fn)); }
-
-   bool Get(const Slice& key, PinnableSlice* value)
-   {
-      if (map.txn == nullptr) {
-         Status s = map.tx_db->Get(map.ro, cf_handle.get(), key, value);
-         return s.ok();
-      } else {
-         Status s = map.txn->Get(map.ro, cf_handle.get(), key, value);
-         if (!s.ok()) {
-            map.txn->Rollback();
-            jumpmu::jump();
-         }
-         return true;
-      }
-   }
 
    bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& fn)
    {
@@ -91,7 +60,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
       rocksdb::PinnableSlice value;
-      bool res = Get(RSlice(folded_key, folded_key_len), &value);
+      bool res = map.Get(cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
       if (!res) {
          std::cerr << "RocksDBAdapter::tryLookup: Get failed for key: " << key << std::endl;
       }
@@ -106,35 +75,7 @@ struct RocksDBAdapter : public Adapter<Record> {
       update1(key, fn);
    }
 
-   bool GetForUpdate(const Slice& key, PinnableSlice* value)
-   {
-      if (map.txn == nullptr) {
-         Status s = map.tx_db->Get(map.ro, cf_handle.get(), key, value);
-         return s.ok();
-      } else {
-         Status s = map.txn->GetForUpdate(map.ro, cf_handle.get(), key, value);
-         if (!s.ok()) {
-            map.txn->Rollback();
-            jumpmu::jump();
-         }
-         return true;
-      }
-   }
-
-   bool Merge(const Slice& key, const Slice& value)
-   {
-      if (map.txn == nullptr) {
-         Status s = map.tx_db->Merge(map.wo, cf_handle.get(), key, value);
-         return s.ok();
-      } else {
-         Status s = map.txn->Merge(cf_handle.get(), key, value);
-         if (!s.ok()) {
-            map.txn->Rollback();
-            jumpmu::jump();
-         }
-         return true;
-      }
-   }
+   
 
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb) final
    {
@@ -143,32 +84,19 @@ struct RocksDBAdapter : public Adapter<Record> {
       const auto folded_key_len = Record::foldKey(folded_key, key);
       rocksdb::PinnableSlice r_slice;
       r_slice.PinSelf(RSlice(&r, sizeof(r)));
-      GetForUpdate(RSlice(folded_key, folded_key_len), &r_slice);
+      map.GetForUpdate(cf_handle.get(), RSlice(folded_key, folded_key_len), &r_slice);
       Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
       cb(r_lookedup);
-      Merge(RSlice(folded_key, folded_key_len), RSlice(&r_lookedup, sizeof(r_lookedup)));
+      map.Merge(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&r_lookedup, sizeof(r_lookedup)));
    }
    // -------------------------------------------------------------------------------------
-   bool Delete(const Slice& key)
-   {
-      if (map.txn == nullptr) {
-         Status s = map.tx_db->Delete(map.wo, cf_handle.get(), key);
-         return s.ok();
-      } else {
-         Status s = map.txn->Delete(cf_handle.get(), key);
-         if (!s.ok()) {
-            map.txn->Rollback();
-            jumpmu::jump();
-         }
-         return true;
-      }
-   }
+   
 
    bool erase(const typename Record::Key& key) final
    {
       u8 folded_key[Record::maxFoldLength()];
       const u32 folded_key_len = Record::foldKey(folded_key, key);
-      Delete(RSlice(folded_key, folded_key_len));
+      map.Delete(cf_handle.get(), RSlice(folded_key, folded_key_len));
       return true;
    }
    // Not part of a txn

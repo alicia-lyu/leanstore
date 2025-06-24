@@ -32,6 +32,8 @@ inline rocksdb::Slice RSlice(T* ptr, u64 len)
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
+using ROCKSDB_NAMESPACE::PinnableSlice;
+using ROCKSDB_NAMESPACE::Status;
 
 struct RocksDB {
    rocksdb::TransactionDB* tx_db;
@@ -74,7 +76,7 @@ struct RocksDB {
       cf_descs.insert(cf_descs.begin(), ColumnFamilyDescriptor(ROCKSDB_NAMESPACE::kDefaultColumnFamilyName, ColumnFamilyOptions()));
       cf_handles.insert(cf_handles.begin(), nullptr);
 
-      rocksdb::Status s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, cf_descs, &cf_handles, &tx_db); // will create absent cfs
+      rocksdb::Status s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, cf_descs, &cf_handles, &tx_db);  // will create absent cfs
       if (!s.ok())
          cerr << s.ToString() << endl;
       assert(s.ok());
@@ -115,4 +117,14 @@ struct RocksDB {
       delete txn;
       txn = nullptr;
    }
+
+   bool Put(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value);
+
+   bool Get(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, PinnableSlice* value);
+
+   bool GetForUpdate(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, PinnableSlice* value);
+
+   bool Merge(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value);
+
+   bool Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key);
 };

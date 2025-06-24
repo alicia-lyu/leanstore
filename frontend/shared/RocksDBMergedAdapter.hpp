@@ -5,7 +5,6 @@
 #include "RocksDBMergedScanner.hpp"
 #include "Units.hpp"
 #include "leanstore/KVInterface.hpp"
-#include "leanstore/utils/JumpMU.hpp"
 
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
@@ -45,11 +44,7 @@ struct RocksDBMergedAdapter {
       }
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
-      s = map.txn->Put(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
-      if (!s.ok()) {
-         map.txn->Rollback();
-         jumpmu::jump();
-      }
+      map.Put(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&record, sizeof(record)));
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
@@ -66,10 +61,7 @@ struct RocksDBMergedAdapter {
       // -------------------------------------------------------------------------------------
       rocksdb::PinnableSlice value;
       rocksdb::Status s;
-      s = map.txn->Get(cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
-      if (!s.ok()) {
-         return false;
-      }
+      map.Get(cf_handle.get(), RSlice(folded_key, folded_key_len), &value);
       const Record& record = *reinterpret_cast<const Record*>(value.data());
       fn(record);
       value.Reset();
@@ -84,18 +76,11 @@ struct RocksDBMergedAdapter {
       const auto folded_key_len = Record::foldKey(folded_key, key);
       rocksdb::PinnableSlice r_slice;
       r_slice.PinSelf(RSlice(&r, sizeof(r)));
-      Status s = map.txn->GetForUpdate(map.ro, cf_handle.get(), RSlice(folded_key, folded_key_len), &r_slice);
-      if (!s.ok()) {
-         map.txn->Rollback();
-         jumpmu::jump();
-      }
+      map.GetForUpdate(cf_handle.get(), RSlice(folded_key, folded_key_len), &r_slice);
       Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
       cb(r_lookedup);
-      s = map.txn->Merge(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&r_lookedup, sizeof(r_lookedup)));
-      if (!s.ok()) {
-         map.txn->Rollback();
-         jumpmu::jump();
-      }
+      map.Merge(cf_handle.get(), RSlice(folded_key, folded_key_len), RSlice(&r_lookedup, sizeof(r_lookedup)));
+      r_slice.Reset();
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
@@ -105,11 +90,7 @@ struct RocksDBMergedAdapter {
       const u32 folded_key_len = Record::foldKey(folded_key, key);
       // -------------------------------------------------------------------------------------
       rocksdb::Status s;
-      s = map.txn->Delete(cf_handle.get(), RSlice(folded_key, folded_key_len));
-      if (!s.ok()) {
-         map.txn->Rollback();
-         jumpmu::jump();
-      }
+      map.Delete(cf_handle.get(), RSlice(folded_key, folded_key_len));
       return true;
    }
    // -------------------------------------------------------------------------------------

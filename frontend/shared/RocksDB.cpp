@@ -1,4 +1,5 @@
 #include "RocksDB.hpp"
+#include "leanstore/utils/JumpMU.hpp"
 
 void RocksDB::set_options()
 {
@@ -23,4 +24,79 @@ void RocksDB::set_options()
    db_options.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(sizeof(u32)));  // ID
    db_options.statistics = rocksdb::CreateDBStatistics();
    db_options.stats_dump_period_sec = 1;
+}
+
+bool RocksDB::Put(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value)
+{
+   if (txn == nullptr) {
+      Status s = tx_db->Put(wo, cf_handle, key, value);
+      return s.ok();
+   } else {
+      Status s = txn->Put(cf_handle, key, value);
+      if (!s.ok()) {
+         txn->Rollback();
+         jumpmu::jump();
+      }
+      return true;
+   }
+}
+
+bool RocksDB::Get(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, PinnableSlice* value)
+{
+   if (txn == nullptr) {
+      Status s = tx_db->Get(ro, cf_handle, key, value);
+      return s.ok();
+   } else {
+      Status s = txn->Get(ro, cf_handle, key, value);
+      if (!s.ok()) {
+         txn->Rollback();
+         jumpmu::jump();
+      }
+      return true;
+   }
+}
+
+bool RocksDB::GetForUpdate(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, PinnableSlice* value)
+{
+   if (txn == nullptr) {
+      Status s = tx_db->Get(ro, cf_handle, key, value);
+      return s.ok();
+   } else {
+      Status s = txn->GetForUpdate(ro, cf_handle, key, value);
+      if (!s.ok()) {
+         txn->Rollback();
+         jumpmu::jump();
+      }
+      return true;
+   }
+}
+
+bool RocksDB::Merge(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value)
+{
+   if (txn == nullptr) {
+      Status s = tx_db->Merge(wo, cf_handle, key, value);
+      return s.ok();
+   } else {
+      Status s = txn->Merge(cf_handle, key, value);
+      if (!s.ok()) {
+         txn->Rollback();
+         jumpmu::jump();
+      }
+      return true;
+   }
+}
+
+bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
+{
+   if (txn == nullptr) {
+      Status s = tx_db->Delete(wo, cf_handle, key);
+      return s.ok();
+   } else {
+      Status s = txn->Delete(cf_handle, key);
+      if (!s.ok()) {
+         txn->Rollback();
+         jumpmu::jump();
+      }
+      return true;
+   }
 }
