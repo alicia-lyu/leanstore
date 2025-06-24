@@ -134,6 +134,10 @@ class Logger
    {
       std::filesystem::create_directories(csv_runtime);
       std::filesystem::create_directories(csv_db);
+      cpu_table.open();
+      configs_table.open();
+      cpu_table.next();
+      configs_table.next();
    }
    virtual void reset()
    {
@@ -144,12 +148,16 @@ class Logger
 
    void log(long tput, int tx_count, std::string tx, std::string method, double size)
    {
+      cpu_table.next();
+      configs_table.next();
       stats.init(tput, tx_count, tx, method, size);
       log_summary();
       log_details();
    }
    void log(long elapsed, std::string tx, std::string method, double size)
    {
+      cpu_table.next();
+      configs_table.next();
       stats.init(elapsed, tx, method, size);
       log_summary();
       log_details();

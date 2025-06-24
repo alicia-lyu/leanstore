@@ -59,14 +59,13 @@ void Logger::log_sizes(std::map<std::string, double> sizes)
 
 void Logger::summarize_shared_stats()
 {
-   auto header = stats.header;
-   auto data = stats.data;
+   auto& header = stats.header;
+   auto& data = stats.data;
    header.push_back(to_string(stats.column_name));
    data.push_back(std::to_string(stats.elapsed_or_tput));
 
    switch (stats.column_name) {
       case ColumnName::ELAPSED:
-
          for (auto& [t_name, worker_e] : cpu_table.workers_events) {
             long cycles = static_cast<long>(worker_e.at("cycle"));
             if (cycles == 0)
@@ -76,7 +75,6 @@ void Logger::summarize_shared_stats()
          }
          break;
       case ColumnName::TPUT:
-
          for (auto& [t_name, worker_e] : cpu_table.workers_events) {
             long cycles = static_cast<long>(worker_e.at("cycle"));
             if (cycles == 0)
@@ -114,8 +112,6 @@ void Logger::log_summary()
    csv_sum.open(csv_sum_path, std::ios::app);
 
    stats.log(csv_sum, csv_sum_exists);
-
-   log_detail_table(configs_table);
 }
 
 void Logger::log_detail_table(leanstore::profiling::ProfilingTable& t)

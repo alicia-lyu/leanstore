@@ -6,9 +6,9 @@ void RocksDB::set_options()
    // OPTIONS
    wo.disableWAL = true;
    wo.sync = false;
-   iterator_ro.snapshot = nullptr;  // Snapshot from pinning resources
-   db_options.use_direct_reads = true;
-   db_options.use_direct_io_for_flush_and_compaction = true;
+   iterator_ro.snapshot = nullptr;  // Snapshot from pinning resourcesq
+   db_options.use_direct_reads = false;
+   db_options.use_direct_io_for_flush_and_compaction = false;
    db_options.db_write_buffer_size = 0;  // disabled
    // db_options.write_buffer_size = 64 * 1024 * 1024; keep the default
    db_options.create_if_missing = true;

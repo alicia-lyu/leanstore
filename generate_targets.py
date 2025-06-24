@@ -157,7 +157,7 @@ def generate_recover_rules() -> None:
             prefix = "lldb -o run -- " if "debug" in bd else ""
             print(
                 f"\t{prefix}{exe_path} {cfg.leanstore_flags} "
-                f"--csv_path={rd} --persist_file=$@ "
+                f"--csv_path={rd} --persist_file={recover} "
                 f"--trunc=true --ssd_path={img} --dram_gib=8 2>{rd}/stderr.txt\n"
             )
 

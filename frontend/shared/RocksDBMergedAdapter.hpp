@@ -16,7 +16,7 @@ template <typename... Records>
 struct RocksDBMergedAdapter {
    const int idx;  // index in RocksDB::cf_handles
    const std::string name = "merged" + ((std::to_string(Records::id) + std::string("-")) + ...);
-   std::unique_ptr<ColumnFamilyHandle> cf_handle;
+   ColumnFamilyHandle* cf_handle;
    RocksDB& map;
 
    RocksDBMergedAdapter(RocksDB& map) : idx(map.cf_descs.size()), map(map)
@@ -32,49 +32,55 @@ struct RocksDBMergedAdapter {
       assert(map.tx_db != nullptr);
       ColumnFamilyHandle* handle = map.cf_handles.at(idx + 1); // +1 because cf_handles[0] is the default column family
       assert(handle != nullptr);
-      cf_handle.reset(handle); 
+      cf_handle = handle;
+   }
+
+   ~RocksDBMergedAdapter()
+   {
+      Status s = map.tx_db->DestroyColumnFamilyHandle(cf_handle);
+      assert(s.ok());
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
    void insert(const typename Record::Key& key, const Record& record)
    {
-      map.template insert<Record>(cf_handle.get(), key, record);
+      map.template insert<Record>(cf_handle, key, record);
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
    void lookup1(const typename Record::Key& key, const std::function<void(const Record&)>& cb)
    {
-      map.template lookup1<Record>(cf_handle.get(), key, cb);
+      map.template lookup1<Record>(cf_handle, key, cb);
    }
 
    template <class Record>
    bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& cb)
    {
-      return map.template tryLookup<Record>(cf_handle.get(), key, cb);
+      return map.template tryLookup<Record>(cf_handle, key, cb);
    }
 
    template <class Record>
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& fn, leanstore::UpdateSameSizeInPlaceDescriptor&)
    {
-      map.template update1<Record>(cf_handle.get(), key, fn);
+      map.template update1<Record>(cf_handle, key, fn);
    }
 
    template <class Record>
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb)
    {
-      map.template update1<Record>(cf_handle.get(), key, cb);
+      map.template update1<Record>(cf_handle, key, cb);
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
    bool erase(const typename Record::Key& key)
    {
-      return map.template erase<Record>(cf_handle.get(), key);
+      return map.template erase<Record>(cf_handle, key);
    }
    // -------------------------------------------------------------------------------------
    template <class Field, class Record>
    Field lookupField(const typename Record::Key& key, Field Record::* f)
    {
-      return map.template lookupField<Record>(cf_handle.get(), key, f);
+      return map.template lookupField<Record>(cf_handle, key, f);
    }
 
    u64 estimatePages() { UNREACHABLE(); }
@@ -82,12 +88,12 @@ struct RocksDBMergedAdapter {
 
    double size()
    {
-      return map.get_size(cf_handle.get(), std::max({Records::maxFoldLength()...}), name);
+      return map.get_size(cf_handle, std::max({Records::maxFoldLength()...}), name);
    }
 
    template <typename JK, typename JR>
    std::unique_ptr<RocksDBMergedScanner<JK, JR, Records...>> getScanner()
    {
-      return std::make_unique<RocksDBMergedScanner<JK, JR, Records...>>(cf_handle.get(), map);
+      return std::make_unique<RocksDBMergedScanner<JK, JR, Records...>>(cf_handle, map);
    }
 };
