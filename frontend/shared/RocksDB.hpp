@@ -128,21 +128,22 @@ struct RocksDB {
 
    bool GetForUpdate(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, PinnableSlice* value);
 
-   bool Merge(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value);
-
    bool Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key);
+
+   std::string key_buf; // temporary buffer for ONE folded key
 
    template <typename Record>
    rocksdb::Slice fold_key(const typename Record::Key& key)
    {
-      u8 folded_key[Record::maxFoldLength()];
-      const u32 folded_key_len = Record::foldKey(folded_key, key);
-      return RSlice(folded_key, folded_key_len);
+      key_buf.resize(Record::maxFoldLength());
+      const u32 folded_key_len = Record::foldKey(reinterpret_cast<u8*>(key_buf.data()), key);
+      return RSlice(reinterpret_cast<const char*>(key_buf.data()), folded_key_len);
    }
 
    template <typename Record>
    rocksdb::Slice fold_record(const Record& record)
    {
+      // record's lifetime is managed by the caller
       return RSlice(&record, sizeof(record));
    }
 
@@ -193,7 +194,7 @@ struct RocksDB {
       GetForUpdate(cf_handle, fold_key<Record>(key), &r_slice);
       Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
       cb(r_lookedup);
-      Merge(cf_handle, fold_key<Record>(key), fold_record<Record>(r_lookedup));
+      Put(cf_handle, fold_key<Record>(key), fold_record<Record>(r_lookedup));
       r_slice.Reset();
    }
 

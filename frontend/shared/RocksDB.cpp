@@ -30,7 +30,11 @@ bool RocksDB::Put(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, cons
 {
    if (txn == nullptr) {
       Status s = tx_db->Put(wo, cf_handle, key, value);
-      return s.ok();
+      if (!s.ok()) {
+         std::cerr << "RocksDB::Put failed: " << s.ToString() << std::endl;
+         return false;
+      }
+      return true;
    } else {
       Status s = txn->Put(cf_handle, key, value);
       if (!s.ok()) {
@@ -45,7 +49,11 @@ bool RocksDB::Get(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, Pinn
 {
    if (txn == nullptr) {
       Status s = tx_db->Get(ro, cf_handle, key, value);
-      return s.ok();
+      if (!s.ok()) {
+         std::cerr << "RocksDB::Get failed: " << s.ToString() << std::endl;
+         return false;
+      }
+      return true;
    } else {
       Status s = txn->Get(ro, cf_handle, key, value);
       if (!s.ok()) {
@@ -60,24 +68,14 @@ bool RocksDB::GetForUpdate(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& 
 {
    if (txn == nullptr) {
       Status s = tx_db->Get(ro, cf_handle, key, value);
-      return s.ok();
-   } else {
-      Status s = txn->GetForUpdate(ro, cf_handle, key, value);
+      // return s.ok();
       if (!s.ok()) {
-         txn->Rollback();
-         jumpmu::jump();
+         std::cerr << "RocksDB::GetForUpdate failed: " << s.ToString() << std::endl;
+         return false;
       }
       return true;
-   }
-}
-
-bool RocksDB::Merge(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value)
-{
-   if (txn == nullptr) {
-      Status s = tx_db->Merge(wo, cf_handle, key, value);
-      return s.ok();
    } else {
-      Status s = txn->Merge(cf_handle, key, value);
+      Status s = txn->GetForUpdate(ro, cf_handle, key, value);
       if (!s.ok()) {
          txn->Rollback();
          jumpmu::jump();
@@ -90,7 +88,12 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
 {
    if (txn == nullptr) {
       Status s = tx_db->Delete(wo, cf_handle, key);
-      return s.ok();
+      // return s.ok();
+      if (!s.ok()) {
+         std::cerr << "RocksDB::Delete failed: " << s.ToString() << std::endl;
+         return false;
+      }
+      return true;
    } else {
       Status s = txn->Delete(cf_handle, key);
       if (!s.ok()) {
