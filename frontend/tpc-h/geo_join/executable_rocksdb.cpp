@@ -59,9 +59,8 @@ int main(int argc, char** argv)
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
-      rocks_db.startTX();
-         tpchGeoJoin.load();
-         rocks_db.commitTX();
+      // Not part of a txn, similar to leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT
+      tpchGeoJoin.load();
       return 0;
    } else {
       tpch.recover_last_ids();
