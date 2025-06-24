@@ -1,13 +1,10 @@
 #include "CPUTable.hpp"
 
 #include "leanstore/Config.hpp"
-#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "leanstore/profiling/counters/CPUCounters.hpp"
-#include "leanstore/utils/ThreadLocalAggregator.hpp"
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
 // -------------------------------------------------------------------------------------
-using leanstore::utils::threadlocal::sum;
 namespace leanstore
 {
 namespace profiling
@@ -20,7 +17,12 @@ std::string CPUTable::getName()
 // -------------------------------------------------------------------------------------
 void CPUTable::open()
 {
-   PerfEvent e; // Only for getting the names
+   if (CPUCounters::threads.empty()) {
+      for (u32 t_i = 0; t_i < FLAGS_worker_threads; t_i++) {
+         CPUCounters::registerThread("t" + std::to_string(t_i), false);
+      }
+   }
+   PerfEvent e;  // Only for getting the names
    for (const auto& event_name : e.getEventsName()) {
       workers_agg_events[event_name] = 0;
       pp_agg_events[event_name] = 0;

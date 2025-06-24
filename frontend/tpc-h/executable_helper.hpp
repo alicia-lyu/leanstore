@@ -70,7 +70,7 @@ struct ExecutableHelper {
    std::vector<std::string> tput_prefixes;
    TPCHWorkload<AdapterType> tpch;
    double size;
-   std::atomic<u64> keep_running = true;
+   std::atomic<bool> keep_running_warmup = true;
    std::atomic<u64> lookup_count = 0;
    std::atomic<u64> running_threads_counter = 0;
 
@@ -117,25 +117,29 @@ struct ExecutableHelper {
       std::cout << "Running experiment with " << db_traits->name() << std::endl;
       tpch.prepare();
       warmup();
+      sleep(FLAGS_warmup_seconds);
       for (auto& cb : elapsed_cbs) {
          db_traits->run_tx(cb);
       }
       for (size_t i = 0; i < tput_cbs.size(); i++) {
          tput_tx(tput_cbs[i], tput_prefixes[i]);
       }
+      keep_running_warmup = false;
+      while (running_threads_counter > 0) {
+         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // sleep 0.1 sec
+      }
    }
    void warmup()
    {
       std::cout << std::endl << std::string(20, '=') << method << "," << size << std::string(20, '=') << std::endl;
       db_traits->schedule_warmup([&]() { warmup_phase(); });
-      sleep(FLAGS_warmup_seconds);
    }
 
    void warmup_phase()
    {
       running_threads_counter++;
       tpch.prepare();
-      while (keep_running) {
+      while (keep_running_warmup) {
          jumpmuTry()
          {
             db_traits->run_tx(lookup_cb);
@@ -159,12 +163,13 @@ struct ExecutableHelper {
       auto start = std::chrono::high_resolution_clock::now();
       atomic<int> count = 0;
       std::cout << "Running " << tx << " on " << method << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
-      atomic<u64> keep_running = true;
+      atomic<bool> keep_running_tx = true;
       std::thread([&] {
          std::this_thread::sleep_for(std::chrono::seconds(FLAGS_tx_seconds));
-         keep_running = false;
+         keep_running_tx = false;
       }).detach();
-      while (keep_running || count.load() < 10) {
+      running_threads_counter++;
+      while (keep_running_tx || count.load() < 10) {
          jumpmuTry()
          {
             db_traits->run_tx(cb);
@@ -182,5 +187,6 @@ struct ExecutableHelper {
       auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = (double)count.load() / duration * 1e6;
       tpch.logger.log(static_cast<long>(std::round(tput)), count.load(), tx, method, size);
+      running_threads_counter--;
    }
 };
