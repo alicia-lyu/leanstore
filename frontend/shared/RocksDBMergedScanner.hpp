@@ -6,15 +6,15 @@
 
 template <typename JK, typename JR, typename... Records>
 struct RocksDBMergedScanner {
-   ColumnFamilyHandle* cf_handle;  // adapter's lifespan must cover scanner's
    std::unique_ptr<rocksdb::Iterator> it;
    bool after_seek = false;
    long long produced = 0;
 
    RocksDBMergedScanner(ColumnFamilyHandle* cf_handle, RocksDB& map)
-       : cf_handle(cf_handle),
-         it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
+       : it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
    {
+      it->SeekToFirst();
+      after_seek = true;
    }
 
    void reset() 
@@ -50,6 +50,9 @@ struct RocksDBMergedScanner {
    {
       seekForPrev<Record>(key);
       while (true) {
+         if (!it->Valid()) {
+            return false;
+         }
          auto kv = current().value();
          if (std::holds_alternative<Record>(kv.second)) {
             after_seek = true;

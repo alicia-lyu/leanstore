@@ -18,16 +18,15 @@ using ROCKSDB_NAMESPACE::Status;
 
 template <class Record>
 struct RocksDBAdapter : public Adapter<Record> {
-   int idx;  // index in RocksDB::cf_handles
+   const int idx;  // index in RocksDB::cf_handles
+   const std::string name = "table" + std::to_string(Record::id);
    std::unique_ptr<ColumnFamilyHandle> cf_handle;
    RocksDB& map;
-   const std::string name = "table" + std::to_string(Record::id);
-   RocksDBAdapter(RocksDB& map) : map(map)
+   RocksDBAdapter(RocksDB& map) : idx(map.cf_descs.size()), map(map)
    {
       ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(name, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
-      idx = map.cf_descs.size() - 1;
       map.get_handle_cbs.push_back([this]() { get_handle(); });
    }
 

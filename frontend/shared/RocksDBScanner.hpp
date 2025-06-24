@@ -10,14 +10,16 @@ using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 template <class Record>
 class RocksDBScanner
 {
-   ColumnFamilyHandle* cf_handle;  // adapter's lifespan must cover scanner's
    std::unique_ptr<rocksdb::Iterator> it;
 
   public:
    bool after_seek = false;
    long long produced = 0;
 
-   RocksDBScanner(ColumnFamilyHandle* cf_handle, RocksDB& map) : cf_handle(cf_handle), it(map.tx_db->NewIterator(map.iterator_ro, cf_handle)) {}
+   RocksDBScanner(ColumnFamilyHandle* cf_handle, RocksDB& map) : it(map.tx_db->NewIterator(map.iterator_ro, cf_handle)) {
+      it->SeekToFirst();
+      after_seek = true;
+   }
    ~RocksDBScanner() = default;
 
    void reset()
