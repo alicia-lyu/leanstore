@@ -12,6 +12,7 @@
 // -------------------------------------------------------------------------------------
 #include "Units.hpp"
 #include "leanstore/Config.hpp"
+#include "leanstore/KVInterface.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/utilities/optimistic_transaction_db.h"
 #include "rocksdb/utilities/transaction_db.h"
@@ -34,6 +35,7 @@ using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
 using ROCKSDB_NAMESPACE::PinnableSlice;
 using ROCKSDB_NAMESPACE::Status;
+using ROCKSDB_NAMESPACE::Range;
 
 struct RocksDB {
    rocksdb::TransactionDB* tx_db;
@@ -118,6 +120,8 @@ struct RocksDB {
       txn = nullptr;
    }
 
+   double get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string& name);
+
    bool Put(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value);
 
    bool Get(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, PinnableSlice* value);
@@ -127,4 +131,89 @@ struct RocksDB {
    bool Merge(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value);
 
    bool Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key);
+
+   template <typename Record>
+   rocksdb::Slice fold_key(const typename Record::Key& key)
+   {
+      u8 folded_key[Record::maxFoldLength()];
+      const u32 folded_key_len = Record::foldKey(folded_key, key);
+      return RSlice(folded_key, folded_key_len);
+   }
+
+   template <typename Record>
+   rocksdb::Slice fold_record(const Record& record)
+   {
+      return RSlice(&record, sizeof(record));
+   }
+
+   template <typename Record>
+   void insert(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const Record& record)
+   {
+      Put(cf_handle, fold_key<Record>(key), fold_record<Record>(record));
+   }
+
+   template <typename Record>
+   void lookup1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb)
+   {
+      rocksdb::Slice k_slice = fold_key<Record>(key);
+      rocksdb::PinnableSlice value;
+      Get(cf_handle, k_slice, &value);
+      const Record& record = *reinterpret_cast<const Record*>(value.data());
+      cb(record);
+      value.Reset();
+   }
+
+   template <typename Record>
+   bool tryLookup(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb)
+   {
+      rocksdb::Slice k_slice = fold_key<Record>(key);
+      rocksdb::PinnableSlice value;
+      Status s = tx_db->Get(ro, cf_handle, k_slice, &value); // force not as part of txn
+      if (!s.ok()) {
+         return false;
+      }
+      const Record& record = *reinterpret_cast<const Record*>(value.data());
+      cb(record);
+      value.Reset();
+      return true;
+   }
+
+   template <class Record>
+   void update1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(Record&)>& cb, leanstore::UpdateSameSizeInPlaceDescriptor&)
+   {
+      update1(cf_handle, key, cb);
+   }
+
+   template <class Record>
+   void update1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(Record&)>& cb)
+   {
+      Record r;
+      rocksdb::PinnableSlice r_slice;
+      r_slice.PinSelf(RSlice(&r, sizeof(r)));
+      GetForUpdate(cf_handle, fold_key<Record>(key), &r_slice);
+      Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
+      cb(r_lookedup);
+      Merge(cf_handle, fold_key<Record>(key), fold_record<Record>(r_lookedup));
+      r_slice.Reset();
+   }
+
+   template <class Record>
+   bool erase(ColumnFamilyHandle* cf_handle, const typename Record::Key& key)
+   {
+      Delete(cf_handle, fold_key<Record>(key));
+      return true;
+   }
+
+   template <class Field, class Record>
+   Field lookupField(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, Field Record::* f)
+   {
+      Field local_f;
+      bool found = false;
+      lookup1(cf_handle, key, [&](const Record& record) {
+         found = true;
+         local_f = (record).*f;
+      });
+      assert(found);
+      return local_f;
+   }
 };

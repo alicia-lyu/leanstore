@@ -280,6 +280,12 @@ class GeoJoin
 
    void load();
 
+   std::vector<city_t::Key> seq_load(std::vector<Integer>& custkeys, size_t& customer_idx);
+
+   void load_hot_cities(std::vector<Integer>& custkeys, size_t& customer_idx, std::vector<city_t::Key>& hot_city_candidates);
+
+   void load_1customer2(int n, int s, int c, int ci, int cu);
+
    double get_view_size();
 
    double get_indexes_size();

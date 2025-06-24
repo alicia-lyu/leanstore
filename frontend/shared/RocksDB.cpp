@@ -100,3 +100,28 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
       return true;
    }
 }
+
+double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string& name)
+{
+   std::vector<u8> min_key(1, 0);  // min key
+   auto start_slice = RSlice(min_key.data(), min_key.size());
+   std::vector<u8> max_key(max_fold_len, 255);  // max key
+   auto limit_slice = RSlice(max_key.data(), max_key.size());
+
+   std::cout << "Compacting " << name << "..." << std::endl;
+   auto compact_options = rocksdb::CompactRangeOptions();
+   compact_options.change_level = true;
+   auto ret = tx_db->CompactRange(compact_options, cf_handle, &start_slice, &limit_slice);
+   assert(ret.ok());
+
+   std::array<u64, 1> sizes;
+   std::array<Range, 1> ranges;
+   ranges[0].start = start_slice;
+   ranges[0].limit = limit_slice;
+   rocksdb::SizeApproximationOptions size_options;
+   size_options.include_memtables = true;
+   size_options.include_files = true;
+   size_options.files_size_error_margin = 0.1;
+   tx_db->GetApproximateSizes(size_options, cf_handle, ranges.data(), ranges.size(), sizes.data());
+   return (double)sizes[0] / 1024.0 / 1024.0;  // convert to MB
+}
