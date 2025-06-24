@@ -19,6 +19,7 @@ class RocksDBScanner
    RocksDBScanner(ColumnFamilyHandle* cf_handle, RocksDB& map) : it(map.tx_db->NewIterator(map.iterator_ro, cf_handle)) {
       it->SeekToFirst();
       after_seek = true;
+      assert(it->Valid());
    }
    ~RocksDBScanner() = default;
 

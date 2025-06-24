@@ -15,6 +15,7 @@ struct RocksDBMergedScanner {
    {
       it->SeekToFirst();
       after_seek = true;
+      assert(it->Valid());
    }
 
    void reset() 
