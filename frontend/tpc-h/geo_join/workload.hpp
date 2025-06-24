@@ -10,6 +10,29 @@
 namespace geo_join
 {
 
+struct LoadState {
+   long county_sum = 0;
+   long city_sum = 0;
+   std::vector<Integer> custkeys;
+   size_t customer_idx = 0;
+   std::vector<city_t::Key> hot_city_candidates;
+   std::function<void(int, int, int, int, int)> insert_customer_func;
+
+   LoadState() = default;
+
+   LoadState(int last_customer_id, std::function<void(int, int, int, int, int)> insert_customer_func) : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates(), insert_customer_func(insert_customer_func)
+   {
+      std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
+      std::random_shuffle(custkeys.begin(), custkeys.end());
+   }
+
+   void if_customers_drain(size_t customer_end, int n, int s, int c, int ci);
+
+   void advance_customers_in_1city(const size_t step_cnt, int n, int s, int c, int ci);
+
+   void advance_customers_to_hot_cities(const size_t step_cnt);
+};
+
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
@@ -279,19 +302,6 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- LOADING -----------------------------
-   struct LoadState {
-      std::vector<Integer> custkeys;
-      size_t customer_idx = 0;
-      std::vector<city_t::Key> hot_city_candidates;
-
-      LoadState() = default;
-
-      LoadState(int last_customer_id) : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates()
-      {
-         std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
-         std::random_shuffle(custkeys.begin(), custkeys.end());
-      }
-   };
 
    LoadState load_state;
 
@@ -307,7 +317,7 @@ class GeoJoin
 
    void load_hot_cities();
 
-   void load_1customer2(int n, int s, int c, int ci, int cu);
+   void load_1customer(int n, int s, int c, int ci, int cu);
 
    double get_view_size();
 

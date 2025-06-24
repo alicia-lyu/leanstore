@@ -66,6 +66,8 @@ struct RocksDB {
       }
       if (FLAGS_persist_file == "./leanstore.json") {
          FLAGS_persist = false;
+      } else {
+         FLAGS_persist = true;
       }
       set_options();
    }
@@ -98,6 +100,7 @@ struct RocksDB {
          rocksdb::Status s = tx_db->WaitForCompact(wfc_options);
          std::ofstream persist_file(FLAGS_persist_file, std::ios::trunc);
          persist_file << "Placeholder. Code logic only needs the file to exist." << std::endl;
+         assert(s.ok());
       } else {
          std::cout << "FLAGS_persist is false, compaction skipped. Unable to undo changes. You need to manually remove files.";
       }
