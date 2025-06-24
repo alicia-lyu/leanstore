@@ -14,17 +14,16 @@ using ROCKSDB_NAMESPACE::Status;
 
 template <typename... Records>
 struct RocksDBMergedAdapter {
-   int idx;  // index in RocksDB::cf_handles
+   const int idx;  // index in RocksDB::cf_handles
+   const std::string name = "merged" + ((std::to_string(Records::id) + std::string("-")) + ...);
    std::unique_ptr<ColumnFamilyHandle> cf_handle;
    RocksDB& map;
-   const std::string name = "merged" + ((std::to_string(Records::id) + std::string("-")) + ...);
 
-   RocksDBMergedAdapter(RocksDB& map) : map(map)
+   RocksDBMergedAdapter(RocksDB& map) : idx(map.cf_descs.size()), map(map)
    {
       ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(name, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
-      idx = map.cf_descs.size() - 1;
    }
 
    void get_handle()

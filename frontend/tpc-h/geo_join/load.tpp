@@ -86,6 +86,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    }
    assert (customer_idx < custkeys.size()); // create hot keys
    std::cout << std::endl << "Assigning " << custkeys.size() - customer_idx << " remaining customers...." << std::endl;
+   auto cust_start = customer_idx;
    for (; customer_idx < custkeys.size(); customer_idx++) {
       auto custkey = custkeys[customer_idx];
       sort_key_t sk;
@@ -102,6 +103,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       customer2.insert(cust_key, cuv);
       merged.insert(cust_key, cuv);
       ccc.insert(cust_key, cuv);
+      TPCH::printProgress("Assigning customers", customer_idx, cust_start, custkeys.size());
    }
    std::cout << "Loaded " << county_sum << " counties and " << city_sum << " cities." << std::endl;
    // --------------------------------------- load view ---------------------------------------
