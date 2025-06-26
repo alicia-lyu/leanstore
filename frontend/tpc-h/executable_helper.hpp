@@ -119,7 +119,9 @@ struct ExecutableHelper {
       warmup();
       sleep(FLAGS_warmup_seconds);
       for (auto& cb : elapsed_cbs) {
+         running_threads_counter++;
          db_traits->run_tx(cb);
+         running_threads_counter--;
       }
       for (size_t i = 0; i < tput_cbs.size(); i++) {
          tput_tx(tput_cbs[i], tput_prefixes[i]);
