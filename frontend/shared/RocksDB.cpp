@@ -4,24 +4,37 @@
 void RocksDB::set_options()
 {
    // OPTIONS
-   wo.disableWAL = true;
-   wo.sync = false;
-   iterator_ro.snapshot = nullptr;  // Snapshot from pinning resourcesq
+   iterator_ro.fill_cache = false;
    db_options.use_direct_reads = false;
    db_options.use_direct_io_for_flush_and_compaction = false;
-   db_options.db_write_buffer_size = 0;  // disabled
-   // db_options.write_buffer_size = 64 * 1024 * 1024; keep the default
    db_options.create_if_missing = true;
    db_options.create_missing_column_families = true;
    // db_options.manual_wal_flush = true;
    db_options.compression = rocksdb::CompressionType::kNoCompression;
-   db_options.compaction_style = rocksdb::CompactionStyle::kCompactionStyleLevel;
-   db_options.row_cache = rocksdb::NewLRUCache(FLAGS_dram_gib * 1024 * 1024 * 1024);
-   rocksdb::BlockBasedTableOptions table_options;
-   table_options.filter_policy.reset(
-       rocksdb::NewBloomFilterPolicy(10, false));  // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
-   db_options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
+   db_options.OptimizeLevelStyleCompaction();
+   db_options.compaction_style = rocksdb::kCompactionStyleLevel;
+
+   const double pct_block_cache = 0.70;
+   const size_t total_bytes = FLAGS_dram_gib * 1024ull * 1024 * 1024;
+   const size_t block_cache_bytes = size_t(total_bytes * pct_block_cache);
+   const size_t memtable_bytes = total_bytes - block_cache_bytes;
+
+   std::cout << "DRAM GB: " << FLAGS_dram_gib << "\n"
+             << "Block bytes: " << block_cache_bytes << " Memtable: " << memtable_bytes << "\n";
+
+   cache = rocksdb::NewLRUCache(block_cache_bytes);
+   
+   table_opts.block_cache = cache;
+
+   db_options.max_write_buffer_number = 2;  // e.g. 2 buffers in memory
+   db_options.write_buffer_size = memtable_bytes / 2;
+   db_options.min_write_buffer_number_to_merge = 1;
+
+   table_opts.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false));  // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
+   db_options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_opts));
+
    db_options.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(sizeof(u32)));  // ID
+
    db_options.statistics = rocksdb::CreateDBStatistics();
    db_options.stats_dump_period_sec = 1;
 }

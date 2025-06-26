@@ -10,55 +10,55 @@ struct ExeParams {
    W& workload;
    ExeParams(W& w) : workload(w) {}
    const std::vector<std::string> tput_prefixes = {
-       // "join-ns",
-       // "join-nsc",
-       // "join-nscci",
-       // "maintain",
+       "join-ns",
+       "join-nsc",
+       "join-nscci",
+       "maintain",
        // "group-point",
        "mixed-point"};
    const std::vector<std::function<void()>> elapsed_cbs_base = {
-       // std::bind(&GJ::query_by_base, &tpchGeoJoin),
-       // std::bind(&GJ::agg_by_base, &tpchGeoJoin),
+       std::bind(&W::query_by_base, &workload),
+    //    std::bind(&W::agg_by_base, &workload),
        std::bind(&W::mixed_query_by_base, &workload)};
    const std::vector<std::function<void()>> tput_cbs_base = {
-       // std::bind(&GJ::ns_base, &tpchGeoJoin),
-       // std::bind(&GJ::nsc_base, &tpchGeoJoin),
-       // std::bind(&GJ::nscci_by_base, &tpchGeoJoin),
-       // std::bind(&GJ::maintain_base, &tpchGeoJoin),
-       // std::bind(&GJ::point_agg_by_base, &tpchGeoJoin),
+       std::bind(&W::ns_base, &workload),
+       std::bind(&W::nsc_base, &workload),
+       std::bind(&W::nscci_by_base, &workload),
+       std::bind(&W::maintain_base, &workload),
+       // std::bind(&W::point_agg_by_base, &workload),
        std::bind(&W::point_mixed_query_by_base, &workload)};
    const std::vector<std::function<void()>> elapsed_cbs_view = {
-       // std::bind(&GJ::query_by_view, &tpchGeoJoin),
-       // std::bind(&GJ::agg_in_view, &tpchGeoJoin),
+       std::bind(&W::query_by_view, &workload),
+    //    std::bind(&W::agg_in_view, &workload),
        std::bind(&W::mixed_query_by_view, &workload)};
    const std::vector<std::function<void()>> tput_cbs_view = {
-       // std::bind(&GJ::ns_view, &tpchGeoJoin),
-       // std::bind(&GJ::nsc_view, &tpchGeoJoin),
-       // std::bind(&GJ::nscci_by_view, &tpchGeoJoin),
-       // std::bind(&GJ::maintain_view, &tpchGeoJoin),
-       // std::bind(&GJ::point_agg_by_view, &tpchGeoJoin),
+       std::bind(&W::ns_view, &workload),
+       std::bind(&W::nsc_view, &workload),
+       std::bind(&W::nscci_by_view, &workload),
+       std::bind(&W::maintain_view, &workload),
+       // std::bind(&W::point_agg_by_view, &workload),
        std::bind(&W::point_mixed_query_by_view, &workload)};
    const std::vector<std::function<void()>> elapsed_cbs_merged = {
-       // std::bind(&GJ::query_by_merged, &tpchGeoJoin),
-       // std::bind(&GJ::agg_by_merged, &tpchGeoJoin),
+       std::bind(&W::query_by_merged, &workload),
+    //    std::bind(&W::agg_by_merged, &workload),
        std::bind(&W::mixed_query_by_merged, &workload)};
    const std::vector<std::function<void()>> tput_cbs_merged = {
-       // std::bind(&GJ::ns_merged, &tpchGeoJoin),
-       // std::bind(&GJ::nsc_merged, &tpchGeoJoin),
-       // std::bind(&GJ::nscci_by_merged, &tpchGeoJoin),
-       // std::bind(&GJ::maintain_merged, &tpchGeoJoin),
-       // std::bind(&GJ::point_agg_by_merged, &tpchGeoJoin),
+       std::bind(&W::ns_merged, &workload),
+       std::bind(&W::nsc_merged, &workload),
+       std::bind(&W::nscci_by_merged, &workload),
+       std::bind(&W::maintain_merged, &workload),
+       // std::bind(&W::point_agg_by_merged, &workload),
        std::bind(&W::point_mixed_query_by_merged, &workload)};
    const std::vector<std::function<void()>> elapsed_cbs_2merged = {
-       // std::bind(&GJ::query_by_2merged, &tpchGeoJoin),
-       // std::bind(&GJ::agg_by_2merged, &tpchGeoJoin),
+       std::bind(&W::query_by_2merged, &workload),
+       // std::bind(&W::agg_by_2merged, &workload),
        std::bind(&W::mixed_query_by_2merged, &workload)};
    const std::vector<std::function<void()>> tput_cbs_2merged = {
-       // std::bind(&GJ::ns_by_2merged, &tpchGeoJoin),
-       // std::bind(&GJ::nsc_by_2merged, &tpchGeoJoin),
-       // std::bind(&GJ::nscci_by_2merged, &tpchGeoJoin),
-       // std::bind(&GJ::maintain_2merged, &tpchGeoJoin),
-       // std::bind(&GJ::point_agg_by_2merged, &tpchGeoJoin),
+       std::bind(&W::ns_by_2merged, &workload),
+       std::bind(&W::nsc_by_2merged, &workload),
+       std::bind(&W::nscci_by_2merged, &workload),
+       std::bind(&W::maintain_2merged, &workload),
+       // std::bind(&W::point_agg_by_2merged, &workload),
        std::bind(&W::point_mixed_query_by_2merged, &workload)};
 };
 }  // namespace geo_join

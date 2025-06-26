@@ -1,5 +1,6 @@
 #pragma once
 
+#include <rocksdb/cache.h>
 #include <rocksdb/filter_policy.h>
 #include <rocksdb/options.h>
 #include <rocksdb/rocksdb_namespace.h>
@@ -36,6 +37,7 @@ using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
 using ROCKSDB_NAMESPACE::PinnableSlice;
 using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::Range;
+using ROCKSDB_NAMESPACE::Cache;
 
 struct RocksDB {
    rocksdb::TransactionDB* tx_db;
@@ -45,9 +47,11 @@ struct RocksDB {
    static thread_local rocksdb::Transaction* txn;
 
    rocksdb::Options db_options;
+   rocksdb::BlockBasedTableOptions table_opts;
    rocksdb::WriteOptions wo;
    rocksdb::ReadOptions ro;
    rocksdb::ReadOptions iterator_ro;
+   std::shared_ptr<Cache> cache = nullptr;
 
    enum class DB_TYPE : u8 { DB, TransactionDB, OptimisticDB };
    const DB_TYPE type;
