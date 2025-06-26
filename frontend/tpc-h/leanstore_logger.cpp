@@ -29,7 +29,6 @@ void LeanStoreLogger::summarize_other_stats()
 
 void LeanStoreLogger::prepare()
 {
-   std::cout << "Preparing TPC-H" << std::endl;
    [[maybe_unused]] Integer t_id = Integer(leanstore::WorkerCounters::myCounters().t_id.load());
    Integer h_id = 0;
    leanstore::WorkerCounters::myCounters().variable_for_workload = h_id;

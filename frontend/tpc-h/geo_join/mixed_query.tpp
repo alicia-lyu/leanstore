@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <optional>
+#include "Exceptions.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -186,11 +187,15 @@ struct BaseCounter {
             break;
          auto& [cuk, cuv] = *customer_kv;
          sort_key_t cu_sk = SKBuilder<sort_key_t>::create(cuk, cuv);
-         if (ci_sk.match(cu_sk) != 0) {
+         if (ci_sk.
+            match(cu_sk) < 0) { // this city has no customers
             customer_scanner->after_seek = true;  // rescan this customer
+            
             break;
-         } else {
+         } else if (ci_sk.match(cu_sk) == 0) { // this customer belongs to the city
             customer_count++;
+         } else {
+            UNREACHABLE();
          }
       }
       if (customer_count > 0) {

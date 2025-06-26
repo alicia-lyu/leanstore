@@ -51,7 +51,7 @@ struct RocksDB {
    rocksdb::WriteOptions wo;
    rocksdb::ReadOptions ro;
    rocksdb::ReadOptions iterator_ro;
-   std::shared_ptr<Cache> cache = nullptr;
+   // std::shared_ptr<Cache> cache = nullptr;
 
    enum class DB_TYPE : u8 { DB, TransactionDB, OptimisticDB };
    const DB_TYPE type;

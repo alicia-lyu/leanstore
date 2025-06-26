@@ -16,7 +16,8 @@ class RocksDBScanner
    bool after_seek = false;
    long long produced = 0;
 
-   RocksDBScanner(ColumnFamilyHandle* cf_handle, RocksDB& map) : it(map.tx_db->NewIterator(map.iterator_ro, cf_handle)) {
+   RocksDBScanner(ColumnFamilyHandle* cf_handle, RocksDB& map) : it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
+   {
       it->SeekToFirst();
       after_seek = true;
       assert(it->Valid());
@@ -57,7 +58,7 @@ class RocksDBScanner
       return it->Valid();
    }
 
-   std::optional<std::pair<typename Record::Key, Record>> current() 
+   std::optional<std::pair<typename Record::Key, Record>> current()
    {
       if (!it->Valid()) {
          return std::nullopt;
@@ -68,15 +69,13 @@ class RocksDBScanner
       return std::make_pair(key, record);
    }
 
-   std::optional<std::pair<typename Record::Key, Record>> next() 
+   std::optional<std::pair<typename Record::Key, Record>> next()
    {
       if (after_seek) {
          after_seek = false;
-         return current();
-      }
-      it->Next();
-      if (!it->Valid()) {
-         return std::nullopt;
+      } else {
+         it->Next();
+         produced++;
       }
       return current();
    }
@@ -85,11 +84,8 @@ class RocksDBScanner
    {
       if (after_seek) {
          after_seek = false;
-         return current();
-      }
-      it->Prev();
-      if (!it->Valid()) {
-         return std::nullopt;
+      } else {
+         it->Prev();
       }
       return current();
    }

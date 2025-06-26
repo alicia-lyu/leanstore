@@ -30,7 +30,7 @@ struct LoadState {
 
    void advance_customers_in_1city(const size_t step_cnt, int n, int s, int c, int ci);
 
-   void advance_customers_to_hot_cities(const size_t step_cnt);
+   void advance_customers_to_hot_cities();
 };
 
 template <template <typename> class AdapterType,
@@ -315,17 +315,19 @@ class GeoJoin
 
    void load_1city(int n, int s, int c, int ci);
 
-   void load_hot_cities();
-
    void load_1customer(int n, int s, int c, int ci, int cu);
 
-   double get_view_size();
+   double get_view_size()
+   {
+      double indexes_size = get_indexes_size();
+   return indexes_size + join_view.size();  // + city_count_per_county.size();
+   }
 
-   double get_indexes_size();
+   double get_indexes_size() {return nation.size() + states.size() + county.size() + city.size() + customer2.size(); }
 
-   double get_merged_size();
+   double get_merged_size() {return merged.size();}
 
-   double get_2merged_size();
+   double get_2merged_size() {return ns.size() + ccc.size();}
 
    void log_sizes();
 

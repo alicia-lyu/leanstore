@@ -89,32 +89,27 @@ int main(int argc, char** argv)
    
    switch (FLAGS_storage_structure) {
       case 0: {
-         std::cout << "TPC-H with traditional indexes" << std::endl;
          ExecutableHelper<LeanStoreAdapter> helper(crm, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
          helper.run();
          break;
       }
       case 1: {
-         std::cout << "TPC-H with materialized views" << std::endl;
-
          ExecutableHelper<LeanStoreAdapter> helper(crm, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
          helper.run();
          break;
       }
       case 2: {
-         std::cout << "TPC-H with merged indexes" << std::endl;
          ExecutableHelper<LeanStoreAdapter> helper(crm, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
          helper.run();
          break;
       }
       case 3 : {
-         std::cout << "TPC-H with 2 merged indexes" << std::endl;
          ExecutableHelper<LeanStoreAdapter> helper(crm, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
          helper.run();
          break;
       }
       default: {
-         std::cerr << "Invalid storage structure option" << std::endl;
+         std::cerr << "Invalid storage structure option: " << FLAGS_storage_structure << std::endl;
          return -1;
       }
    }

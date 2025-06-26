@@ -7,6 +7,30 @@
 
 namespace geo_join
 {
+void LoadState::advance_customers_in_1city(const size_t step_cnt, int n, int s, int c, int ci)
+{
+   size_t customer_end = customer_idx + step_cnt;
+   if (customer_end >= custkeys.size() && customer_idx < custkeys.size()) {
+      std::cout << "WARNING: No customer since nation " << n << ", state " << s << ", county " << c << ", city " << ci << ". " << std::endl;
+   }
+   for (; customer_idx < custkeys.size() && customer_idx < customer_end; customer_idx++) {
+      insert_customer_func(n, s, c, ci, custkeys.at(customer_idx));
+   }
+}
+
+void LoadState::advance_customers_to_hot_cities()
+{
+   assert(!hot_city_candidates.empty());
+   assert(customer_idx < custkeys.size());  // create hot keys
+   std::cout << "Assigning " << custkeys.size() - customer_idx << " remaining customers in " << hot_city_candidates.size() << " hot cities..." << std::endl;
+
+   std::cout << "Shuffling hot city candidates..." << std::endl;
+   std::random_shuffle(hot_city_candidates.begin(), hot_city_candidates.end());
+   for (; customer_idx < custkeys.size(); customer_idx++) {
+      city_t::Key cik = hot_city_candidates.at(customer_idx % hot_city_candidates.size());
+      insert_customer_func(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, custkeys.at(customer_idx));
+   }
+}
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
@@ -17,7 +41,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    workload.load();
    load_state = LoadState(workload.last_customer_id, [this](int n, int s, int c, int ci, int cu) { load_1customer(n, s, c, ci, cu); });
    seq_load();
-   load_hot_cities();
+   load_state.advance_customers_to_hot_cities();
    // load view
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
    PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
@@ -88,26 +112,6 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    }
 }
 
-void LoadState::advance_customers_in_1city(const size_t step_cnt, int n, int s, int c, int ci)
-{
-   size_t customer_end = customer_idx + step_cnt;
-   if (customer_end >= custkeys.size() && customer_idx < custkeys.size()) {
-      std::cout << "WARNING: No customer since nation " << n << ", state " << s << ", county " << c << ", city " << ci << ". " << std::endl;
-   }
-   for (; customer_idx < custkeys.size() && customer_idx < customer_end; customer_idx++) {
-      insert_customer_func(n, s, c, ci, custkeys.at(customer_idx));
-   }
-}
-
-void LoadState::advance_customers_to_hot_cities(const size_t step_cnt)
-{
-   size_t customer_end = customer_idx + step_cnt;
-   for (; customer_idx < custkeys.size() && customer_idx < customer_end; customer_idx++) {
-      city_t::Key cik = hot_city_candidates.at(customer_idx % hot_city_candidates.size());
-      insert_customer_func(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, custkeys.at(customer_idx));
-   }
-}
-
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
@@ -120,7 +124,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    merged.insert(cik, civ);
    ccc.insert(cik, civ);
    int lottery = urand(1, 100);  // 100 is HARDCODED
-   if (lottery == 1) {
+   if (lottery <= 2) {
       load_state.hot_city_candidates.push_back(cik);
    }
    // insert customer2
@@ -134,65 +138,13 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load_1customer(int n, int s, int c, int ci, int cu)
 {
    customer2_t::Key cust_key{n, s, c, ci, cu};
+   assert(s > 0);
    customer2_t cuv;
    workload.customer.lookup1(customerh_t::Key{cu}, [&](const customerh_t& v) { cuv = customer2_t{v}; });
    customer2.insert(cust_key, cuv);
    merged.insert(cust_key, cuv);
    ccc.insert(cust_key, cuv);
 }
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load_hot_cities()
-{
-   assert(load_state.customer_idx < load_state.custkeys.size());  // create hot keys
-   size_t rem_customer_cnt = load_state.custkeys.size() - load_state.customer_idx;
-   std::cout << "Assigning " << rem_customer_cnt << " remaining customers in " << load_state.hot_city_candidates.size() << " hot cities..."
-             << std::endl;
-
-   std::cout << "Shuffling hot city candidates..." << std::endl;
-   std::random_shuffle(load_state.hot_city_candidates.begin(), load_state.hot_city_candidates.end());
-   load_state.advance_customers_to_hot_cities(rem_customer_cnt);
-}
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_view_size()
-{
-   double indexes_size = get_indexes_size();
-   return indexes_size + join_view.size();  // + city_count_per_county.size();
-};
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_indexes_size()
-{
-   return nation.size() + states.size() + county.size() + city.size() + customer2.size();
-};
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_merged_size()
-{
-   return merged.size();
-};
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-double GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::get_2merged_size()
-{
-   return ns.size() + ccc.size();
-};
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
