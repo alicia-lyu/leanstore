@@ -109,7 +109,7 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, 
    std::vector<u8> max_key(max_fold_len, 255);  // max key
    auto limit_slice = RSlice(max_key.data(), max_key.size());
 
-   std::cout << "Compacting " << name << "..." << std::endl;
+   std::cout << "RocksDB::get_size: Compacting " << name << "...";
    auto compact_options = rocksdb::CompactRangeOptions();
    compact_options.change_level = true;
    auto ret = tx_db->CompactRange(compact_options, cf_handle, &start_slice, &limit_slice);

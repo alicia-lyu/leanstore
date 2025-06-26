@@ -1,17 +1,19 @@
 #pragma once
 
 #include "../tpc-h/merge.hpp"
+#include "Exceptions.hpp"
 #include "RocksDB.hpp"
 #include "variant_utils.hpp"
 
 template <typename JK, typename JR, typename... Records>
 struct RocksDBMergedScanner {
+   RocksDB& map;
    std::unique_ptr<rocksdb::Iterator> it;
    bool after_seek = false;
    long long produced = 0;
 
    RocksDBMergedScanner(ColumnFamilyHandle* cf_handle, RocksDB& map)
-       : it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
+       : map(map), it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
    {
       it->SeekToFirst();
       after_seek = true;
@@ -29,9 +31,9 @@ struct RocksDBMergedScanner {
    void seek(const typename Record::Key& key)
       requires std::disjunction_v<std::is_same<Record, Records>...>
    {
-      u8 folded_key[Record::maxFoldLength()];
-      const u32 folded_key_len = Record::foldKey(folded_key, key);
-      it->Seek(RSlice(folded_key, folded_key_len));
+      std::string key_buf;
+      rocksdb::Slice k_slice = map.template fold_key<Record>(key, key_buf);
+      it->Seek(k_slice);
       after_seek = true;
    }
 
@@ -39,9 +41,9 @@ struct RocksDBMergedScanner {
    void seekForPrev(const typename Record::Key& key)
       requires std::disjunction_v<std::is_same<Record, Records>...>
    {
-      u8 folded_key[Record::maxFoldLength()];
-      const u32 folded_key_len = Record::foldKey(folded_key, key);
-      it->SeekForPrev(RSlice(folded_key, folded_key_len));
+      std::string key_buf;
+      rocksdb::Slice k_slice = map.template fold_key<Record>(key, key_buf);
+      it->SeekForPrev(k_slice);
       after_seek = true;
    }
 
@@ -60,10 +62,8 @@ struct RocksDBMergedScanner {
             return true;
          }
          it->Next();
-         if (!it->Valid()) {
-            return false;
-         }
       }
+      UNREACHABLE();
    }
 
    void seekJK(const JK& jk) 
@@ -78,22 +78,27 @@ struct RocksDBMergedScanner {
    {
       if (after_seek) {
          after_seek = false;
-         return current();  // std::nullopt if !Valid
+      } else {
+         if (!it->Valid()) {
+            return std::nullopt;
+         }
+         it->Next();
+         produced++;
       }
-      it->Next();
-      this->produced++;
-      return this->current();  // std::nullopt if !Valid
+      return current();
    }
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> prev()
    {
-      if (after_seek) {
+     if (after_seek) {
          after_seek = false;
-         return current();
+      } else {
+         if (!it->Valid()) {
+            return std::nullopt;
+         }
+         it->Prev();
       }
-      it->Prev();
-      this->produced++;
-      return this->current();  // std::nullopt if !Valid
+      return current();
    }
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current() 

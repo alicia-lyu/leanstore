@@ -106,7 +106,7 @@ struct RocksDB {
          persist_file << "Placeholder. Code logic only needs the file to exist." << std::endl;
          assert(s.ok());
       } else {
-         std::cout << "FLAGS_persist is false, compaction skipped. Unable to undo changes. You need to manually remove files.";
+         std::cout << "FLAGS_persist is false, compaction skipped. UNABLE TO UNDO CHANGES." << std::endl;
       }
       delete tx_db;
    }
@@ -137,10 +137,8 @@ struct RocksDB {
 
    bool Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key);
 
-   std::string key_buf; // temporary buffer for ONE folded key
-
    template <typename Record>
-   rocksdb::Slice fold_key(const typename Record::Key& key)
+   rocksdb::Slice fold_key(const typename Record::Key& key, std::string& key_buf)
    {
       key_buf.resize(Record::maxFoldLength());
       const u32 folded_key_len = Record::foldKey(reinterpret_cast<u8*>(key_buf.data()), key);
@@ -157,13 +155,15 @@ struct RocksDB {
    template <typename Record>
    void insert(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const Record& record)
    {
-      Put(cf_handle, fold_key<Record>(key), fold_record<Record>(record));
+      std::string key_buf;
+      Put(cf_handle, fold_key<Record>(key, key_buf), fold_record<Record>(record));
    }
 
    template <typename Record>
    void lookup1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb)
    {
-      rocksdb::Slice k_slice = fold_key<Record>(key);
+      std::string key_buf;
+      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf);
       rocksdb::PinnableSlice value;
       Get(cf_handle, k_slice, &value);
       const Record& record = *reinterpret_cast<const Record*>(value.data());
@@ -174,7 +174,8 @@ struct RocksDB {
    template <typename Record>
    bool tryLookup(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb)
    {
-      rocksdb::Slice k_slice = fold_key<Record>(key);
+      std::string key_buf;
+      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf);
       rocksdb::PinnableSlice value;
       Status s = tx_db->Get(ro, cf_handle, k_slice, &value); // force not as part of txn
       if (!s.ok()) {
@@ -198,17 +199,20 @@ struct RocksDB {
       Record r;
       rocksdb::PinnableSlice r_slice;
       r_slice.PinSelf(RSlice(&r, sizeof(r)));
-      GetForUpdate(cf_handle, fold_key<Record>(key), &r_slice);
+      std::string key_buf;
+      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf);
+      GetForUpdate(cf_handle, k_slice, &r_slice);
       Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
       cb(r_lookedup);
-      Put(cf_handle, fold_key<Record>(key), fold_record<Record>(r_lookedup));
+      Put(cf_handle, k_slice, fold_record<Record>(r_lookedup));
       r_slice.Reset();
    }
 
    template <class Record>
    bool erase(ColumnFamilyHandle* cf_handle, const typename Record::Key& key)
    {
-      Delete(cf_handle, fold_key<Record>(key));
+      std::string key_buf;
+      Delete(cf_handle, fold_key<Record>(key, key_buf));
       return true;
    }
 
