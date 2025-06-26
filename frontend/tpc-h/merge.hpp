@@ -110,7 +110,7 @@ struct PremergedJoin {
 
    ~PremergedJoin()
    {
-      if (seek_cnt > 0)
+      if (seek_cnt > 1 || scan_filter_cnt > 0)
          std::cout << "\r~PremergedJoin: seek count = " << seek_cnt << ", scan filter count = " << scan_filter_cnt
                    << ", emplace count = " << emplace_cnt << ", joined = " << join_state.joined << "!";
    }

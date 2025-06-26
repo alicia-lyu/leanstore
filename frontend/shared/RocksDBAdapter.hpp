@@ -70,7 +70,8 @@ struct RocksDBAdapter : public Adapter<Record> {
    // Not part of a txn
    void scan(const typename Record::Key& key, const std::function<bool(const typename Record::Key&, const Record&)>& cb, std::function<void()>) final
    {
-      rocksdb::Slice folded_key = map.template fold_key<Record>(key);
+      std::string key_buf;
+      rocksdb::Slice folded_key = map.template fold_key<Record>(key, key_buf);
       rocksdb::Iterator* it = map.tx_db->NewIterator(map.iterator_ro, cf_handle);
       for (it->Seek(folded_key); it->Valid(); it->Next()) {
          typename Record::Key s_key;
@@ -87,7 +88,8 @@ struct RocksDBAdapter : public Adapter<Record> {
                  const std::function<bool(const typename Record::Key&, const Record&)>& fn,
                  std::function<void()>) final
    {
-      rocksdb::Slice folded_key = map.template fold_key<Record>(key);
+      std::string key_buf;
+      rocksdb::Slice folded_key = map.template fold_key<Record>(key, key_buf);
       rocksdb::Iterator* it = map.tx_db->NewIterator(map.iterator_ro, cf_handle);
       for (it->SeekForPrev(folded_key); it->Valid(); it->Prev()) {
          typename Record::Key s_key;

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include "../randutils.hpp"
 
 // 1 nation + 1--80 states --- 1--6 pages
@@ -9,9 +8,9 @@
 namespace geo_join
 {
 struct params {
-   static constexpr size_t STATE_MAX = 80;    // in a nation
-   static constexpr size_t COUNTY_MAX = 200;  // in a state
-   static constexpr size_t CITY_MAX = 4;      // in a county
+   static constexpr int STATE_MAX = 80;    // in a nation
+   static constexpr int COUNTY_MAX = 200;  // in a state
+   static constexpr int CITY_MAX = 4;      // in a county
 
    static int get_state_cnt() { return randutils::urand(1, STATE_MAX); }
 
@@ -19,15 +18,6 @@ struct params {
 
    static int get_city_cnt()
    {
-      // int lottery = randutils::urand(1, 3);
-      // switch (lottery) {
-      //    case 1:
-      //       return 0;
-      //    case 2:
-      //       return 1;
-      //    default:
-      //       return randutils::urand(2, CITY_MAX);
-      // }
       return randutils::urand(1, CITY_MAX);
    }
 

@@ -35,7 +35,7 @@ cfg = Config()
 
 def print_section(title: str) -> None:
     """Prints a styled section header."""
-    sep = "-" * 20
+    sep = "=" * 20
     print(f"# {sep} {title} {sep}")
     
 def get_cmake_cmd(build_dir: str) -> str:
@@ -80,7 +80,7 @@ class Experiment:
     recover_file: str
     separate_runs: List[str]
     
-    sep = "=" * 20
+    sep = "-" * 20
 
     def __init__(self, build_dir: str, exec_fname: str):
         self.build_dir = build_dir
@@ -114,6 +114,7 @@ class Experiment:
             self.debug_experiment()
 
     def generate_executable(self) -> None:
+        print(f"#{self.sep} Generate executable {self.sep}")
         print(f"{self.exec_path}: check_perf_event_paranoid") # check_perf_event_paranoid is PHONY, force rebuild
         print(f'\t@echo "{self.sep} Building {self.exec_path} {self.sep}"')
         print(
@@ -122,11 +123,13 @@ class Experiment:
         )
         
     def generate_runtime_dir(self) -> None:
+        print(f"#{self.sep} Generate runtime dir {self.sep}")
         print(f"{self.runtime_dir}:")
         print(f'\t@echo "{self.sep} Creating CSV runtime dir {self.runtime_dir} {self.sep}"')
         print(f"\tmkdir -p {self.runtime_dir}\n")
         
     def generate_image(self) -> None:
+        print(f"#{self.sep} Generate image file/dir {self.sep}")
         print(f"{self.image_file}:")
         print(f'\t@echo "{self.sep} Touching a new image file {self.image_file} {self.sep}"')
         print(f"\t{self.create_image_cmd}")
@@ -135,6 +138,7 @@ class Experiment:
         print(f"\t{self.copy_image_cmd}")
         
     def generate_recover_files(self) -> None:
+        print(f"#{self.sep} Generate recovery file {self.sep}")
         loading_files_str = " ".join(self.loading_files)
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} {self.image_file}")
         # for f in [recover, LOADING_META_FILE, loading_file(exe), img]:
@@ -149,6 +153,7 @@ class Experiment:
         )
         
     def run_experiment(self) -> None:
+        print(f"#{self.sep} Run experiment {self.sep}")
         separate_runs_str = " ".join(self.separate_runs)
         print(f"{self.exec_fname}: {separate_runs_str}")
 
@@ -164,6 +169,7 @@ class Experiment:
             )
     
     def debug_experiment(self) -> None:
+        print(f"#{self.sep} Debug experiment {self.sep}")
         separate_runs_str = " ".join(self.separate_runs)
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")
 
