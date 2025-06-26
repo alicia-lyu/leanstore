@@ -23,16 +23,25 @@ struct DBTraits {
 
 struct LeanStoreTraits : public DBTraits {
    leanstore::cr::CRManager& crm;
-   explicit LeanStoreTraits(leanstore::cr::CRManager& crm) : crm(crm) {}
+   explicit LeanStoreTraits(leanstore::cr::CRManager& crm) : crm(crm) { std::cout << "Running experiment with " << name() << std::endl; }
    ~LeanStoreTraits() = default;
    void run_tx(std::function<void()> cb)
    {
-      leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE);
-      cb();
-      leanstore::cr::Worker::my().commitTX();
+      crm.scheduleJobSync(1, [&]() {
+         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE);
+         cb();
+         leanstore::cr::Worker::my().commitTX();
+      });
    }
 
-   void schedule_warmup(std::function<void()> cb) { crm.scheduleJobAsync(0, cb); }
+   void schedule_warmup(std::function<void()> cb)
+   {
+      crm.scheduleJobAsync(0, [&]() {
+         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE);
+         cb();
+         leanstore::cr::Worker::my().commitTX();
+      });
+   }
 
    void cleanup_thread() { leanstore::cr::Worker::my().shutdown(); }
 
@@ -41,7 +50,7 @@ struct LeanStoreTraits : public DBTraits {
 
 struct RocksDBTraits : public DBTraits {
    RocksDB& rocks_db;
-   explicit RocksDBTraits(RocksDB& rocks_db) : rocks_db(rocks_db) {}
+   explicit RocksDBTraits(RocksDB& rocks_db) : rocks_db(rocks_db) { std::cout << "Running experiment with " << name() << std::endl; }
    ~RocksDBTraits() = default;
    void run_tx(std::function<void()> cb)
    {
@@ -114,37 +123,40 @@ struct ExecutableHelper {
 
    void run()
    {
-      std::cout << "Running experiment with " << db_traits->name() << std::endl;
+      std::cout << std::string(20, '=') << method << "," << size << std::string(20, '=') << std::endl;
       tpch.prepare();
+
       warmup();
-      sleep(FLAGS_warmup_seconds);
+
       for (auto& cb : elapsed_cbs) {
          running_threads_counter++;
          db_traits->run_tx(cb);
          running_threads_counter--;
       }
+
       for (size_t i = 0; i < tput_cbs.size(); i++) {
          tput_tx(tput_cbs[i], tput_prefixes[i]);
       }
+
       keep_running_warmup = false;
+
       while (running_threads_counter > 0) {
-         std::this_thread::sleep_for(std::chrono::milliseconds(100)); // sleep 0.1 sec
+         std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
       }
    }
    void warmup()
    {
-      std::cout << std::endl << std::string(20, '=') << method << "," << size << std::string(20, '=') << std::endl;
       db_traits->schedule_warmup([&]() { warmup_phase(); });
+      sleep(FLAGS_warmup_seconds);
    }
 
    void warmup_phase()
    {
       running_threads_counter++;
-      tpch.prepare();
       while (keep_running_warmup) {
          jumpmuTry()
          {
-            db_traits->run_tx(lookup_cb);
+            lookup_cb();
             lookup_count++;
          }
          jumpmuCatchNoPrint()
@@ -164,13 +176,17 @@ struct ExecutableHelper {
       tpch.logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
       atomic<int> count = 0;
+
       std::cout << "Running " << tx << " on " << method << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
+
       atomic<bool> keep_running_tx = true;
       std::thread([&] {
          std::this_thread::sleep_for(std::chrono::seconds(FLAGS_tx_seconds));
          keep_running_tx = false;
       }).detach();
+
       running_threads_counter++;
+
       while (keep_running_tx || count.load() < 10) {
          jumpmuTry()
          {
@@ -184,7 +200,9 @@ struct ExecutableHelper {
          if (count.load() % 1000 == 1)
             std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
       }
+
       std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;
+
       auto end = std::chrono::high_resolution_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = (double)count.load() / duration * 1e6;
