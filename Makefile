@@ -16,7 +16,6 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 
 # Experiment flags
 dram                := 1
-scale               := 10
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
@@ -36,9 +35,8 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	-$(MAKE) geo_lsm dram=2 # scale = 10
-	-$(MAKE) geo_lsm dram=1 # scale = 10
-	-$(MAKE) geo_lsm dram=0.6 # scale = 10
+	-$(MAKE) geo_lsm dram=2
+	-$(MAKE) geo_lsm dram=0.6
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1

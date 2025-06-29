@@ -20,7 +20,8 @@ struct LoadState {
 
    LoadState() = default;
 
-   LoadState(int last_customer_id, std::function<void(int, int, int, int, int)> insert_customer_func) : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates(), insert_customer_func(insert_customer_func)
+   LoadState(int last_customer_id, std::function<void(int, int, int, int, int)> insert_customer_func)
+       : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates(), insert_customer_func(insert_customer_func)
    {
       std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
       std::random_shuffle(custkeys.begin(), custkeys.end());
@@ -88,7 +89,14 @@ class GeoJoin
          customer2(customer2),
          logger(workload.logger)
    {
-      TPCH::CUSTOMER_SCALE *= 200;
+      if (FLAGS_tpch_scale_factor > 1000) {
+         throw std::runtime_error("GeoJoin does not support scale factor larger than 1000");
+      }
+      TPCH::CUSTOMER_SCALE *= 200; // already linear to scale factor
+      TPCH::NATION_COUNT *= std::min(FLAGS_tpch_scale_factor, 5);
+      std::cout << "GeoJoin params: NATION_COUNT = " << TPCH::NATION_COUNT << ", STATE_MAX = " << params::STATE_MAX
+                << ", COUNTY_MAX = " << params::COUNTY_MAX << ", CITY_MAX = " << params::CITY_MAX << ", CUSTOMER_MAX = " << params::CUSTOMER_MAX
+                << std::endl;
    }
 
    ~GeoJoin()
@@ -320,14 +328,14 @@ class GeoJoin
    double get_view_size()
    {
       double indexes_size = get_indexes_size();
-   return indexes_size + join_view.size();  // + city_count_per_county.size();
+      return indexes_size + join_view.size();  // + city_count_per_county.size();
    }
 
-   double get_indexes_size() {return nation.size() + states.size() + county.size() + city.size() + customer2.size(); }
+   double get_indexes_size() { return nation.size() + states.size() + county.size() + city.size() + customer2.size(); }
 
-   double get_merged_size() {return merged.size();}
+   double get_merged_size() { return merged.size(); }
 
-   double get_2merged_size() {return ns.size() + ccc.size();}
+   double get_2merged_size() { return ns.size() + ccc.size(); }
 
    void log_sizes();
 

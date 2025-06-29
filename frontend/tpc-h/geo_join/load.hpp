@@ -1,5 +1,6 @@
 #pragma once
 
+#include <gflags/gflags.h>
 #include "../randutils.hpp"
 
 // 1 nation + 1--80 states --- 1--6 pages
@@ -8,25 +9,23 @@
 namespace geo_join
 {
 struct params {
-   static constexpr int STATE_MAX = 80;    // in a nation
-   static constexpr int COUNTY_MAX = 200;  // in a state
-   static constexpr int CITY_MAX = 4;      // in a county
+   static int STATE_MAX;     // in a nation
+   static int COUNTY_MAX;    // in a state
+   static int CITY_MAX;      // in a county
+   static int CUSTOMER_MAX;  // in a city
 
    static int get_state_cnt() { return randutils::urand(1, STATE_MAX); }
 
    static int get_county_cnt() { return randutils::urand(1, COUNTY_MAX); }
 
-   static int get_city_cnt()
-   {
-      return randutils::urand(0, CITY_MAX);
-   }
+   static int get_city_cnt() { return randutils::urand(0, CITY_MAX); }
 
-   static int get_customer_cnt() // avg: 1.5
+   static int get_customer_cnt()  // avg: 1.5
    {
       // int lottery = randutils::urand(1, 3);
       // if (lottery <= 2) return 0;
       // else return randutils::urand(0, 12);
-      return randutils::urand(0, 2);
+      return randutils::urand(0, CUSTOMER_MAX);
       // some hot cities emerge during the final assignment
    }
 
