@@ -36,5 +36,9 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	-$(MAKE) geo_join dram=1 # scale = 10
-	-$(MAKE) geo_join dram=0.6 # scale = 10
+	-$(MAKE) geo_lsm dram=2 # scale = 10
+	-$(MAKE) geo_lsm dram=1 # scale = 10
+	-$(MAKE) geo_lsm dram=0.6 # scale = 10
+
+tmux:
+	tmux new-session -s s1 || tmux attach-session -t s1

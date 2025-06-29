@@ -31,13 +31,13 @@ inline rocksdb::Slice RSlice(T* ptr, u64 len)
    return rocksdb::Slice(reinterpret_cast<const char*>(ptr), len);
 }
 
+using ROCKSDB_NAMESPACE::Cache;
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
 using ROCKSDB_NAMESPACE::PinnableSlice;
-using ROCKSDB_NAMESPACE::Status;
 using ROCKSDB_NAMESPACE::Range;
-using ROCKSDB_NAMESPACE::Cache;
+using ROCKSDB_NAMESPACE::Status;
 
 struct RocksDB {
    rocksdb::TransactionDB* tx_db;
@@ -63,6 +63,7 @@ struct RocksDB {
       if (FLAGS_trunc == false && std::filesystem::exists(FLAGS_ssd_path)) {
          FLAGS_recover = true;
       } else if (FLAGS_trunc == true && std::filesystem::exists(FLAGS_ssd_path)) {
+         std::cout << "RocksDB: truncating " << FLAGS_ssd_path << std::endl;
          std::filesystem::remove_all(FLAGS_ssd_path);
          std::filesystem::create_directory(FLAGS_ssd_path);
       } else if (!std::filesystem::exists(FLAGS_ssd_path)) {
@@ -86,7 +87,7 @@ struct RocksDB {
 
       rocksdb::Status s = rocksdb::TransactionDB::Open(db_options, {}, FLAGS_ssd_path, cf_descs, &cf_handles, &tx_db);  // will create absent cfs
       if (!s.ok())
-         cerr << s.ToString() << endl;
+         std::cerr << s.ToString() << std::endl;
       assert(s.ok());
       // Set the column family handles for all adapters
       for (std::function<void()>& cb : get_handle_cbs) {
@@ -98,17 +99,29 @@ struct RocksDB {
    {
       std::cout << "RocksDB::~RocksDB() ";
       if (FLAGS_persist) {
-         std::cout << "Waiting for compaction to finish" << std::endl;
+         std::cout << "Waiting for compaction and flush..." << std::endl;
+         // Flush and sync WAL
+         rocksdb::FlushOptions fo;
+         fo.wait = true;
+         Status s_flush = tx_db->Flush(fo, cf_handles);
+         Status s_wal = tx_db->FlushWAL(true);
+         assert(s_flush.ok() && s_wal.ok());
+         // destroy all column families
+         for (ColumnFamilyHandle* cf_handle : cf_handles) {
+            Status s = tx_db->DestroyColumnFamilyHandle(cf_handle);
+            assert(s.ok());
+         }
+         // Wait for compaction to finish and close the DB
          rocksdb::WaitForCompactOptions wfc_options;
          wfc_options.close_db = true;
          rocksdb::Status s = tx_db->WaitForCompact(wfc_options);
+         assert(s.ok());
          std::ofstream persist_file(FLAGS_persist_file, std::ios::trunc);
          persist_file << "Placeholder. Code logic only needs the file to exist." << std::endl;
-         assert(s.ok());
       } else {
          std::cout << "FLAGS_persist is false, compaction skipped. UNABLE TO UNDO CHANGES." << std::endl;
+         delete tx_db;
       }
-      delete tx_db;
    }
 
    void startTX()
@@ -177,7 +190,7 @@ struct RocksDB {
       std::string key_buf;
       rocksdb::Slice k_slice = fold_key<Record>(key, key_buf);
       rocksdb::PinnableSlice value;
-      Status s = tx_db->Get(ro, cf_handle, k_slice, &value); // force not as part of txn
+      Status s = tx_db->Get(ro, cf_handle, k_slice, &value);  // force not as part of txn
       if (!s.ok()) {
          return false;
       }
@@ -188,7 +201,10 @@ struct RocksDB {
    }
 
    template <class Record>
-   void update1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(Record&)>& cb, leanstore::UpdateSameSizeInPlaceDescriptor&)
+   void update1(ColumnFamilyHandle* cf_handle,
+                const typename Record::Key& key,
+                const std::function<void(Record&)>& cb,
+                leanstore::UpdateSameSizeInPlaceDescriptor&)
    {
       update1(cf_handle, key, cb);
    }
