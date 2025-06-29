@@ -25,10 +25,8 @@ class Config:
     cmake_relwithdebinfo: str = "$(CMAKE_RELWITHDEBINFO)"
     leanstore_flags: str = "--vi=false --mv=false \
                        --isolation_level=ser --optimistic_scan=false \
-                       --pp_threads=1 --csv_truncate=false --worker_threads=2 \
-                       --tpch_scale_factor=$(scale)"
+                       --pp_threads=1 --csv_truncate=false --worker_threads=2"
     dram: str = "$(dram)"
-    scale: str = "$(scale)"
 
 
 cfg = Config()
@@ -46,22 +44,22 @@ def get_executable_path(build_dir: str, exe: str) -> Path:
     """Returns the path to the compiled executable."""
     return Path(build_dir) / "frontend" / exe
 
-def get_runtime_dir(build_dir: str, exe: str) -> Path:
+def get_runtime_dir(build_dir: str, exe: str, scale: int) -> Path:
     """
     Returns a dedicated runtime directory for CSV/log output,
     separate from 'frontend' so it's not confused with the binary.
     """
-    return Path(build_dir) / exe / f"{cfg.scale}-in-{cfg.dram}"
+    return Path(build_dir) / exe / f"{scale}-in-{cfg.dram}"
 
 
-def get_image_file(build_dir:str, exe: str) -> Path:
+def get_image_file(build_dir:str, exe: str, scale) -> Path:
     """Returns the path to the SSD image file for a given executable."""
     if "lsm" in exe:
         # LSM executables use a different image directory
-        p =  Path("/mnt/hdd/rocksdb_images") / build_dir / exe / f"{cfg.scale}"
+        p =  Path("/mnt/hdd/rocksdb_images") / build_dir / exe / f"{scale}"
         return p, f"mkdir -p {p}", f"cp -R -f {p} {p}_temp"
     else:
-        p =  Path("/mnt/hdd/leanstore_images") / build_dir / exe / f"{cfg.scale}.image"
+        p =  Path("/mnt/hdd/leanstore_images") / build_dir / exe / f"{scale}.image"
         return p, f"mkdir -p {p.parent} && touch {p}", f"cp -f {p} {p}_temp"
 
 executables = []
@@ -78,6 +76,7 @@ class Experiment:
     copy_image_cmd: str
     loading_files: List[str]
     recover_file: str
+    scale: int
     
     sep = "-" * 20
 
@@ -87,17 +86,20 @@ class Experiment:
         self.cmake_cmd = get_cmake_cmd(build_dir)
         self.exec_path = get_executable_path(build_dir, exec_fname)
         executables.append(self.exec_path)
-        self.runtime_dir = get_runtime_dir(build_dir, exec_fname)
-        runtime_dirs.append(self.runtime_dir)
-        self.image_file, self.create_image_cmd, self.copy_image_cmd = get_image_file(build_dir, exec_fname)
+        
         src_dir = DIFF_DIRS[exec_fname] if exec_fname in DIFF_DIRS else exec_fname
         file_base = f"./frontend/tpc-h/{src_dir}/load"
         self.loading_files = []
-        for ext in ['tpp', 'hpp']:
+        for ext in ['tpp', 'hpp', 'cpp']:
             file = f"{file_base}.{ext}"
             if Path(file).exists():
                 self.loading_files.append(file)
-        self.recover_file = Path(build_dir) / exec_fname / f"{cfg.scale}.json" if "lsm" not in exec_fname else Path(build_dir) / exec_fname / f"leanstore.json"
+        self.scale = 50 if "lsm" in exec_fname else 10
+        self.recover_file = Path(build_dir) / exec_fname / f"{self.scale}.json" if "lsm" not in exec_fname else Path(build_dir) / exec_fname / f"leanstore.json"
+        self.runtime_dir = get_runtime_dir(build_dir, exec_fname, self.scale)
+        self.image_file, self.create_image_cmd, self.copy_image_cmd = get_image_file(build_dir, exec_fname, self.scale)
+        runtime_dirs.append(self.runtime_dir)
+        
     
     def generate_all_targets(self) -> None:
         """Generates all Makefile targets for this experiment."""
@@ -151,7 +153,8 @@ class Experiment:
         print(
             f"\t{prefix}{self.exec_path} {cfg.leanstore_flags} "
             f"--csv_path={self.runtime_dir} --persist_file={self.recover_file} "
-            f"--trunc=true --ssd_path={self.image_file} --dram_gib=8 2>{self.runtime_dir}/stderr.txt\n"
+            f"--trunc=true --ssd_path={self.image_file} --tpch_scale_factor={self.scale} "
+            "--dram_gib=8 2>{self.runtime_dir}/stderr.txt\n"
         )
         
     def run_experiment(self) -> None:
@@ -168,7 +171,7 @@ class Experiment:
             print(
                 f'\tscript -q -c "{self.exec_path} {cfg.leanstore_flags} '
                 f"--storage_structure={structure} "
-                f'--csv_path={self.runtime_dir} {recover_flags} '
+                f'--csv_path={self.runtime_dir} {recover_flags} --tpch_scale_factor={self.scale} '
                 f'--ssd_path={img_temp} --dram_gib=$(dram) 2>{self.runtime_dir}/stderr.txt" {self.runtime_dir}/structure{structure}.log'
             )
     
@@ -185,11 +188,11 @@ class Experiment:
             f"--csv_path={self.runtime_dir}",
             f"--ssd_path={img_temp}",
             f"--dram_gib=1",
+            f"--tpch_scale_factor={self.scale}"
         ]
         args += recover_flags
         for i, arg in enumerate(args):
             arg = arg.replace("$(dram)", "1")
-            arg = arg.replace("$(scale)", "10")
             args[i] = arg
         
         # separate runs
@@ -200,7 +203,7 @@ class Experiment:
                 f"{self.exec_path} {cfg.leanstore_flags} "
                 f"--storage_structure={structure} "
                 f"--csv_path={self.runtime_dir} "
-                f"--ssd_path={img_temp} --dram_gib=$(dram) " + " ".join(recover_flags)
+                f"--ssd_path={img_temp} --dram_gib=$(dram) --tpch_scale_factor={self.scale} " + " ".join(recover_flags)
             )
             args_run = args + [f"--storage_structure={structure}"]
         
