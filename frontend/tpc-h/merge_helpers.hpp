@@ -37,7 +37,9 @@ struct JoinState {
 
    ~JoinState()
    {
-      if (cached_jk % 100 == 1 || joined > 10000) // sampling
+      if (
+          // cached_jk % 1000 == 1 || // sampling
+          joined > 10000)
          std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records." << std::endl;
    }
 

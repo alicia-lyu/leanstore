@@ -15,7 +15,7 @@ using namespace leanstore;
 DEFINE_int32(tpch_scale_factor, 1000, "TPC-H scale factor");
 DEFINE_int32(tx_seconds, 10, "Number of seconds to run each type of transactions");
 DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes, 3 for 2 merged indexes");
-DEFINE_int32(warmup_seconds, 0, "Warmup seconds");
+DEFINE_int32(warmup_seconds, 30, "Warmup seconds"); // flush out loading data from the buffer pool
 
 using namespace geo_join;
 
@@ -57,14 +57,7 @@ int main(int argc, char** argv)
    TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, states, county, city, customer2);
 
-   if (!FLAGS_recover) {
-      std::cout << "Loading TPC-H" << std::endl;
-      // Not part of a txn, similar to leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT
-      tpchGeoJoin.load();
-      return 0;
-   } else {
-      tpch.recover_last_ids();
-   }
+   tpchGeoJoin.load();
 
    ExeParams<GJ> params(tpchGeoJoin);
    

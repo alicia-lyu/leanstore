@@ -18,7 +18,7 @@ struct params {
 
    static int get_city_cnt()
    {
-      return randutils::urand(1, CITY_MAX);
+      return randutils::urand(0, CITY_MAX);
    }
 
    static int get_customer_cnt() // avg: 1.5

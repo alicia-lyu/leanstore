@@ -5,15 +5,19 @@ void RocksDB::set_options()
 {
    // OPTIONS
    iterator_ro.fill_cache = false;
+
    db_options.use_direct_reads = false;
    db_options.use_direct_io_for_flush_and_compaction = false;
    db_options.create_if_missing = true;
    db_options.create_missing_column_families = true;
-   // db_options.manual_wal_flush = true;
+   // Other durability-related settings:
+   db_options.WAL_ttl_seconds = 0;    // keep WAL indefinitely (until manual deletion)
+   db_options.WAL_size_limit_MB = 0;  // no size-based WAL deletion
+
    db_options.compression = rocksdb::CompressionType::kNoCompression;
    db_options.OptimizeLevelStyleCompaction();
    db_options.compaction_style = rocksdb::kCompactionStyleLevel;
-   
+
    // table_opts.block_cache = cache;
 
    db_options.max_write_buffer_number = 2;

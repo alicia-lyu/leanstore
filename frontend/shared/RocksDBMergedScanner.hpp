@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../tpc-h/merge.hpp"
 #include "Exceptions.hpp"
 #include "RocksDB.hpp"
 #include "variant_utils.hpp"
@@ -108,20 +107,5 @@ struct RocksDBMergedScanner {
       }
       auto [key, rec] = toType<Records...>(it->key(), it->value());
       return std::make_pair(key, rec);
-   }
-
-   void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
-   {
-      reset();
-      PremergedJoin<RocksDBMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
-      joiner.run();
-   }
-
-   std::tuple<JK, long> next_jk(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {
-   })
-   {
-      PremergedJoin<RocksDBMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
-      joiner.next_jk();
-      return std::make_tuple(joiner.current_jk, joiner.produced);
    }
 };

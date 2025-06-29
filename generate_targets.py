@@ -78,7 +78,6 @@ class Experiment:
     copy_image_cmd: str
     loading_files: List[str]
     recover_file: str
-    separate_runs: List[str]
     
     sep = "-" * 20
 
@@ -98,8 +97,7 @@ class Experiment:
             file = f"{file_base}.{ext}"
             if Path(file).exists():
                 self.loading_files.append(file)
-        self.recover_file = Path(build_dir) / exec_fname / f"{cfg.scale}.json"
-        self.separate_runs = [f"{self.exec_fname}_{str(i)}" for i in STRUCTURE_OPTIONS[self.exec_fname]]
+        self.recover_file = Path(build_dir) / exec_fname / f"{cfg.scale}.json" if "lsm" not in exec_fname else Path(build_dir) / exec_fname / f"leanstore.json"
     
     def generate_all_targets(self) -> None:
         """Generates all Makefile targets for this experiment."""
@@ -107,7 +105,11 @@ class Experiment:
         self.generate_executable()
         self.generate_runtime_dir()
         self.generate_image()
-        self.generate_recover_files()
+        if "lsm" not in self.exec_fname:
+            self.generate_recover_files()
+        else:
+            print(f"{self.recover_file}:")
+            print(f"\ttouch {self.recover_file}")
         if "debug" not in self.build_dir:
             self.run_experiment()
         else:
@@ -154,32 +156,37 @@ class Experiment:
         
     def run_experiment(self) -> None:
         print(f"#{self.sep} Run experiment {self.sep}")
-        separate_runs_str = " ".join(self.separate_runs)
+        separate_runs = [f"{self.exec_fname}_{str(i)}" for i in STRUCTURE_OPTIONS[self.exec_fname]]
+        separate_runs_str = " ".join(separate_runs)
         print(f"{self.exec_fname}: {separate_runs_str}")
 
-        img_temp = f"{self.image_file}_temp"
+        img_temp = f"{self.image_file}_temp" if "lsm" not in self.exec_fname else f"{self.image_file}"
         for structure in STRUCTURE_OPTIONS[self.exec_fname]:
             print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.runtime_dir} {self.exec_path} {self.recover_file} {img_temp}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
+            recover_flags = f"--recover_file={self.recover_file}" + " --trunc=true" if "lsm" in self.exec_fname else ""
             print(
                 f'\tscript -q -c "{self.exec_path} {cfg.leanstore_flags} '
                 f"--storage_structure={structure} "
-                f'--csv_path={self.runtime_dir} --recover_file={self.recover_file} '
+                f'--csv_path={self.runtime_dir} {recover_flags} '
                 f'--ssd_path={img_temp} --dram_gib=$(dram) 2>{self.runtime_dir}/stderr.txt" {self.runtime_dir}/structure{structure}.log'
             )
     
     def debug_experiment(self) -> None:
         print(f"#{self.sep} Debug experiment {self.sep}")
-        separate_runs_str = " ".join(self.separate_runs)
+        separate_runs = [f"{self.exec_fname}_lldb_{str(i)}" for i in STRUCTURE_OPTIONS[self.exec_fname]]
+        separate_runs_str = " ".join(separate_runs)
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")
+        
+        recover_flags = [f"--recover_file={self.recover_file}"] + ["--trunc=true"] if "lsm" in self.exec_fname else []
 
-        img_temp = f"{self.image_file}_temp"
+        img_temp = f"{self.image_file}_temp" if "lsm" not in self.exec_fname else f"{self.image_file}"
         args = list(cfg.leanstore_flags.split()) + [
             f"--csv_path={self.runtime_dir}",
-            f"--recover_file={self.recover_file}",
             f"--ssd_path={img_temp}",
             f"--dram_gib=1",
         ]
+        args += recover_flags
         for i, arg in enumerate(args):
             arg = arg.replace("$(dram)", "1")
             arg = arg.replace("$(scale)", "10")
@@ -192,8 +199,8 @@ class Experiment:
                 f"\tlldb -o run -- "
                 f"{self.exec_path} {cfg.leanstore_flags} "
                 f"--storage_structure={structure} "
-                f"--csv_path={self.runtime_dir} --recover_file={self.recover_file} "
-                f"--ssd_path={img_temp} --dram_gib=$(dram)"
+                f"--csv_path={self.runtime_dir} "
+                f"--ssd_path={img_temp} --dram_gib=$(dram) " + " ".join(recover_flags)
             )
             args_run = args + [f"--storage_structure={structure}"]
         

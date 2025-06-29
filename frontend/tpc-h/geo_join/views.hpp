@@ -89,7 +89,7 @@ struct customer2_t {
    }
 
    struct Key {
-      static constexpr int id = 3;
+      static constexpr int id = 11;
       Integer nationkey;
       Integer statekey;
       Integer countykey;
@@ -161,7 +161,7 @@ struct nation2_t {
 struct states_t {
    static constexpr int id = 13;
    struct Key {
-      static constexpr int id = 14;
+      static constexpr int id = 13;
       Integer nationkey;
       Integer statekey;
       ADD_KEY_TRAITS(&Key::nationkey, &Key::statekey)
@@ -316,7 +316,7 @@ struct nscci_t : public joined_t<22, sort_key_t, nsc_t, city_t> {
 };
 
 struct mixed_view_t {
-   static constexpr int id = 18;
+   static constexpr int id = 25;
 
    Varchar<25> city_name;
    Integer customer_count;
@@ -328,7 +328,7 @@ struct mixed_view_t {
    using Key = sort_key_t;  // shouldn't require id
 };
 
-struct view_t : public joined_t<15, sort_key_t, nation2_t, states_t, county_t, city_t, customer2_t> {
+struct view_t : public joined_t<24, sort_key_t, nation2_t, states_t, county_t, city_t, customer2_t> {
    view_t() = default;
    // view_t(const nsc_t& nsc, const city_t& c) : joined_t{std::tuple_cat(nsc.flatten(), std::make_tuple(c))} {}
    view_t(const nscci_t& nscci, const customer2_t& cu) : joined_t{std::tuple_cat(nscci.flatten(), std::make_tuple(cu))} {}

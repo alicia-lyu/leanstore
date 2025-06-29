@@ -16,7 +16,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_join/10-in-1",
-        "--recover_file=build-debug/basic_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_join/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=0"
@@ -39,7 +38,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_join/10-in-1",
-        "--recover_file=build-debug/basic_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_join/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=1"
@@ -62,7 +60,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_join/10-in-1",
-        "--recover_file=build-debug/basic_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_join/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=2"
@@ -85,7 +82,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_group/10-in-1",
-        "--recover_file=build-debug/basic_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_group/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=0"
@@ -108,7 +104,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_group/10-in-1",
-        "--recover_file=build-debug/basic_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_group/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=2"
@@ -131,7 +126,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_group_variant/10-in-1",
-        "--recover_file=build-debug/basic_group_variant/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_group_variant/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=0"
@@ -154,7 +148,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_group_variant/10-in-1",
-        "--recover_file=build-debug/basic_group_variant/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_group_variant/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=2"
@@ -177,7 +170,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_join_group/10-in-1",
-        "--recover_file=build-debug/basic_join_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_join_group/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=0"
@@ -200,7 +192,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/basic_join_group/10-in-1",
-        "--recover_file=build-debug/basic_join_group/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/basic_join_group/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=2"
@@ -223,7 +214,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_join/10-in-1",
-        "--recover_file=build-debug/geo_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_join/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=0"
@@ -246,7 +236,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_join/10-in-1",
-        "--recover_file=build-debug/geo_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_join/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=1"
@@ -269,7 +258,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_join/10-in-1",
-        "--recover_file=build-debug/geo_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_join/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=2"
@@ -292,7 +280,6 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_join/10-in-1",
-        "--recover_file=build-debug/geo_join/10.json",
         "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_join/10.image_temp",
         "--dram_gib=1",
         "--storage_structure=3"
@@ -315,9 +302,10 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
-        "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10",
         "--dram_gib=1",
+        "--recover_file=build-debug/geo_lsm/leanstore.json",
+        "--trunc=true",
         "--storage_structure=0"
       ],
       "cwd": "${workspaceFolder}",
@@ -338,9 +326,10 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
-        "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10",
         "--dram_gib=1",
+        "--recover_file=build-debug/geo_lsm/leanstore.json",
+        "--trunc=true",
         "--storage_structure=1"
       ],
       "cwd": "${workspaceFolder}",
@@ -361,9 +350,10 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
-        "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10",
         "--dram_gib=1",
+        "--recover_file=build-debug/geo_lsm/leanstore.json",
+        "--trunc=true",
         "--storage_structure=2"
       ],
       "cwd": "${workspaceFolder}",
@@ -384,9 +374,10 @@
         "--worker_threads=2",
         "--tpch_scale_factor=10",
         "--csv_path=build-debug/geo_lsm/10-in-1",
-        "--recover_file=build-debug/geo_lsm/10.json",
-        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10_temp",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10",
         "--dram_gib=1",
+        "--recover_file=build-debug/geo_lsm/leanstore.json",
+        "--trunc=true",
         "--storage_structure=3"
       ],
       "cwd": "${workspaceFolder}",

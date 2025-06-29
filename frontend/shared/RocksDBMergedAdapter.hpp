@@ -37,8 +37,6 @@ struct RocksDBMergedAdapter {
 
    ~RocksDBMergedAdapter()
    {
-      Status s = map.tx_db->DestroyColumnFamilyHandle(cf_handle);
-      assert(s.ok());
    }
    // -------------------------------------------------------------------------------------
    template <class Record>

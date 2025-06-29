@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <variant>
+#include "../shared/LeanStoreMergedScanner.hpp"
 #include "merge_helpers.hpp"
 #include "view_templates.hpp"
 
@@ -58,9 +59,11 @@ struct MergeJoin {
       return getHeapConsumesToBeJoined(std::index_sequence_for<Rs...>{});
    }
 
-   void run() { 
+   void run()
+   {
       join_state.logging = true;
-      heap_merge.run(); }
+      heap_merge.run();
+   }
 
    void next_jk()
    {
@@ -110,9 +113,9 @@ struct PremergedJoin {
 
    ~PremergedJoin()
    {
-      if (seek_cnt > 1 || scan_filter_cnt > 0)
-         std::cout << "\r~PremergedJoin: seek count = " << seek_cnt << ", scan filter count = " << scan_filter_cnt
-                   << ", emplace count = " << emplace_cnt << ", joined = " << join_state.joined << "!";
+      // if (seek_cnt > 1 || scan_filter_cnt > 0)
+      //    std::cout << "\r~PremergedJoin: seek count = " << seek_cnt << ", scan filter count = " << scan_filter_cnt
+      //              << ", emplace count = " << emplace_cnt << ", joined = " << join_state.joined << "!";
    }
 
    bool scan_next()
@@ -152,13 +155,14 @@ struct PremergedJoin {
       if (dist < 0) {          // scanned and passed
          return false;         // no required record (type R)
       } else if (dist == 0) {  // scanned and cached
-      // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
+                               // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
          return true;          // skip this R
       } else if (dist <= 1) {  // right next record
          assert(base == 0);
          // go to the end
-      } else if (dist <= 15 &&              // HARDCODED, at most acorss 1 page
-                 I == sizeof...(Rs) - 1) {  // last R
+      } else if (dist <= 15 &&                                                                               // HARDCODED, at most acorss 1 page
+                 I == sizeof...(Rs) - 1 &&                                                                   // last R
+                 std::is_same_v<MergedScannerType<JK, JR, Rs...>, LeanStoreMergedScanner<JK, JR, Rs...>>) {  // b-tree scanner
          return scan_filter_next(seek_jk);
       } else {  // across multiple pages
          typename R::Key k{seek_jk};
@@ -167,7 +171,7 @@ struct PremergedJoin {
          // go to the end
       }
       scan_next();
-      auto cmp = join_state.cached_jk.match(jk); // cached_jk is just cached in scan_next()
+      auto cmp = join_state.cached_jk.match(jk);  // cached_jk is just cached in scan_next()
       assert(cmp >= 0);
       if (cmp > 0) {
          return false;  // no more records to scan, all records are after the seek_jk
@@ -194,7 +198,7 @@ struct PremergedJoin {
             continue;  // skip this record, it is before the seek_jk
          } else if (cmp > 0) {
             return false;  // no more records to scan, all records are after the seek_jk
-         } else {  // cmp == 0, found the right record
+         } else {          // cmp == 0, found the right record
             if (join_state.cached_jk.match(jk) != 0)
                join_state.refresh(jk);
             // add the new record to the fcache
@@ -218,7 +222,7 @@ struct PremergedJoin {
          bool ret;
          if (seek_jk != JK::max() && start) {
             ret = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
-            start = false; // if still no next, scan
+            start = false;  // if still no next, scan
          } else {
             ret = scan_next();
          }
@@ -300,9 +304,11 @@ struct Merge {
       return {getHeapConsumeToMerged<MergedAdapterType, Rs, SourceRecords>(mergedAdapter)...};
    }
 
-   void run() { 
+   void run()
+   {
       logging = true;
-      heap_merge.run(); }
+      heap_merge.run();
+   }
 
    void next_jk()
    {

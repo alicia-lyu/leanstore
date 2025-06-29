@@ -39,8 +39,6 @@ struct RocksDBAdapter : public Adapter<Record> {
 
    ~RocksDBAdapter()
    {
-      Status s = map.tx_db->DestroyColumnFamilyHandle(cf_handle);
-      assert(s.ok());
    }
 
    void insert(const typename Record::Key& key, const Record& record) final { map.template insert<Record>(cf_handle, key, record); }

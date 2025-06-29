@@ -2,7 +2,7 @@
 
 
 #include <memory>
-#include "../tpc-h/merge.hpp"
+// #include "../tpc-h/merge.hpp"
 #include "variant_utils.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
@@ -123,17 +123,17 @@ struct LeanStoreMergedScanner
       return toType<Records...>(key, payload);
    }
 
-   void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
-   {
-      reset();
-      PremergedJoin<LeanStoreMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
-      joiner.run();
-   }
+   // void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
+   // {
+   //    reset();
+   //    PremergedJoin<LeanStoreMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
+   //    joiner.run();
+   // }
 
-   std::tuple<JK, long> next_jk(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
-   {
-      PremergedJoin<LeanStoreMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
-      joiner.next_jk();
-      return std::make_tuple(joiner.current_jk, joiner.produced);
-   }
+   // std::tuple<JK, long> next_jk(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
+   // {
+   //    PremergedJoin<LeanStoreMergedScanner, JK, JR, Records...> joiner(*this, consume_joined);
+   //    joiner.next_jk();
+   //    return std::make_tuple(joiner.current_jk, joiner.produced);
+   // }
 };
