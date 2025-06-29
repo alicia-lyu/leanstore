@@ -13,9 +13,9 @@
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 50, "TPC-H scale factor");
-DEFINE_int32(tx_seconds, 100, "Number of seconds to run each type of transactions");
-DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes, 3 for 2 merged indexes");
-DEFINE_int32(warmup_seconds, 30, "Warmup seconds"); // flush out loading data from the buffer pool
+DEFINE_int32(tx_seconds, 60, "Number of seconds to run each type of transactions");
+DEFINE_int32(storage_structure, 0, "Unused option for rocksdb");
+DEFINE_int32(warmup_seconds, 0, "Warmup seconds"); // flush out loading data from the buffer pool
 
 using namespace geo_join;
 
@@ -27,6 +27,7 @@ int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Leanstore GeoJoin TPC-H");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
+   assert(FLAGS_storage_structure == 0);
    auto type = RocksDB::DB_TYPE::TransactionDB;
    RocksDB rocks_db(type);
 
@@ -61,38 +62,26 @@ int main(int argc, char** argv)
 
    ExeParams<GJ> params(tpchGeoJoin);
    
-   switch (FLAGS_storage_structure) {
-      case 0: {
-         std::cout << "TPC-H with traditional indexes" << std::endl;
-         
-         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
-         helper.run();
-         break;
-      }
-      case 1: {
-         std::cout << "TPC-H with materialized views" << std::endl;
+   std::cout << "TPC-H with traditional indexes" << std::endl;
+   
+   // base or 2merged at first is the most fair, because the last step of loading fills buffer with merged and view
+   std::cout << "TPC-H with 2 merged indexes" << std::endl;
 
-         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
-         helper.run();
-         break;
-      }
-      case 2: {
-         std::cout << "TPC-H with merged indexes" << std::endl;
+   ExecutableHelper<RocksDBAdapter> helper_2merged(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
+   helper_2merged.run();
 
-         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
-         helper.run();
-         break;
-      }
-      case 3 : {
-         std::cout << "TPC-H with 2 merged indexes" << std::endl;
+   ExecutableHelper<RocksDBAdapter> helper_base(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
+   helper_base.run();
 
-         ExecutableHelper<RocksDBAdapter> helper(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
-         helper.run();
-         break;
-      }
-      default: {
-         std::cerr << "Invalid storage structure option" << std::endl;
-         return -1;
-      }
-   }
+   std::cout << "TPC-H with materialized views" << std::endl;
+
+   ExecutableHelper<RocksDBAdapter> helper_view(rocks_db, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
+   helper_view.run();
+
+   std::cout << "TPC-H with merged indexes" << std::endl;
+
+   ExecutableHelper<RocksDBAdapter> helper_merged(rocks_db, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
+   helper_merged.run();
+
+   return 0;
 };

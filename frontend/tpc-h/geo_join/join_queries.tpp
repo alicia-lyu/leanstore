@@ -160,7 +160,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::qu
           return true;
        },
        [&]() {});
-   std::cout << "\rEnumerating materialized join_view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
+   std::cout << "Enumerating materialized join_view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
    logger.log(t, "join", "view", get_view_size());

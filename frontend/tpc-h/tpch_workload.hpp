@@ -59,7 +59,6 @@ struct TPCHWorkload {
       loadOrders();
       loadNation();
       loadRegion();
-      log_sizes();
    }
 
    static Integer PART_SCALE;
@@ -132,11 +131,11 @@ struct TPCHWorkload {
       auto scale = end - start + 1;
       if (scale < 100)
          return;
-      if (i % 1000 == start % 1000 || i == end) {
+      if ((i % 1000 == start % 1000 || i == end) && FLAGS_log_progress) {
          double progress = (double)(i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
       }
-      if (i == end && scale > 100) {
+      if (i == end && scale > 100 && FLAGS_log_progress) {
          std::cout << std::endl;
       }
    }
@@ -369,7 +368,7 @@ struct TPCHWorkload {
 
    static void inspect_produced(const std::string& msg, long& produced)
    {
-      if (produced % 1000 == 0) {
+      if (produced % 1000 == 0 && FLAGS_log_progress) {
          std::cout << "\r" << msg << (double)produced / 1000 << "k------------------------------------";
       }
       produced++;

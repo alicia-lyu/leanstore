@@ -163,7 +163,7 @@ struct ExecutableHelper {
          {
             std::cerr << "#" << lookup_count.load() << " point lookups failed." << std::endl;
          }
-         if (lookup_count.load() % 100 == 1 && running_threads_counter == 1)
+         if (lookup_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
             std::cout << "\r#" << lookup_count.load() << " warm-up point lookups performed.";
       }
       std::cout << std::endl;
@@ -197,11 +197,11 @@ struct ExecutableHelper {
          {
             std::cerr << "#" << count.load() << " " << tx << "for " << method << " failed." << std::endl;
          }
-         if (count.load() % 1000 == 1)
+         if (count.load() % 1000 == 1 && FLAGS_log_progress)
             std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
       }
 
-      std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;
+      std::cout << "#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;
 
       auto end = std::chrono::high_resolution_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();

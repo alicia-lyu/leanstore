@@ -2,11 +2,14 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <gflags/gflags.h>
 #include "Units.hpp"
 #include "leanstore/Config.hpp"
 #include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/profiling/tables/ConfigsTable.hpp"
 #include "tabulate/table.hpp"
+
+DECLARE_bool(log_progress);
 
 enum class ColumnName { ELAPSED, TPUT };
 
