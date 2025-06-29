@@ -275,12 +275,12 @@ struct Merge {
    ~Merge()
    {
       if (heap_merge.sifted > 1000)
-         std::cout << "\r~Merge: produced " << (double)heap_merge.sifted / 1000 << "k records------------------------------------" << std::endl;
+         std::cout << "~Merge: produced " << (double)heap_merge.sifted / 1000 << "k records------------------------------------" << std::endl;
    }
 
    void printProgress()
    {
-      if (heap_merge.current_jk % 10 == 0) {
+      if (heap_merge.current_jk % 10 == 0 && FLAGS_log_progress) {
          double progress = (double)heap_merge.sifted / 1000;
          std::cout << "\rMerge: " << progress << "k records------------------------------------";
       }

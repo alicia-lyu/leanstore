@@ -9,6 +9,7 @@
 #include "Exceptions.hpp"
 #include "Units.hpp"
 #include "view_templates.hpp"
+#include "logger.hpp"
 
 template <typename JK, typename JR, typename... Rs>
 struct JoinState {
@@ -130,7 +131,7 @@ struct JoinState {
    void update_print_produced(int curr_joined)
    {
       joined += curr_joined;
-      if (logging && joined > last_logged + 1000) {
+      if (logging && joined > last_logged + 1000 && FLAGS_log_progress) {
          double progress = (double)joined / 1000;
          std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
          last_logged = joined;

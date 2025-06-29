@@ -69,7 +69,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       merged.insert(nk, nv);
       ns.insert(nk, nv);
       for (int s = 1; s <= state_cnt; s++) {
-         std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
+         if (FLAGS_log_progress)
+            std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
          load_1state(n, s);
       }
    }

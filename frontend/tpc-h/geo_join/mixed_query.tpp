@@ -34,7 +34,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
        [&](const view_t::Key& vk, const view_t& vv) {
           if (curr_sk != vk.jk) {
              produced++;
-             if (produced % 10000 == 0) {
+             if (produced % 10000 == 0 && FLAGS_log_progress) {
                 std::cout << "\rmixed_query_by_view() produced: " << produced;
              }
              city_t c = std::get<3>(vv.payloads);
@@ -124,7 +124,7 @@ struct MergedCounter {
          auto kv = next();
          if (kv == std::nullopt)
             break;
-         if (produced - last_logged > 10000) {
+         if (produced - last_logged > 10000 && FLAGS_log_progress) {
             std::cout << "\rMergedCounter::run() produced: " << produced;
             last_logged = produced;
          }
@@ -213,7 +213,7 @@ struct BaseCounter {
          auto kv = next();
          if (kv == std::nullopt)
             break;
-         if (produced - last_logged > 10000) {
+         if (produced - last_logged > 10000 && FLAGS_log_progress) {
             std::cout << "\rBaseCounter::run() produced: " << produced;
             last_logged = produced;
          }
@@ -300,7 +300,7 @@ struct Merged2Counter {
          auto kv = next();
          if (kv == std::nullopt)
             break;
-         if (produced - last_logged > 10000) {
+         if (produced - last_logged > 10000 && FLAGS_log_progress) {
             std::cout << "\rMerged2Counter::run() produced: " << produced;
             last_logged = produced;
          }

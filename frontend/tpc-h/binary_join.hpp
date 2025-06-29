@@ -4,6 +4,7 @@
 #include <vector>
 #include "Units.hpp"
 #include "view_templates.hpp"
+#include "logger.hpp"
 
 // merge join
 // LATER: outer join
@@ -155,7 +156,7 @@ class BinaryJoin
 
    std::pair<typename JR::Key, JR> merge(typename LeftRec::Key& lk, LeftRec& lr, typename RightRec::Key& rk, RightRec& rr)
    {
-      if ((++produced) % 1000 == 1) {
+      if ((++produced) % 1000 == 1 && FLAGS_log_progress) {
          std::cout << "\rJoined " << produced << " records------------------------------------";
       }
       left_matched = true;
