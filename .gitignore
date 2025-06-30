@@ -25,3 +25,4 @@ paper*
 stderr.txt
 *.mk
 perf*
+leanstore.json

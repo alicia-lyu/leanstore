@@ -44,7 +44,7 @@ def get_exec_vars(build_dir: Path, exec_fname: str):
     if "lsm" in exec_fname:
         scale = 10
         image_path = Path("/mnt/hdd/rocksdb_images") / build_dir / exec_fname / f"{scale}"
-        recover_file = build_dir / exec_fname / f"leanstore.json" # no recover
+        recover_file = "./leanstore.json" # no recover
     else:
         scale = 10
         image_path = Path("/mnt/hdd/leanstore_images") / build_dir / exec_fname / f"{scale}.image"
@@ -147,6 +147,7 @@ class Experiment:
         print(f"{self.image_path}:")
         # print(f'\t@echo "{self.sep} Touching a new image file {self.image_path} {self.sep}"')
         create_image_cmd, copy_image_cmd = get_image_command("lsm" in self.exec_fname, self.image_path)
+        print(f"{self.image_path}: check_perf_event_paranoid {self.runtime_dir}")
         self.print_subsection(f"Creating image file/dir {self.image_path}")
         print(f"\t{create_image_cmd}")
         
@@ -178,7 +179,7 @@ class Experiment:
             self.print_subsection(f"Persisting data to {self.recover_file}")
             prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else ""
             rem_flags = self.remaining_flags(
-                    recover_file=self.recover_file.parent / "leanstore.json", # do not recover
+                    recover_file="./leanstore.json", # do not recover
                     persist_file=self.recover_file, # do persist
                     trunc=True,
                     ssd_path=self.image_path,
@@ -212,7 +213,7 @@ class Experiment:
         else:
             rem_flags = self.remaining_flags(
                 recover_file=self.recover_file, # do recover
-                persist_file=self.recover_file.parent / "leanstore.json", # do not persist
+                persist_file="./leanstore.json", # do not persist
                 trunc=False,
                 ssd_path=image_dep, # duplicate image
                 scale=self.scale,
