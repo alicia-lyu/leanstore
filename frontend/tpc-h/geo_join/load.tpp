@@ -131,7 +131,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    city.insert(cik, civ);
    merged.insert(cik, civ);
    ccc.insert(cik, civ);
-   int lottery = urand(1, 100);  // 100 is HARDCODED
+   int lottery = urand(1, 1000);  // HARDCODED
    if (lottery == 1) {
       load_state.hot_city_candidates.push_back(cik);
    }

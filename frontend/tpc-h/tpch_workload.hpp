@@ -137,7 +137,7 @@ struct TPCHWorkload {
       }
       if (i == end && scale > 100) {
          std::cout << "Loaded " << scale << " " << msg << " records." << std::endl;
-      } else if (FLAGS_log_progress) {
+      } else if (i == end && FLAGS_log_progress) {
          std::cout << std::endl;
       }
    }
