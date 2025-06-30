@@ -14,7 +14,7 @@
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 10, "TPC-H scale factor");
-DEFINE_int32(tx_seconds, 10, "Number of seconds to run each type of transactions");
+DEFINE_int32(tx_seconds, 30, "Number of seconds to run each type of transactions");
 DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes, 3 for 2 merged indexes");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds");
 

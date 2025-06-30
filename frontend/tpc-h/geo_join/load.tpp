@@ -31,7 +31,7 @@ void LoadState::advance_customers_to_hot_cities()
       city_t::Key cik = hot_city_candidates.at(customer_idx % hot_city_candidates.size());
       insert_customer_func(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, custkeys.at(customer_idx), true); // insert view
       if (FLAGS_log_progress && customer_idx % 1000 == 0) {
-         std::cout << "\rAssigned " << customer_idx << " customers to hot cities." << std::flush;
+         std::cout << "\rAssigned " << customer_idx << " customers to hot cities.";
       }
    }
 }
@@ -68,6 +68,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       nation.update1(nk, update_fn, nation_update_desc);
       merged.insert(nk, nv);
       ns.insert(nk, nv);
+      if (!FLAGS_log_progress) {
+         std::cout << "\rLoading nation " << n << " with " << state_cnt << " states...";
+      }
       for (int s = 1; s <= state_cnt; s++) {
          if (FLAGS_log_progress)
             std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";

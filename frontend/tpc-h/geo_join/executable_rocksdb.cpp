@@ -13,7 +13,7 @@
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 50, "TPC-H scale factor");
-DEFINE_int32(tx_seconds, 60, "Number of seconds to run each type of transactions");
+DEFINE_int32(tx_seconds, 30, "Number of seconds to run each type of transactions");
 DEFINE_int32(storage_structure, 0, "Unused option for rocksdb");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds"); // flush out loading data from the buffer pool
 

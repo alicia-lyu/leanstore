@@ -13,9 +13,10 @@ struct ExeParams {
        "join-ns",
        "join-nsc",
        "join-nscci",
+       "mixed-point",
        "maintain",
        // "group-point",
-       "mixed-point"};
+       };
    const std::vector<std::function<void()>> elapsed_cbs_base = {
        std::bind(&W::query_by_base, &workload),
     //    std::bind(&W::agg_by_base, &workload),
@@ -24,9 +25,10 @@ struct ExeParams {
        std::bind(&W::ns_base, &workload),
        std::bind(&W::nsc_base, &workload),
        std::bind(&W::nscci_by_base, &workload),
-       std::bind(&W::maintain_base, &workload),
        // std::bind(&W::point_agg_by_base, &workload),
-       std::bind(&W::point_mixed_query_by_base, &workload)};
+       std::bind(&W::point_mixed_query_by_base, &workload),
+       std::bind(&W::maintain_base, &workload),
+    };
    const std::vector<std::function<void()>> elapsed_cbs_view = {
        std::bind(&W::query_by_view, &workload),
     //    std::bind(&W::agg_in_view, &workload),
@@ -35,9 +37,10 @@ struct ExeParams {
        std::bind(&W::ns_view, &workload),
        std::bind(&W::nsc_view, &workload),
        std::bind(&W::nscci_by_view, &workload),
-       std::bind(&W::maintain_view, &workload),
        // std::bind(&W::point_agg_by_view, &workload),
-       std::bind(&W::point_mixed_query_by_view, &workload)};
+       std::bind(&W::point_mixed_query_by_view, &workload),
+        std::bind(&W::maintain_view, &workload),
+    };
    const std::vector<std::function<void()>> elapsed_cbs_merged = {
        std::bind(&W::query_by_merged, &workload),
     //    std::bind(&W::agg_by_merged, &workload),
@@ -46,9 +49,10 @@ struct ExeParams {
        std::bind(&W::ns_merged, &workload),
        std::bind(&W::nsc_merged, &workload),
        std::bind(&W::nscci_by_merged, &workload),
-       std::bind(&W::maintain_merged, &workload),
        // std::bind(&W::point_agg_by_merged, &workload),
-       std::bind(&W::point_mixed_query_by_merged, &workload)};
+       std::bind(&W::point_mixed_query_by_merged, &workload),
+       std::bind(&W::maintain_merged, &workload),
+    };
    const std::vector<std::function<void()>> elapsed_cbs_2merged = {
        std::bind(&W::query_by_2merged, &workload),
        // std::bind(&W::agg_by_2merged, &workload),
@@ -57,8 +61,9 @@ struct ExeParams {
        std::bind(&W::ns_by_2merged, &workload),
        std::bind(&W::nsc_by_2merged, &workload),
        std::bind(&W::nscci_by_2merged, &workload),
-       std::bind(&W::maintain_2merged, &workload),
        // std::bind(&W::point_agg_by_2merged, &workload),
-       std::bind(&W::point_mixed_query_by_2merged, &workload)};
+       std::bind(&W::point_mixed_query_by_2merged, &workload),
+       std::bind(&W::maintain_2merged, &workload),
+    };
 };
 }  // namespace geo_join
