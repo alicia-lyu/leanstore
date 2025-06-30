@@ -146,7 +146,7 @@ struct ExecutableHelper {
    }
    void warmup()
    {
-      db_traits->schedule_warmup([&]() { warmup_phase(); });
+      db_traits->schedule_warmup([this]() { warmup_phase(); });
       sleep(FLAGS_warmup_seconds);
    }
 

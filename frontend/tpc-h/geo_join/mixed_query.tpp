@@ -98,7 +98,9 @@ struct MergedCounter {
 
          sort_key_t curr_sk = SKBuilder<sort_key_t>::create(kv->first, kv->second);
          if (sk != sort_key_t::max() && curr_sk.match(sk) != 0) {
-            scanner->after_seek = true;  // rescan this record
+            if (std::holds_alternative<city_t>(kv->second)) {
+               scanner->after_seek = true;  // rescan this city
+            }
             if (customer_count > 0) {
                mixed_view_t mv{city_name, customer_count};
                produced++;
@@ -107,12 +109,13 @@ struct MergedCounter {
                return next();  // TODO outer join?
             }
          }
-         sk = curr_sk;
-         std::visit(overloaded{[&](const nation2_t::Key&) {}, [&](const states_t::Key&) {}, [&](const county_t::Key&) {}, [&](const city_t::Key&) {},
-                               [&](const customer2_t::Key&) { customer_count++; }},
-                    kv->first);
+
          std::visit(overloaded{[&](const nation2_t&) {}, [&](const states_t&) {}, [&](const county_t&) {},
-                               [&](const city_t& cv) { city_name = cv.name; }, [&](const customer2_t&) {}},
+                               [&](const city_t& cv) {
+                                  sk = curr_sk;
+                                  city_name = cv.name;
+                               },
+                               [&](const customer2_t&) { customer_count++; }},
                     kv->second);
       }
    }
@@ -187,12 +190,10 @@ struct BaseCounter {
             break;
          auto& [cuk, cuv] = *customer_kv;
          sort_key_t cu_sk = SKBuilder<sort_key_t>::create(cuk, cuv);
-         if (ci_sk.
-            match(cu_sk) < 0) { // this city has no customers
+         if (ci_sk.match(cu_sk) < 0) {            // this customer belongs to the next city
             customer_scanner->after_seek = true;  // rescan this customer
-            
             break;
-         } else if (ci_sk.match(cu_sk) == 0) { // this customer belongs to the city
+         } else if (ci_sk.match(cu_sk) == 0) {  // this customer belongs to the city
             customer_count++;
          } else {
             UNREACHABLE();
@@ -276,7 +277,9 @@ struct Merged2Counter {
          auto curr_sk = SKBuilder<sort_key_t>::create(kv->first, kv->second);
 
          if (sk != sort_key_t::max() && sk.match(curr_sk) != 0) {
-            ccc_scanner->after_seek = true;  // rescan this record
+            if (std::holds_alternative<city_t>(kv->second)) {
+               ccc_scanner->after_seek = true;  // rescan this city
+            }
             if (customer_count > 0) {
                produced++;
                return std::make_pair(mixed_view_t::Key{sk}, mixed_view_t{city_name, customer_count});
@@ -284,12 +287,14 @@ struct Merged2Counter {
                return next();  // TODO outer join?
             }
          }
-         
-         sk = curr_sk;
 
-         std::visit(
-             overloaded{[&](const county_t&) {}, [&](const city_t& cv) { city_name = cv.name; }, [&](const customer2_t&) { customer_count++; }},
-             kv->second);
+         std::visit(overloaded{[&](const county_t&) {},
+                               [&](const city_t& cv) {
+                                  sk = curr_sk;
+                                  city_name = cv.name;
+                               },
+                               [&](const customer2_t&) { customer_count++; }},
+                    kv->second);
       }
    }
 

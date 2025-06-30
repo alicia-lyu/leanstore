@@ -1,13 +1,20 @@
 #include "RocksDB.hpp"
+#include <rocksdb/cache.h>
+#include <rocksdb/rocksdb_namespace.h>
+#include <rocksdb/table.h>
 #include "leanstore/utils/JumpMU.hpp"
+
+using ROCKSDB_NAMESPACE::CacheEntryRole;
+using ROCKSDB_NAMESPACE::CacheEntryRoleOptions;
+using ROCKSDB_NAMESPACE::CacheUsageOptions;
 
 void RocksDB::set_options()
 {
    // OPTIONS
    iterator_ro.fill_cache = false;
 
-   db_options.use_direct_reads = false;
-   db_options.use_direct_io_for_flush_and_compaction = false;
+   db_options.use_direct_reads = true; // otherwise, OS page cache is used, and we cannot set its size
+   db_options.use_direct_io_for_flush_and_compaction = true;
    db_options.create_if_missing = true;
    db_options.create_missing_column_families = true;
    // Other durability-related settings:
@@ -26,6 +33,22 @@ void RocksDB::set_options()
 
    db_options.statistics = rocksdb::CreateDBStatistics();
    db_options.stats_dump_period_sec = 1;
+
+   // charge all memory usage to the block cache except memtables
+   size_t memtable_budget = memtable_share * total_cache_bytes;
+   table_opts.block_cache = cache;
+   CacheUsageOptions cache_opts;
+   CacheEntryRoleOptions cache_entry_opts;
+   cache_entry_opts.charged = CacheEntryRoleOptions::Decision::kEnabled;
+   cache_opts.options_overrides = {{CacheEntryRole::kCompressionDictionaryBuildingBuffer, cache_entry_opts},  // entry opts will be copied
+                                   {CacheEntryRole::kFilterConstruction, cache_entry_opts},
+                                   {CacheEntryRole::kBlockBasedTableReader, cache_entry_opts},
+                                   {CacheEntryRole::kFileMetadata, cache_entry_opts}};
+   
+   // memtables
+   db_options.max_write_buffer_number = 2;
+   db_options.write_buffer_size = memtable_budget / 2;
+   db_options.min_write_buffer_number_to_merge = 1;
 }
 
 bool RocksDB::Put(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value)

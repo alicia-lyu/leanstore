@@ -16,11 +16,11 @@ struct LoadState {
    std::vector<Integer> custkeys;
    size_t customer_idx = 0;
    std::vector<city_t::Key> hot_city_candidates;
-   std::function<void(int, int, int, int, int)> insert_customer_func;
+   std::function<void(int, int, int, int, int, bool)> insert_customer_func;
 
    LoadState() = default;
 
-   LoadState(int last_customer_id, std::function<void(int, int, int, int, int)> insert_customer_func)
+   LoadState(int last_customer_id, std::function<void(int, int, int, int, int, bool)> insert_customer_func)
        : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates(), insert_customer_func(insert_customer_func)
    {
       std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
@@ -92,18 +92,34 @@ class GeoJoin
       if (FLAGS_tpch_scale_factor > 1000) {
          throw std::runtime_error("GeoJoin does not support scale factor larger than 1000");
       }
-      TPCH::CUSTOMER_SCALE *= 200; // already linear to scale factor
+      TPCH::CUSTOMER_SCALE *= 200;  // already linear to scale factor
       TPCH::NATION_COUNT *= std::min(FLAGS_tpch_scale_factor, 5);
+
+      int county_scale_factor = FLAGS_tpch_scale_factor / std::min(FLAGS_tpch_scale_factor, 5);  // nation scale factor
+      params::COUNTY_MAX = 20 * std::min(county_scale_factor, 10);
+      double city_scale_factor = (double) county_scale_factor / std::min(county_scale_factor, 10);  // scale from state
+      params::CITY_MAX = 4 * std::floor(city_scale_factor);
+
       std::cout << "GeoJoin params: NATION_COUNT = " << TPCH::NATION_COUNT << ", STATE_MAX = " << params::STATE_MAX
                 << ", COUNTY_MAX = " << params::COUNTY_MAX << ", CITY_MAX = " << params::CITY_MAX << ", CUSTOMER_MAX = " << params::CUSTOMER_MAX
                 << std::endl;
    }
 
-   ~GeoJoin()
+   void reset_sum_counts()
    {
       std::cout << "Average ns produced: " << (ns_count > 0 ? (double)ns_sum / ns_count : 0) << std::endl;
       std::cout << "Average nsc produced: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
       std::cout << "Average nscci produced: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
+      ns_sum = 0;
+      ns_count = 0;
+      nsc_sum = 0;
+      nsc_count = 0;
+      nscci_sum = 0;
+      nscci_count = 0;
+   }
+
+   ~GeoJoin() {
+      reset_sum_counts();
    }
 
    std::optional<sort_key_t> find_random_geo_key_in_base()
@@ -323,7 +339,7 @@ class GeoJoin
 
    void load_1city(int n, int s, int c, int ci);
 
-   void load_1customer(int n, int s, int c, int ci, int cu);
+   void load_1customer(int n, int s, int c, int ci, int cu, bool insert_view);
 
    double get_view_size()
    {
