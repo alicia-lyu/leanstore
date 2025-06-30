@@ -68,19 +68,23 @@ int main(int argc, char** argv)
    std::cout << "TPC-H with 2 merged indexes" << std::endl;
 
    ExecutableHelper<RocksDBAdapter> helper_2merged(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
+   tpchGeoJoin.reset_sum_counts();
    helper_2merged.run();
 
    ExecutableHelper<RocksDBAdapter> helper_base(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
+   tpchGeoJoin.reset_sum_counts();
    helper_base.run();
 
    std::cout << "TPC-H with materialized views" << std::endl;
 
    ExecutableHelper<RocksDBAdapter> helper_view(rocks_db, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
+   tpchGeoJoin.reset_sum_counts();
    helper_view.run();
 
    std::cout << "TPC-H with merged indexes" << std::endl;
 
    ExecutableHelper<RocksDBAdapter> helper_merged(rocks_db, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
+   tpchGeoJoin.reset_sum_counts();
    helper_merged.run();
 
    return 0;

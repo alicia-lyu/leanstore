@@ -38,6 +38,8 @@ using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
 using ROCKSDB_NAMESPACE::PinnableSlice;
 using ROCKSDB_NAMESPACE::Range;
 using ROCKSDB_NAMESPACE::Status;
+using ROCKSDB_NAMESPACE::LRUCacheOptions;
+using ROCKSDB_NAMESPACE::NewLRUCache;
 
 struct RocksDB {
    rocksdb::TransactionDB* tx_db;
@@ -51,12 +53,15 @@ struct RocksDB {
    rocksdb::WriteOptions wo;
    rocksdb::ReadOptions ro;
    rocksdb::ReadOptions iterator_ro;
-   // std::shared_ptr<Cache> cache = nullptr;
+   const u64 total_cache_bytes;
+   const double block_share = 0.8;
+   const double memtable_share = 0.2;
+   std::shared_ptr<Cache> cache = nullptr;
 
    enum class DB_TYPE : u8 { DB, TransactionDB, OptimisticDB };
    const DB_TYPE type;
    // -------------------------------------------------------------------------------------
-   RocksDB(DB_TYPE type = DB_TYPE::TransactionDB) : type(type)
+   RocksDB(DB_TYPE type = DB_TYPE::TransactionDB) : total_cache_bytes(FLAGS_dram_gib * 1024 * 1024 * 1024), type(type)
    {
       assert(type == DB_TYPE::TransactionDB);  // only allow TransactionDB for now
       // PERSIST & RECOVER
@@ -74,6 +79,11 @@ struct RocksDB {
       } else {
          FLAGS_persist = true;
       }
+      LRUCacheOptions cache_opts;
+      std::cout << "RocksDB: total_cache_bytes = " << total_cache_bytes << std::endl;
+      cache_opts.capacity = total_cache_bytes * block_share;
+      cache_opts.strict_capacity_limit = true;
+      cache = NewLRUCache(cache_opts);
       set_options();
    }
 

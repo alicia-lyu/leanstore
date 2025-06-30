@@ -365,6 +365,14 @@ struct view_t : public joined_t<24, sort_key_t, nation2_t, states_t, county_t, c
       {
       }
 
+      Key(const customer2_t::Key& cu)
+          : joined_t::Key{sort_key_t{cu.nationkey, cu.statekey, cu.countykey, cu.citykey, cu.custkey},
+                          nation2_t::Key{cu.nationkey}, states_t::Key{cu.nationkey, cu.statekey},
+                          county_t::Key{cu.nationkey, cu.statekey, cu.countykey}, city_t::Key{cu.nationkey, cu.statekey, cu.countykey, cu.citykey},
+                          customer2_t::Key{cu}}
+      {
+      }
+
       Key(const sort_key_t& jk)
           : joined_t::Key{jk,
                           nation2_t::Key{jk.nationkey},

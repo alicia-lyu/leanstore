@@ -36,7 +36,7 @@ include targets.mk
 
 temp:
 	-$(MAKE) geo_lsm dram=2
-	-$(MAKE) geo_lsm dram=0.6
+	-$(MAKE) geo_lsm dram=1
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
