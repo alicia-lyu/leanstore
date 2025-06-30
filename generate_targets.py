@@ -42,7 +42,7 @@ def get_build_vars(build_dir: Path):
 def get_exec_vars(build_dir: Path, exec_fname: str):
     exec_path = build_dir / "frontend" / exec_fname
     if "lsm" in exec_fname:
-        scale = 50
+        scale = 10
         image_path = Path("/mnt/hdd/rocksdb_images") / build_dir / exec_fname / f"{scale}"
         recover_file = build_dir / exec_fname / f"leanstore.json" # no recover
     else:
@@ -177,17 +177,19 @@ class Experiment:
             print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} {self.image_path} {self.runtime_dir}")
             self.print_subsection(f"Persisting data to {self.recover_file}")
             prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else ""
-            print(
-                f"\t{prefix}{self.exec_path}", 
-                self.flags_str(),
-                self.remaining_flags(
+            rem_flags = self.remaining_flags(
                     recover_file=self.recover_file.parent / "leanstore.json", # do not recover
                     persist_file=self.recover_file, # do persist
                     trunc=True,
                     ssd_path=self.image_path,
                     scale=self.scale,
                     dram_gib=8
-                ),
+                )
+            rem_flags_str = " ".join([f"--{k}={v}" for k, v in rem_flags])
+            print(
+                f"\t{prefix}{self.exec_path}", 
+                self.flags_str(),
+                rem_flags_str,
                 f"2>{self.runtime_dir}/stderr.txt",
                 sep=" "
             )

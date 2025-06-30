@@ -131,11 +131,13 @@ struct TPCHWorkload {
       auto scale = end - start + 1;
       if (scale < 100)
          return;
-      if ((i % 1000 == start % 1000 || i == end) && FLAGS_log_progress) {
+      if (i % 1000 == start % 1000 && FLAGS_log_progress) {
          double progress = (double)(i - start + 1) / scale * 100;
          std::cout << "\rLoading " << scale << " " << msg << ": " << progress << "%------------------------------------";
       }
-      if (i == end && scale > 100 && FLAGS_log_progress) {
+      if (i == end && scale > 100) {
+         std::cout << "Loaded " << scale << " " << msg << " records." << std::endl;
+      } else if (FLAGS_log_progress) {
          std::cout << std::endl;
       }
    }

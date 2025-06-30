@@ -167,6 +167,7 @@ struct ExecutableHelper {
             std::cout << "\r#" << lookup_count.load() << " warm-up point lookups performed.";
       }
       std::cout << std::endl;
+      std::cout << "#" << lookup_count.load() << " warm-up point lookups in total performed." << std::endl;
       db_traits->cleanup_thread();
       running_threads_counter--;
    }
