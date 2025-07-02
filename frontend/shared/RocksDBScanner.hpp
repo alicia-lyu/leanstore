@@ -21,7 +21,6 @@ class RocksDBScanner
    {
       it->SeekToFirst();
       after_seek = true;
-      assert(it->Valid());
    }
    ~RocksDBScanner() = default;
 
@@ -38,7 +37,7 @@ class RocksDBScanner
       rocksdb::Slice k_slice = map.template fold_key<Record>(key, key_buf);
       it->Seek(k_slice);
       after_seek = true;
-      return it->Valid();
+      return it->Valid();  // may well be false but Next() will validate it
    }
 
    void seekForPrev(const typename Record::Key key)
@@ -76,7 +75,11 @@ class RocksDBScanner
    {
       if (after_seek) {
          after_seek = false;
+         // if (!it->Valid() && it->status().ok()) {  // may be invalid after seek
+         //    it->Next();
+         // }
       } else {
+         // invalid not after seek is not allowed
          if (!it->Valid()) {
             return std::nullopt;
          }
@@ -90,6 +93,9 @@ class RocksDBScanner
    {
       if (after_seek) {
          after_seek = false;
+         // if (!it->Valid() && it->status().ok()) {  // may be invalid after seek
+         //    it->Prev();
+         // }
       } else {
          if (!it->Valid()) {
             return std::nullopt;

@@ -40,6 +40,7 @@ int main(int argc, char** argv)
    LeanStoreAdapter<nation_t> nation;
    LeanStoreAdapter<region_t> region;
    // Additional indexes
+   LeanStoreAdapter<nation2_t> nation2;
    LeanStoreAdapter<states_t> states;
    LeanStoreAdapter<county_t> county;
    LeanStoreAdapter<city_t> city;
@@ -73,7 +74,7 @@ int main(int argc, char** argv)
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, states, county, city, customer2);
+   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, nation2, states, county, city, customer2);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;

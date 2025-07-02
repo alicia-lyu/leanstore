@@ -53,11 +53,14 @@ struct BaseJoiner {
 
    void seek(const sort_key_t& sk)
    {
-      nation_scanner->seek(nation2_t::Key{sk.nationkey});
-      states_scanner->seek(states_t::Key{sk.nationkey, sk.statekey});
-      county_scanner->seek(county_t::Key{sk.nationkey, sk.statekey, sk.countykey});
-      city_scanner->seek(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
-      customer2_scanner->seek(customer2_t::Key{sk});
+      auto n_ret = nation_scanner->seek(nation2_t::Key{sk.nationkey});
+      auto s_ret = states_scanner->seek(states_t::Key{sk.nationkey, sk.statekey});
+      auto c_ret = county_scanner->seek(county_t::Key{sk.nationkey, sk.statekey, sk.countykey});
+      auto ci_ret = city_scanner->seek(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
+      auto cu_ret = customer2_scanner->seek(customer2_t::Key{sk});
+      if (!n_ret || !s_ret || !c_ret || !ci_ret || !cu_ret) {
+         std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << std::endl;
+      }
    }
 };
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>

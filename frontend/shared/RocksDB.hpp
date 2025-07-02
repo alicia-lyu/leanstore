@@ -67,6 +67,7 @@ struct RocksDB {
       // PERSIST & RECOVER
       if (FLAGS_trunc == false && std::filesystem::exists(FLAGS_ssd_path)) {
          FLAGS_recover = true;
+         std::cout << "RocksDB: recovering from " << FLAGS_ssd_path << std::endl;
       } else if (FLAGS_trunc == true && std::filesystem::exists(FLAGS_ssd_path)) {
          std::cout << "RocksDB: truncating " << FLAGS_ssd_path << std::endl;
          std::filesystem::remove_all(FLAGS_ssd_path);

@@ -41,7 +41,8 @@ struct JoinState {
       if (
           // cached_jk % 1000 == 1 || // sampling
           joined > 10000)
-         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records." << std::endl;
+         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at " << cached_jk
+                   << std::endl;
    }
 
    void refresh(const JK& next_jk)
@@ -133,7 +134,7 @@ struct JoinState {
       joined += curr_joined;
       if (logging && joined > last_logged + 1000 && FLAGS_log_progress) {
          double progress = (double)joined / 1000;
-         std::cout << "\r" << msg << ": joined " << progress << "k records------------------------------------";
+         std::cout << "\r" << msg << ": joined " << progress << "k records at " << cached_jk << "------------------------------------";
          last_logged = joined;
       }
       if (cached_joined_records.size() > 1000 && cached_joined_records.size() > static_cast<size_t>(curr_joined)) {

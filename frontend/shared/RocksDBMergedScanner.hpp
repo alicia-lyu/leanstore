@@ -11,15 +11,13 @@ struct RocksDBMergedScanner {
    bool after_seek = false;
    long long produced = 0;
 
-   RocksDBMergedScanner(ColumnFamilyHandle* cf_handle, RocksDB& map)
-       : map(map), it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
+   RocksDBMergedScanner(ColumnFamilyHandle* cf_handle, RocksDB& map) : map(map), it(map.tx_db->NewIterator(map.iterator_ro, cf_handle))
    {
       it->SeekToFirst();
       after_seek = true;
-      assert(it->Valid());
    }
 
-   void reset() 
+   void reset()
    {
       it->SeekToFirst();
       after_seek = true;
@@ -65,7 +63,7 @@ struct RocksDBMergedScanner {
       UNREACHABLE();
    }
 
-   void seekJK(const JK& jk) 
+   void seekJK(const JK& jk)
    {
       u8 folded_jk[JK::maxFoldLength()];
       u16 folded_jk_len = JK::keyfold(folded_jk, jk);
@@ -73,11 +71,15 @@ struct RocksDBMergedScanner {
       after_seek = true;
    }
 
-   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next() 
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next()
    {
       if (after_seek) {
          after_seek = false;
+         // if (!it->Valid() && it->status().ok()) {  // may be invalid after seek
+         //    it->Next();
+         // }
       } else {
+         // invalid not after seek is not allowed
          if (!it->Valid()) {
             return std::nullopt;
          }
@@ -89,8 +91,11 @@ struct RocksDBMergedScanner {
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> prev()
    {
-     if (after_seek) {
+      if (after_seek) {
          after_seek = false;
+         // if (!it->Valid() && it->status().ok()) {  // may be invalid after seek
+         //    it->Prev();
+         // }
       } else {
          if (!it->Valid()) {
             return std::nullopt;
@@ -100,7 +105,7 @@ struct RocksDBMergedScanner {
       return current();
    }
 
-   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current() 
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> current()
    {
       if (!it->Valid()) {
          return std::nullopt;
