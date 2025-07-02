@@ -4,23 +4,26 @@
 #include "../executable_helper.hpp"
 #include "../leanstore_logger.hpp"
 #include "../tables.hpp"
+#include "executable_params.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "views.hpp"
 #include "workload.hpp"
-#include "executable_params.hpp"
 
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 10, "TPC-H scale factor");
 DEFINE_int32(tx_seconds, 30, "Number of seconds to run each type of transactions");
-DEFINE_int32(storage_structure, 0, "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes, 3 for 2 merged indexes");
+DEFINE_int32(storage_structure,
+             0,
+             "Storage structure: 0 for traditional indexes, 1 for materialized views, 2 for merged indexes, 3 for 2 merged indexes");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds");
 
 using namespace geo_join;
 
 using GJ = GeoJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
+using EH = ExecutableHelper<LeanStoreAdapter>;
 
 int main(int argc, char** argv)
 {
@@ -85,26 +88,29 @@ int main(int argc, char** argv)
    }
 
    ExeParams<GJ> params(tpchGeoJoin);
-   
-   
+
    switch (FLAGS_storage_structure) {
       case 0: {
-         ExecutableHelper<LeanStoreAdapter> helper(crm, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
+         EH helper(crm, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
+                   params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
          helper.run();
          break;
       }
       case 1: {
-         ExecutableHelper<LeanStoreAdapter> helper(crm, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
+         EH helper(crm, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
+                   params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
          helper.run();
          break;
       }
       case 2: {
-         ExecutableHelper<LeanStoreAdapter> helper(crm, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
+         EH helper(crm, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
+                   params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
          helper.run();
          break;
       }
-      case 3 : {
-         ExecutableHelper<LeanStoreAdapter> helper(crm, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
+      case 3: {
+         EH helper(crm, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
+                   params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
          helper.run();
          break;
       }

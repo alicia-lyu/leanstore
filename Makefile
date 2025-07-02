@@ -16,6 +16,7 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 
 # Experiment flags
 dram                := 1
+scale 			    := 10
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid

@@ -17,9 +17,6 @@ void RocksDB::set_options()
    db_options.use_direct_io_for_flush_and_compaction = true;
    db_options.create_if_missing = true;
    db_options.create_missing_column_families = true;
-   // Other durability-related settings:
-   db_options.WAL_ttl_seconds = 0;    // keep WAL indefinitely (until manual deletion)
-   db_options.WAL_size_limit_MB = 0;  // no size-based WAL deletion
 
    db_options.compression = rocksdb::CompressionType::kNoCompression;
    db_options.OptimizeLevelStyleCompaction();
@@ -136,11 +133,11 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, 
    std::vector<u8> max_key(max_fold_len, 255);  // max key
    auto limit_slice = RSlice(max_key.data(), max_key.size());
 
-   std::cout << "RocksDB::get_size: Compacting " << name << "...";
-   auto compact_options = rocksdb::CompactRangeOptions();
-   compact_options.change_level = true;
-   auto ret = tx_db->CompactRange(compact_options, cf_handle, &start_slice, &limit_slice);
-   assert(ret.ok());
+   // std::cout << "RocksDB::get_size: Compacting " << name << "...";
+   // auto compact_options = rocksdb::CompactRangeOptions();
+   // compact_options.change_level = true;
+   // auto ret = tx_db->CompactRange(compact_options, cf_handle, &start_slice, &limit_slice);
+   // assert(ret.ok());
 
    std::array<u64, 1> sizes;
    std::array<Range, 1> ranges;
