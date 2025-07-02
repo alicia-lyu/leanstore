@@ -35,11 +35,11 @@ using ROCKSDB_NAMESPACE::Cache;
 using ROCKSDB_NAMESPACE::ColumnFamilyDescriptor;
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;
 using ROCKSDB_NAMESPACE::ColumnFamilyOptions;
+using ROCKSDB_NAMESPACE::LRUCacheOptions;
+using ROCKSDB_NAMESPACE::NewLRUCache;
 using ROCKSDB_NAMESPACE::PinnableSlice;
 using ROCKSDB_NAMESPACE::Range;
 using ROCKSDB_NAMESPACE::Status;
-using ROCKSDB_NAMESPACE::LRUCacheOptions;
-using ROCKSDB_NAMESPACE::NewLRUCache;
 
 struct RocksDB {
    rocksdb::TransactionDB* tx_db;
@@ -54,8 +54,8 @@ struct RocksDB {
    rocksdb::ReadOptions ro;
    rocksdb::ReadOptions iterator_ro;
    const u64 total_cache_bytes;
-   const double block_share = 0.8;
-   const double memtable_share = 0.2;
+   double block_share;
+   double memtable_share;
    std::shared_ptr<Cache> cache = nullptr;
 
    enum class DB_TYPE : u8 { DB, TransactionDB, OptimisticDB };
@@ -68,23 +68,29 @@ struct RocksDB {
       if (FLAGS_trunc == false && std::filesystem::exists(FLAGS_ssd_path)) {
          FLAGS_recover = true;
          std::cout << "RocksDB: recovering from " << FLAGS_ssd_path << std::endl;
-      } else if (FLAGS_trunc == true && std::filesystem::exists(FLAGS_ssd_path)) {
-         std::cout << "RocksDB: truncating " << FLAGS_ssd_path << std::endl;
-         std::filesystem::remove_all(FLAGS_ssd_path);
-         std::filesystem::create_directory(FLAGS_ssd_path);
-      } else if (!std::filesystem::exists(FLAGS_ssd_path)) {
+      } else { // load DB from scratch
+         if (FLAGS_trunc == true && std::filesystem::exists(FLAGS_ssd_path)) {
+            std::cout << "RocksDB: truncating " << FLAGS_ssd_path << std::endl;
+            std::filesystem::remove_all(FLAGS_ssd_path);
+         }
          std::filesystem::create_directory(FLAGS_ssd_path);
       }
-      if (FLAGS_persist_file == "./leanstore.json") {
-         FLAGS_persist = false;
-      } else {
-         FLAGS_persist = true;
+      FLAGS_persist = FLAGS_persist_file == "./leanstore.json" ? false : true;
+      
+      // SETUP CACHE
+      if (!FLAGS_recover) {  // bulk loading, write heavy
+         block_share = 0.4;
+         memtable_share = 0.6;
+      } else {  // running queries, read heavy
+         block_share = 0.8;
+         memtable_share = 0.2;
       }
       LRUCacheOptions cache_opts;
       std::cout << "RocksDB: total_cache_bytes = " << total_cache_bytes << std::endl;
       cache_opts.capacity = total_cache_bytes * block_share;
       cache_opts.strict_capacity_limit = true;
       cache = NewLRUCache(cache_opts);
+
       set_options();
    }
 

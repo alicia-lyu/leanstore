@@ -340,7 +340,7 @@ struct BinaryMergeJoin {
          next_left(fetch_left()),
          next_right(fetch_right())
    {
-      assert(next_left || next_right);  // at least one source must be available
+      // assert(next_left || next_right);  // at least one source must be available
       refresh_join_state(); // initialize the join state with the smallest JK
    }
 

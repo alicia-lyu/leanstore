@@ -21,6 +21,7 @@ struct RocksDBMergedAdapter {
 
    RocksDBMergedAdapter(RocksDB& map) : idx(map.cf_descs.size()), map(map)
    {
+      // std::cout << "RocksDBMergedAdapter<" << name << ">::RocksDBMergedAdapter()" << std::endl;
       ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(name, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
