@@ -1,25 +1,26 @@
 #include <gflags/gflags.h>
+#include <rocksdb/db.h>
+#include "../../shared/RocksDBAdapter.hpp"
 #include "../../shared/RocksDBMergedAdapter.hpp"
 #include "../../shared/RocksDBMergedScanner.hpp"
 #include "../executable_helper.hpp"
 #include "../rocksdb_logger.hpp"
 #include "../tables.hpp"
-#include "views.hpp"
-#include <rocksdb/db.h>
-#include "../../shared/RocksDBAdapter.hpp"
-#include "workload.hpp"
 #include "executable_params.hpp"
+#include "views.hpp"
+#include "workload.hpp"
 
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 50, "TPC-H scale factor");
 DEFINE_int32(tx_seconds, 30, "Number of seconds to run each type of transactions");
 DEFINE_int32(storage_structure, 0, "Unused option for rocksdb");
-DEFINE_int32(warmup_seconds, 0, "Warmup seconds"); // flush out loading data from the buffer pool
+DEFINE_int32(warmup_seconds, 0, "Warmup seconds");  // flush out loading data from the buffer pool
 
 using namespace geo_join;
 
 using GJ = GeoJoin<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
+using EH = ExecutableHelper<RocksDBAdapter>;
 
 thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 
@@ -27,7 +28,7 @@ int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Leanstore GeoJoin TPC-H");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
-   assert(FLAGS_storage_structure == 0);
+
    auto type = RocksDB::DB_TYPE::TransactionDB;
    RocksDB rocks_db(type);
 
@@ -52,40 +53,54 @@ int main(int argc, char** argv)
    RocksDBMergedAdapter<nation2_t, states_t> ns(rocks_db);
    RocksDBMergedAdapter<county_t, city_t, customer2_t> ccc(rocks_db);
    // -------------------------------------------------------------------------------------
-   rocks_db.open(); // only after all adapters are created (along with their column families)
+   rocks_db.open();  // only after all adapters are created (along with their column families)
 
    RocksDBLogger logger(rocks_db);
    TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, states, county, city, customer2);
-
-   tpchGeoJoin.load();
+   if (!FLAGS_recover) {
+      tpchGeoJoin.load();
+      return 0;
+   } else {
+      tpch.recover_last_ids();
+   }
 
    ExeParams<GJ> params(tpchGeoJoin);
-   
-   std::cout << "TPC-H with traditional indexes" << std::endl;
-   
-   // base or 2merged at first is the most fair, because the last step of loading fills buffer with merged and view
-   std::cout << "TPC-H with 2 merged indexes" << std::endl;
 
-   ExecutableHelper<RocksDBAdapter> helper_2merged(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
-   tpchGeoJoin.reset_sum_counts();
-   helper_2merged.run();
-
-   ExecutableHelper<RocksDBAdapter> helper_base(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
-   tpchGeoJoin.reset_sum_counts();
-   helper_base.run();
-
-   std::cout << "TPC-H with materialized views" << std::endl;
-
-   ExecutableHelper<RocksDBAdapter> helper_view(rocks_db, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
-   tpchGeoJoin.reset_sum_counts();
-   helper_view.run();
-
-   std::cout << "TPC-H with merged indexes" << std::endl;
-
-   ExecutableHelper<RocksDBAdapter> helper_merged(rocks_db, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
-   tpchGeoJoin.reset_sum_counts();
-   helper_merged.run();
+   switch (FLAGS_storage_structure) {
+      case 3: {
+         EH helper_2merged(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin),
+                           std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged,
+                           params.tput_prefixes);
+         tpchGeoJoin.reset_sum_counts();
+         helper_2merged.run();
+         break;
+      }
+      case 0: {
+         EH helper_base(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
+                        params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
+         tpchGeoJoin.reset_sum_counts();
+         helper_base.run();
+         break;
+      }
+      case 1: {
+         EH helper_view(rocks_db, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
+                        params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
+         tpchGeoJoin.reset_sum_counts();
+         helper_view.run();
+         break;
+      }
+      case 2: {
+         EH helper_merged(rocks_db, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin),
+                          std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged,
+                          params.tput_prefixes);
+         tpchGeoJoin.reset_sum_counts();
+         helper_merged.run();
+         break;
+      }
+      default:
+         return -1;
+   }
 
    return 0;
 };

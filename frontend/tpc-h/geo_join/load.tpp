@@ -14,7 +14,7 @@ void LoadState::advance_customers_in_1city(const size_t step_cnt, int n, int s, 
       std::cout << "WARNING: No customer since nation " << n << ", state " << s << ", county " << c << ", city " << ci << ". " << std::endl;
    }
    for (; customer_idx < custkeys.size() && customer_idx < customer_end; customer_idx++) {
-      insert_customer_func(n, s, c, ci, custkeys.at(customer_idx), false); // do not insert view
+      insert_customer_func(n, s, c, ci, custkeys.at(customer_idx), false); // do not insert view 
    }
 }
 
@@ -31,7 +31,7 @@ void LoadState::advance_customers_to_hot_cities()
       city_t::Key cik = hot_city_candidates.at(customer_idx % hot_city_candidates.size());
       insert_customer_func(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, custkeys.at(customer_idx), true); // insert view
       if (FLAGS_log_progress && customer_idx % 1000 == 0) {
-         std::cout << "\rAssigned " << customer_idx << " customers to hot cities.";
+         std::cout << "\rAssigned " << customer_idx << " customers to hot cities...";
       }
    }
 }
