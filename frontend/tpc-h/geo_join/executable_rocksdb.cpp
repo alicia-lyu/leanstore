@@ -69,13 +69,6 @@ int main(int argc, char** argv)
    ExeParams<GJ> params(tpchGeoJoin);
 
    switch (FLAGS_storage_structure) {
-      case 3: {
-         EH helper_2merged(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin),
-                           std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged,
-                           params.tput_prefixes);
-         helper_2merged.run();
-         break;
-      }
       case 0: {
          EH helper_base(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
                         params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
@@ -93,6 +86,13 @@ int main(int argc, char** argv)
                           std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged,
                           params.tput_prefixes);
          helper_merged.run();
+         break;
+      }
+      case 3: {
+         EH helper_2merged(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin),
+                           std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged,
+                           params.tput_prefixes);
+         helper_2merged.run();
          break;
       }
       default:

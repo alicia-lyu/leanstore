@@ -1,5 +1,4 @@
 #pragma once
-#include "../../shared/Adapter.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -28,8 +27,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
    for (int n = 1; n <= params.nation_count; n++) {
       // load_1nation(n);
       int state_cnt = params.get_state_cnt();
-      UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
-      auto nk = nation2_t::Key{n};
+      nation2_t::Key nk{n};
       nation2_t nv = nation2_t::generateRandomRecord(state_cnt);
       nation.insert(nk, nv);
       merged.insert(nk, nv);

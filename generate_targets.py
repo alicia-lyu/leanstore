@@ -58,7 +58,7 @@ def get_image_command(lsm: bool, image_path: Path) -> tuple[str, str]:
     """Returns the command to create an image file/dir."""
     if lsm:
         create_image_cmd = f"mkdir -p {image_path}"
-        copy_image_cmd = f"cp -R -f {image_path} {image_path}_temp"
+        copy_image_cmd = f"rm -rf {image_path}_temp && cp -R -f {image_path} {image_path}_temp"
     else:
         create_image_cmd = f"mkdir -p {image_path.parent} && touch {image_path}"
         copy_image_cmd = f"cp -f {image_path} {image_path}_temp"

@@ -59,7 +59,8 @@ struct BaseJoiner {
       auto ci_ret = city_scanner->seek(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
       auto cu_ret = customer2_scanner->seek(customer2_t::Key{sk});
       if (!n_ret || !s_ret || !c_ret || !ci_ret || !cu_ret) {
-         std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << std::endl;
+         std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << "nation: " << n_ret
+                   << ", states: " << s_ret << ", county: " << c_ret << ", city: " << ci_ret << ", customer2: " << cu_ret << std::endl;
       }
    }
 };

@@ -90,11 +90,7 @@ struct Params {
 
    int get_customer_cnt()  // avg: 1.5
    {
-      // int lottery = randutils::urand(1, 3);
-      // if (lottery <= 2) return 0;
-      // else return randutils::urand(0, 12);
       return randutils::urand(0, customer_max);
-      // some hot cities emerge during the final assignment
    }
 
    int get_nationkey() { return randutils::urand(1, nation_count); }

@@ -23,6 +23,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    RocksDB& map;
    RocksDBAdapter(RocksDB& map) : idx(map.cf_descs.size()), map(map)
    {
+      // std::cout << "RocksDBAdapter<" << name << ">::RocksDBAdapter()" << std::endl;
       ColumnFamilyDescriptor cf_desc = ColumnFamilyDescriptor(name, ColumnFamilyOptions());
       map.cf_descs.push_back(cf_desc);
       map.cf_handles.push_back(nullptr);
