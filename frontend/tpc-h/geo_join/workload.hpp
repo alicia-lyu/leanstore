@@ -9,31 +9,6 @@
 
 namespace geo_join
 {
-
-struct LoadState {
-   long county_sum = 0;
-   long city_sum = 0;
-   std::vector<Integer> custkeys;
-   size_t customer_idx = 0;
-   std::vector<city_t::Key> hot_city_candidates;
-   std::function<void(int, int, int, int, int, bool)> insert_customer_func;
-
-   LoadState() = default;
-
-   LoadState(int last_customer_id, std::function<void(int, int, int, int, int, bool)> insert_customer_func)
-       : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates(), insert_customer_func(insert_customer_func)
-   {
-      std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
-      std::random_shuffle(custkeys.begin(), custkeys.end());
-   }
-
-   void if_customers_drain(size_t customer_end, int n, int s, int c, int ci);
-
-   void advance_customers_in_1city(const size_t step_cnt, int n, int s, int c, int ci);
-
-   void advance_customers_to_hot_cities();
-};
-
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
@@ -56,6 +31,8 @@ class GeoJoin
    AdapterType<city_t>& city;
    AdapterType<customer2_t>& customer2;
 
+   Params params;
+
    long long ns_sum = 0;
    long long ns_count = 0;
 
@@ -76,6 +53,7 @@ class GeoJoin
            AdapterType<view_t>& v,
            MergedAdapterType<nation2_t, states_t>& ns,
            MergedAdapterType<county_t, city_t, customer2_t>& ccc,
+           AdapterType<nation2_t>& n,
            AdapterType<states_t>& s,
            AdapterType<county_t>& c,
            AdapterType<city_t>& ci,
@@ -85,7 +63,7 @@ class GeoJoin
          join_view(v),
          ns(ns),
          ccc(ccc),
-         nation(reinterpret_cast<AdapterType<nation2_t>&>(workload.nation)),
+         nation(n),
          states(s),
          county(c),
          city(ci),
@@ -96,15 +74,18 @@ class GeoJoin
          throw std::runtime_error("GeoJoin does not support scale factor larger than 1000");
       }
       TPCH::CUSTOMER_SCALE *= 200;  // already linear to scale factor
-      TPCH::NATION_COUNT *= std::min(FLAGS_tpch_scale_factor, 5);
 
-      int county_scale_factor = FLAGS_tpch_scale_factor / std::min(FLAGS_tpch_scale_factor, 5);  // nation scale factor
-      params::COUNTY_MAX = 20 * std::min(county_scale_factor, 10);
-      double city_scale_factor = (double)county_scale_factor / std::min(county_scale_factor, 10);  // scale from state
-      params::CITY_MAX = 4 * std::floor(city_scale_factor);
+      int nation_multiplier = std::min(FLAGS_tpch_scale_factor, 5);
+      params.nation_count = 25 * nation_multiplier;
 
-      std::cout << "GeoJoin params: NATION_COUNT = " << TPCH::NATION_COUNT << ", STATE_MAX = " << params::STATE_MAX
-                << ", COUNTY_MAX = " << params::COUNTY_MAX << ", CITY_MAX = " << params::CITY_MAX << ", CUSTOMER_MAX = " << params::CUSTOMER_MAX
+      int county_multiplier = std::min(FLAGS_tpch_scale_factor / nation_multiplier, 10);
+      params.county_max = 20 * county_multiplier;
+
+      double city_multiplier = (double)FLAGS_tpch_scale_factor / (county_multiplier * nation_multiplier);
+      params.city_max = std::floor(4 * city_multiplier);
+
+      std::cout << "GeoJoin params: nation_count = " << params.nation_count << ", state_max = " << params.state_max
+                << ", county_max = " << params.county_max << ", city_max = " << params.city_max << ", customer_max = " << params.customer_max
                 << std::endl;
    }
 
@@ -127,10 +108,10 @@ class GeoJoin
 
    std::optional<sort_key_t> find_random_geo_key_in_base()
    {
-      int n = workload.getNationID();
-      int s = params::get_statekey();
-      int c = params::get_countykey();
-      int ci = params::get_citykey();
+      int n = params.get_nationkey();
+      int s = params.get_statekey();
+      int c = params.get_countykey();
+      int ci = params.get_citykey();
 
       bool found = false;
 
@@ -153,7 +134,7 @@ class GeoJoin
 
    std::optional<sort_key_t> find_random_geo_key_in_view()
    {
-      auto sk = {workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0};
+      sort_key_t sk = {params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
 
       bool found = false;
       join_view.scan(
@@ -172,10 +153,10 @@ class GeoJoin
 
    std::optional<sort_key_t> find_random_geo_key_in_merged()
    {
-      int n = workload.getNationID();
-      int s = params::get_statekey();
-      int c = params::get_countykey();
-      int ci = params::get_citykey();
+      int n = params.get_nationkey();
+      int s = params.get_statekey();
+      int c = params.get_countykey();
+      int ci = params.get_citykey();
 
       auto scanner = merged.template getScanner<sort_key_t, view_t>();
       bool ret = scanner->template seekTyped<city_t>(city_t::Key{n, s, c, ci});
@@ -191,10 +172,10 @@ class GeoJoin
 
    std::optional<sort_key_t> find_random_geo_key_in_2merged()
    {
-      int n = workload.getNationID();
-      int s = params::get_statekey();
-      int c = params::get_countykey();
-      int ci = params::get_citykey();
+      int n = params.get_nationkey();
+      int s = params.get_statekey();
+      int c = params.get_countykey();
+      int ci = params.get_citykey();
 
       auto scanner = ccc.template getScanner<sort_key_t, ccc_t>();
       bool ret = scanner->template seekTyped<city_t>(city_t::Key{n, s, c, ci});
@@ -249,70 +230,70 @@ class GeoJoin
    // Find all joined rows for the same nationkey, statekeyZ
    void ns_view()
    {
-      ns_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
    void ns_merged()
    {
-      ns_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
    void ns_base()
    {
-      ns_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
 
    void ns_by_2merged()
    {
-      ns_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), 0, 0);
+      ns_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
 
    // Find all joined rows for the same nationkey, statekey, countykey
    void nsc_view()
    {
-      nsc_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
    void nsc_merged()
    {
-      nsc_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
    void nsc_base()
    {
-      nsc_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
 
    void nsc_by_2merged()
    {
-      nsc_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), 0);
+      nsc_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
 
    void nscci_by_view()
    {
-      nscci_sum += range_query_by_view(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
    void nscci_by_merged()
    {
-      nscci_sum += range_query_by_merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
    void nscci_by_base()
    {
-      nscci_sum += range_query_by_base(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
    void nscci_by_2merged()
    {
-      nscci_sum += range_query_by_2merged(workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey());
+      nscci_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 

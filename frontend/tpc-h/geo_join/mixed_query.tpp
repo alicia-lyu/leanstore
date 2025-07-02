@@ -94,7 +94,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_view()
 {
-   sort_key_t sk{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0};
+   sort_key_t sk{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
    ViewCounter<AdapterType, ScannerType> counter(join_view, city, sk);
    auto kv = counter.next();
    mixed_point_tx_count++;
@@ -191,7 +191,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_merged()
 {
    MergedCounter<MergedAdapterType, MergedScannerType> counter(
-       merged, sort_key_t{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0});
+       merged, sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
    auto kv = counter.next();
    mixed_point_tx_count++;
    if (kv != std::nullopt) {
@@ -280,7 +280,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_base()
 {
    BaseCounter<AdapterType, ScannerType> counter(
-       city, customer2, sort_key_t{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0});
+       city, customer2, sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
    auto kv = counter.next();
    mixed_point_tx_count++;
    if (kv != std::nullopt) {
@@ -373,7 +373,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_2merged()
 {
    Merged2Counter<MergedAdapterType, MergedScannerType> counter(
-       ccc, mixed_view_t::Key{workload.getNationID(), params::get_statekey(), params::get_countykey(), params::get_citykey(), 0});
+       ccc, mixed_view_t::Key{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
    auto kv = counter.next();
    mixed_point_tx_count++;
    if (kv != std::nullopt) {

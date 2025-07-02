@@ -340,12 +340,14 @@ struct BinaryMergeJoin {
          next_left(fetch_left()),
          next_right(fetch_right())
    {
+      assert(next_left || next_right);  // at least one source must be available
+      refresh_join_state(); // initialize the join state with the smallest JK
    }
 
    void refill_current_key()
    {
       auto curr_jk = join_state.cached_jk;
-      while (next_left && SKBuilder<JK>::create(next_left->first, next_left->second).match(curr_jk) == 0) {
+     while (next_left && SKBuilder<JK>::create(next_left->first, next_left->second).match(curr_jk) == 0) {
          join_state.template emplace<R1, 0>(next_left->first, next_left->second);
          next_left = fetch_left();
       }
@@ -355,13 +357,18 @@ struct BinaryMergeJoin {
       }
    }
 
-   void next_jk()
+   void refresh_join_state()
    {
-      refill_current_key();
       JK left_jk = next_left ? SKBuilder<JK>::create(next_left->first, next_left->second) : JK::max();
       JK right_jk = next_right ? SKBuilder<JK>::create(next_right->first, next_right->second) : JK::max();
 
       join_state.refresh(left_jk < right_jk ? left_jk : right_jk);
+   }
+
+   void next_jk()
+   {
+      refill_current_key();
+      refresh_join_state();
    }
 
    void run()

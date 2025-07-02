@@ -234,7 +234,8 @@ class Experiment:
         # vscode_flags = self.class_flags.copy() + rem_flags.copy()
         vscode_flags: dict[str, str] = self.class_flags.copy()
         vscode_flags.update(rem_flags.copy())
-        vscode_flags["dram_gib"] = "1"
+        for k, v in vscode_flags.items():
+            vscode_flags[k] = str(v).replace("$(dram)", "1").replace("$(scale)", "10")
         
         # rule to run the experiment in LLDB
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")

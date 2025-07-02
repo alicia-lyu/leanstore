@@ -1,7 +1,6 @@
 #pragma once
 #include <algorithm>
 #include "../../shared/Adapter.hpp"
-#include "load.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -57,15 +56,11 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
 {
    for (int n = 1; n <= workload.NATION_COUNT; n++) {
       // load_1nation(n);
-      int state_cnt = params::get_state_cnt();
+      int state_cnt = params.get_state_cnt();
       UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
       auto nk = nation2_t::Key{n};
-      nation2_t nv;
-      auto update_fn = [&](nation2_t& n) {
-         n.last_statekey = state_cnt;
-         nv = n;
-      };
-      nation.update1(nk, update_fn, nation_update_desc);
+      nation2_t nv = nation2_t::generateRandomRecord(state_cnt);
+      nation.insert(nk, nv);
       merged.insert(nk, nv);
       ns.insert(nk, nv);
       if (!FLAGS_log_progress) {
@@ -90,7 +85,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load_1state(int n, int s)
 {
-   int county_cnt = params::get_county_cnt();
+   int county_cnt = params.get_county_cnt();
    load_state.county_sum += county_cnt;
    auto sk = states_t::Key{n, s};
    auto sv = states_t::generateRandomRecord(county_cnt);
@@ -108,7 +103,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load_1county(int n, int s, int c)
 {
-   int city_cnt = params::get_city_cnt();
+   int city_cnt = params.get_city_cnt();
    load_state.city_sum += city_cnt;
    auto ck = county_t::Key{n, s, c};
    auto cv = county_t::generateRandomRecord(city_cnt);
@@ -136,7 +131,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
       load_state.hot_city_candidates.push_back(cik);
    }
    // insert customer2
-   load_state.advance_customers_in_1city(params::get_customer_cnt(), n, s, c, ci);
+   load_state.advance_customers_in_1city(params.get_customer_cnt(), n, s, c, ci);
 }
 
 template <template <typename> class AdapterType,

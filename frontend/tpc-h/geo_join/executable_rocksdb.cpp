@@ -42,6 +42,7 @@ int main(int argc, char** argv)
    RocksDBAdapter<nation_t> nation(rocks_db);
    RocksDBAdapter<region_t> region(rocks_db);
    // Additional indexes
+   RocksDBAdapter<nation2_t> nation2(rocks_db);
    RocksDBAdapter<states_t> states(rocks_db);
    RocksDBAdapter<county_t> county(rocks_db);
    RocksDBAdapter<city_t> city(rocks_db);
@@ -57,7 +58,7 @@ int main(int argc, char** argv)
 
    RocksDBLogger logger(rocks_db);
    TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, states, county, city, customer2);
+   GJ tpchGeoJoin(tpch, mergedGeoJoin, view, ns, ccc, nation2, states, county, city, customer2);
    if (!FLAGS_recover) {
       tpchGeoJoin.load();
       return 0;
@@ -72,21 +73,18 @@ int main(int argc, char** argv)
          EH helper_2merged(rocks_db, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin),
                            std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged,
                            params.tput_prefixes);
-         tpchGeoJoin.reset_sum_counts();
          helper_2merged.run();
          break;
       }
       case 0: {
          EH helper_base(rocks_db, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
                         params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
-         tpchGeoJoin.reset_sum_counts();
          helper_base.run();
          break;
       }
       case 1: {
          EH helper_view(rocks_db, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
                         params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
-         tpchGeoJoin.reset_sum_counts();
          helper_view.run();
          break;
       }
@@ -94,7 +92,6 @@ int main(int argc, char** argv)
          EH helper_merged(rocks_db, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin),
                           std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged,
                           params.tput_prefixes);
-         tpchGeoJoin.reset_sum_counts();
          helper_merged.run();
          break;
       }

@@ -10,9 +10,6 @@ using ROCKSDB_NAMESPACE::CacheUsageOptions;
 
 void RocksDB::set_options()
 {
-   // OPTIONS
-   iterator_ro.fill_cache = false;
-
    db_options.use_direct_reads = true; // otherwise, OS page cache is used, and we cannot set its size
    db_options.use_direct_io_for_flush_and_compaction = true;
    db_options.create_if_missing = true;
@@ -21,10 +18,6 @@ void RocksDB::set_options()
    db_options.compression = rocksdb::CompressionType::kNoCompression;
    db_options.OptimizeLevelStyleCompaction();
    db_options.compaction_style = rocksdb::kCompactionStyleLevel;
-
-   // table_opts.block_cache = cache;
-
-   db_options.max_write_buffer_number = 2;
 
    table_opts.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false));  // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
 
