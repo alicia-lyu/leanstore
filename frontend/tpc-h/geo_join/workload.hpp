@@ -65,6 +65,9 @@ class GeoJoin
    long long nscci_sum = 0;
    long long nscci_count = 0;
 
+   long long mixed_point_customer_sum = 0;
+   long long mixed_point_tx_count = 0;
+
    Logger& logger;
 
   public:
@@ -97,7 +100,7 @@ class GeoJoin
 
       int county_scale_factor = FLAGS_tpch_scale_factor / std::min(FLAGS_tpch_scale_factor, 5);  // nation scale factor
       params::COUNTY_MAX = 20 * std::min(county_scale_factor, 10);
-      double city_scale_factor = (double) county_scale_factor / std::min(county_scale_factor, 10);  // scale from state
+      double city_scale_factor = (double)county_scale_factor / std::min(county_scale_factor, 10);  // scale from state
       params::CITY_MAX = 4 * std::floor(city_scale_factor);
 
       std::cout << "GeoJoin params: NATION_COUNT = " << TPCH::NATION_COUNT << ", STATE_MAX = " << params::STATE_MAX
@@ -110,6 +113,8 @@ class GeoJoin
       std::cout << "Average ns produced: " << (ns_count > 0 ? (double)ns_sum / ns_count : 0) << std::endl;
       std::cout << "Average nsc produced: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
       std::cout << "Average nscci produced: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
+      std::cout << "Average customer count in mixed point tx: "
+                << (mixed_point_tx_count > 0 ? (double)mixed_point_customer_sum / mixed_point_tx_count : 0) << std::endl;
       ns_sum = 0;
       ns_count = 0;
       nsc_sum = 0;
@@ -118,9 +123,7 @@ class GeoJoin
       nscci_count = 0;
    }
 
-   ~GeoJoin() {
-      reset_sum_counts();
-   }
+   ~GeoJoin() { reset_sum_counts(); }
 
    std::optional<sort_key_t> find_random_geo_key_in_base()
    {
@@ -367,19 +370,6 @@ class GeoJoin
    void point_mixed_query_by_merged();
    void point_mixed_query_by_base();
    void point_mixed_query_by_2merged();
-
-   // --------------------------------------------------------------
-   // ---------------------- GROUP-BY ------------------------------
-
-   void agg_in_view();
-   void agg_by_merged();
-   void agg_by_base();
-   void agg_by_2merged();
-
-   void point_agg_by_view();
-   void point_agg_by_merged();
-   void point_agg_by_base();
-   void point_agg_by_2merged();
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
