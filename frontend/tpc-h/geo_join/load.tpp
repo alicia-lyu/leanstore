@@ -1,40 +1,10 @@
 #pragma once
-#include <algorithm>
 #include "../../shared/Adapter.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
 namespace geo_join
 {
-void LoadState::advance_customers_in_1city(const size_t step_cnt, int n, int s, int c, int ci)
-{
-   size_t customer_end = customer_idx + step_cnt;
-   if (customer_end >= custkeys.size() && customer_idx < custkeys.size()) {
-      std::cout << "WARNING: No customer since nation " << n << ", state " << s << ", county " << c << ", city " << ci << ". " << std::endl;
-   }
-   for (; customer_idx < custkeys.size() && customer_idx < customer_end; customer_idx++) {
-      insert_customer_func(n, s, c, ci, custkeys.at(customer_idx), false); // do not insert view 
-   }
-}
-
-void LoadState::advance_customers_to_hot_cities()
-{
-   assert(!hot_city_candidates.empty());
-   assert(customer_idx < custkeys.size());  // create hot keys
-   std::cout << "Assigning " << custkeys.size() - customer_idx << " remaining customers in " << hot_city_candidates.size() << " hot cities..."
-             << std::endl;
-
-   std::cout << "Shuffling hot city candidates..." << std::endl;
-   std::random_shuffle(hot_city_candidates.begin(), hot_city_candidates.end());
-   for (; customer_idx < custkeys.size(); customer_idx++) {
-      city_t::Key cik = hot_city_candidates.at(customer_idx % hot_city_candidates.size());
-      insert_customer_func(cik.nationkey, cik.statekey, cik.countykey, cik.citykey, custkeys.at(customer_idx), true); // insert view
-      if (FLAGS_log_progress && customer_idx % 1000 == 0) {
-         std::cout << "\rAssigned " << customer_idx << " customers to hot cities...";
-      }
-   }
-}
-
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
@@ -42,7 +12,8 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
 {
    workload.load();
-   load_state = LoadState(workload.last_customer_id, [this](int n, int s, int c, int ci, int cu, bool insert_view) { load_1customer(n, s, c, ci, cu, insert_view); });
+   load_state = LoadState(workload.last_customer_id,
+                          [this](int n, int s, int c, int ci, int cu, bool insert_view) { load_1customer(n, s, c, ci, cu, insert_view); });
    seq_load();
    load_state.advance_customers_to_hot_cities();
    log_sizes();
@@ -54,7 +25,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::seq_load()
 {
-   for (int n = 1; n <= workload.NATION_COUNT; n++) {
+   for (int n = 1; n <= params.nation_count; n++) {
       // load_1nation(n);
       int state_cnt = params.get_state_cnt();
       UpdateDescriptorGenerator1(nation_update_desc, nation2_t, last_statekey);
@@ -68,12 +39,12 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       }
       for (int s = 1; s <= state_cnt; s++) {
          if (FLAGS_log_progress)
-            std::cout << "\rLoading nation " << n << "/" << workload.NATION_COUNT << ", state " << s << "/" << state_cnt << "...";
+            std::cout << "\rLoading nation " << n << "/" << params.nation_count << ", state " << s << "/" << state_cnt << "...";
          load_1state(n, s);
       }
    }
    std::cout << std::endl << "Loaded " << load_state.county_sum << " counties and " << load_state.city_sum << " cities." << std::endl;
-      // load view
+   // load view
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
    PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
    joiner.run();

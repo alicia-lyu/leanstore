@@ -74,19 +74,6 @@ class GeoJoin
          throw std::runtime_error("GeoJoin does not support scale factor larger than 1000");
       }
       TPCH::CUSTOMER_SCALE *= 200;  // already linear to scale factor
-
-      int nation_multiplier = std::min(FLAGS_tpch_scale_factor, 5);
-      params.nation_count = 25 * nation_multiplier;
-
-      int county_multiplier = std::min(FLAGS_tpch_scale_factor / nation_multiplier, 10);
-      params.county_max = 20 * county_multiplier;
-
-      double city_multiplier = (double)FLAGS_tpch_scale_factor / (county_multiplier * nation_multiplier);
-      params.city_max = std::floor(4 * city_multiplier);
-
-      std::cout << "GeoJoin params: nation_count = " << params.nation_count << ", state_max = " << params.state_max
-                << ", county_max = " << params.county_max << ", city_max = " << params.city_max << ", customer_max = " << params.customer_max
-                << std::endl;
    }
 
    void reset_sum_counts()

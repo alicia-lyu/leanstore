@@ -26,26 +26,27 @@ struct LeanStoreScanner
       this->produced = 0;
    }
 
-   void seek(const typename Record::Key& key) { return seek<Record>(key); }
+   bool seek(const typename Record::Key& key) { return seek<Record>(key); }
 
-   void seekForPrev(const typename Record::Key& key)
+   bool seekForPrev(const typename Record::Key& key)
    {
       return seekForPrev<Record>(key);
    }
 
    template <typename RecordType>
-   void seek(const typename RecordType::Key& k)
+   bool seek(const typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       RecordType::foldKey(keyBuffer, k);
       leanstore::Slice keySlice(keyBuffer, RecordType::maxFoldLength());
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) return; // last key, next will return std::nullopt
+      if (res != leanstore::OP_RESULT::OK) return false; // last key, next will return std::nullopt
       after_seek = true;
+      return true;
    }
 
    template <typename RecordType>
-   void seekForPrev(const typename RecordType::Key& k)
+   bool seekForPrev(const typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
       RecordType::foldKey(keyBuffer, k);
@@ -53,21 +54,23 @@ struct LeanStoreScanner
       const leanstore::OP_RESULT res = it->seekForPrev(keySlice);
       if (res != leanstore::OP_RESULT::OK) {
          it->reset();  // next() will return first key
-         return;
+         return false;
       }
       after_seek = true;
+      return true;
    }
    
 
    template <typename JK>
-   void seek(const JK& jk)
+   bool seek(const JK& jk)
    {
       u8 keyBuffer[JK::maxFoldLength()];
       unsigned pos = JK::keyfold(keyBuffer, jk);
       leanstore::Slice keySlice(keyBuffer, pos);
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) return; // last key, next will return std::nullopt
+      if (res != leanstore::OP_RESULT::OK) return false; // last key, next will return std::nullopt
       after_seek = true;
+      return true;
    }
 
    std::optional<std::pair<typename Record::Key, Record>> next()

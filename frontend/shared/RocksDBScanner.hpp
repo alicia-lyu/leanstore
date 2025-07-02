@@ -21,6 +21,7 @@ class RocksDBScanner
    {
       it->SeekToFirst();
       after_seek = true;
+      assert(it->Valid());
    }
    ~RocksDBScanner() = default;
 

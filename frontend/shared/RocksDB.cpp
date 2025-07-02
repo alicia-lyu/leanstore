@@ -119,7 +119,7 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
    }
 }
 
-double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string& name)
+double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string&)
 {
    std::vector<u8> min_key(1, 0);  // min key
    auto start_slice = RSlice(min_key.data(), min_key.size());

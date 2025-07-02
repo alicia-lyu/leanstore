@@ -107,8 +107,6 @@ void Logger::log_summary()
    std::filesystem::path csv_sum_path;
    csv_sum_path = csv_db / (to_short_string(stats.column_name) + ".csv");
 
-   std::cout << "Summary logging to " << csv_sum_path << std::endl;
-
    bool csv_sum_exists = std::filesystem::exists(csv_sum_path);
    std::ofstream csv_sum;
    csv_sum.open(csv_sum_path, std::ios::app);

@@ -61,6 +61,8 @@ int main(int argc, char** argv)
       orders = LeanStoreAdapter<orders_t>(db, "orders");
       nation = LeanStoreAdapter<nation_t>(db, "nation");
       region = LeanStoreAdapter<region_t>(db, "region");
+
+      nation2 = LeanStoreAdapter<nation2_t>(db, "nation2");
       states = LeanStoreAdapter<states_t>(db, "states");
       county = LeanStoreAdapter<county_t>(db, "county");
       city = LeanStoreAdapter<city_t>(db, "city");
