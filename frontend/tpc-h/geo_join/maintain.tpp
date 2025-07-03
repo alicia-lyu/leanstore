@@ -9,7 +9,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-auto GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_base()
+std::pair<customer2_t::Key, customer2_t> GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_base()
 {
    std::optional<sort_key_t> sk = std::nullopt;
    while (!sk.has_value()) {
@@ -18,6 +18,7 @@ auto GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    customer2_t::Key cust_key{sk->nationkey, sk->statekey, sk->countykey, sk->citykey, workload.last_customer_id++};
    customer2_t cust_val = customer2_t::generateRandomRecord();
    customer2.insert(cust_key, cust_val);
+   inserted.push_back(*sk);
    return std::make_pair(cust_key, cust_val);
 }
 
@@ -34,6 +35,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    customer2_t::Key cust_key{sk->nationkey, sk->statekey, sk->countykey, sk->citykey, workload.last_customer_id++};
    customer2_t cust_val = customer2_t::generateRandomRecord();
    merged.insert(cust_key, cust_val);
+   inserted.push_back(*sk);
 }
 
 template <template <typename> class AdapterType,
@@ -55,7 +57,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    view_t::Key vk{cust_key.nationkey, cust_key.statekey, cust_key.countykey, cust_key.citykey, cust_key.custkey};
    view_t vv{*nv, *sv, *cv, *civ, cust_val};
    join_view.insert(vk, vv);
-   // TODO: update city_count_per_county
+   inserted.push_back(SKBuilder<sort_key_t>::create(cust_key, cust_val));
 }
 
 template <template <typename> class AdapterType,
@@ -71,5 +73,6 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    customer2_t::Key cust_key{sk->nationkey, sk->statekey, sk->countykey, sk->citykey, workload.last_customer_id++};
    customer2_t cust_val = customer2_t::generateRandomRecord();
    ccc.insert(cust_key, cust_val);
+   inserted.push_back(*sk);
 }
 } // namespace geo_join

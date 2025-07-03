@@ -149,10 +149,11 @@ class Experiment:
         self.console_print_subsection(f"Creating image file/dir {self.image_path}")
         print(f"\t{create_image_cmd}")
 
-        # rule to copy image file/dir to a temporary "test field"
-        print(f"{self.image_path}_temp: {self.image_path} FORCE") # force duplicate
-        self.console_print_subsection(f"Copying image file {self.image_path} to {self.image_path}_temp")
-        print(f"\t{copy_image_cmd}")
+        # rule to copy image file to a temporary "test field"
+        if "lsm" not in self.exec_fname:
+            print(f"{self.image_path}_temp: {self.image_path} FORCE") # force duplicate
+            self.console_print_subsection(f"Copying image file {self.image_path} to {self.image_path}_temp")
+            print(f"\t{copy_image_cmd}")
 
     def remaining_flags(self, recover_file: str, persist_file: str, trunc: bool, ssd_path: str, scale: int, dram_gib: int) -> dict[str, str]:
         flags = {
@@ -191,7 +192,8 @@ class Experiment:
         print()
 
     def experiment_flags(self) -> tuple[dict[str, str], str]:
-        image_dep = f"{self.image_path}_temp"
+        
+        image_dep = self.image_path if "lsm" in self.exec_fname else f"{self.image_path}_temp"
         rem_flags = self.remaining_flags(
             recover_file=self.recover_file, # do recover
             persist_file="./leanstore.json", # do not persist
@@ -229,7 +231,7 @@ class Experiment:
         print(f"#{self.sep} Debug experiment {self.sep}")
         separate_runs = [f"{self.exec_fname}_lldb_{str(i)}" for i in STRUCTURE_OPTIONS[self.exec_fname]]
         separate_runs_str = " ".join(separate_runs)
-        rem_flags, img_temp = self.experiment_flags()
+        rem_flags, img_dep = self.experiment_flags()
         # replace dram with 1 in vscode flags
         # vscode_flags = self.class_flags.copy() + rem_flags.copy()
         vscode_flags: dict[str, str] = self.class_flags.copy()
@@ -241,7 +243,7 @@ class Experiment:
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")
         # rules for separate runs
         for structure in STRUCTURE_OPTIONS[self.exec_fname]:
-            print(f"{self.exec_fname}_lldb_{structure}: {self.exec_path} {self.recover_file} check_perf_event_paranoid {img_temp}")
+            print(f"{self.exec_fname}_lldb_{structure}: {self.exec_path} {self.recover_file} check_perf_event_paranoid {img_dep}")
             print(
                 f"\tlldb -o run --",
                 f"{self.exec_path}",
