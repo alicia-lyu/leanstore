@@ -79,6 +79,8 @@ struct ExecutableHelper {
    std::vector<std::string> tput_prefixes;
    TPCHWorkload<AdapterType> tpch;
    double size;
+   std::function<void()> cleanup_cb = []() {};
+
    std::atomic<bool> keep_running_warmup = true;
    std::atomic<u64> lookup_count = 0;
    std::atomic<u64> running_threads_counter = 0;
@@ -109,7 +111,8 @@ struct ExecutableHelper {
                     std::function<void()> lookup,
                     std::vector<std::function<void()>> elapsed_cbs,
                     std::vector<std::function<void()>> tput_cbs,
-                    std::vector<std::string> tput_prefixes)
+                    std::vector<std::string> tput_prefixes,
+                    std::function<void()> cleanup_cb)
        : db_traits(std::make_unique<RocksDBTraits>(rocks_db)),
          method(method),
          lookup_cb(lookup),
@@ -117,7 +120,8 @@ struct ExecutableHelper {
          tput_cbs(tput_cbs),
          tput_prefixes(tput_prefixes),
          tpch(tpch),
-         size(size_cb())
+         size(size_cb()),
+         cleanup_cb(cleanup_cb)
    {
    }
 
@@ -143,6 +147,9 @@ struct ExecutableHelper {
       while (running_threads_counter > 0) {
          std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
       }
+
+      std::cout << "All threads finished. Cleaning up inserted data from maintenance phase..." << std::endl;
+      db_traits->run_tx(cleanup_cb);
    }
    void warmup()
    {

@@ -25,7 +25,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::seq_load()
 {
    for (int n = 1; n <= params.nation_count; n++) {
-      // load_1nation(n);
+      // load_1nation(n); 
       int state_cnt = params.get_state_cnt();
       nation2_t::Key nk{n};
       nation2_t nv = nation2_t::generateRandomRecord(state_cnt);

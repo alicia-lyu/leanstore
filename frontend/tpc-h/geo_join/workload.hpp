@@ -47,6 +47,8 @@ class GeoJoin
 
    Logger& logger;
 
+   std::vector<sort_key_t> inserted;  // in maintenance
+
   public:
    GeoJoin(TPCH& workload,
            MergedTree& m,
@@ -287,13 +289,47 @@ class GeoJoin
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
 
-   auto maintain_base();
+   std::pair<customer2_t::Key, customer2_t> maintain_base();
 
    void maintain_merged();
 
    void maintain_view();
 
    void maintain_2merged();
+
+   void cleanup_base()
+   {
+      for (const sort_key_t& sk : inserted) {
+         customer2_t::Key cust_key{sk};
+         customer2.erase(cust_key);
+      }
+   }
+
+   void cleanup_merged()
+   {
+      for (const sort_key_t& sk : inserted) {
+         customer2_t::Key cust_key{sk};
+         merged.template erase<customer2_t>(cust_key);
+      }
+   }
+
+   void cleanup_view()
+   {
+      for (const sort_key_t& sk : inserted) {
+         view_t::Key vk{sk};
+         join_view.erase(vk);
+         customer2_t::Key cust_key{sk};
+         customer2.erase(cust_key);
+      }
+   }
+
+   void cleanup_2merged()
+   {
+      for (const sort_key_t& sk : inserted) {
+         customer2_t::Key cust_key{sk};
+         ccc.template erase<customer2_t>(cust_key);
+      }
+   }
 
    // -------------------------------------------------------------
    // ---------------------- LOADING -----------------------------
