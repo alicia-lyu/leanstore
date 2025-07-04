@@ -36,9 +36,8 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	-$(MAKE) geo_lsm dram=2
 	-$(MAKE) geo_leanstore dram=0.6
-	-$(MAKE) geo_lsm dram=1
+	-$(MAKE) geo_lsm dram=0.4
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
