@@ -58,7 +58,7 @@ def get_image_command(lsm: bool, image_path: Path) -> tuple[str, str]:
     """Returns the command to create an image file/dir."""
     if lsm:
         create_image_cmd = f"mkdir -p {image_path}"
-        copy_image_cmd = f"rm -rf {image_path}_temp && cp -R -f {image_path} {image_path}_temp"
+        copy_image_cmd = None
     else:
         create_image_cmd = f"mkdir -p {image_path.parent} && touch {image_path}"
         copy_image_cmd = f"cp -f {image_path} {image_path}_temp"
@@ -106,7 +106,6 @@ class Experiment:
         big_sep = "=" * 20
         print(f"# {big_sep} Generating targets for {self.exec_fname} in {self.build_dir} {big_sep}")
         self.generate_executable()
-        self.generate_runtime_dir()
         self.generate_image()
         self.generate_recover_file()
         if "debug" not in str(self.build_dir):
@@ -132,22 +131,15 @@ class Experiment:
         )
         print()
         
-    def generate_runtime_dir(self) -> None:
-        self.makefile_subsection("Generate CSV runtime dir")
-        # rule to create runtime dir
-        print(f"{self.runtime_dir}:")
-        self.console_print_subsection(f"Creating CSV runtime dir {self.runtime_dir}")
-        print(f"\tmkdir -p {self.runtime_dir}")
-        print()
-        
     def generate_image(self) -> None:
         self.makefile_subsection("Generate image file/dir")
         create_image_cmd, copy_image_cmd = get_image_command("lsm" in self.exec_fname, self.image_path)
         
         # rule to create image file/dir
-        print(f"{self.image_path}: check_perf_event_paranoid {self.runtime_dir}")
+        print(f"{self.image_path}:")
         self.console_print_subsection(f"Creating image file/dir {self.image_path}")
         print(f"\t{create_image_cmd}")
+        print()
 
         # rule to copy image file to a temporary "test field"
         if "lsm" not in self.exec_fname:
@@ -171,7 +163,7 @@ class Experiment:
         loading_files = get_loading_files(self.exec_fname)
         loading_files_str = " ".join(loading_files)
         # rule to load database and create recovery file
-        print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} {self.image_path} {self.runtime_dir}")
+        print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} {self.image_path}")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
         prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else ""
         rem_flags = self.remaining_flags(
@@ -182,6 +174,7 @@ class Experiment:
                 scale=SCALE_ENV,
                 dram_gib=8
             )
+        print(f"\tmkdir -p {self.runtime_dir}")
         print(
             f"\t{prefix}{self.exec_path}", 
             kv_to_str(self.class_flags),
@@ -189,7 +182,7 @@ class Experiment:
             f"2>{self.runtime_dir}/stderr.txt",
             sep=" "
         )
-        print()
+        print("\n") # 2 lines
 
     def experiment_flags(self) -> tuple[dict[str, str], str]:
         
@@ -214,7 +207,8 @@ class Experiment:
         print(f"{self.exec_fname}: {separate_runs_str}")
         # rules for separate runs
         for structure in STRUCTURE_OPTIONS[self.exec_fname]:
-            print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.runtime_dir} {self.exec_path} {self.recover_file} {image_dep}")
+            print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {self.recover_file} {image_dep}")
+            print(f"\tmkdir -p {self.runtime_dir}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
             print(
                 f'\tscript -q -c "{self.exec_path}',
@@ -244,6 +238,7 @@ class Experiment:
         # rules for separate runs
         for structure in STRUCTURE_OPTIONS[self.exec_fname]:
             print(f"{self.exec_fname}_lldb_{structure}: {self.exec_path} {self.recover_file} check_perf_event_paranoid {img_dep}")
+            print(f"\tmkdir -p {self.runtime_dir}")
             print(
                 f"\tlldb -o run --",
                 f"{self.exec_path}",
@@ -268,7 +263,8 @@ class Experiment:
 LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
 
 DIFF_DIRS = {
- "geo_lsm": "geo_join"
+ "geo_lsm": "geo_join",
+ "geo_leanstore": "geo_join"
 }
             
 STRUCTURE_OPTIONS = {

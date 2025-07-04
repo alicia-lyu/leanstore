@@ -174,7 +174,7 @@ struct PremergedJoin {
       auto cmp = join_state.cached_jk.match(jk);  // cached_jk is just cached in scan_next()
       assert(cmp >= 0);
       if (cmp > 0) {
-         return false;  // no more records to scan, all records are after the seek_jk
+         return false;  // all records are after the seek_jk
       } else {
          return true;  // found the right record, but not yet added to the fcache
       }
@@ -227,7 +227,7 @@ struct PremergedJoin {
             ret = scan_next();
          }
          if (!ret) {
-            return std::nullopt;  // no more records to scan
+            return std::nullopt;  // no record matched the seek_jk
          }
       }
       return join_state.next();
@@ -361,8 +361,14 @@ struct BinaryMergeJoin {
    {
       JK left_jk = next_left ? SKBuilder<JK>::create(next_left->first, next_left->second) : JK::max();
       JK right_jk = next_right ? SKBuilder<JK>::create(next_right->first, next_right->second) : JK::max();
+      
+      int comp = left_jk.match(right_jk);
 
-      join_state.refresh(left_jk < right_jk ? left_jk : right_jk);
+      if (comp != 0) {  // cache the smaller one
+         join_state.refresh(comp < 0 ? left_jk : right_jk);
+      } else { // matched but may not be equal, cache the most specific one
+         join_state.refresh(left_jk > right_jk ? left_jk : right_jk);
+      }
    }
 
    void next_jk()

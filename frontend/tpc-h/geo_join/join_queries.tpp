@@ -59,8 +59,8 @@ struct BaseJoiner {
       auto ci_ret = city_scanner->seek(city_t::Key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey});
       auto cu_ret = customer2_scanner->seek(customer2_t::Key{sk});
       if (!n_ret || !s_ret || !c_ret || !ci_ret || !cu_ret) {
-         std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << "nation: " << n_ret
-                   << ", states: " << s_ret << ", county: " << c_ret << ", city: " << ci_ret << ", customer2: " << cu_ret << std::endl;
+         std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << "nation: " << n_ret << ", states: " << s_ret << ", county: " << c_ret
+                   << ", city: " << ci_ret << ", customer2: " << cu_ret << std::endl;
       }
    }
 };
@@ -103,19 +103,18 @@ struct Merged2Joiner {
    std::optional<PremergedJoin<MergedScannerType, sort_key_t, ccc_t, county_t, city_t, customer2_t>> joiner_ccc;
    std::optional<BinaryMergeJoin<sort_key_t, view_t, ns_t, ccc_t>> joiner_view;
    sort_key_t seek_key;
-   const sort_key_t seek_max;
+   const sort_key_t seek_max = sort_key_t::max();
 
    Merged2Joiner(MergedAdapterType<nation2_t, states_t>& merged_ns,
                  MergedAdapterType<county_t, city_t, customer2_t>& merged_ccc,
                  sort_key_t seek_key = sort_key_t::max())
        : merged_scanner_ns(merged_ns.template getScanner<sort_key_t, ns_t>()),
          merged_scanner_ccc(merged_ccc.template getScanner<sort_key_t, ccc_t>()),
-         seek_key(seek_key),
-         seek_max(sort_key_t::max())
+         seek_key(seek_key)
    {
       if (seek_key != seek_max) {
-         merged_scanner_ns->template seek<nation2_t>(nation2_t::Key{seek_key.nationkey});
-         merged_scanner_ccc->template seek<county_t>(county_t::Key{seek_key.nationkey, seek_key.statekey, seek_key.countykey});
+         merged_scanner_ns->template seek<nation2_t>(nation2_t::Key{seek_key});
+         merged_scanner_ccc->template seek<county_t>(county_t::Key{seek_key});
       }
       joiner_ns.emplace(*merged_scanner_ns);
       joiner_ccc.emplace(*merged_scanner_ccc);
@@ -131,8 +130,18 @@ struct Merged2Joiner {
    std::optional<std::pair<view_t::Key, view_t>> next()
    {
       auto ret = joiner_view->next();
-      if (seek_key != seek_max)
+      if (seek_key != seek_max) {
          seek_key = seek_max;  // reset seek_key after the first result
+         if (ret == std::nullopt) { // first result not matching the seek_key
+            // fetch records after the seek key
+            assert(!joiner_view->next_left.has_value() && !joiner_view->next_right.has_value());
+            joiner_view->next_left = joiner_view->fetch_left();
+            joiner_view->next_right = joiner_view->fetch_right();
+            joiner_view->refresh_join_state();
+            return next();
+         }
+      }
+      // not the first result, or the first result matches the seek_key (ret != std::nullopt)
       return ret;
    }
 
