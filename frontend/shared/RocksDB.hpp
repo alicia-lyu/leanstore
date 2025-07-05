@@ -171,8 +171,8 @@ struct RocksDB {
    rocksdb::Slice fold_key(const typename Record::Key& key, std::string& key_buf)
    {
       key_buf.resize(Record::maxFoldLength());
-      const u32 folded_key_len = Record::foldKey(reinterpret_cast<u8*>(key_buf.data()), key);
-      return RSlice(reinterpret_cast<const char*>(key_buf.data()), folded_key_len);
+      const unsigned pos = Record::foldKey(reinterpret_cast<u8*>(key_buf.data()), key);
+      return RSlice(reinterpret_cast<const char*>(key_buf.data()), pos);
    }
 
    template <typename Record>

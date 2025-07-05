@@ -66,8 +66,8 @@ struct RocksDBMergedScanner {
    void seekJK(const JK& jk)
    {
       u8 folded_jk[JK::maxFoldLength()];
-      u16 folded_jk_len = JK::keyfold(folded_jk, jk);
-      it->Seek(RSlice(folded_jk, folded_jk_len));
+      unsigned pos = JK::keyfold(folded_jk, jk);
+      it->Seek(RSlice(folded_jk, pos));
       after_seek = true;
    }
 

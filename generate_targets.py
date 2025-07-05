@@ -94,7 +94,7 @@ class Experiment:
         self.exec_path, self.runtime_dir, self.image_path, self.recover_file = get_exec_vars(Path(build_dir), exec_fname)
         # global lists
         executables.append(self.exec_path)
-        runtime_dirs.append(self.runtime_dir)
+        runtime_dirs.append(self.runtime_dir.parent)
         # class flags
         self.class_flags = shared_flags.copy()
         self.class_flags["csv_path"] = str(self.runtime_dir)
@@ -248,13 +248,14 @@ class Experiment:
                 sep=" "
             )
             print()
-        
+            vscode_flags_structure = vscode_flags.copy()
+            vscode_flags_structure["storage_structure"] = str(structure)
             vscode_configs = {
                 "name": f"{self.exec_fname}_{structure}",
                 "type": "lldb",
                 "request": "launch",
                 "program": f"${{workspaceFolder}}/{self.exec_path}",
-                "args": [f"--{k}={v}" for k, v in vscode_flags.items()],
+                "args": [f"--{k}={v}" for k, v in vscode_flags_structure.items()],
                 "cwd": "${workspaceFolder}",
                 "stopOnEntry": False
             }

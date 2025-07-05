@@ -16,7 +16,7 @@ struct sort_key_t {
    Integer citykey;
    Integer custkey;
    using Key = sort_key_t;
-   ADD_KEY_TRAITS(&sort_key_t::nationkey, &sort_key_t::statekey, &sort_key_t::countykey, &sort_key_t::citykey)
+   ADD_KEY_TRAITS(&sort_key_t::nationkey, &sort_key_t::statekey, &sort_key_t::countykey, &sort_key_t::citykey, &sort_key_t::custkey)
    auto operator<=>(const sort_key_t&) const = default;
 
    static sort_key_t max()
@@ -473,13 +473,37 @@ inline sort_key_t SKBuilder<sort_key_t>::get<states_t>(const sort_key_t& jk)
 }
 
 template <>
+inline sort_key_t SKBuilder<sort_key_t>::get<ns_t>(const sort_key_t& jk)
+{
+   return sort_key_t{jk.nationkey, jk.statekey, 0, 0, 0};
+}
+
+template <>
 inline sort_key_t SKBuilder<sort_key_t>::get<county_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, 0, 0};
 }
 
 template <>
+inline sort_key_t SKBuilder<sort_key_t>::get<nsc_t>(const sort_key_t& jk)
+{
+   return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, 0, 0};
+}
+
+template <>
 inline sort_key_t SKBuilder<sort_key_t>::get<city_t>(const sort_key_t& jk)
+{
+   return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, 0};
+}
+
+template <>
+inline sort_key_t SKBuilder<sort_key_t>::get<nscci_t>(const sort_key_t& jk)
+{
+   return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, 0};
+}
+
+template <>
+inline sort_key_t SKBuilder<sort_key_t>::get<mixed_view_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, 0};
 }
