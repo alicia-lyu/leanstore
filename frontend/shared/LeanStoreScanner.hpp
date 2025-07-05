@@ -37,8 +37,8 @@ struct LeanStoreScanner
    bool seek(const typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
-      RecordType::foldKey(keyBuffer, k);
-      leanstore::Slice keySlice(keyBuffer, RecordType::maxFoldLength());
+      unsigned pos = RecordType::foldKey(keyBuffer, k);
+      leanstore::Slice keySlice(keyBuffer, pos);
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
       if (res != leanstore::OP_RESULT::OK) return false; // last key, next will return std::nullopt
       after_seek = true;
@@ -49,8 +49,8 @@ struct LeanStoreScanner
    bool seekForPrev(const typename RecordType::Key& k)
    {
       u8 keyBuffer[RecordType::maxFoldLength()];
-      RecordType::foldKey(keyBuffer, k);
-      leanstore::Slice keySlice(keyBuffer, RecordType::maxFoldLength());
+      unsigned pos = RecordType::foldKey(keyBuffer, k);
+      leanstore::Slice keySlice(keyBuffer, pos);
       const leanstore::OP_RESULT res = it->seekForPrev(keySlice);
       if (res != leanstore::OP_RESULT::OK) {
          it->reset();  // next() will return first key

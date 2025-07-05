@@ -31,7 +31,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       nation2_t nv = nation2_t::generateRandomRecord(state_cnt);
       nation.insert(nk, nv);
       merged.insert(nk, nv);
-      ns.insert(nk, nv);
+      ns.insert(nk, nv); 
       if (!FLAGS_log_progress) {
          std::cout << "\rLoading nation " << n << " with " << state_cnt << " states...";
       }

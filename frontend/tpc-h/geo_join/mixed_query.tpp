@@ -111,7 +111,7 @@ struct MergedCounter {
        : scanner(merged.template getScanner<sort_key_t, view_t>())
    {
       if (sk != sort_key_t::max()) {
-         scanner->seekJK(sk);
+         scanner->template seek<city_t>(city_t::Key{sk});
       }
    }
 
@@ -164,7 +164,7 @@ struct MergedCounter {
             last_logged = produced;
          }
       }
-      std::cout << "MergedCounter::run() produced: " << produced << std::endl;
+      std::cout << "\rMergedCounter::run() produced: " << produced << std::endl;
    }
 };
 
@@ -190,8 +190,8 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_merged()
 {
-   MergedCounter<MergedAdapterType, MergedScannerType> counter(
-       merged, sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
+   sort_key_t sk{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
+   MergedCounter<MergedAdapterType, MergedScannerType> counter(merged, sk);
    auto kv = counter.next();
    mixed_point_tx_count++;
    if (kv != std::nullopt) {
@@ -297,7 +297,7 @@ struct Merged2Counter {
        : ccc_scanner(ccc.template getScanner<sort_key_t, ccc_t>())
    {
       if (sk != sort_key_t::max()) {
-         ccc_scanner->seekJK(sk);
+         ccc_scanner->template seek<city_t>(city_t::Key{sk});
       }
    }
 
@@ -372,8 +372,8 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_2merged()
 {
-   Merged2Counter<MergedAdapterType, MergedScannerType> counter(
-       ccc, mixed_view_t::Key{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
+   sort_key_t seek_key{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
+   Merged2Counter<MergedAdapterType, MergedScannerType> counter(ccc, seek_key);
    auto kv = counter.next();
    mixed_point_tx_count++;
    if (kv != std::nullopt) {
