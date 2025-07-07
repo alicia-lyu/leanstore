@@ -113,4 +113,14 @@ struct RocksDBMergedScanner {
       auto [key, rec] = toType<Records...>(it->key(), it->value());
       return std::make_pair(key, rec);
    }
+
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> last_in_page()
+   {
+      return std::nullopt; // a page/block is not necessarily continuous
+   }
+
+   void go_to_last_in_page()
+   {
+      assert(false); // should never be called
+   }
 };

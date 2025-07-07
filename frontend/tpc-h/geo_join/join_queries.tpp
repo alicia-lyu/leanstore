@@ -69,12 +69,12 @@ struct MergedJoiner {
    std::unique_ptr<MergedScannerType<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>> merged_scanner;
    std::optional<PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>> joiner;
    sort_key_t seek_key;
+   const sort_key_t seek_max = sort_key_t::max();
 
    MergedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, sort_key_t seek_key = sort_key_t::max())
        : merged_scanner(merged.template getScanner<sort_key_t, view_t>()), seek_key(seek_key)
    {
-      if (seek_key != sort_key_t::max())
-         merged_scanner->template seek<nation2_t>(nation2_t::Key{seek_key.nationkey});
+      // seek handled by PremergedJoin
       joiner.emplace(*merged_scanner);
    }
 
@@ -82,12 +82,11 @@ struct MergedJoiner {
 
    std::optional<std::pair<view_t::Key, view_t>> next()
    {
-      if (produced() == 0) {
-         auto ret = joiner->next(seek_key);  // seek before the first result
-         if (ret != std::nullopt)
-            return ret;
+      auto ret = joiner->next(seek_key);
+      if (seek_key != seek_max) {
+         seek_key = seek_max;  // reset seek_key after the first result
       }
-      return joiner->next();
+      return ret;
    }
 
    sort_key_t current_jk() const { return joiner->current_jk(); }
@@ -112,10 +111,7 @@ struct Merged2Joiner {
          merged_scanner_ccc(merged_ccc.template getScanner<sort_key_t, ccc_t>()),
          seek_key(seek_key)
    {
-      if (seek_key != seek_max) {
-         merged_scanner_ns->template seek<nation2_t>(nation2_t::Key{seek_key});
-         merged_scanner_ccc->template seek<county_t>(county_t::Key{seek_key});
-      }
+      // seek handled by PremergedJoin
       joiner_ns.emplace(*merged_scanner_ns);
       joiner_ccc.emplace(*merged_scanner_ccc);
       joiner_view.emplace([this]() { return joiner_ns->next(this->seek_key); }, [this]() { return joiner_ccc->next(this->seek_key); });
@@ -132,16 +128,7 @@ struct Merged2Joiner {
       auto ret = joiner_view->next();
       if (seek_key != seek_max) {
          seek_key = seek_max;  // reset seek_key after the first result
-         if (ret == std::nullopt) { // first result not matching the seek_key
-            // fetch records after the seek key
-            assert(!joiner_view->next_left.has_value() && !joiner_view->next_right.has_value());
-            joiner_view->next_left = joiner_view->fetch_left();
-            joiner_view->next_right = joiner_view->fetch_right();
-            joiner_view->refresh_join_state();
-            return next();
-         }
       }
-      // not the first result, or the first result matches the seek_key (ret != std::nullopt)
       return ret;
    }
 

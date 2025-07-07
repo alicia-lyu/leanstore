@@ -7,8 +7,7 @@
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
 
 template <class Record>
-struct LeanStoreScanner
-{
+struct LeanStoreScanner {
    using BTreeIt = leanstore::storage::btree::BTreeSharedIterator;
    using BTree = leanstore::storage::btree::BTreeGeneric;
 
@@ -28,10 +27,7 @@ struct LeanStoreScanner
 
    bool seek(const typename Record::Key& key) { return seek<Record>(key); }
 
-   bool seekForPrev(const typename Record::Key& key)
-   {
-      return seekForPrev<Record>(key);
-   }
+   bool seekForPrev(const typename Record::Key& key) { return seekForPrev<Record>(key); }
 
    template <typename RecordType>
    bool seek(const typename RecordType::Key& k)
@@ -40,7 +36,8 @@ struct LeanStoreScanner
       unsigned pos = RecordType::foldKey(keyBuffer, k);
       leanstore::Slice keySlice(keyBuffer, pos);
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) return false; // last key, next will return std::nullopt
+      if (res != leanstore::OP_RESULT::OK)
+         return false;  // last key, next will return std::nullopt
       after_seek = true;
       return true;
    }
@@ -59,7 +56,6 @@ struct LeanStoreScanner
       after_seek = true;
       return true;
    }
-   
 
    template <typename JK>
    bool seek(const JK& jk)
@@ -68,7 +64,8 @@ struct LeanStoreScanner
       unsigned pos = JK::keyfold(keyBuffer, jk);
       leanstore::Slice keySlice(keyBuffer, pos);
       [[maybe_unused]] const leanstore::OP_RESULT res = it->seek(keySlice);
-      if (res != leanstore::OP_RESULT::OK) return false; // last key, next will return std::nullopt
+      if (res != leanstore::OP_RESULT::OK)
+         return false;  // last key, next will return std::nullopt
       after_seek = true;
       return true;
    }
@@ -76,8 +73,7 @@ struct LeanStoreScanner
    std::optional<std::pair<typename Record::Key, Record>> next()
    {
       this->produced++;
-      if (after_seek)
-      {
+      if (after_seek) {
          after_seek = false;
          return this->current();
       }
@@ -89,8 +85,7 @@ struct LeanStoreScanner
 
    std::optional<std::pair<typename Record::Key, Record>> prev()
    {
-      if (after_seek)
-      {
+      if (after_seek) {
          after_seek = false;
          return this->current();
       }
@@ -102,8 +97,7 @@ struct LeanStoreScanner
 
    std::optional<std::pair<typename Record::Key, Record>> current()
    {
-      if (it->cur == -1)
-      {
+      if (it->cur == -1) {
          return std::nullopt;
       }
       it->assembleKey();
@@ -115,5 +109,18 @@ struct LeanStoreScanner
       typename Record::Key typed_key;
       Record::unfoldKey(key.data(), typed_key);
       return std::make_pair(typed_key, typed_payload);
+   }
+
+   std::optional<std::pair<typename Record::Key, Record>> last_in_page()
+   {
+      if (it->leaf->count > 0) {
+         auto prev_cur = it->cur;
+         it->cur = it->leaf->count - 1;
+         auto kv = current();
+         it->cur = prev_cur; // restore the cursor
+         return kv;
+      } else {
+         return std::nullopt; // no records in the page
+      }
    }
 };

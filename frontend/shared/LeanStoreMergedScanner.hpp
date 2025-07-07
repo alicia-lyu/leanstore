@@ -123,6 +123,25 @@ struct LeanStoreMergedScanner
       return toType<Records...>(key, payload);
    }
 
+   std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> last_in_page()
+   {
+      if (it->leaf->count > 0) {
+         auto prev_cur = it->cur;
+         it->cur = it->leaf->count - 1;
+         auto kv = current();
+         it->cur = prev_cur; // restore the cursor
+         return kv;
+      } else {
+         return std::nullopt; // no records in the page
+      }
+   }
+
+   void go_to_last_in_page()
+   {
+      assert(it->leaf->count > 0);
+      it->cur = it->leaf->count - 1;
+   }
+
    // void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
    // {
    //    reset();
