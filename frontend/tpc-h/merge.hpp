@@ -1,7 +1,6 @@
 #pragma once
 #include <cstddef>
 #include <variant>
-#include "../shared/LeanStoreMergedScanner.hpp"
 #include "merge_helpers.hpp"
 #include "view_templates.hpp"
 
@@ -92,6 +91,7 @@ struct PremergedJoin {
    MergedScannerType<JK, JR, Rs...>& merged_scanner;
    JoinState<JK, JR, Rs...> join_state;
    size_t seek_cnt = 0;
+   size_t right_next_cnt = 0;
    size_t scan_filter_cnt = 0;
    size_t emplace_cnt = 0;  // not necessarily equal to merged_scanner.produced
 
@@ -113,9 +113,14 @@ struct PremergedJoin {
 
    ~PremergedJoin()
    {
-      // if (seek_cnt > 1 || scan_filter_cnt > 0)
-      //    std::cout << "\r~PremergedJoin: seek count = " << seek_cnt << ", scan filter count = " << scan_filter_cnt
-      //              << ", emplace count = " << emplace_cnt << ", joined = " << join_state.joined << "!";
+      int cached_not_joined = 0;
+      std::apply([&](auto&... records) { ((cached_not_joined += records.size()), ...); }, join_state.cached_records);
+      if (scan_filter_cnt > 0 || right_next_cnt > 0)
+         std::cout << "~PremergedJoin with " << sizeof...(Rs) << " record types: seek count = " << seek_cnt
+                   << ", scan filter count = " << scan_filter_cnt << ", right next count = " << right_next_cnt << "; emplace count = " << emplace_cnt
+                   << ", cached but not joined = " << cached_not_joined << "; joined = " << join_state.joined
+                   << ", produced: " << join_state.joined - join_state.cached_joined_records.size() << "; current cached jk: " << join_state.cached_jk
+                   << std::endl;
    }
 
    bool scan_next()
@@ -128,55 +133,73 @@ struct PremergedJoin {
       auto& v = kv->second;
       JK jk;
       std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
-      // if (current_jk != jk) join the cached records
-      if (join_state.cached_jk.match(jk) != 0)
-         join_state.refresh(jk);
-      // add the new record to the fcache
-      join_state.emplace(k, v);
-      emplace_cnt++;
+      emplace(k, v, jk);
       return true;
    }
 
-   std::pair<int, int> distance(const JK& to_jk)
+   std::tuple<int, int, int> distance(const JK& to_jk)
    {
-      if (join_state.cached_jk == JK::max()) {
-         assert(join_state.joined == 0);
-         return to_jk.first_diff(JK());
-      } else {
-         return to_jk.first_diff(join_state.cached_jk);
-      }
+      assert(join_state.cached_jk != JK::max());
+      return to_jk.first_diff(join_state.cached_jk);
+   }
+
+   template <typename R>
+   void seek(const JK& jk)
+   {
+      typename R::Key k{jk};
+      merged_scanner.template seek<R>(k);
+      seek_cnt++;
+   }
+
+   void emplace(const K& k, const V& v, const JK& jk)
+   {
+      // if (current_jk != jk) join the cached records
+      if (join_state.cached_jk.match(jk) != 0)
+         join_state.refresh(jk);  // previous records are joined
+      // add the new record to the cache
+      join_state.emplace(k, v);
+      emplace_cnt++;
    }
 
    template <typename R, size_t I>
    bool get_next(const JK& seek_jk)
    {
-      JK jk = SKBuilder<JK>::template get<R>(seek_jk);
-      auto [base, dist] = distance(jk);
-      if (dist < 0) {          // scanned and passed
-         return false;         // no required record (type R)
-      } else if (dist == 0) {  // scanned and cached
-                               // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
-         return true;          // skip this R
-      } else if (dist <= 1) {  // right next record
-         assert(base == 0);
-         // go to the end
-      } else if (dist <= 15 &&                                                                               // HARDCODED, at most acorss 1 page
-                 I == sizeof...(Rs) - 1 &&                                                                   // last R
-                 std::is_same_v<MergedScannerType<JK, JR, Rs...>, LeanStoreMergedScanner<JK, JR, Rs...>>) {  // b-tree scanner
-         return scan_filter_next(seek_jk);
-      } else {  // across multiple pages
-         typename R::Key k{seek_jk};
-         merged_scanner.template seek<R>(k);
-         seek_cnt++;
-         // go to the end
+      if (join_state.cached_jk == JK::max()) {  // seek first record at all times
+         seek<R>(seek_jk);                      // then scan_next();
+      } else {
+         JK jk_r = SKBuilder<JK>::template get<R>(seek_jk);
+         auto [pos, base, dist] = distance(jk_r);
+         if (dist < 0) {                       // scanned and passed
+            return false;                      // no required record (type R)
+         } else if (dist == 0) {               // scanned and cached, or no selection at this field
+                                               // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
+            return true;                       // no scan or seek needed
+         } else if (base == 0 && dist == 1) {  // right the next record
+            // scan_next();
+            right_next_cnt++;
+         } else {
+            auto last_kv_in_page = merged_scanner.last_in_page();
+            if (last_kv_in_page.has_value()) {
+               auto [k, v] = last_kv_in_page.value();
+               JK last_jk = SKBuilder<JK>::create(k, v);
+               if (last_jk > jk_r) {  // required jk in page
+                  return scan_filter_next(seek_jk);
+               } else if (last_jk == jk_r) {  // The right record is the very last record in the page
+                  emplace(k, v, last_jk);
+                  merged_scanner.go_to_last_in_page();
+                  return true;  // no scan or seek needed
+               }
+            }
+            seek<R>(seek_jk);  // then scan_next();
+         }
       }
       scan_next();
-      auto cmp = join_state.cached_jk.match(jk);  // cached_jk is just cached in scan_next()
+      auto cmp = join_state.cached_jk.match(seek_jk);  // cached_jk is just cached in scan_next()
       assert(cmp >= 0);
       if (cmp > 0) {
          return false;  // all records are after the seek_jk
       } else {
-         return true;  // found the right record, but not yet added to the fcache
+         return true;
       }
    }
 
@@ -195,15 +218,12 @@ struct PremergedJoin {
          std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
          int cmp = jk.match(seek_jk);
          if (cmp < 0) {
-            continue;  // skip this record, it is before the seek_jk
-         } else if (cmp > 0) {
-            return false;  // no more records to scan, all records are after the seek_jk
-         } else {          // cmp == 0, found the right record
-            if (join_state.cached_jk.match(jk) != 0)
-               join_state.refresh(jk);
-            // add the new record to the fcache
-            join_state.emplace(k, v);
-            emplace_cnt++;
+            continue;           // skip this record, it is before the seek_jk
+         } else if (cmp > 0) {  // no records matches seek_jk, all records are after the seek_jk
+            emplace(k, v, jk);  // emplace anyway, otherwise we need to scan this record again later
+            return false;
+         } else {  // cmp == 0, found the right record
+            emplace(k, v, jk);
             return true;
          }  // else continue scanning
       }
@@ -219,15 +239,18 @@ struct PremergedJoin {
    {
       bool start = true;
       while (!join_state.has_next()) {
-         bool ret;
-         if (seek_jk != JK::max() && start) {
-            ret = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
-            start = false;  // if still no next, scan
+         if (seek_jk != JK::max() && start) {  // only seek once
+            bool all_records_exists_for_seek_jk = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
+            start = false;
+            if (all_records_exists_for_seek_jk) {  // go to scan_next() in the next iteration, yielding a record == seek_jk
+               assert(!join_state.has_next());     // previous records would only yield a record < seek_jk
+            }  // else go to scan_next() in the next iteration, yielding a record > seek_jk
          } else {
-            ret = scan_next();
-         }
-         if (!ret) {
-            return std::nullopt;  // no record matched the seek_jk
+            bool not_exhausted = scan_next();
+            if (!not_exhausted) {
+               return std::nullopt;  // no record matched the seek_jk
+               // only return std::nullopt if the joiner reaches the end
+            }
          }
       }
       return join_state.next();

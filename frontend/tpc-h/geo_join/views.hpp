@@ -50,19 +50,19 @@ struct sort_key_t {
       return 0;
    }
 
-   std::pair<int, int> first_diff(const sort_key_t& base) const
+   std::tuple<int, int, int> first_diff(const sort_key_t& base) const
    {
       if (nationkey != base.nationkey)
-         return std::make_pair(base.nationkey, nationkey - base.nationkey);
+         return std::make_tuple(0, base.nationkey, nationkey - base.nationkey);
       if (statekey != base.statekey)
-         return std::make_pair(base.statekey, statekey - base.statekey);
+         return std::make_tuple(1, base.statekey, statekey - base.statekey);
       if (countykey != base.countykey)
-         return std::make_pair(base.countykey, countykey - base.countykey);
+         return std::make_tuple(2, base.countykey, countykey - base.countykey);
       if (citykey != base.citykey)
-         return std::make_pair(base.citykey, citykey - base.citykey);
+         return std::make_tuple(3, base.citykey, citykey - base.citykey);
       if (custkey != base.custkey)
-         return std::make_pair(base.custkey, custkey - base.custkey);
-      return std::make_pair(0, 0);  // no difference
+         return std::make_tuple(4, base.custkey, custkey - base.custkey);
+      return std::make_tuple(5, 0, 0);  // no difference
    }
 };
 
@@ -367,8 +367,10 @@ struct view_t : public joined_t<24, sort_key_t, nation2_t, states_t, county_t, c
 
       Key(const customer2_t::Key& cu)
           : joined_t::Key{sort_key_t{cu.nationkey, cu.statekey, cu.countykey, cu.citykey, cu.custkey},
-                          nation2_t::Key{cu.nationkey}, states_t::Key{cu.nationkey, cu.statekey},
-                          county_t::Key{cu.nationkey, cu.statekey, cu.countykey}, city_t::Key{cu.nationkey, cu.statekey, cu.countykey, cu.citykey},
+                          nation2_t::Key{cu.nationkey},
+                          states_t::Key{cu.nationkey, cu.statekey},
+                          county_t::Key{cu.nationkey, cu.statekey, cu.countykey},
+                          city_t::Key{cu.nationkey, cu.statekey, cu.countykey, cu.citykey},
                           customer2_t::Key{cu}}
       {
       }
@@ -432,6 +434,18 @@ struct SKBuilder<sort_key_t> {
                                    [&](const customer2_t::Key& cu) {
                                       const customer2_t* c = std::get_if<customer2_t>(&v);
                                       return create(cu, *c);
+                                   }},
+                        k);
+   }
+   static sort_key_t inline create(const std::variant<nation2_t::Key, states_t::Key>& k, const std::variant<nation2_t, states_t>& v)
+   {
+      return std::visit(overloaded{[&](const nation2_t::Key& nk) {
+                                      const nation2_t* n = std::get_if<nation2_t>(&v);
+                                      return create(nk, *n);
+                                   },
+                                   [&](const states_t::Key& sk) {
+                                      const states_t* s = std::get_if<states_t>(&v);
+                                      return create(sk, *s);
                                    }},
                         k);
    }
