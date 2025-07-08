@@ -9,8 +9,6 @@
 #include "leanstore/profiling/tables/ConfigsTable.hpp"
 #include "tabulate/table.hpp"
 
-DECLARE_bool(log_progress);
-
 enum class ColumnName { ELAPSED, TPUT };
 
 inline std::string to_string(ColumnName column)

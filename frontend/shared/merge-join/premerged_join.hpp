@@ -1,6 +1,7 @@
 #pragma once
-#include "join_state.hpp"
+#include <filesystem>
 #include <fstream>
+#include "join_state.hpp"
 
 // merged_scanner -> join_state -> yield joined records
 template <template <typename...> class MergedScannerType, typename JK, typename JR, typename... Rs>
@@ -30,17 +31,31 @@ struct PremergedJoin {
 
    ~PremergedJoin()
    {
-      int cached_not_joined = 0;
-      std::apply([&](auto&... records) { ((cached_not_joined += records.size()), ...); }, join_state.cached_records);
       std::filesystem::path premerged_join_log_path = std::filesystem::path(FLAGS_csv_path) / "premerged_join.csv";
       bool print_header = !std::filesystem::exists(premerged_join_log_path);
       std::ofstream premerged_join_log(premerged_join_log_path, std::ios::app);
       if (print_header) {
-         premerged_join_log << "record_type_cnt,seek_cnt,scan_filter_cnt,right_next_cnt,emplace_cnt,cached_not_joined,joined,joined_not_produced\n";
+         premerged_join_log << "record_type_cnt,seek_cnt,scan_filter_cnt,right_next_cnt,emplace_cnt,remaining_records_to_join(,produced\n";
       }
       premerged_join_log << sizeof...(Rs) << "," << seek_cnt << "," << scan_filter_cnt << "," << right_next_cnt << "," << emplace_cnt << ","
-                         << cached_not_joined << "," << join_state.joined << "," << join_state.cached_joined_records.size() << std::endl;
+                         << join_state.get_remaining_records_to_join() << "," << join_state.get_produced() << std::endl;
       premerged_join_log.close();
+   }
+
+   void eager_join() { join_state.eager_join(); }
+
+   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
+
+   bool has_cached_next() const { return join_state.has_next(); }
+
+   void emplace(const K& k, const V& v, const JK& jk)
+   {
+      // if (current_jk != jk) join the cached records
+      if (join_state.jk_to_join.match(jk) != 0)
+         join_state.refresh(jk);  // previous records are joined
+      // add the new record to the cache
+      join_state.emplace(k, v);
+      emplace_cnt++;
    }
 
    bool scan_next()
@@ -57,38 +72,22 @@ struct PremergedJoin {
       return true;
    }
 
-   void eager_join() { join_state.join_current(); }
-
-   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
-
-   bool has_cached_next() const { return join_state.has_next(); }
-
    std::tuple<int, int, int> distance(const JK& to_jk)
    {
-      assert(join_state.cached_jk != JK::max());
-      return to_jk.first_diff(join_state.cached_jk);
+      assert(join_state.jk_to_join != JK::max());
+      return to_jk.first_diff(join_state.jk_to_join);
    }
 
    template <typename R>
-   bool seek_and_scan_next(const JK& seek_jk)
+   bool seek_next(const JK& seek_jk)
    {
       typename R::Key k{seek_jk};
       merged_scanner.template seek<R>(k);
       seek_cnt++;
       scan_next();
-      int cmp = join_state.cached_jk.match(seek_jk);  // cached_jk is just cached in scan_next()
+      int cmp = join_state.jk_to_join.match(seek_jk);  // cached_jk is just cached in scan_next()
       assert(cmp >= 0);
       return cmp == 0;  // true if the cached record matches the seek_jk
-   }
-
-   void emplace(const K& k, const V& v, const JK& jk)
-   {
-      // if (current_jk != jk) join the cached records
-      if (join_state.cached_jk.match(jk) != 0)
-         join_state.refresh(jk);  // previous records are joined
-      // add the new record to the cache
-      join_state.emplace(k, v);
-      emplace_cnt++;
    }
 
    bool scan_filter_next(const JK& seek_jk)
@@ -106,14 +105,10 @@ struct PremergedJoin {
          std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
          int cmp = jk.match(seek_jk);
          if (cmp < 0) {
-            continue;           // skip this record, it is before the seek_jk
-         } else if (cmp > 0) {  // no records matches seek_jk, all records are after the seek_jk
-            emplace(k, v, jk);  // emplace anyway, otherwise we need to scan this record again later
-            return false;
-         } else {  // cmp == 0, found the right record
-            emplace(k, v, jk);
-            return true;
-         }  // else continue scanning
+            continue;  // skip this record, it is before the seek_jk
+         }
+         emplace(k, v, jk);  // emplace the record, it is either the right one or the first one after the seek_jk, which will be needed later
+         return cmp == 0;
       }
    }
 
@@ -128,8 +123,8 @@ struct PremergedJoin {
           info_exhausted || jk_r == seek_jk;  // seek_jk has more info only when there is additional non-zero fields, i.e., seek_jk > jk_r
       // if info_exhausted, stop getting the next R
       // 1. seek first record at all times
-      if (join_state.cached_jk == JK::max()) {
-         return seek_and_scan_next<R>(seek_jk);
+      if (join_state.jk_to_join == JK::max()) {
+         return seek_next<R>(seek_jk);
       }
       // 2. have sought before...
       auto [_, base, dist] = distance(jk_r);
@@ -142,7 +137,7 @@ struct PremergedJoin {
       if (base == 0 && dist == 1) {
          right_next_cnt++;
          scan_next();
-         int cmp = join_state.cached_jk.match(seek_jk);  // cached_jk is just cached in scan_next()
+         int cmp = join_state.jk_to_join.match(seek_jk);  // cached_jk is just cached in scan_next()
          assert(cmp >= 0);
          return cmp == 0;  // true if the cached record matches the seek_jk
       }
@@ -162,7 +157,7 @@ struct PremergedJoin {
          }
       }
       // 2.4 if the last record in the page is smaller than the seek_jk, we need to seek
-      return seek_and_scan_next<R>(seek_jk);  // then scan_next();
+      return seek_next<R>(seek_jk);  // then scan_next();
    }
 
    template <size_t... Is>
@@ -174,38 +169,31 @@ struct PremergedJoin {
 
    std::optional<std::pair<typename JR::Key, JR>> next(const JK& seek_jk = JK::max())
    {
+      if (join_state.jk_to_join == JK::max() &&  // no record scanned
+          seek_jk != JK::max()) {                // seek required
+         bool all_records_exists_for_seek_jk = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
+         assert(join_state.jk_to_join != JK::max());
+         if (all_records_exists_for_seek_jk) {  // go to scan_next() in the next iteration, yielding a record == seek_jk
+            assert(!join_state.has_next());     // previous records would only yield a record < seek_jk
+         }  // else go to scan_next() in the next iteration, yielding a record > seek_jk
+      } else if (join_state.jk_to_join != JK::max() && seek_jk != JK::max()) {
+         std::cerr << "PremergedJoin::next() call with meaningful seek_jk should only happen when join_state.jk_to_join == JK::max(), i.e., "
+                      "immediately after PremergedJoin construction."
+                   << std::endl;
+      }
+
       while (!join_state.has_next()) {
-         if (join_state.cached_jk == JK::max() &&  // no record scanned
-             seek_jk != JK::max()) {
-            bool all_records_exists_for_seek_jk = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
-            assert(join_state.cached_jk != JK::max());
-            if (all_records_exists_for_seek_jk) {  // go to scan_next() in the next iteration, yielding a record == seek_jk
-               assert(!join_state.has_next());     // previous records would only yield a record < seek_jk
-            }  // else go to scan_next() in the next iteration, yielding a record > seek_jk
-         } else {
-            bool not_exhausted = scan_next();
-            if (!not_exhausted) {
-               return std::nullopt;  // only return std::nullopt if the joiner reaches the end
-            }
+         bool not_exhausted = scan_next();
+         if (!not_exhausted) {
+            return std::nullopt;  // only return std::nullopt if the joiner reaches the end
          }
       }
       return join_state.next();
    }
 
-   void next_jk()
-   {
-      JK start_jk = join_state.cached_jk;
-      while (join_state.cached_jk == start_jk) {
-         auto ret = next();
-         if (!ret.has_value()) {
-            break;
-         }
-      }
-   }
-
    void run()
    {
-      join_state.logging = true;
+      join_state.enable_logging();
       while (true) {
          auto ret = next();
          if (!ret.has_value()) {
@@ -214,7 +202,7 @@ struct PremergedJoin {
       }
    }
 
-   JK current_jk() const { return join_state.cached_jk; }
+   JK jk_to_join() const { return join_state.jk_to_join; }
 
-   long produced() const { return join_state.joined; }
+   long produced() const { return join_state.get_produced(); }
 };

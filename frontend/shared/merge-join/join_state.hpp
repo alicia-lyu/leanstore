@@ -1,33 +1,21 @@
 #pragma once
 #include <cstddef>
 #include <functional>
-#include <limits>
+
 #include <optional>
 #include <queue>
 #include <variant>
 #include <vector>
-#include "Exceptions.hpp"
-#include "Units.hpp"
-#include "../../tpc-h/logger.hpp"
 #include "../view_templates.hpp"
+#include "../variant_tuple_utils.hpp"
+#include "leanstore/Config.hpp"
 
 template <typename JK, typename JR, typename... Rs>
-struct JoinState {
-   bool logging = false;
-   template <typename Tuple, typename Func>
-   static void for_each(Tuple& tup, Func func)
-   {
-      std::apply([&](auto&... elems) { (..., func(elems)); }, tup);
-   }
-
-   JK cached_jk = JK::max();
-   std::tuple<std::vector<std::pair<typename Rs::Key, Rs>>...> cached_records = {};
-   std::queue<std::pair<typename JR::Key, JR>> cached_joined_records = {};
-
-   long joined = 0;
-
-   const std::function<void(const typename JR::Key&, const JR&)> consume_joined;
-   const std::string msg;
+class JoinState
+{
+  public:
+   JK jk_to_join = JK::max();
+   void enable_logging() { logging = true; }
 
    JoinState(
        const std::string& msg,
@@ -39,26 +27,82 @@ struct JoinState {
    ~JoinState()
    {
       if (
-          // cached_jk % 1000 == 1 || // sampling
+          // jk_to_join % 1000 == 1 || // sampling
           joined > 10000)
-         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << cached_jk << std::endl;
+         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << jk_to_join << std::endl;
    }
 
    bool went_past(const JK& match_jk) const
    {
-      if (cached_jk == JK::max()) {
+      if (jk_to_join == JK::max()) {
          return false;
       }
-      return cached_jk.match(match_jk) > 0 &&  // future joined records are all larger than match_jk
-             !has_next();                      // no more cached joined records, which might match match_jk, left to consume
+      return jk_to_join.match(match_jk) > 0 &&  // future joined records are all larger than match_jk
+             !has_next();                       // no more cached joined records, which might match match_jk, left to consume
    }
 
    void refresh(const JK& next_jk)
    {
-      // assert(next_jk.match(cached_jk) != 0);
+      // assert(next_jk.match(jk_to_join) != 0);
       int curr_joined = join_and_clear(next_jk, std::index_sequence_for<Rs...>{});
       update_print_produced(curr_joined);
    }
+
+   std::optional<std::pair<typename JR::Key, JR>> next()
+   {
+      if (joined_records.empty()) {
+         return std::nullopt;
+      }
+      auto joined_pair = joined_records.front();
+      joined_records.pop();
+      consume_joined(joined_pair.first, joined_pair.second);
+      return joined_pair;
+   }
+
+   bool has_next() const { return !joined_records.empty(); }
+
+   template <typename Record, size_t I>
+   void emplace(const typename Record::Key& key, const Record& rec)
+   {
+      JK jk = SKBuilder<JK>::create(key, rec);
+      std::get<I>(records_to_join).emplace_back(key, rec);
+      jk_to_join = jk;
+   }
+
+   template <size_t... Is>
+   void emplace(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec, std::index_sequence<Is...>)
+   {
+      (([&]() {
+          if (std::holds_alternative<typename Rs::Key>(key)) {
+             assert(std::holds_alternative<Rs>(rec));
+             emplace<Rs, Is>(std::get<typename Rs::Key>(key), std::get<Rs>(rec));
+          }
+       })(),
+       ...);
+   }
+
+   void emplace(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec) { emplace(key, rec, std::index_sequence_for<Rs...>{}); }
+
+   void eager_join() { join_current(); }
+
+   long get_produced() const { return joined - joined_records.size(); }
+
+   size_t get_remaining_records_to_join() const
+   {
+      size_t remaining = 0;
+      for_each(records_to_join, [&](const auto& v) { remaining += v.size(); });
+      return remaining;
+   }
+
+  private:
+   bool logging = false;
+   std::tuple<std::vector<std::pair<typename Rs::Key, Rs>>...> records_to_join = {};
+   std::queue<std::pair<typename JR::Key, JR>> joined_records = {};
+
+   long joined = 0;
+
+   const std::function<void(const typename JR::Key&, const JR&)> consume_joined;
+   const std::string msg;
 
    template <size_t... Is>
    void assemble_joined_records(std::vector<std::tuple<std::pair<typename Rs::Key, Rs>...>>& cartesian_product,
@@ -67,7 +111,7 @@ struct JoinState {
                                 std::index_sequence<Is...>)
    {
       (..., ([&] {
-          auto& vec = std::get<Is>(cached_records);
+          auto& vec = std::get<Is>(records_to_join);
           size_t repeat = *batch_size / vec.size(), batch = len_cartesian_product / *batch_size;
           for (size_t b = 0; b < batch; ++b)
              for (size_t r = 0; r < repeat; ++r)
@@ -82,7 +126,7 @@ struct JoinState {
    int join_current()
    {
       size_t len_cartesian_product = 1;  // how many records the cached records can join and produce
-      for_each(cached_records, [&](const auto& v) { len_cartesian_product *= v.size(); });
+      for_each(records_to_join, [&](const auto& v) { len_cartesian_product *= v.size(); });
       if (len_cartesian_product == 0)
          return 0;
 
@@ -101,38 +145,25 @@ struct JoinState {
                 joined_rec = JR{std::get<1>(pairs)...};
              },
              cartesian_product_instance);
-         cached_joined_records.emplace(joined_key, joined_rec);
+         joined_records.emplace(joined_key, joined_rec);
       }
       return static_cast<int>(len_cartesian_product);
    }
-
-   std::optional<std::pair<typename JR::Key, JR>> next()
-   {
-      if (cached_joined_records.empty()) {
-         return std::nullopt;
-      }
-      auto joined_pair = cached_joined_records.front();
-      cached_joined_records.pop();
-      consume_joined(joined_pair.first, joined_pair.second);
-      return joined_pair;
-   }
-
-   bool has_next() const { return !cached_joined_records.empty(); }
 
    template <size_t... Is>
    int join_and_clear(const JK& next_jk, std::index_sequence<Is...>)
    {
       int joined_cnt = 0;
       (..., ([&] {
-          auto& vec = std::get<Is>(cached_records);
+          auto& vec = std::get<Is>(records_to_join);
           using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
           using RecordType = std::tuple_element_t<1, VecElem>;
-          if (next_jk.match(SKBuilder<JK>::template get<RecordType>(cached_jk)) != 0) {
+          if (next_jk.match(SKBuilder<JK>::template get<RecordType>(jk_to_join)) != 0) {
              joined_cnt += join_current();
              vec.clear();
           }
        }()));
-      cached_jk = next_jk;
+      jk_to_join = next_jk;
       return joined_cnt;
    }
 
@@ -143,135 +174,13 @@ struct JoinState {
       joined += curr_joined;
       if (logging && joined > last_logged + 1000 && FLAGS_log_progress) {
          double progress = (double)joined / 1000;
-         std::cout << "\r" << msg << ": joined " << progress << "k records at JK " << cached_jk << "------------------------------------";
+         std::cout << "\r" << msg << ": joined " << progress << "k records at JK " << jk_to_join << "------------------------------------";
          last_logged = joined;
       }
-      if (cached_joined_records.size() > 1000 && cached_joined_records.size() > static_cast<size_t>(curr_joined)) {
+      if (joined_records.size() > 1000 && joined_records.size() > static_cast<size_t>(curr_joined)) {
          throw std::runtime_error(
              "JoinState: too many joined records in the queue. Are you calling JoinState::next()? JoinState is only supposed to be a pipeline "
              "instead of a storage!");
       }
-   }
-
-   template <typename Record, size_t I>
-   void emplace(const typename Record::Key& key, const Record& rec)
-   {
-      JK jk = SKBuilder<JK>::create(key, rec);
-      std::get<I>(cached_records).emplace_back(key, rec);
-      cached_jk = jk;
-   }
-
-   template <size_t... Is>
-   void emplace(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec, std::index_sequence<Is...>)
-   {
-      (([&]() {
-          if (std::holds_alternative<typename Rs::Key>(key)) {
-             assert(std::holds_alternative<Rs>(rec));
-             emplace<Rs, Is>(std::get<typename Rs::Key>(key), std::get<Rs>(rec));
-          }
-       })(),
-       ...);
-   }
-
-   void emplace(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec) { emplace(key, rec, std::index_sequence_for<Rs...>{}); }
-};
-
-template <typename JK>
-struct HeapEntry {
-   JK jk;
-   std::vector<std::byte> k, v;
-   u8 source;
-   HeapEntry() : jk(JK::max()), source(std::numeric_limits<u8>::max()) {}
-   HeapEntry(JK jk, std::vector<std::byte> k, std::vector<std::byte> v, u8 source) : jk(jk), k(std::move(k)), v(std::move(v)), source(source) {}
-   bool operator>(const HeapEntry& other) const { return jk > other.jk; }
-};
-
-template <typename JK, typename... Rs>
-struct HeapMergeHelper {
-   static constexpr size_t nways = sizeof...(Rs);
-
-   std::vector<std::function<HeapEntry<JK>()>> sources;
-   std::vector<std::function<void(HeapEntry<JK>&)>> consumes;
-
-   std::priority_queue<HeapEntry<JK>, std::vector<HeapEntry<JK>>, std::greater<>> heap;
-   long sifted = 0;
-
-   HeapMergeHelper(std::vector<std::function<HeapEntry<JK>()>> sources, std::vector<std::function<void(HeapEntry<JK>&)>> consumes)
-       : sources(sources), consumes(consumes)
-   {
-   }
-
-   template <template <typename> class ScannerType>
-   HeapMergeHelper(std::vector<std::function<void(HeapEntry<JK>&)>> consumes, ScannerType<Rs>&... scanners)
-       : HeapMergeHelper(getHeapSources(scanners...), consumes)
-   {
-   }
-
-   template <template <typename> class ScannerType, typename... SourceRecords>
-   HeapMergeHelper(std::vector<std::function<void(HeapEntry<JK>&)>> consumes, ScannerType<SourceRecords>&... scanners)
-       : HeapMergeHelper(getHeapSources(scanners...), consumes)
-   {
-   }
-
-   void run()
-   {
-      while (!heap.empty())
-         next();
-   }
-
-   void init()
-   {
-      assert(consumes.size() == nways);
-      for (auto& s : sources) {
-         auto entry = s();
-         if (entry.jk != JK::max())
-            heap.push(entry);
-      }
-   }
-
-   void next()
-   {
-      HeapEntry<JK> entry = heap.top();
-      heap.pop();
-      sifted++;
-      consumes.at(entry.source)(entry);
-
-      HeapEntry<JK> next;
-      if (nways == sources.size()) {
-         next = sources.at(entry.source)();
-      } else if (sources.size() == 1) {
-         next = sources.at(0)();
-      } else {
-         UNREACHABLE();
-      }
-
-      if (next.jk != JK::max())
-         heap.push(next);
-   }
-
-   bool has_next() const { return !heap.empty(); }
-
-   template <template <typename> class ScannerType, typename RecordType>
-   std::function<HeapEntry<JK>()> getHeapSource(ScannerType<RecordType>& scanner, u8 source)
-   {
-      return [source, this, &scanner]() {
-         auto kv = scanner.next();
-         if (!kv)
-            return HeapEntry<JK>();
-         auto& [k, v] = *kv;
-         return HeapEntry<JK>(SKBuilder<JK>(k, v), RecordType::toBytes(k), RecordType::toBytes(v), source);
-      };
-   }
-
-   template <template <typename> class ScannerType, size_t... Is, typename... SourceRecords>
-   std::vector<std::function<HeapEntry<JK>()>> getHeapSources(std::index_sequence<Is...>, ScannerType<SourceRecords>&... scanners)
-   {
-      return {getHeapSource(scanners, Is)...};
-   }
-
-   template <template <typename> class ScannerType, typename... SourceRecords>
-   std::vector<std::function<HeapEntry<JK>()>> getHeapSources(ScannerType<SourceRecords>&... scanners)
-   {
-      return getHeapSources(std::index_sequence_for<SourceRecords...>{}, scanners...);
    }
 };
