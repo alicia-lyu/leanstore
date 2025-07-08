@@ -1,11 +1,11 @@
 #include <gflags/gflags.h>
 #include <rocksdb/db.h>
-#include "../../shared/RocksDBAdapter.hpp"
-#include "../../shared/RocksDBMergedAdapter.hpp"
-#include "../../shared/RocksDBMergedScanner.hpp"
-#include "../executable_helper.hpp"
-#include "../rocksdb_logger.hpp"
-#include "../tables.hpp"
+#include "../shared/adapter-scanner/RocksDBAdapter.hpp"
+#include "../shared/adapter-scanner/RocksDBMergedAdapter.hpp"
+#include "../shared/adapter-scanner/RocksDBMergedScanner.hpp"
+#include "executable_helper.hpp"
+#include "../tpc-h/rocksdb_logger.hpp"
+#include "../tpc-h/tables.hpp"
 #include "executable_params.hpp"
 #include "views.hpp"
 #include "workload.hpp"

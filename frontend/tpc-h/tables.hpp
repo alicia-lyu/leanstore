@@ -1,7 +1,7 @@
 #pragma once
 #include <functional>
-#include "randutils.hpp"
-#include "table_traits.hpp"
+#include "../shared/randutils.hpp"
+#include "../shared/table_traits.hpp"
 
 using namespace randutils;
 

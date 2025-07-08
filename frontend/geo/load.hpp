@@ -1,8 +1,8 @@
 #pragma once
 
 #include <gflags/gflags.h>
-#include "../randutils.hpp"
-#include "../tpch_workload.hpp"
+#include "../shared/randutils.hpp"
+#include "../tpc-h/workload.hpp"
 #include "views.hpp"
 
 // 1 nation + 1--80 states --- 1--6 pages

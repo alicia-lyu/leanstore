@@ -15,7 +15,7 @@ vscode_launch_obj = {
 }
 
 build_dirs = ["build", "build-debug"]
-exec_names = ["geo_leanstore", "geo_lsm"]
+exec_names = ["geo_btree", "geo_lsm"]
 shared_flags: dict[str, str] = {
     "vi": "false",
     "mv": "false",
@@ -265,11 +265,11 @@ LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
 
 DIFF_DIRS = {
  "geo_lsm": "geo_join",
- "geo_leanstore": "geo_join"
+ "geo_btree": "geo_join"
 }
             
 STRUCTURE_OPTIONS = {
-    "geo_leanstore": [0, 1, 2, 3],
+    "geo_btree": [0, 1, 2, 3],
     "geo_lsm": [0, 1, 2, 3]
 }
 

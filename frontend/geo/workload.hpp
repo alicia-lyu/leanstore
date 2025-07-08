@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <optional>
 #include <variant>
-#include "../tpch_workload.hpp"
+#include "../tpc-h/workload.hpp"
 #include "load.hpp"
 #include "views.hpp"
 

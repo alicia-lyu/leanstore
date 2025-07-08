@@ -2,10 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "geo_leanstore_0",
+      "name": "geo_btree_0",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/build-debug/frontend/geo_leanstore",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_btree",
       "args": [
         "--vi=false",
         "--mv=false",
@@ -14,12 +14,12 @@
         "--pp_threads=1",
         "--csv_truncate=false",
         "--worker_threads=2",
-        "--csv_path=build-debug/geo_leanstore/10-in-1",
+        "--csv_path=build-debug/geo_btree/10-in-1",
         "--log_progress=true",
-        "--recover_file=build-debug/geo_leanstore/10.json",
+        "--recover_file=build-debug/geo_btree/10.json",
         "--persist_file=./leanstore.json",
         "--trunc=false",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_leanstore/10.image_temp",
+        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_btree/10.image_temp",
         "--tpch_scale_factor=10",
         "--dram_gib=1",
         "--storage_structure=0"
@@ -28,10 +28,10 @@
       "stopOnEntry": false
     },
     {
-      "name": "geo_leanstore_1",
+      "name": "geo_btree_1",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/build-debug/frontend/geo_leanstore",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_btree",
       "args": [
         "--vi=false",
         "--mv=false",
@@ -40,12 +40,12 @@
         "--pp_threads=1",
         "--csv_truncate=false",
         "--worker_threads=2",
-        "--csv_path=build-debug/geo_leanstore/10-in-1",
+        "--csv_path=build-debug/geo_btree/10-in-1",
         "--log_progress=true",
-        "--recover_file=build-debug/geo_leanstore/10.json",
+        "--recover_file=build-debug/geo_btree/10.json",
         "--persist_file=./leanstore.json",
         "--trunc=false",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_leanstore/10.image_temp",
+        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_btree/10.image_temp",
         "--tpch_scale_factor=10",
         "--dram_gib=1",
         "--storage_structure=1"
@@ -54,10 +54,10 @@
       "stopOnEntry": false
     },
     {
-      "name": "geo_leanstore_2",
+      "name": "geo_btree_2",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/build-debug/frontend/geo_leanstore",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_btree",
       "args": [
         "--vi=false",
         "--mv=false",
@@ -66,12 +66,12 @@
         "--pp_threads=1",
         "--csv_truncate=false",
         "--worker_threads=2",
-        "--csv_path=build-debug/geo_leanstore/10-in-1",
+        "--csv_path=build-debug/geo_btree/10-in-1",
         "--log_progress=true",
-        "--recover_file=build-debug/geo_leanstore/10.json",
+        "--recover_file=build-debug/geo_btree/10.json",
         "--persist_file=./leanstore.json",
         "--trunc=false",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_leanstore/10.image_temp",
+        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_btree/10.image_temp",
         "--tpch_scale_factor=10",
         "--dram_gib=1",
         "--storage_structure=2"
@@ -80,10 +80,10 @@
       "stopOnEntry": false
     },
     {
-      "name": "geo_leanstore_3",
+      "name": "geo_btree_3",
       "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/build-debug/frontend/geo_leanstore",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_btree",
       "args": [
         "--vi=false",
         "--mv=false",
@@ -92,12 +92,12 @@
         "--pp_threads=1",
         "--csv_truncate=false",
         "--worker_threads=2",
-        "--csv_path=build-debug/geo_leanstore/10-in-1",
+        "--csv_path=build-debug/geo_btree/10-in-1",
         "--log_progress=true",
-        "--recover_file=build-debug/geo_leanstore/10.json",
+        "--recover_file=build-debug/geo_btree/10.json",
         "--persist_file=./leanstore.json",
         "--trunc=false",
-        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_leanstore/10.image_temp",
+        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_btree/10.image_temp",
         "--tpch_scale_factor=10",
         "--dram_gib=1",
         "--storage_structure=3"

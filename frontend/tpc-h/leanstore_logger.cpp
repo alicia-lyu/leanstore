@@ -3,6 +3,7 @@
 #include <string>
 #include <tabulate/table.hpp>
 #include "logger.hpp"
+#include "../shared/Types.hpp"
 
 void LeanStoreLogger::summarize_other_stats()
 {

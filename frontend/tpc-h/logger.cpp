@@ -2,7 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include "tpch_workload.hpp"
+#include "workload.hpp"
 
 DEFINE_bool(log_progress, true, "Log progress of the workload execution");
 

@@ -2,7 +2,7 @@
 
 #include <rocksdb/iterator.h>
 #include <rocksdb/slice.h>
-#include "RocksDB.hpp"
+#include "../RocksDB.hpp"
 #include "Units.hpp"
 
 using ROCKSDB_NAMESPACE::ColumnFamilyHandle;

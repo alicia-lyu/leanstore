@@ -1,13 +1,12 @@
 #pragma once
 #include <filesystem>
-#include <string>
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/profiling/tables/BMTable.hpp"
 #include "leanstore/profiling/tables/CRTable.hpp"
 #include "leanstore/profiling/tables/DTTable.hpp"
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
 #include "logger.hpp"
-#include "tpch_workload.hpp"
+#include "workload.hpp"
 
 struct LeanStoreLogger : public Logger {
    leanstore::profiling::BMTable bm_table;
@@ -20,9 +19,9 @@ struct LeanStoreLogger : public Logger {
        : bm_table(*db.buffer_manager.get()), dt_table(*db.buffer_manager.get()), tables({&bm_table, &dt_table, &cpu_table, &cr_table})
    {
       std::filesystem::create_directories(csv_runtime);
-
       static fLS::clstring tpch_scale_factor_str = std::to_string(FLAGS_tpch_scale_factor);
       leanstore::LeanStore::addStringFlag("TPCH_SCALE", &tpch_scale_factor_str);
+
       for (auto& t : tables) {
          t->open();
          t->next();

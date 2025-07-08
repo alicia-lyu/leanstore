@@ -3,7 +3,6 @@
 #include <fstream>
 #include <variant>
 #include "merge_helpers.hpp"
-#include "view_templates.hpp"
 
 // source -> heap -> join_state (consume) -> yield joined records
 template <typename JK, typename JR, typename... Rs>

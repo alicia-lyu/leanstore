@@ -7,7 +7,7 @@
 #include <thread>
 #include "../shared/RocksDB.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
-#include "tpch_workload.hpp"
+#include "../tpc-h/workload.hpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
