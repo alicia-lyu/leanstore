@@ -66,7 +66,7 @@ def get_image_command(lsm: bool, image_path: Path) -> tuple[str, str]:
     
 def get_loading_files(exec_fname: str) -> List[str]:
     src_dir = DIFF_DIRS[exec_fname] if exec_fname in DIFF_DIRS else exec_fname
-    file_base = f"./frontend/tpc-h/{src_dir}/load"
+    file_base = f"./frontend/{src_dir}/load"
     loading_files = []
     for ext in ['tpp', 'hpp', 'cpp']:
         file = f"{file_base}.{ext}"
@@ -261,11 +261,11 @@ class Experiment:
             }
             vscode_launch_obj["configurations"].append(vscode_configs)
 
-LOADING_META_FILE = "./frontend/tpc-h/tpch_workload.hpp"
+LOADING_META_FILE = "./frontend/tpc-h/workload.hpp"
 
 DIFF_DIRS = {
- "geo_lsm": "geo_join",
- "geo_btree": "geo_join"
+ "geo_lsm": "geo",
+ "geo_btree": "geo"
 }
             
 STRUCTURE_OPTIONS = {
