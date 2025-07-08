@@ -44,13 +44,13 @@ struct JoinState {
          std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << cached_jk << std::endl;
    }
 
-   bool exhausted(const JK& match_jk) const
+   bool went_past(const JK& match_jk) const
    {
       if (cached_jk == JK::max()) {
          return false;
       }
       return cached_jk.match(match_jk) > 0 &&  // future joined records are all larger than match_jk
-             has_next();                       // no joined records, which might match match_jk, left to consume
+             !has_next();                      // no more cached joined records, which might match match_jk, left to consume
    }
 
    void refresh(const JK& next_jk)
