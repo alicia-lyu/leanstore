@@ -8,8 +8,8 @@
 #include <vector>
 #include "Exceptions.hpp"
 #include "Units.hpp"
-#include "view_templates.hpp"
 #include "logger.hpp"
+#include "view_templates.hpp"
 
 template <typename JK, typename JR, typename... Rs>
 struct JoinState {
@@ -41,8 +41,16 @@ struct JoinState {
       if (
           // cached_jk % 1000 == 1 || // sampling
           joined > 10000)
-         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << cached_jk
-                   << std::endl;
+         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << cached_jk << std::endl;
+   }
+
+   bool exhausted(const JK& match_jk) const
+   {
+      if (cached_jk == JK::max()) {
+         return false;
+      }
+      return cached_jk.match(match_jk) > 0 &&  // future joined records are all larger than match_jk
+             has_next();                       // no joined records, which might match match_jk, left to consume
    }
 
    void refresh(const JK& next_jk)
