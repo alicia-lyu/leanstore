@@ -24,12 +24,11 @@ struct BinaryMergeJoin {
 
    void refill_current_key()
    {
-      auto curr_jk = join_state.cached_jk;
-      while (next_left && SKBuilder<JK>::create(next_left->first, next_left->second).match(curr_jk) == 0) {
+      while (next_left && SKBuilder<JK>::create(next_left->first, next_left->second).match(join_state.jk_to_join) == 0) {
          join_state.template emplace<R1, 0>(next_left->first, next_left->second);
          next_left = fetch_left();
       }
-      while (next_right && SKBuilder<JK>::create(next_right->first, next_right->second).match(curr_jk) == 0) {
+      while (next_right && SKBuilder<JK>::create(next_right->first, next_right->second).match(join_state.jk_to_join) == 0) {
          join_state.template emplace<R2, 1>(next_right->first, next_right->second);
          next_right = fetch_right();
       }
@@ -52,7 +51,7 @@ struct BinaryMergeJoin {
       }
    }
 
-   void eager_join() { join_state.join_current(); }
+   void eager_join() { join_state.eager_join(); }
 
    bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
 
@@ -66,7 +65,7 @@ struct BinaryMergeJoin {
 
    void run()
    {
-      join_state.logging = true;
+      join_state.enable_logging();
       while (next_left || next_right) {
          next();
       }
@@ -83,6 +82,6 @@ struct BinaryMergeJoin {
       return join_state.next();
    }
 
-   JK current_jk() const { return join_state.cached_jk; }
-   long produced() const { return join_state.joined; }
+   JK jk_to_join() const { return join_state.jk_to_join; }
+   long produced() const { return join_state.get_produced(); }
 };

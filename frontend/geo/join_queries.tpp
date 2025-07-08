@@ -48,7 +48,7 @@ struct BaseJoiner {
 
    std::optional<std::pair<view_t::Key, view_t>> next() { return final_joiner->next(); }
 
-   sort_key_t current_jk() const { return final_joiner->current_jk(); }
+   sort_key_t current_jk() const { return final_joiner->jk_to_join(); }
 
    long produced() const { return final_joiner->produced(); }
 
@@ -150,7 +150,7 @@ struct Merged2Joiner {
       return ret;
    }
 
-   sort_key_t current_jk() const { return joiner_view->current_jk(); }
+   sort_key_t current_jk() const { return joiner_view->jk_to_join(); }
    long produced() const { return joiner_view->produced(); }
 
    bool went_past(const sort_key_t& sk)

@@ -1,6 +1,7 @@
 #pragma once
 #include "gflags/gflags.h"
 // -------------------------------------------------------------------------------------
+DECLARE_bool(log_progress);
 DECLARE_double(dram_gib);
 DECLARE_double(ssd_gib);
 DECLARE_string(ssd_path);

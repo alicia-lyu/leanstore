@@ -1,9 +1,10 @@
 #pragma once
-#include "join_state.hpp"
+#include "heap.hpp"
+#include "leanstore/Config.hpp"
 
 template <typename JK, typename... Rs>
 struct Merge {
-   HeapMergeHelper<JK, Rs...> heap_merge;
+   Heap<JK, Rs...> heap_merge;
    bool logging = false;
 
    template <typename MergedAdapterType, template <typename> class ScannerType, typename... SourceRecords>
