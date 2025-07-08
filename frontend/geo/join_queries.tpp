@@ -3,7 +3,8 @@
 #include <chrono>
 #include <cstddef>
 
-#include "../shared/merge-join/merge.hpp"
+#include "../shared/merge-join/binary_merge_join.hpp"
+#include "../shared/merge-join/premerged_join.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
