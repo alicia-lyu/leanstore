@@ -58,18 +58,19 @@ struct PremergedJoin {
       emplace_cnt++;
    }
 
-   bool scan_next()
+   std::optional<std::tuple<K, V, JK>> scan_next(bool to_emplace = true)
    {
       std::optional<std::pair<K, V>> kv = merged_scanner.next();
       if (!kv) {
-         return false;
+         return std::nullopt;
       }
       auto& k = kv->first;
       auto& v = kv->second;
       JK jk;
       std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
-      emplace(k, v, jk);
-      return true;
+      if (to_emplace)
+         emplace(k, v, jk);
+      return std::make_tuple(k, v, jk);
    }
 
    std::tuple<int, int, int> distance(const JK& to_jk)
@@ -84,8 +85,12 @@ struct PremergedJoin {
       typename R::Key k{seek_jk};
       merged_scanner.template seek<R>(k);
       seek_cnt++;
-      scan_next();
-      int cmp = join_state.jk_to_join.match(seek_jk);  // cached_jk is just cached in scan_next()
+      auto t = scan_next();
+      if (!t.has_value()) {
+         return false;  // exhausted scanner
+      }
+      auto [scanned_k, scanned_v, scanned_jk] = t.value();
+      int cmp = scanned_jk.match(seek_jk);
       assert(cmp >= 0);
       return cmp == 0;  // true if the cached record matches the seek_jk
    }
@@ -95,14 +100,11 @@ struct PremergedJoin {
       // scan until we find the first record with the right jk
       scan_filter_cnt++;
       while (true) {
-         std::optional<std::pair<K, V>> kv = merged_scanner.next();
-         if (!kv) {
-            return false;  // no more records to scan
+         auto t = scan_next(false);  // decide later whether to emplace
+         if (!t.has_value()) {
+            return false;  // exhausted scanner
          }
-         auto& k = kv->first;
-         auto& v = kv->second;
-         JK jk;
-         std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
+         auto [k, v, jk] = t.value();
          int cmp = jk.match(seek_jk);
          if (cmp < 0) {
             continue;  // skip this record, it is before the seek_jk
@@ -136,8 +138,12 @@ struct PremergedJoin {
       // 2.2 right the next record
       if (base == 0 && dist == 1) {
          right_next_cnt++;
-         scan_next();
-         int cmp = join_state.jk_to_join.match(seek_jk);  // cached_jk is just cached in scan_next()
+         auto t = scan_next();
+         if (!t.has_value()) {
+            return false;  // exhausted scanner
+         }
+         auto [scanned_k, scanned_v, scanned_jk] = t.value();
+         int cmp = scanned_jk.match(seek_jk);
          assert(cmp >= 0);
          return cmp == 0;  // true if the cached record matches the seek_jk
       }
@@ -157,7 +163,7 @@ struct PremergedJoin {
          }
       }
       // 2.4 if the last record in the page is smaller than the seek_jk, we need to seek
-      return seek_next<R>(seek_jk);  // then scan_next();
+      return seek_next<R>(seek_jk);
    }
 
    template <size_t... Is>
@@ -173,9 +179,9 @@ struct PremergedJoin {
           seek_jk != JK::max()) {                // seek required
          bool all_records_exists_for_seek_jk = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
          assert(join_state.jk_to_join != JK::max());
-         if (all_records_exists_for_seek_jk) {  // go to scan_next() in the next iteration, yielding a record == seek_jk
+         if (all_records_exists_for_seek_jk) {  // go to scan_next() in the while loop, yielding a record == seek_jk
             assert(!join_state.has_next());     // previous records would only yield a record < seek_jk
-         }  // else go to scan_next() in the next iteration, yielding a record > seek_jk
+         }  // else go to scan_next() in the while loop, yielding a record > seek_jk
       } else if (join_state.jk_to_join != JK::max() && seek_jk != JK::max()) {
          std::cerr << "PremergedJoin::next() call with meaningful seek_jk should only happen when join_state.jk_to_join == JK::max(), i.e., "
                       "immediately after PremergedJoin construction."
@@ -183,8 +189,8 @@ struct PremergedJoin {
       }
 
       while (!join_state.has_next()) {
-         bool not_exhausted = scan_next();
-         if (!not_exhausted) {
+         auto t = scan_next();
+         if (!t.has_value()) {
             return std::nullopt;  // only return std::nullopt if the joiner reaches the end
          }
       }
