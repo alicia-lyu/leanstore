@@ -64,14 +64,14 @@ struct BaseJoiner {
       }
    }
 
-   bool exhausted(const sort_key_t& sk)
+   bool went_past(const sort_key_t& sk)
    {
-      if (joiner_ns->exhausted(sk) && joiner_nsc->exhausted(sk) && joiner_nscci->exhausted(sk)) {
-         final_joiner->exhausted(sk);              // good timing to trigger eager joining
-         return !final_joiner->has_cached_next();  // final join might not have cached_jk > sk, but any future cached_jk, coming from upstream
+      if (joiner_ns->went_past(sk) && joiner_nsc->went_past(sk) && joiner_nscci->went_past(sk)) {
+         final_joiner->eager_join();               // good timing to trigger eager joining
+         return !final_joiner->has_cached_next();  // final join might not have past sk, but any future cached_jk, coming from upstream
                                                    // joiners, will be larger than sk
       }
-      return false;
+      return final_joiner->went_past(sk);  // should be false as upstream joiners have not gone past sk
    }
 };
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -103,7 +103,7 @@ struct MergedJoiner {
    long produced() const { return joiner->produced(); }
    long consumed() const { return merged_scanner->produced; }
 
-   bool exhausted(const sort_key_t& sk) { return joiner->exhausted(sk); }
+   bool went_past(const sort_key_t& sk) { return joiner->went_past(sk); }
 };
 
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -126,7 +126,15 @@ struct Merged2Joiner {
       // seek handled by PremergedJoin
       joiner_ns.emplace(*merged_scanner_ns);
       joiner_ccc.emplace(*merged_scanner_ccc);
-      joiner_view.emplace([this]() { return joiner_ns->next(this->seek_key); }, [this]() { return joiner_ccc->next(this->seek_key); });
+      joiner_view.emplace(
+          [this]() {
+             auto ret = joiner_ns->next(this->seek_key);
+             return ret;
+          },
+          [this]() {
+             auto ret = joiner_ccc->next(this->seek_key);
+             return ret;
+          });
    }
 
    void run()
@@ -138,23 +146,20 @@ struct Merged2Joiner {
    std::optional<std::pair<view_t::Key, view_t>> next()
    {
       auto ret = joiner_view->next();
-      if (seek_key != seek_max) {
-         seek_key = seek_max;  // reset seek_key after the first result
-      }
       return ret;
    }
 
    sort_key_t current_jk() const { return joiner_view->current_jk(); }
    long produced() const { return joiner_view->produced(); }
 
-   bool exhausted(const sort_key_t& sk)
+   bool went_past(const sort_key_t& sk)
    {
-      if (joiner_ns->exhausted(sk) && joiner_ccc->exhausted(sk)) {
-         joiner_view->exhausted(sk);              // good timing to trigger eager joining
+      if (joiner_ns->went_past(sk) && joiner_ccc->went_past(sk)) {
+         joiner_view->eager_join();               // good timing to trigger eager joining
          return !joiner_view->has_cached_next();  // final join might not have cached_jk > sk, but any future cached_jk, coming from upstream
                                                   // joiners, will be larger than sk
       }
-      return false;
+      return joiner_view->went_past(sk);  // should be false as upstream joiners have not gone past sk
    }
 };
 // -------------------------------------------------------------
@@ -303,7 +308,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
    }
    update_sk(sk, kv->first.jk);
 
-   while (!merged_joiner.exhausted(sk)) {
+   while (!merged_joiner.went_past(sk)) {
       auto ret = merged_joiner.next();
       if (ret == std::nullopt)
          break;
@@ -331,7 +336,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
    }
    update_sk(sk, kv->first.jk);
 
-   while (!base_joiner.exhausted(sk)) {
+   while (!base_joiner.went_past(sk)) {
       auto ret = base_joiner.next();
       if (ret == std::nullopt)
          break;
@@ -359,7 +364,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
    }
    update_sk(sk, kv->first.jk);
 
-   while (!merged2_joiner.exhausted(sk)) {
+   while (!merged2_joiner.went_past(sk)) {
       auto ret = merged2_joiner.next();
       if (ret == std::nullopt)
          break;

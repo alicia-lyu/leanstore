@@ -59,11 +59,9 @@ struct MergeJoin {
       return getHeapConsumesToBeJoined(std::index_sequence_for<Rs...>{});
    }
 
-   bool exhausted(const JK& match_jk)
-   {
-      join_state.join_current();  // exhaust calls signal eager joining
-      return join_state.exhausted(match_jk);
-   }
+   void eager_join() { join_state.join_current(); }
+
+   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
 
    bool has_cached_next() const { return join_state.has_next(); }
 
@@ -149,11 +147,9 @@ struct PremergedJoin {
       return true;
    }
 
-   bool exhausted(const JK& match_jk)
-   {
-      join_state.join_current();  // exhaust calls signal eager joining
-      return join_state.exhausted(match_jk);
-   }
+   void eager_join() { join_state.join_current(); }
+
+   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
 
    bool has_cached_next() const { return join_state.has_next(); }
 
@@ -164,11 +160,15 @@ struct PremergedJoin {
    }
 
    template <typename R>
-   void seek(const JK& jk)
+   bool seek_and_scan_next(const JK& seek_jk)
    {
-      typename R::Key k{jk};
+      typename R::Key k{seek_jk};
       merged_scanner.template seek<R>(k);
       seek_cnt++;
+      scan_next();
+      int cmp = join_state.cached_jk.match(seek_jk);  // cached_jk is just cached in scan_next()
+      assert(cmp >= 0);
+      return cmp == 0;  // true if the cached record matches the seek_jk
    }
 
    void emplace(const K& k, const V& v, const JK& jk)
@@ -179,49 +179,6 @@ struct PremergedJoin {
       // add the new record to the cache
       join_state.emplace(k, v);
       emplace_cnt++;
-   }
-
-   template <typename R, size_t I>
-   bool get_next(const JK& seek_jk)
-   {
-      if (join_state.cached_jk == JK::max()) {  // seek first record at all times
-         seek<R>(seek_jk);                      // then scan_next();
-      } else {
-         JK jk_r = SKBuilder<JK>::template get<R>(seek_jk);
-         auto [pos, base, dist] = distance(jk_r);
-         if (dist < 0) {                       // scanned and passed
-            return false;                      // no required record (type R)
-         } else if (dist == 0) {               // scanned and cached, or no selection at this field
-                                               // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
-            return true;                       // no scan or seek needed
-         } else if (base == 0 && dist == 1) {  // right the next record
-            // scan_next();
-            right_next_cnt++;
-         } else {
-            auto last_kv_in_page = merged_scanner.last_in_page();
-            if (last_kv_in_page.has_value()) {
-               auto [k, v] = last_kv_in_page.value();
-               JK last_jk = SKBuilder<JK>::create(k, v);
-               if (last_jk > jk_r) {  // required jk in page
-                  return scan_filter_next(seek_jk);
-               } else if (last_jk == jk_r) {  // The right record is the very last record in the page
-                  scan_filter_cnt++;
-                  emplace(k, v, last_jk);
-                  merged_scanner.go_to_last_in_page();
-                  return true;  // no scan or seek needed
-               }
-            }
-            seek<R>(seek_jk);  // then scan_next();
-         }
-      }
-      scan_next();
-      auto cmp = join_state.cached_jk.match(seek_jk);  // cached_jk is just cached in scan_next()
-      assert(cmp >= 0);
-      if (cmp > 0) {
-         return false;  // all records are after the seek_jk
-      } else {
-         return true;
-      }
    }
 
    bool scan_filter_next(const JK& seek_jk)
@@ -250,27 +207,75 @@ struct PremergedJoin {
       }
    }
 
+   template <typename R, size_t I>
+   bool get_next(const JK& seek_jk, bool& info_exhausted)
+   {
+      if (info_exhausted) {  // no more seeks needed
+         return true;
+      }
+      JK jk_r = SKBuilder<JK>::template get<R>(seek_jk);
+      info_exhausted =
+          info_exhausted || jk_r == seek_jk;  // seek_jk has more info only when there is additional non-zero fields, i.e., seek_jk > jk_r
+      // if info_exhausted, stop getting the next R
+      // 1. seek first record at all times
+      if (join_state.cached_jk == JK::max()) {
+         return seek_and_scan_next<R>(seek_jk);
+      }
+      // 2. have sought before...
+      auto [_, base, dist] = distance(jk_r);
+      assert(dist >= 0);  // unexhausted info
+      // 2.1 scanned and cached, or no selection at this field
+      if (dist == 0) {  // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
+         return true;   // no scan or seek needed
+      }
+      // 2.2 right the next record
+      if (base == 0 && dist == 1) {
+         right_next_cnt++;
+         scan_next();
+         int cmp = join_state.cached_jk.match(seek_jk);  // cached_jk is just cached in scan_next()
+         assert(cmp >= 0);
+         return cmp == 0;  // true if the cached record matches the seek_jk
+      }
+      // decide between scan_filter_next() and seek
+      auto last_kv_in_page = merged_scanner.last_in_page();
+      // 2.3 if the last record in the page is larger than the seek_jk, we scan the page
+      if (last_kv_in_page.has_value()) {
+         auto [k, v] = last_kv_in_page.value();
+         JK last_jk = SKBuilder<JK>::create(k, v);
+         if (last_jk > jk_r) {  // required jk in page
+            return scan_filter_next(seek_jk);
+         } else if (last_jk == jk_r) {  // The right record is the very last record in the page
+            scan_filter_cnt++;
+            emplace(k, v, last_jk);
+            merged_scanner.go_to_last_in_page();  // last_in_page returns to the previous cursor position
+            return true;                          // no scan or seek needed
+         }
+      }
+      // 2.4 if the last record in the page is smaller than the seek_jk, we need to seek
+      return seek_and_scan_next<R>(seek_jk);  // then scan_next();
+   }
+
    template <size_t... Is>
    bool get_next_all(const JK& seek_jk, std::index_sequence<Is...>)
    {
-      return ((get_next<Rs, Is>(seek_jk) && ...));
+      bool info_exhausted = false;
+      return (get_next<Rs, Is>(seek_jk, info_exhausted) && ...);
    }
 
    std::optional<std::pair<typename JR::Key, JR>> next(const JK& seek_jk = JK::max())
    {
-      bool start = true;
       while (!join_state.has_next()) {
-         if (seek_jk != JK::max() && start) {  // only seek once
+         if (join_state.cached_jk == JK::max() &&  // no record scanned
+             seek_jk != JK::max()) {
             bool all_records_exists_for_seek_jk = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
-            start = false;
+            assert(join_state.cached_jk != JK::max());
             if (all_records_exists_for_seek_jk) {  // go to scan_next() in the next iteration, yielding a record == seek_jk
                assert(!join_state.has_next());     // previous records would only yield a record < seek_jk
             }  // else go to scan_next() in the next iteration, yielding a record > seek_jk
          } else {
             bool not_exhausted = scan_next();
             if (!not_exhausted) {
-               return std::nullopt;  // no record matched the seek_jk
-               // only return std::nullopt if the joiner reaches the end
+               return std::nullopt;  // only return std::nullopt if the joiner reaches the end
             }
          }
       }
@@ -418,11 +423,9 @@ struct BinaryMergeJoin {
       }
    }
 
-   bool exhausted(const JK& match_jk)
-   {
-      join_state.join_current();  // exhaust calls signal eager joining
-      return join_state.exhausted(match_jk);
-   }
+   void eager_join() { join_state.join_current(); }
+
+   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
 
    bool has_cached_next() const { return join_state.has_next(); }
 
