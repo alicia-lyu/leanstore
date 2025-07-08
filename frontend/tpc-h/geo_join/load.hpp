@@ -62,7 +62,7 @@ struct Params {
    int city_max;      // in a county
    int customer_max;  // in a city
 
-   const int nation_multiplier = std::min(FLAGS_tpch_scale_factor, 5);
+   const int nation_multiplier = std::min(FLAGS_tpch_scale_factor, 1);
    const int county_multiplier = std::min(FLAGS_tpch_scale_factor / nation_multiplier, 10);
    const double city_multiplier = (double)FLAGS_tpch_scale_factor / (county_multiplier * nation_multiplier);
 

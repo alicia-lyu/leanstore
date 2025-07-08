@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <fstream>
 #include <variant>
 #include "merge_helpers.hpp"
 #include "view_templates.hpp"
@@ -58,6 +59,14 @@ struct MergeJoin {
       return getHeapConsumesToBeJoined(std::index_sequence_for<Rs...>{});
    }
 
+   bool exhausted(const JK& match_jk)
+   {
+      join_state.join_current();  // exhaust calls signal eager joining
+      return join_state.exhausted(match_jk);
+   }
+
+   bool has_cached_next() const { return join_state.has_next(); }
+
    void run()
    {
       join_state.logging = true;
@@ -115,12 +124,15 @@ struct PremergedJoin {
    {
       int cached_not_joined = 0;
       std::apply([&](auto&... records) { ((cached_not_joined += records.size()), ...); }, join_state.cached_records);
-      if (scan_filter_cnt > 0 || right_next_cnt > 0)
-         std::cout << "~PremergedJoin with " << sizeof...(Rs) << " record types: seek count = " << seek_cnt
-                   << ", scan filter count = " << scan_filter_cnt << ", right next count = " << right_next_cnt << "; emplace count = " << emplace_cnt
-                   << ", cached but not joined = " << cached_not_joined << "; joined = " << join_state.joined
-                   << ", produced: " << join_state.joined - join_state.cached_joined_records.size() << "; current cached jk: " << join_state.cached_jk
-                   << std::endl;
+      std::filesystem::path premerged_join_log_path = std::filesystem::path(FLAGS_csv_path) / "premerged_join.csv";
+      bool print_header = !std::filesystem::exists(premerged_join_log_path);
+      std::ofstream premerged_join_log(premerged_join_log_path, std::ios::app);
+      if (print_header) {
+         premerged_join_log << "record_type_cnt,seek_cnt,scan_filter_cnt,right_next_cnt,emplace_cnt,cached_not_joined,joined,joined_not_produced\n";
+      }
+      premerged_join_log << sizeof...(Rs) << "," << seek_cnt << "," << scan_filter_cnt << "," << right_next_cnt << "," << emplace_cnt << ","
+                         << cached_not_joined << "," << join_state.joined << "," << join_state.cached_joined_records.size() << std::endl;
+      premerged_join_log.close();
    }
 
    bool scan_next()
@@ -136,6 +148,14 @@ struct PremergedJoin {
       emplace(k, v, jk);
       return true;
    }
+
+   bool exhausted(const JK& match_jk)
+   {
+      join_state.join_current();  // exhaust calls signal eager joining
+      return join_state.exhausted(match_jk);
+   }
+
+   bool has_cached_next() const { return join_state.has_next(); }
 
    std::tuple<int, int, int> distance(const JK& to_jk)
    {
@@ -185,6 +205,7 @@ struct PremergedJoin {
                if (last_jk > jk_r) {  // required jk in page
                   return scan_filter_next(seek_jk);
                } else if (last_jk == jk_r) {  // The right record is the very last record in the page
+                  scan_filter_cnt++;
                   emplace(k, v, last_jk);
                   merged_scanner.go_to_last_in_page();
                   return true;  // no scan or seek needed
@@ -396,6 +417,14 @@ struct BinaryMergeJoin {
          join_state.refresh(left_jk > right_jk ? left_jk : right_jk);
       }
    }
+
+   bool exhausted(const JK& match_jk)
+   {
+      join_state.join_current();  // exhaust calls signal eager joining
+      return join_state.exhausted(match_jk);
+   }
+
+   bool has_cached_next() const { return join_state.has_next(); }
 
    void next_jk()
    {

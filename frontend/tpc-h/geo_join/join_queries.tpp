@@ -58,10 +58,20 @@ struct BaseJoiner {
       auto c_ret = county_scanner->seek(county_t::Key{sk});
       auto ci_ret = city_scanner->seek(city_t::Key{sk});
       auto cu_ret = customer2_scanner->seek(customer2_t::Key{sk});
-      // if (!n_ret || !s_ret || !c_ret || !ci_ret || !cu_ret)
-      //    std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << "nation: " << n_ret << ", states: " << s_ret << ", county: " << c_ret
-      //              << ", city: " << ci_ret << ", customer2: " << cu_ret << std::endl;
-      // }
+      if ((!n_ret || !s_ret || !c_ret || !ci_ret || !cu_ret) && sk.nationkey != 25) {  // HARDCODED max nationkey
+         std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << "nation: " << n_ret << ", states: " << s_ret << ", county: " << c_ret
+                   << ", city: " << ci_ret << ", customer2: " << cu_ret << std::endl;
+      }
+   }
+
+   bool exhausted(const sort_key_t& sk)
+   {
+      if (joiner_ns->exhausted(sk) && joiner_nsc->exhausted(sk) && joiner_nscci->exhausted(sk)) {
+         final_joiner->exhausted(sk);              // good timing to trigger eager joining
+         return !final_joiner->has_cached_next();  // final join might not have cached_jk > sk, but any future cached_jk, coming from upstream
+                                                   // joiners, will be larger than sk
+      }
+      return false;
    }
 };
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -92,6 +102,8 @@ struct MergedJoiner {
    sort_key_t current_jk() const { return joiner->current_jk(); }
    long produced() const { return joiner->produced(); }
    long consumed() const { return merged_scanner->produced; }
+
+   bool exhausted(const sort_key_t& sk) { return joiner->exhausted(sk); }
 };
 
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -134,6 +146,16 @@ struct Merged2Joiner {
 
    sort_key_t current_jk() const { return joiner_view->current_jk(); }
    long produced() const { return joiner_view->produced(); }
+
+   bool exhausted(const sort_key_t& sk)
+   {
+      if (joiner_ns->exhausted(sk) && joiner_ccc->exhausted(sk)) {
+         joiner_view->exhausted(sk);              // good timing to trigger eager joining
+         return !joiner_view->has_cached_next();  // final join might not have cached_jk > sk, but any future cached_jk, coming from upstream
+                                                  // joiners, will be larger than sk
+      }
+      return false;
+   }
 };
 // -------------------------------------------------------------
 // ------------------------ QUERIES -----------------------------
@@ -281,7 +303,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
    }
    update_sk(sk, kv->first.jk);
 
-   while ((merged_joiner.current_jk().match(sk) == 0) || merged_joiner.current_jk() == sort_key_t::max()) {
+   while (!merged_joiner.exhausted(sk)) {
       auto ret = merged_joiner.next();
       if (ret == std::nullopt)
          break;
@@ -309,7 +331,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
    }
    update_sk(sk, kv->first.jk);
 
-   while ((base_joiner.current_jk().match(sk) == 0) || base_joiner.current_jk() == sort_key_t::max()) {
+   while (!base_joiner.exhausted(sk)) {
       auto ret = base_joiner.next();
       if (ret == std::nullopt)
          break;
@@ -337,7 +359,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
    }
    update_sk(sk, kv->first.jk);
 
-   while ((merged2_joiner.current_jk().match(sk) == 0) || merged2_joiner.current_jk() == sort_key_t::max()) {
+   while (!merged2_joiner.exhausted(sk)) {
       auto ret = merged2_joiner.next();
       if (ret == std::nullopt)
          break;
