@@ -1,9 +1,9 @@
 #pragma once
 
 #include <variant>
-#include "../tables.hpp"
-#include "../variant_tuple_utils.hpp"
-#include "../view_templates.hpp"
+#include "../tpc-h/tables.hpp"
+#include "../shared/variant_tuple_utils.hpp"
+#include "../shared/view_templates.hpp"
 
 // id range: 10s + 20s (only one such namespace are included in each executable)
 namespace geo_join

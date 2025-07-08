@@ -8,8 +8,8 @@
 #include <vector>
 #include "Exceptions.hpp"
 #include "Units.hpp"
-#include "logger.hpp"
-#include "view_templates.hpp"
+#include "../../tpc-h/logger.hpp"
+#include "../view_templates.hpp"
 
 template <typename JK, typename JR, typename... Rs>
 struct JoinState {

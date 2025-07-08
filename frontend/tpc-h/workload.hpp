@@ -9,7 +9,7 @@
 
 #include "tables.hpp"
 
-#include "logger.hpp"
+#include "../tpc-h/logger.hpp"
 
 DECLARE_int32(tpch_scale_factor);
 

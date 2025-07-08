@@ -1,4 +1,6 @@
 #pragma once
+#include <variant> // IWYU pragma: keep
+#include <tuple> // IWYU pragma: keep
 
 template <class... Ts>
 struct overloaded : Ts... {

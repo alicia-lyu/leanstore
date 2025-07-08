@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Exceptions.hpp"
-#include "RocksDB.hpp"
-#include "variant_utils.hpp"
+#include "../RocksDB.hpp"
+#include "../variant_utils.hpp"
 
 template <typename JK, typename JR, typename... Records>
 struct RocksDBMergedScanner {

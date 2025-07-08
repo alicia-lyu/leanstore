@@ -1,7 +1,7 @@
 #pragma once
 #include <rocksdb/db.h>
 #include "Exceptions.hpp"
-#include "RocksDB.hpp"
+#include "../RocksDB.hpp"
 #include "RocksDBMergedScanner.hpp"
 #include "Units.hpp"
 #include "leanstore/KVInterface.hpp"

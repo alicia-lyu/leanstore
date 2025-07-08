@@ -3,7 +3,7 @@
 #include <rocksdb/slice.h>
 #include <functional>
 #include "Adapter.hpp"
-#include "RocksDB.hpp"
+#include "../RocksDB.hpp"
 #include "RocksDBScanner.hpp"
 
 // -------------------------------------------------------------------------------------
