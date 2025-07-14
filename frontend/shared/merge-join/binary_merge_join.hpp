@@ -51,8 +51,6 @@ struct BinaryMergeJoin {
       }
    }
 
-   void eager_join() { join_state.eager_join(); }
-
    bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
 
    bool has_cached_next() const { return join_state.has_next(); }

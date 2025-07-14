@@ -65,15 +65,7 @@ struct BaseJoiner {
       }
    }
 
-   bool went_past(const sort_key_t& sk)
-   {
-      if (joiner_ns->went_past(sk) && joiner_nsc->went_past(sk) && joiner_nscci->went_past(sk)) {
-         final_joiner->eager_join();               // good timing to trigger eager joining
-         return !final_joiner->has_cached_next();  // final join might not have past sk, but any future cached_jk, coming from upstream
-                                                   // joiners, will be larger than sk
-      }
-      return final_joiner->went_past(sk);  // should be false as upstream joiners have not gone past sk
-   }
+   bool went_past(const sort_key_t& sk) { return final_joiner->went_past(sk); }
 };
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
 struct MergedJoiner {
@@ -104,7 +96,7 @@ struct MergedJoiner {
    long produced() const { return joiner->produced(); }
    long consumed() const { return merged_scanner->produced; }
 
-   bool went_past(const sort_key_t& sk) { return joiner->went_past(sk); }
+   bool went_past(const sort_key_t& sk) const { return joiner->went_past(sk); }
 };
 
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -153,15 +145,7 @@ struct Merged2Joiner {
    sort_key_t current_jk() const { return joiner_view->jk_to_join(); }
    long produced() const { return joiner_view->produced(); }
 
-   bool went_past(const sort_key_t& sk)
-   {
-      if (joiner_ns->went_past(sk) && joiner_ccc->went_past(sk)) {
-         joiner_view->eager_join();               // good timing to trigger eager joining
-         return !joiner_view->has_cached_next();  // final join might not have cached_jk > sk, but any future cached_jk, coming from upstream
-                                                  // joiners, will be larger than sk
-      }
-      return joiner_view->went_past(sk);  // should be false as upstream joiners have not gone past sk
-   }
+   bool went_past(const sort_key_t& sk) { return joiner_view->went_past(sk); }
 };
 // -------------------------------------------------------------
 // ------------------------ QUERIES -----------------------------
