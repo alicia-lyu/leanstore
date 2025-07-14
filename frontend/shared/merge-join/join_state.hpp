@@ -6,8 +6,8 @@
 #include <queue>
 #include <variant>
 #include <vector>
-#include "../view_templates.hpp"
 #include "../variant_tuple_utils.hpp"
+#include "../view_templates.hpp"
 #include "leanstore/Config.hpp"
 
 template <typename JK, typename JR, typename... Rs>
@@ -83,9 +83,14 @@ class JoinState
 
    void emplace(const std::variant<typename Rs::Key...>& key, const std::variant<Rs...>& rec) { emplace(key, rec, std::index_sequence_for<Rs...>{}); }
 
-   void eager_join() { join_current(); }
-
-   long get_produced() const { return joined - joined_records.size(); }
+   long get_produced() const
+   {
+      size_t joined_not_produced = joined_records.size();
+      if (joined_not_produced > 0) {
+         std::cerr << "WARNING: JoinState: get_produced() called while there are still " << joined_not_produced << " joined records in the queue." << std::endl;
+      }
+      return joined - joined_not_produced;
+   }
 
    size_t get_remaining_records_to_join() const
    {

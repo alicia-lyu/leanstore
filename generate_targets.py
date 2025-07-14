@@ -126,8 +126,8 @@ class Experiment:
         self.console_print_subsection(f"Building {self.exec_path}")
         cmake_cmd = get_build_vars(self.build_dir)
         print(
-            f'\tcd {self.build_dir}/frontend && {cmake_cmd}',
-            f'&& make {self.exec_fname} -j{NUMJONS_ENV}', sep=" "
+            f'\tcd {self.build_dir} && {cmake_cmd} .',
+            f'cd frontend && make {self.exec_fname} -j{NUMJONS_ENV}', sep="; "
         )
         print()
         
@@ -215,7 +215,7 @@ class Experiment:
                 kv_to_str(self.class_flags),
                 kv_to_str(rem_flags),
                 f"--storage_structure={structure}",
-                f'2>{self.runtime_dir}/stderr.txt\"',
+                f'2>{self.runtime_dir}/structure{structure}_stderr.txt\"',
                 f'{self.runtime_dir}/structure{structure}.log',
                 sep=" "
             )

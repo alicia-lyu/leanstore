@@ -1,10 +1,9 @@
 # Makefile
 # ——————————————————————————————————————————————————————————————————
 # Compiler / Build flags
-CMAKE_DEBUG         := cmake -DCMAKE_BUILD_TYPE=Debug ..
-CMAKE_RELWITHDEBINFO:= cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
-CMAKE_OPTIONS       := -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS} \
-                       -DCMAKE_C_COMPILER=/usr/bin/clang \
+CMAKE_DEBUG         := cmake -DCMAKE_BUILD_TYPE=Debug
+CMAKE_RELWITHDEBINFO:= cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo
+CMAKE_OPTIONS       := -DCMAKE_C_COMPILER=/usr/bin/clang \
                        -DCMAKE_CXX_COMPILER=/usr/bin/clang++
 NUMJOBS             ?= $(shell nproc)
 
@@ -36,8 +35,10 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	-$(MAKE) geo_leanstore dram=0.6
+	-$(MAKE) geo_btree dram=0.6
+	-$(MAKE) geo_btree dram=0.5
 	-$(MAKE) geo_lsm dram=0.4
+	-$(MAKE) geo_lsm dram=0.3
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
