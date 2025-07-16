@@ -176,13 +176,14 @@ struct PremergedJoin {
       if (join_state.jk_to_join == JK::max() &&  // no record scanned
           seek_jk != JK::max()) {                // seek required
          bool all_records_exists_for_seek_jk = get_next_all(seek_jk, std::index_sequence_for<Rs...>{});
-         if (all_records_exists_for_seek_jk) {        // go to scan_next() in the while loop, yielding a record == seek_jk
-            assert(!join_state.has_next());           // previous records would only yield a record < seek_jk
+         if (all_records_exists_for_seek_jk) {  // go to scan_next() in the while loop, yielding a record == seek_jk
+            assert(!join_state.has_next());     // previous records would only yield a record < seek_jk
          }  // else go to scan_next() in the while loop, yielding a record > seek_jk
       } else if (join_state.jk_to_join != JK::max() && seek_jk != JK::max()) {
-         std::cerr << "PremergedJoin::next() call with meaningful seek_jk should only happen when join_state.jk_to_join == JK::max(), i.e., "
-                      "immediately after PremergedJoin construction."
-                   << std::endl;
+         // std::cerr << "PremergedJoin::next() call with meaningful seek_jk (" << seek_jk << ") here should only happen when join_state.jk_to_join ==
+         // JK::max(), i.e., "
+         //  "immediately after PremergedJoin construction."
+         //  << std::endl;
       }
 
       while (!join_state.has_next()) {

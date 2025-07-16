@@ -21,7 +21,7 @@ add_library(RocksDBLogger STATIC tpc-h/rocksdb_logger.cpp)
 target_link_libraries(RocksDBLogger PUBLIC Logger RocksDB)
 target_include_directories(RocksDBLogger PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 
-add_executable(geo_btree geo/executable.cpp)
+add_executable(geo_btree geo/executable_leanstore.cpp)
 target_link_libraries(geo_btree PUBLIC LeanStoreLogger RocksDB)
 target_include_directories(geo_btree PRIVATE ${SHARED_INCLUDE_DIRECTORY})
 
