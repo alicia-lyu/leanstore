@@ -35,10 +35,12 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	-$(MAKE) geo_btree dram=0.6
 	-$(MAKE) geo_btree dram=0.5
 	-$(MAKE) geo_lsm dram=0.4
-	-$(MAKE) geo_lsm dram=0.3
+
+temp_3:
+	-$(MAKE) geo_btree_3 dram=0.5
+	-$(MAKE) geo_lsm_3 dram=0.4
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1

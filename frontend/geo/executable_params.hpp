@@ -64,7 +64,8 @@ struct ExeParams {
     };
    const std::vector<std::function<void()>> elapsed_cbs_2merged = {
        std::bind(&W::query_by_2merged, &workload),
-       std::bind(&W::mixed_query_by_2merged, &workload)};
+       std::bind(&W::mixed_query_by_2merged, &workload)
+    };
    const std::vector<std::function<void()>> tput_cbs_2merged = {
        std::bind(&W::ns_by_2merged, &workload),
        std::bind(&W::nsc_by_2merged, &workload),

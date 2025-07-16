@@ -119,28 +119,14 @@ struct Merged2Joiner {
       // seek handled by PremergedJoin
       joiner_ns.emplace(*merged_scanner_ns);
       joiner_ccc.emplace(*merged_scanner_ccc);
-      joiner_view.emplace(
-          [this]() {
-             auto ret = joiner_ns->next(this->seek_key);
-             return ret;
-          },
-          [this]() {
-             auto ret = joiner_ccc->next(this->seek_key);
-             return ret;
-          });
+      joiner_view.emplace([this]() { return joiner_ns->next(this->seek_key); }, [this]() { return joiner_ccc->next(this->seek_key); });
+      if (joiner_view.has_value())
+         seek_key = seek_max;  // Construction of joiner_view will receive the first records from the two merged joiners
    }
 
-   void run()
-   {
-      next();  // update seek_key
-      joiner_view->run();
-   }
+   void run() { joiner_view->run(); }
 
-   std::optional<std::pair<view_t::Key, view_t>> next()
-   {
-      auto ret = joiner_view->next();
-      return ret;
-   }
+   std::optional<std::pair<view_t::Key, view_t>> next() { return joiner_view->next(); }
 
    sort_key_t current_jk() const { return joiner_view->jk_to_join(); }
    long produced() const { return joiner_view->produced(); }

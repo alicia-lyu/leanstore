@@ -1,4 +1,5 @@
 #include "RocksDB.hpp"
+#include <rocksdb/advanced_options.h>
 #include <rocksdb/cache.h>
 #include <rocksdb/rocksdb_namespace.h>
 #include <rocksdb/table.h>
@@ -10,14 +11,14 @@ using ROCKSDB_NAMESPACE::CacheUsageOptions;
 
 void RocksDB::set_options()
 {
-   db_options.use_direct_reads = true; // otherwise, OS page cache is used, and we cannot set its size
+   db_options.use_direct_reads = true;  // otherwise, OS page cache is used, and we cannot set its size
    db_options.use_direct_io_for_flush_and_compaction = true;
    db_options.create_if_missing = true;
    db_options.create_missing_column_families = true;
 
    db_options.compression = rocksdb::CompressionType::kNoCompression;
    db_options.OptimizeLevelStyleCompaction();
-   db_options.compaction_style = rocksdb::kCompactionStyleLevel;
+   db_options.compaction_style = rocksdb::kCompactionStyleUniversal;
 
    table_opts.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false));  // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
 
@@ -34,7 +35,7 @@ void RocksDB::set_options()
                                    {CacheEntryRole::kFilterConstruction, cache_entry_opts},
                                    {CacheEntryRole::kBlockBasedTableReader, cache_entry_opts},
                                    {CacheEntryRole::kFileMetadata, cache_entry_opts}};
-   
+
    // memtables
    db_options.max_write_buffer_number = 2;
    db_options.write_buffer_size = memtable_budget / 2;
@@ -119,18 +120,12 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
    }
 }
 
-double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string&)
+double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string& name)
 {
    std::vector<u8> min_key(1, 0);  // min key
    auto start_slice = RSlice(min_key.data(), min_key.size());
    std::vector<u8> max_key(max_fold_len, 255);  // max key
    auto limit_slice = RSlice(max_key.data(), max_key.size());
-
-   // std::cout << "RocksDB::get_size: Compacting " << name << "...";
-   // auto compact_options = rocksdb::CompactRangeOptions();
-   // compact_options.change_level = true;
-   // auto ret = tx_db->CompactRange(compact_options, cf_handle, &start_slice, &limit_slice);
-   // assert(ret.ok());
 
    std::array<u64, 1> sizes;
    std::array<Range, 1> ranges;
@@ -141,5 +136,32 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, 
    size_options.include_files = true;
    size_options.files_size_error_margin = 0.1;
    tx_db->GetApproximateSizes(size_options, cf_handle, ranges.data(), ranges.size(), sizes.data());
+   std::string SSTables;
+   tx_db->GetProperty(cf_handle, "rocksdb.sstables", &SSTables);
+   std::cout << name << " SSTables: " << SSTables << std::endl;
+   rocksdb::ColumnFamilyMetaData cf_meta;
+   tx_db->GetColumnFamilyMetaData(cf_handle, &cf_meta);
+
+   std::cout << "\n--- Column Family: " << cf_meta.name << " Metadata ---" << std::endl;
+   std::cout << "  Size: " << static_cast<double>(cf_meta.size) / 1024.0 / 1024.0 << " MB" << std::endl;
+   std::cout << "  File Count: " << cf_meta.file_count << std::endl;
+   std::cout << "  Levels: " << cf_meta.levels.size() << std::endl;
+
+   for (const auto& level_meta : cf_meta.levels) {
+      std::cout << "  --- Level " << level_meta.level << " ---" << std::endl;
+      std::cout << "    Level Size: " << static_cast<double>(level_meta.size) / 1024.0 / 1024.0 << " MB" << std::endl;
+      std::cout << "    Files at this Level: " << level_meta.files.size() << std::endl;
+
+      for (const auto& sst_file_meta : level_meta.files) {
+         std::cout << "      File Number: " << sst_file_meta.file_number << std::endl;
+         std::cout << "      Size: " << static_cast<double>(sst_file_meta.size) / 1024.0 / 1024.0 << " MB" << std::endl;
+         std::cout << "      Smallest Key: '" << sst_file_meta.smallestkey << "'" << std::endl;
+         std::cout << "      Largest Key: '" << sst_file_meta.largestkey << "'" << std::endl;
+         std::cout << "      Number of Entries: " << sst_file_meta.num_entries << std::endl;
+         std::cout << "      Number of Deletions: " << sst_file_meta.num_deletions << std::endl;
+         std::cout << "      Being Compacted: " << (sst_file_meta.being_compacted ? "Yes" : "No") << std::endl;
+         // You can get more fields from sst_file_meta if needed (e.g., smallest_seqno, largest_seqno, etc.)
+      }
+   }
    return (double)sizes[0] / 1024.0 / 1024.0;  // convert to MB
 }
