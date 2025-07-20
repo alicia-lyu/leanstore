@@ -154,6 +154,7 @@ class Logger
       stats.init(tput, tx_count, tx, method, size);
       log_summary();
       log_details();
+      log_size();
    }
    void log(long elapsed, std::string tx, std::string method, double size)
    {
@@ -162,7 +163,9 @@ class Logger
       stats.init(elapsed, tx, method, size);
       log_summary();
       log_details();
+      log_size();
    }
+   void log_size();
    void log_sizes(std::map<std::string, double> sizes);
 
    virtual void prepare() = 0;

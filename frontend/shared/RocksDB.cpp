@@ -1,6 +1,7 @@
 #include "RocksDB.hpp"
 #include <rocksdb/advanced_options.h>
 #include <rocksdb/cache.h>
+#include <rocksdb/options.h>
 #include <rocksdb/rocksdb_namespace.h>
 #include <rocksdb/table.h>
 #include "leanstore/utils/JumpMU.hpp"
@@ -18,7 +19,7 @@ void RocksDB::set_options()
 
    db_options.compression = rocksdb::CompressionType::kNoCompression;
    db_options.OptimizeLevelStyleCompaction();
-   db_options.compaction_style = rocksdb::kCompactionStyleUniversal;
+   db_options.compaction_style = rocksdb::kCompactionStyleLevel;
 
    table_opts.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false));  // As of RocksDB 7.0, the use_block_based_builder parameter is ignored.
 
@@ -120,48 +121,60 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
    }
 }
 
-double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string& name)
+double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int, const std::string& name)
 {
-   std::vector<u8> min_key(1, 0);  // min key
-   auto start_slice = RSlice(min_key.data(), min_key.size());
-   std::vector<u8> max_key(max_fold_len, 255);  // max key
-   auto limit_slice = RSlice(max_key.data(), max_key.size());
+   // compact so that every experiment starts with a clean slate for fair comparison
+   std::cout << "Compacting " << name << "..." << std::flush;
+   rocksdb::CompactRangeOptions cr_options;
+   cr_options.exclusive_manual_compaction = true;
+   cr_options.change_level = true;
+   cr_options.target_level = -1; // force compaction to the bottommost level
+   cr_options.allow_write_stall = true;
+   cr_options.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
+   tx_db->CompactRange(cr_options, cf_handle, nullptr, nullptr);
+   rocksdb::WaitForCompactOptions wfc_options;
+   tx_db->WaitForCompact(wfc_options);
+   std::cout << " done." << std::endl;
 
-   std::array<u64, 1> sizes;
-   std::array<Range, 1> ranges;
-   ranges[0].start = start_slice;
-   ranges[0].limit = limit_slice;
-   rocksdb::SizeApproximationOptions size_options;
-   size_options.include_memtables = true;
-   size_options.include_files = true;
-   size_options.files_size_error_margin = 0.1;
-   tx_db->GetApproximateSizes(size_options, cf_handle, ranges.data(), ranges.size(), sizes.data());
-   std::string SSTables;
-   tx_db->GetProperty(cf_handle, "rocksdb.sstables", &SSTables);
-   std::cout << name << " SSTables: " << SSTables << std::endl;
+   std::string total_sstables_size; // kTotalSstFilesSize
+   tx_db->GetProperty(cf_handle, "rocksdb.total-sst-files-size", &total_sstables_size);
+   std::string live_sstables_size; // kLiveSstFilesSize
+   tx_db->GetProperty(cf_handle, "rocksdb.live-sst-files-size", &live_sstables_size);
+   std::string live_data_size; // kEstimateLiveDataSize
+   tx_db->GetProperty(cf_handle, "rocksdb.estimate-live-data-size", &live_data_size);
+
    rocksdb::ColumnFamilyMetaData cf_meta;
    tx_db->GetColumnFamilyMetaData(cf_handle, &cf_meta);
 
-   std::cout << "\n--- Column Family: " << cf_meta.name << " Metadata ---" << std::endl;
-   std::cout << "  Size: " << static_cast<double>(cf_meta.size) / 1024.0 / 1024.0 << " MB" << std::endl;
-   std::cout << "  File Count: " << cf_meta.file_count << std::endl;
-   std::cout << "  Levels: " << cf_meta.levels.size() << std::endl;
-
+   long total_num_deletions = 0;
    for (const auto& level_meta : cf_meta.levels) {
-      std::cout << "  --- Level " << level_meta.level << " ---" << std::endl;
-      std::cout << "    Level Size: " << static_cast<double>(level_meta.size) / 1024.0 / 1024.0 << " MB" << std::endl;
-      std::cout << "    Files at this Level: " << level_meta.files.size() << std::endl;
-
       for (const auto& sst_file_meta : level_meta.files) {
-         std::cout << "      File Number: " << sst_file_meta.file_number << std::endl;
-         std::cout << "      Size: " << static_cast<double>(sst_file_meta.size) / 1024.0 / 1024.0 << " MB" << std::endl;
-         std::cout << "      Smallest Key: '" << sst_file_meta.smallestkey << "'" << std::endl;
-         std::cout << "      Largest Key: '" << sst_file_meta.largestkey << "'" << std::endl;
-         std::cout << "      Number of Entries: " << sst_file_meta.num_entries << std::endl;
-         std::cout << "      Number of Deletions: " << sst_file_meta.num_deletions << std::endl;
-         std::cout << "      Being Compacted: " << (sst_file_meta.being_compacted ? "Yes" : "No") << std::endl;
-         // You can get more fields from sst_file_meta if needed (e.g., smallest_seqno, largest_seqno, etc.)
+         total_num_deletions += sst_file_meta.num_deletions;
       }
    }
-   return (double)sizes[0] / 1024.0 / 1024.0;  // convert to MB
+
+   long long live_data_size_bytes = std::stoll(live_data_size);
+   long long total_sstables_size_bytes = std::stoll(total_sstables_size);
+   long long live_sstables_size_bytes = std::stoll(live_sstables_size);
+
+   if (live_data_size_bytes != live_sstables_size_bytes || live_sstables_size_bytes != total_sstables_size_bytes) {
+      std::cerr << "Error: Live data size, live SSTables size, and total SSTables size do not match!" << std::endl;
+      std::cerr << "Live Data Size: " << live_data_size_bytes << " bytes" << std::endl;
+      std::cerr << "Live SSTables Size: " << live_sstables_size_bytes << " bytes" << std::endl;
+      std::cerr << "Total SSTables Size: " << total_sstables_size_bytes << " bytes" << std::endl << std::flush;
+   }
+   
+   std::ofstream sstable_csv;
+   sstable_csv.open(std::filesystem::path(FLAGS_csv_path).parent_path() / "sstables.csv", std::ios::app);
+   if (sstable_csv.tellp() == 0) {
+      sstable_csv << "tableid,size (MiB),file count,levels,total deletions" << std::endl;
+   }
+   std::cout << "tableid,size (MiB),file count,levels,total deletions" << std::endl;
+   std::vector<std::ostream*> out = {&std::cout, &sstable_csv};
+   for (std::ostream* o : out) {
+      *o << name << "," << (double) live_data_size_bytes / 1024.0 / 1024.0 << "," << cf_meta.file_count << "," << cf_meta.levels.size() << "," << total_num_deletions << std::endl;
+   }
+   sstable_csv.close();
+
+   return live_data_size_bytes / 1024.0 / 1024.0;
 }
