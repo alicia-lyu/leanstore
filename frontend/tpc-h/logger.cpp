@@ -42,6 +42,12 @@ void SumStats::print()
    print(table);
 }
 
+void Logger::log_size()
+{
+   std::map<std::string, double> sizes = {{stats.method, stats.size}};
+   log_sizes(sizes);
+}
+
 void Logger::log_sizes(std::map<std::string, double> sizes)
 {
    std::ofstream size_csv;

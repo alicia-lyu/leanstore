@@ -76,6 +76,7 @@ def get_loading_files(exec_fname: str) -> List[str]:
 
 executables = []
 runtime_dirs = []
+exp_w_structure = []
 
 class Experiment:
     build_dir: Path
@@ -105,6 +106,7 @@ class Experiment:
         """Generates all Makefile targets for this experiment."""
         big_sep = "=" * 20
         print(f"# {big_sep} Generating targets for {self.exec_fname} in {self.build_dir} {big_sep}")
+        self.generate_runtime_dir()
         self.generate_executable()
         self.generate_image()
         self.generate_recover_file()
@@ -118,6 +120,12 @@ class Experiment:
         
     def console_print_subsection(self, title: str) -> None:
         print(f'\t@echo "{self.sep} {title} {self.sep}"')
+    
+    def generate_runtime_dir(self) -> None:
+        self.makefile_subsection("Generate runtime directory")
+        # rule to create runtime directory
+        print(f"{self.runtime_dir}: ")
+        print(f"\t@mkdir -p {self.runtime_dir}")
     
     def generate_executable(self) -> None:
         self.makefile_subsection("Generate executable")
@@ -163,7 +171,7 @@ class Experiment:
         loading_files = get_loading_files(self.exec_fname)
         loading_files_str = " ".join(loading_files)
         # rule to load database and create recovery file
-        print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} {self.image_path}")
+        print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str}")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
         prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else ""
         rem_flags = self.remaining_flags(
@@ -174,7 +182,8 @@ class Experiment:
                 scale=SCALE_ENV,
                 dram_gib=8
             )
-        print(f"\tmkdir -p {self.runtime_dir}")
+        print("\t${MAKE}", self.image_path)
+        print("\t${MAKE}", self.runtime_dir)
         print(
             f"\t{prefix}{self.exec_path}", 
             kv_to_str(self.class_flags),
@@ -206,10 +215,13 @@ class Experiment:
         # rule to run the experiment
         print(f"{self.exec_fname}: {separate_runs_str}")
         # rules for separate runs
-        for structure in STRUCTURE_OPTIONS[self.exec_fname]:
+        for structure in [0] + STRUCTURE_OPTIONS[self.exec_fname]:
+            exp_w_structure.append(f"{self.exec_fname}_{structure}")
             print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {self.recover_file} {image_dep}")
             print(f"\tmkdir -p {self.runtime_dir}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
+            if structure == 0:
+                rem_flags["persist_file"] = self.recover_file
             print(
                 f'\tscript -q -c "{self.exec_path}',
                 kv_to_str(self.class_flags),
@@ -220,6 +232,7 @@ class Experiment:
                 sep=" "
             )
             print()
+        print(f"{self.exec_fname}_reload: {self.exec_fname}_0")
     
     def debug_experiment(self) -> None:
         print(f"#{self.sep} Debug experiment {self.sep}")
@@ -236,7 +249,7 @@ class Experiment:
         # rule to run the experiment in LLDB
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")
         # rules for separate runs
-        for structure in STRUCTURE_OPTIONS[self.exec_fname]:
+        for structure in [0] + STRUCTURE_OPTIONS[self.exec_fname]:
             print(f"{self.exec_fname}_lldb_{structure}: {self.exec_path} {self.recover_file} check_perf_event_paranoid {img_dep}")
             print(f"\tmkdir -p {self.runtime_dir}")
             print(
@@ -260,6 +273,7 @@ class Experiment:
                 "stopOnEntry": False
             }
             vscode_launch_obj["configurations"].append(vscode_configs)
+        print(f"{self.exec_fname}_lldb_reload: {self.exec_fname}_lldb_0")
 
 LOADING_META_FILE = "./frontend/tpc-h/workload.hpp"
 
@@ -269,8 +283,8 @@ DIFF_DIRS = {
 }
             
 STRUCTURE_OPTIONS = {
-    "geo_btree": [0, 1, 2, 3],
-    "geo_lsm": [0, 1, 2, 3]
+    "geo_btree": [1, 2, 3, 4],
+    "geo_lsm": [1, 2, 3, 4]
 }
 
 def main() -> None:
@@ -289,7 +303,7 @@ def main() -> None:
         print(f"\trm -rf {dir}")
 
     # phony declaration
-    phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + exec_names + [f"{e}_lldb" for e in exec_names]
+    phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + exec_names + [f"{e}_lldb" for e in exec_names] + [f"{e}_reload" for e in exec_names] + [f"{e}_reload_debug" for e in exec_names]
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")

@@ -33,6 +33,11 @@ class GeoJoin
 
    Params params;
 
+   double indexes_size = 0.0;
+   double view_size = 0.0;
+   double merged_size = 0.0;
+   double merged2_size = 0.0;
+
    long long ns_sum = 0;
    long long ns_count = 0;
 
@@ -44,6 +49,8 @@ class GeoJoin
 
    long long mixed_point_customer_sum = 0;
    long long mixed_point_tx_count = 0;
+
+   long long find_rdkey_scans = 0;
 
    Logger& logger;
 
@@ -85,18 +92,21 @@ class GeoJoin
       std::cout << "Average nscci produced: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
       std::cout << "Average customer count in mixed point tx: "
                 << (mixed_point_tx_count > 0 ? (double)mixed_point_customer_sum / mixed_point_tx_count : 0) << std::endl;
+      std::cout << "Total find_rdkey_scans: " << find_rdkey_scans << std::endl;
       ns_sum = 0;
       ns_count = 0;
       nsc_sum = 0;
       nsc_count = 0;
       nscci_sum = 0;
       nscci_count = 0;
+      find_rdkey_scans = 0;
    }
 
    ~GeoJoin() { reset_sum_counts(); }
 
    std::optional<sort_key_t> find_random_geo_key_in_base()
    {
+      find_rdkey_scans++;
       int n = params.get_nationkey();
       int s = params.get_statekey();
       int c = params.get_countykey();
@@ -124,6 +134,7 @@ class GeoJoin
    std::optional<sort_key_t> find_random_geo_key_in_view()
    {
       sort_key_t sk = {params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
+      find_rdkey_scans++;
 
       bool found = false;
       join_view.scan(
@@ -142,6 +153,7 @@ class GeoJoin
 
    std::optional<sort_key_t> find_random_geo_key_in_merged()
    {
+      find_rdkey_scans++;
       int n = params.get_nationkey();
       int s = params.get_statekey();
       int c = params.get_countykey();
@@ -161,6 +173,7 @@ class GeoJoin
 
    std::optional<sort_key_t> find_random_geo_key_in_2merged()
    {
+      find_rdkey_scans++;
       int n = params.get_nationkey();
       int s = params.get_statekey();
       int c = params.get_countykey();
@@ -298,6 +311,7 @@ class GeoJoin
 
    void cleanup_base()
    {
+      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : inserted) {
          customer2_t::Key cust_key{sk};
          customer2.erase(cust_key);
@@ -306,6 +320,7 @@ class GeoJoin
 
    void cleanup_merged()
    {
+      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : inserted) {
          customer2_t::Key cust_key{sk};
          merged.template erase<customer2_t>(cust_key);
@@ -314,6 +329,7 @@ class GeoJoin
 
    void cleanup_view()
    {
+      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : inserted) {
          view_t::Key vk{sk};
          join_view.erase(vk);
@@ -324,6 +340,7 @@ class GeoJoin
 
    void cleanup_2merged()
    {
+      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : inserted) {
          customer2_t::Key cust_key{sk};
          ccc.template erase<customer2_t>(cust_key);
@@ -349,15 +366,36 @@ class GeoJoin
 
    double get_view_size()
    {
-      double indexes_size = get_indexes_size();
-      return indexes_size + join_view.size();  // + city_count_per_county.size();
+      if (view_size == 0.0) {
+         view_size = get_indexes_size() + join_view.size();
+      }
+      return view_size;
    }
 
-   double get_indexes_size() { return nation.size() + states.size() + county.size() + city.size() + customer2.size(); }
+   double get_indexes_size()
+   {
+      // return nation.size() + states.size() + county.size() + city.size() + customer2.size();
+      if (indexes_size == 0.0) {
+         indexes_size = nation.size() + states.size() + county.size() + city.size() + customer2.size();
+      }
+      return indexes_size;
+   }
 
-   double get_merged_size() { return merged.size(); }
+   double get_merged_size()
+   {
+      if (merged_size == 0.0) {
+         merged_size = merged.size();
+      }
+      return merged_size;
+   }
 
-   double get_2merged_size() { return ns.size() + ccc.size(); }
+   double get_2merged_size()
+   {
+      if (merged2_size == 0.0) {
+         merged2_size = ns.size() + ccc.size();
+      }
+      return merged2_size;
+   }
 
    void log_sizes();
 

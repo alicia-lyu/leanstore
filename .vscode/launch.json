@@ -106,6 +106,32 @@
       "stopOnEntry": false
     },
     {
+      "name": "geo_btree_4",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_btree",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--csv_path=build-debug/geo_btree/10-in-1",
+        "--log_progress=true",
+        "--recover_file=build-debug/geo_btree/10.json",
+        "--persist_file=./leanstore.json",
+        "--trunc=false",
+        "--ssd_path=/mnt/hdd/leanstore_images/build-debug/geo_btree/10.image_temp",
+        "--tpch_scale_factor=10",
+        "--dram_gib=1",
+        "--storage_structure=4"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
       "name": "geo_lsm_0",
       "type": "lldb",
       "request": "launch",
@@ -205,6 +231,32 @@
         "--tpch_scale_factor=10",
         "--dram_gib=1",
         "--storage_structure=3"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "geo_lsm_4",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_lsm",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--csv_path=build-debug/geo_lsm/10-in-1",
+        "--log_progress=true",
+        "--recover_file=build-debug/geo_lsm/10.json",
+        "--persist_file=./leanstore.json",
+        "--trunc=false",
+        "--ssd_path=/mnt/hdd/rocksdb_images/build-debug/geo_lsm/10",
+        "--tpch_scale_factor=10",
+        "--dram_gib=1",
+        "--storage_structure=4"
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
