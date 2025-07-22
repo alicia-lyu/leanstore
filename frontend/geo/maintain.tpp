@@ -11,14 +11,10 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 std::pair<customer2_t::Key, customer2_t> GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_base()
 {
-   std::optional<sort_key_t> sk = std::nullopt;
-   while (!sk.has_value()) {
-      sk = find_random_geo_key_in_base();
-   }
-   customer2_t::Key cust_key{sk->nationkey, sk->statekey, sk->countykey, sk->citykey, workload.last_customer_id++};
+   sort_key_t sk = to_insert.at(++maintain_processed);
+   customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, workload.last_customer_id++};
    customer2_t cust_val = customer2_t::generateRandomRecord();
    customer2.insert(cust_key, cust_val);
-   inserted.push_back(*sk);
    return std::make_pair(cust_key, cust_val);
 }
 
@@ -28,14 +24,10 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_merged()
 {
-   std::optional<sort_key_t> sk = std::nullopt;
-   while (!sk.has_value()) {
-      sk = find_random_geo_key_in_merged();
-   }
-   customer2_t::Key cust_key{sk->nationkey, sk->statekey, sk->countykey, sk->citykey, workload.last_customer_id++};
+   sort_key_t sk = to_insert.at(++maintain_processed);
+   customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, workload.last_customer_id++};
    customer2_t cust_val = customer2_t::generateRandomRecord();
    merged.insert(cust_key, cust_val);
-   inserted.push_back(*sk);
 }
 
 template <template <typename> class AdapterType,
@@ -57,7 +49,6 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    view_t::Key vk{cust_key.nationkey, cust_key.statekey, cust_key.countykey, cust_key.citykey, cust_key.custkey};
    view_t vv{*nv, *sv, *cv, *civ, cust_val};
    join_view.insert(vk, vv);
-   inserted.push_back(SKBuilder<sort_key_t>::create(cust_key, cust_val));
 }
 
 template <template <typename> class AdapterType,
@@ -66,13 +57,9 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_2merged()
 {
-   std::optional<sort_key_t> sk = std::nullopt;
-   while (!sk.has_value()) {
-      sk = find_random_geo_key_in_2merged();
-   }
-   customer2_t::Key cust_key{sk->nationkey, sk->statekey, sk->countykey, sk->citykey, workload.last_customer_id++};
+   sort_key_t sk = to_insert.at(++maintain_processed);
+   customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, workload.last_customer_id++};
    customer2_t cust_val = customer2_t::generateRandomRecord();
    ccc.insert(cust_key, cust_val);
-   inserted.push_back(*sk);
 }
 } // namespace geo_join

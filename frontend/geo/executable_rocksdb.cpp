@@ -67,6 +67,7 @@ int main(int argc, char** argv)
       return 0;
    } else {
       tpch.recover_last_ids();
+      tpchGeoJoin.select_to_insert();
    }
 
    ExeParams<GJ> params(tpchGeoJoin);

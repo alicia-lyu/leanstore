@@ -1,9 +1,9 @@
 #include <gflags/gflags.h>
 #include "../shared/adapter-scanner/LeanStoreAdapter.hpp"
 #include "../shared/adapter-scanner/LeanStoreMergedAdapter.hpp"
-#include "executable_helper.hpp"
 #include "../tpc-h/leanstore_logger.hpp"
 #include "../tpc-h/tables.hpp"
+#include "executable_helper.hpp"
 #include "executable_params.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
@@ -15,9 +15,10 @@ using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 10, "TPC-H scale factor");
 DEFINE_int32(tx_seconds, 30, "Number of seconds to run each type of transactions");
-DEFINE_int32(storage_structure,
-             0,
-             "Storage structure: 0 to force reload, 1 for traditional indexes, 2 for materialized views, 3 for merged indexes, 4 for 2 merged indexes");
+DEFINE_int32(
+    storage_structure,
+    0,
+    "Storage structure: 0 to force reload, 1 for traditional indexes, 2 for materialized views, 3 for merged indexes, 4 for 2 merged indexes");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds");
 
 using namespace geo_join;
@@ -88,6 +89,7 @@ int main(int argc, char** argv)
       return 0;
    } else {
       tpch.recover_last_ids();
+      tpchGeoJoin.select_to_insert();
    }
 
    ExeParams<GJ> params(tpchGeoJoin);
