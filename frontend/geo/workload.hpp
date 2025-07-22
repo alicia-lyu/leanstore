@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <optional>
-#include <variant>
 #include "../tpc-h/workload.hpp"
 #include "load.hpp"
 #include "views.hpp"
@@ -54,7 +52,7 @@ class GeoJoin
 
    Logger& logger;
 
-   std::vector<sort_key_t> inserted;  // in maintenance
+   std::vector<sort_key_t> to_insert;
 
   public:
    GeoJoin(TPCH& workload,
@@ -103,92 +101,6 @@ class GeoJoin
    }
 
    ~GeoJoin() { reset_sum_counts(); }
-
-   std::optional<sort_key_t> find_random_geo_key_in_base()
-   {
-      find_rdkey_scans++;
-      int n = params.get_nationkey();
-      int s = params.get_statekey();
-      int c = params.get_countykey();
-      int ci = params.get_citykey();
-
-      bool found = false;
-
-      city.scan(
-          city_t::Key{n, s, c, ci},
-          [&](const city_t::Key& k, const city_t&) {
-             n = k.nationkey;
-             s = k.statekey;
-             c = k.countykey;
-             ci = k.citykey;
-             found = true;
-             return false;  // stop after the first match
-          },
-          []() {});
-      if (!found)
-         return std::nullopt;
-
-      return std::make_optional(sort_key_t{n, s, c, ci, 0});
-   }
-
-   std::optional<sort_key_t> find_random_geo_key_in_view()
-   {
-      sort_key_t sk = {params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
-      find_rdkey_scans++;
-
-      bool found = false;
-      join_view.scan(
-          sk,
-          [&](const view_t::Key& k, const view_t&) {
-             sk = k.jk;
-             sk.custkey = 0;
-             found = true;
-             return false;  // stop after the first match
-          },
-          []() {});
-      if (!found)  // too large a key
-         return std::nullopt;
-      return std::make_optional(sk);
-   }
-
-   std::optional<sort_key_t> find_random_geo_key_in_merged()
-   {
-      find_rdkey_scans++;
-      int n = params.get_nationkey();
-      int s = params.get_statekey();
-      int c = params.get_countykey();
-      int ci = params.get_citykey();
-
-      auto scanner = merged.template getScanner<sort_key_t, view_t>();
-      bool ret = scanner->template seekTyped<city_t>(city_t::Key{n, s, c, ci});
-      if (!ret)
-         return std::nullopt;
-
-      auto kv = scanner->next();
-      assert(kv.has_value());
-      city_t::Key* cik = std::get_if<city_t::Key>(&kv->first);
-      assert(cik != nullptr);
-      return sort_key_t{cik->nationkey, cik->statekey, cik->countykey, cik->citykey, 0};
-   }
-
-   std::optional<sort_key_t> find_random_geo_key_in_2merged()
-   {
-      find_rdkey_scans++;
-      int n = params.get_nationkey();
-      int s = params.get_statekey();
-      int c = params.get_countykey();
-      int ci = params.get_citykey();
-
-      auto scanner = ccc.template getScanner<sort_key_t, ccc_t>();
-      bool ret = scanner->template seekTyped<city_t>(city_t::Key{n, s, c, ci});
-      if (!ret)
-         return std::nullopt;
-      auto kv = scanner->next();
-      assert(kv.has_value());
-      city_t::Key* cik = std::get_if<city_t::Key>(&kv->first);
-      assert(cik != nullptr);
-      return sort_key_t{cik->nationkey, cik->statekey, cik->countykey, cik->citykey, 0};
-   }
 
    // -------------------------------------------------------------
    // ---------------------- POINT LOOKUPS ------------------------
@@ -301,6 +213,36 @@ class GeoJoin
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
 
+   void select_to_insert()
+   {
+      size_t num_customers = workload.last_customer_id / 100;
+      std::cout << "Doing a full scan of customers to randomly select "  << num_customers << " for insertion..." << std::endl;
+      to_insert.reserve(num_customers);  // insert 1% of customers
+      auto scanner = customer2.getScanner();
+      while (true) {
+         auto kv = scanner->next();
+         if (!kv.has_value()) {
+            break;  // no more customers
+         }
+         auto [k, v] = *kv;
+         sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
+         size_t i = to_insert.size();
+         if (i < num_customers) {  // First, fill to_insert with the first 1% of customers
+            to_insert.push_back(sk);
+         } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
+            size_t j = rand() % (i + 1);
+            if (j < num_customers) {
+               to_insert.at(j) = sk;
+            }
+         }
+         if (i % 10000 == 1) {
+            std::cout << "\rScanned " << i + 1 << " customers..." << std::flush;
+         }
+      }
+   }
+
+   size_t maintain_processed = 0;
+
    std::pair<customer2_t::Key, customer2_t> maintain_base();
 
    void maintain_merged();
@@ -311,8 +253,8 @@ class GeoJoin
 
    void cleanup_base()
    {
-      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : inserted) {
+      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
+      for (const sort_key_t& sk : to_insert) {
          customer2_t::Key cust_key{sk};
          customer2.erase(cust_key);
       }
@@ -320,8 +262,8 @@ class GeoJoin
 
    void cleanup_merged()
    {
-      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : inserted) {
+      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
+      for (const sort_key_t& sk : to_insert) {
          customer2_t::Key cust_key{sk};
          merged.template erase<customer2_t>(cust_key);
       }
@@ -329,8 +271,8 @@ class GeoJoin
 
    void cleanup_view()
    {
-      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : inserted) {
+      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
+      for (const sort_key_t& sk : to_insert) {
          view_t::Key vk{sk};
          join_view.erase(vk);
          customer2_t::Key cust_key{sk};
@@ -340,8 +282,8 @@ class GeoJoin
 
    void cleanup_2merged()
    {
-      std::cout << "Cleaning up " << inserted.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : inserted) {
+      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
+      for (const sort_key_t& sk : to_insert) {
          customer2_t::Key cust_key{sk};
          ccc.template erase<customer2_t>(cust_key);
       }
