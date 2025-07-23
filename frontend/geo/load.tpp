@@ -38,7 +38,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       for (int s = 1; s <= state_cnt; s++) {
          if (FLAGS_log_progress)
             std::cout << "\rLoading nation " << n << "/" << params.nation_count << ", state " << s << "/" << state_cnt << "...";
-         load_1state(n, s);
+         load_1state(n, s); 
       }
    }
    std::cout << std::endl << "Loaded " << load_state.county_sum << " counties and " << load_state.city_sum << " cities." << std::endl;

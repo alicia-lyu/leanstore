@@ -213,21 +213,24 @@ class GeoJoin
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
 
+   int last_customer_id_old;
+
    void select_to_insert()
    {
-      size_t num_customers = workload.last_customer_id / 100;
+      last_customer_id_old = workload.last_customer_id;
+      size_t num_customers = last_customer_id_old / 100;
       std::cout << "Doing a full scan of customers to randomly select "  << num_customers << " for insertion..." << std::endl;
       to_insert.reserve(num_customers);  // insert 1% of customers
-      auto scanner = customer2.getScanner();
+      auto scanner = city.getScanner();
       while (true) {
          auto kv = scanner->next();
          if (!kv.has_value()) {
-            break;  // no more customers
+            break;  // no more cities
          }
          auto [k, v] = *kv;
          sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
          size_t i = to_insert.size();
-         if (i < num_customers) {  // First, fill to_insert with the first 1% of customers
+         if (i < num_customers) {  // First, fill to_insert with the first 1% of cities
             to_insert.push_back(sk);
          } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
             size_t j = rand() % (i + 1);
@@ -236,10 +239,12 @@ class GeoJoin
             }
          }
          if (i % 10000 == 1) {
-            std::cout << "\rScanned " << i + 1 << " customers..." << std::flush;
+            std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
          }
       }
    }
+
+   bool insertion_complete() { return maintain_processed >= to_insert.size(); }
 
    size_t maintain_processed = 0;
 
@@ -255,38 +260,43 @@ class GeoJoin
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : to_insert) {
-         customer2_t::Key cust_key{sk};
+         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          customer2.erase(cust_key);
       }
+      assert(last_customer_id_old == workload.last_customer_id);
    }
 
    void cleanup_merged()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : to_insert) {
-         customer2_t::Key cust_key{sk};
+         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          merged.template erase<customer2_t>(cust_key);
       }
+      assert(last_customer_id_old == workload.last_customer_id);
    }
 
    void cleanup_view()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : to_insert) {
-         view_t::Key vk{sk};
+         sort_key_t cust_sk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
+         view_t::Key vk{cust_sk};
          join_view.erase(vk);
-         customer2_t::Key cust_key{sk};
+         customer2_t::Key cust_key{cust_sk};
          customer2.erase(cust_key);
       }
+      assert(last_customer_id_old == workload.last_customer_id);
    }
 
    void cleanup_2merged()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (const sort_key_t& sk : to_insert) {
-         customer2_t::Key cust_key{sk};
+         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          ccc.template erase<customer2_t>(cust_key);
       }
+      assert(last_customer_id_old == workload.last_customer_id);
    }
 
    // -------------------------------------------------------------

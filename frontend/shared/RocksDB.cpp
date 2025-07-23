@@ -2,17 +2,15 @@
 #include <rocksdb/advanced_options.h>
 #include <rocksdb/cache.h>
 #include <rocksdb/options.h>
+#include <rocksdb/rate_limiter.h>
 #include <rocksdb/rocksdb_namespace.h>
 #include <rocksdb/table.h>
-#include <rocksdb/rate_limiter.h>
 #include "leanstore/utils/JumpMU.hpp"
 
 using ROCKSDB_NAMESPACE::CacheEntryRole;
 using ROCKSDB_NAMESPACE::CacheEntryRoleOptions;
 using ROCKSDB_NAMESPACE::CacheUsageOptions;
 using ROCKSDB_NAMESPACE::NewGenericRateLimiter;
-
-DEFINE_int32(active_column_families, 1, "Number of active column families in RocksDB");  // default is large memtable budget for every column family
 
 void RocksDB::set_options()
 {
@@ -23,7 +21,9 @@ void RocksDB::set_options()
    db_options.statistics = rocksdb::CreateDBStatistics();
    db_options.stats_dump_period_sec = 1;
    db_options.max_background_jobs = 1;  // only one background thread (compaction or flush) for better transparency
-   db_options.rate_limiter.reset(NewGenericRateLimiter(10 * 1024 * 1024)); // ensure not to saturate the disk with background writes
+   if (FLAGS_recover) {
+      db_options.rate_limiter.reset(NewGenericRateLimiter(10 * 1024 * 1024));  // ensure not to saturate the disk with background writes
+   }  // bulk loading is not rate-limited
 
    // COMPACTION & COMPRESSION
    db_options.compression = rocksdb::CompressionType::kNoCompression;
@@ -32,8 +32,7 @@ void RocksDB::set_options()
    db_options.target_file_size_base = 1 * 1024 * 1024;  // default is 64 MB, but our dataset is smaller
    db_options.target_file_size_multiplier = 2;
 
-   
-   table_opts.block_cache = cache;
+   table_opts.block_cache = block_cache;
    // charge all memory usage to the block cache except memtables
    // FILTER & INDEX
    table_opts.metadata_block_size = 64 * 1024;  // default 4096 is too small for modern hardware
@@ -53,15 +52,12 @@ void RocksDB::set_options()
 
    // MEMTABLES
    size_t memtable_budget = memtable_share * total_cache_bytes;
-   std::cout << "RocksDB: memtable_budget = " << memtable_budget << " for " << FLAGS_active_column_families << " column families." << std::endl;
    db_options.max_total_wal_size = memtable_budget * 0.1;  // 10% of the memtable budget
    // Total budget for all memtables across all CFs
    size_t write_buffer_budget = memtable_budget * 0.9;
-   db_options.write_buffer_manager = std::make_shared<rocksdb::WriteBufferManager>(write_buffer_budget, cache);
-   // With a WriteBufferManager, you still set a base write_buffer_size,
-   // but the manager enforces the global limit.
-   db_options.write_buffer_size = 64 * 1024 * 1024;  // A reasonable base size
-   db_options.max_write_buffer_number = 4;           // slightly higher
+   db_options.write_buffer_manager = std::make_shared<rocksdb::WriteBufferManager>(
+       write_buffer_budget);  // optionally pass block_cache to fill dummy entries as large as the write buffer size
+   db_options.max_write_buffer_number = 10;
 }
 
 bool RocksDB::Put(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value)
