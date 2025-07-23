@@ -6,8 +6,9 @@
 #include <memory>
 #include <thread>
 #include "../shared/RocksDB.hpp"
-#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "../tpc-h/workload.hpp"
+#include "leanstore/concurrency-recovery/CRMG.hpp"
+#include "workload.hpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
@@ -68,7 +69,10 @@ struct RocksDBTraits : public DBTraits {
    std::string name() { return "RocksDB"; }
 };
 
-template <template <typename> class AdapterType>
+template <template <typename> class AdapterType,
+          template <typename...> class MergedAdapterType,
+          template <typename> class ScannerType,
+          template <typename...> class MergedScannerType>
 struct ExecutableHelper {
    std::unique_ptr<DBTraits> db_traits;
    std::string method;
@@ -77,8 +81,10 @@ struct ExecutableHelper {
    std::vector<std::function<void()>> elapsed_cbs;
    std::vector<std::function<void()>> tput_cbs;
    std::vector<std::string> tput_prefixes;
-   TPCHWorkload<AdapterType> tpch;
-   double size;
+   TPCHWorkload<AdapterType>& tpch;
+   geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join;
+
+   std::function<double()> size_cb;
    std::function<void()> cleanup_cb = []() {};
 
    std::atomic<bool> keep_running_warmup = true;
@@ -87,7 +93,8 @@ struct ExecutableHelper {
 
    ExecutableHelper(leanstore::cr::CRManager& crm,
                     std::string method,
-                    TPCHWorkload<AdapterType> tpch,
+                    TPCHWorkload<AdapterType>& tpch,
+                    geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join,
                     std::function<double()> size_cb,
                     std::function<void()> lookup_cb,
                     std::vector<std::function<void()>> elapsed_cbs,
@@ -100,13 +107,15 @@ struct ExecutableHelper {
          tput_cbs(tput_cbs),
          tput_prefixes(tput_prefixes),
          tpch(tpch),
-         size(size_cb())
+         geo_join(geo_join),
+         size_cb(size_cb)
    {
    }
 
    ExecutableHelper(RocksDB& rocks_db,
                     std::string method,
-                    TPCHWorkload<AdapterType> tpch,
+                    TPCHWorkload<AdapterType>& tpch,
+                    geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join,
                     std::function<double()> size_cb,
                     std::function<void()> lookup,
                     std::vector<std::function<void()>> elapsed_cbs,
@@ -120,14 +129,15 @@ struct ExecutableHelper {
          tput_cbs(tput_cbs),
          tput_prefixes(tput_prefixes),
          tpch(tpch),
-         size(size_cb()),
+         geo_join(geo_join),
+         size_cb(size_cb),
          cleanup_cb(cleanup_cb)
    {
    }
 
    void run()
    {
-      std::cout << std::string(20, '=') << method << "," << size << std::string(20, '=') << std::endl;
+      std::cout << std::string(20, '=') << method << "," << size_cb() << std::string(20, '=') << std::endl;
       tpch.prepare();
 
       warmup();
@@ -196,6 +206,10 @@ struct ExecutableHelper {
       running_threads_counter++;
 
       while (keep_running_tx || count.load() < 10) {
+         if (tx == "maintain" && geo_join.insertion_complete()) {
+            std::cout << "Maintenance phase completed. No more insertions." << std::endl;
+            break;
+         }
          jumpmuTry()
          {
             db_traits->run_tx(cb);
@@ -214,7 +228,7 @@ struct ExecutableHelper {
       auto end = std::chrono::high_resolution_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = (double)count.load() / duration * 1e6;
-      tpch.logger.log(static_cast<long>(std::round(tput)), count.load(), tx, method, size);
+      tpch.logger.log(static_cast<long>(std::round(tput)), count.load(), tx, method, size_cb());
       running_threads_counter--;
    }
 };

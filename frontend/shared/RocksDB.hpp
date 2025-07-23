@@ -56,7 +56,7 @@ struct RocksDB {
    const u64 total_cache_bytes;
    double block_share;
    double memtable_share;
-   std::shared_ptr<Cache> cache = nullptr;
+   std::shared_ptr<Cache> block_cache = nullptr;
 
    enum class DB_TYPE : u8 { DB, TransactionDB, OptimisticDB };
    const DB_TYPE type;
@@ -68,7 +68,7 @@ struct RocksDB {
       if (FLAGS_trunc == false && std::filesystem::exists(FLAGS_ssd_path)) {
          FLAGS_recover = true;
          std::cout << "RocksDB: recovering from " << FLAGS_ssd_path << std::endl;
-      } else { // load DB from scratch
+      } else {  // load DB from scratch
          if (FLAGS_trunc == true && std::filesystem::exists(FLAGS_ssd_path)) {
             std::cout << "RocksDB: truncating " << FLAGS_ssd_path << std::endl;
             std::filesystem::remove_all(FLAGS_ssd_path);
@@ -76,7 +76,7 @@ struct RocksDB {
          std::filesystem::create_directory(FLAGS_ssd_path);
       }
       FLAGS_persist = FLAGS_persist_file == "./leanstore.json" ? false : true;
-      
+
       // SETUP CACHE
       if (!FLAGS_recover) {  // bulk loading, write heavy
          block_share = 0.4;
@@ -89,7 +89,7 @@ struct RocksDB {
       std::cout << "RocksDB: total_cache_bytes = " << total_cache_bytes << std::endl;
       cache_opts.capacity = total_cache_bytes * block_share;
       cache_opts.strict_capacity_limit = true;
-      cache = NewLRUCache(cache_opts);
+      block_cache = NewLRUCache(cache_opts);
 
       set_options();
    }
@@ -115,30 +115,28 @@ struct RocksDB {
    ~RocksDB()
    {
       std::cout << "RocksDB::~RocksDB() ";
-      if (FLAGS_persist) {
-         std::cout << "Waiting for compaction and flush..." << std::endl;
-         // Flush and sync WAL
-         rocksdb::FlushOptions fo;
-         fo.wait = true;
-         Status s_flush = tx_db->Flush(fo, cf_handles);
-         Status s_wal = tx_db->FlushWAL(true);
-         assert(s_flush.ok() && s_wal.ok());
-         // destroy all column families
-         for (ColumnFamilyHandle* cf_handle : cf_handles) {
-            Status s = tx_db->DestroyColumnFamilyHandle(cf_handle);
-            assert(s.ok());
-         }
-         // Wait for compaction to finish and close the DB
-         rocksdb::WaitForCompactOptions wfc_options;
-         wfc_options.close_db = true;
-         rocksdb::Status s = tx_db->WaitForCompact(wfc_options);
-         assert(s.ok());
-         std::ofstream persist_file(FLAGS_persist_file, std::ios::trunc);
-         persist_file << "Placeholder. Code logic only needs the file to exist." << std::endl;
-      } else {
-         std::cout << "FLAGS_persist is false, compaction skipped. UNABLE TO UNDO CHANGES." << std::endl;
-         delete tx_db;
+      if (!FLAGS_persist) {
+         std::cout << "Obsolete. Always persisting rocksdb." << std::endl;
       }
+      std::cout << "Waiting for compaction and flush..." << std::endl;
+      // Flush and sync WAL
+      rocksdb::FlushOptions fo;
+      fo.wait = true;
+      Status s_flush = tx_db->Flush(fo, cf_handles);
+      Status s_wal = tx_db->FlushWAL(true);
+      assert(s_flush.ok() && s_wal.ok());
+      // destroy all column families
+      for (ColumnFamilyHandle* cf_handle : cf_handles) {
+         Status s = tx_db->DestroyColumnFamilyHandle(cf_handle);
+         assert(s.ok());
+      }
+      // Wait for compaction to finish and close the DB
+      rocksdb::WaitForCompactOptions wfc_options;
+      wfc_options.close_db = true;
+      rocksdb::Status s = tx_db->WaitForCompact(wfc_options);
+      assert(s.ok());
+      std::ofstream persist_file(FLAGS_persist_file, std::ios::trunc);
+      persist_file << "Placeholder. Code logic only needs the file to exist." << std::endl;
    }
 
    void startTX()

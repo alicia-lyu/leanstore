@@ -24,7 +24,7 @@ DEFINE_int32(warmup_seconds, 0, "Warmup seconds");
 using namespace geo_join;
 
 using GJ = GeoJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
-using EH = ExecutableHelper<LeanStoreAdapter>;
+using EH = ExecutableHelper<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
 
 int main(int argc, char** argv)
 {
@@ -96,26 +96,26 @@ int main(int argc, char** argv)
 
    switch (FLAGS_storage_structure) {
       case 1: {
-         EH helper(crm, "base", tpch, std::bind(&GJ::get_indexes_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
-                   params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
+         EH helper(crm, "base", tpch, tpchGeoJoin, std::bind(&GJ::get_indexes_size, &tpchGeoJoin),
+                   std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
          helper.run();
          break;
       }
       case 2: {
-         EH helper(crm, "view", tpch, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
+         EH helper(crm, "view", tpch, tpchGeoJoin, std::bind(&GJ::get_view_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
                    params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
          helper.run();
          break;
       }
       case 3: {
-         EH helper(crm, "merged", tpch, std::bind(&GJ::get_merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
-                   params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
+         EH helper(crm, "merged", tpch, tpchGeoJoin, std::bind(&GJ::get_merged_size, &tpchGeoJoin),
+                   std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
          helper.run();
          break;
       }
       case 4: {
-         EH helper(crm, "2merged", tpch, std::bind(&GJ::get_2merged_size, &tpchGeoJoin), std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin),
-                   params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
+         EH helper(crm, "2merged", tpch, tpchGeoJoin, std::bind(&GJ::get_2merged_size, &tpchGeoJoin),
+                   std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
          helper.run();
          break;
       }
