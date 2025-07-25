@@ -32,12 +32,12 @@ class JoinState
          std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << jk_to_join << std::endl;
    }
 
-   bool went_past(const JK& match_jk) const
+   bool went_past(const JK& ballpark_jk) const
    {
       if (jk_to_join == JK::max()) {
          return false;
       }
-      return jk_to_join.match(match_jk) > 0 &&  // future joined records are all larger than match_jk
+      return jk_to_join.match(ballpark_jk) > 0 &&  // future joined records are all larger than match_jk
              !has_next();                       // no more cached joined records, which might match match_jk, left to consume
    }
 

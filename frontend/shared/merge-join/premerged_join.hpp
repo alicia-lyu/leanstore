@@ -1,17 +1,73 @@
 #pragma once
+#include <gflags/gflags_declare.h>
 #include <filesystem>
 #include <fstream>
 #include "join_state.hpp"
+
+DECLARE_int32(skipping);
+
+struct PremergedJoinStats {
+   static PremergedJoinStats last_stats;
+   inline static int repeat_count = 0;
+   const size_t record_type_count;
+   size_t seek_cnt = 0;
+   size_t right_next_cnt = 0;
+   size_t scan_filter_success = 0;
+   size_t scan_filter_fail = 0;
+   size_t emplace_cnt = 0;  // not necessarily equal to merged_scanner.produced
+
+   PremergedJoinStats(size_t record_type_count) : record_type_count(record_type_count) {}
+   PremergedJoinStats() : record_type_count(0) {}
+
+   // copy assignment operator
+   PremergedJoinStats& operator=(const PremergedJoinStats& other)
+   {
+      if (this != &other) {
+         // record_type_count is const and cannot be assigned
+         seek_cnt = other.seek_cnt;
+         right_next_cnt = other.right_next_cnt;
+         scan_filter_success = other.scan_filter_success;
+         scan_filter_fail = other.scan_filter_fail;
+         emplace_cnt = other.emplace_cnt;
+      }
+      return *this;
+   }
+
+   bool operator==(const PremergedJoinStats& other) const
+   {
+      return record_type_count == other.record_type_count && seek_cnt == other.seek_cnt && right_next_cnt == other.right_next_cnt &&
+             scan_filter_success == other.scan_filter_success && scan_filter_fail == other.scan_filter_fail && emplace_cnt == other.emplace_cnt;
+   }
+
+   bool operator!=(const PremergedJoinStats& other) const { return !(*this == other); }
+
+   void log(size_t remaining_records_to_join, long produced)
+   {
+      std::filesystem::path premerged_join_log_path = std::filesystem::path(FLAGS_csv_path) / "premerged_join.csv";
+      std::ofstream premerged_join_log(premerged_join_log_path, std::ios::app);
+      if (*this != last_stats &&  // log only if the stats changed
+          repeat_count > 0        // exclude the first stats
+      ) {
+         premerged_join_log << repeat_count << "x! record types: " << last_stats.record_type_count << ", seek_cnt: " << last_stats.seek_cnt
+                            << ", right_next_cnt: " << last_stats.right_next_cnt << ", scan_filter_success: " << last_stats.scan_filter_success
+                            << ", scan_filter_fail: " << last_stats.scan_filter_fail << ", emplace_cnt: " << last_stats.emplace_cnt << std::endl;
+         last_stats = *this;
+         repeat_count = 1;  // reset repeat count
+      }
+      if (repeat_count == 1) {
+         premerged_join_log << "remaining_records_to_join\tproduced" << std::endl;  // header
+      }
+      premerged_join_log << remaining_records_to_join << "\t\t" << produced << std::endl;
+      premerged_join_log.close();
+   }
+};
 
 // merged_scanner -> join_state -> yield joined records
 template <template <typename...> class MergedScannerType, typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
    MergedScannerType<JK, JR, Rs...>& merged_scanner;
    JoinState<JK, JR, Rs...> join_state;
-   size_t seek_cnt = 0;
-   size_t right_next_cnt = 0;
-   size_t scan_filter_cnt = 0;
-   size_t emplace_cnt = 0;  // not necessarily equal to merged_scanner.produced
+   PremergedJoinStats stats{sizeof...(Rs)};
 
    using K = std::variant<typename Rs::Key...>;
    using V = std::variant<Rs...>;
@@ -29,20 +85,9 @@ struct PremergedJoin {
    {
    }
 
-   ~PremergedJoin()
-   {
-      std::filesystem::path premerged_join_log_path = std::filesystem::path(FLAGS_csv_path) / "premerged_join.csv";
-      bool print_header = !std::filesystem::exists(premerged_join_log_path);
-      std::ofstream premerged_join_log(premerged_join_log_path, std::ios::app);
-      if (print_header) {
-         premerged_join_log << "record_type_cnt,seek_cnt,scan_filter_cnt,right_next_cnt,emplace_cnt,remaining_records_to_join(,produced\n";
-      }
-      premerged_join_log << sizeof...(Rs) << "," << seek_cnt << "," << scan_filter_cnt << "," << right_next_cnt << "," << emplace_cnt << ","
-                         << join_state.get_remaining_records_to_join() << "," << join_state.get_produced() << std::endl;
-      premerged_join_log.close();
-   }
+   ~PremergedJoin() { stats.log(join_state.get_remaining_records_to_join(), join_state.get_produced()); }
 
-   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
+   bool went_past(const JK& ballpark_jk) const { return join_state.went_past(ballpark_jk); }
 
    bool has_cached_next() const { return join_state.has_next(); }
 
@@ -53,7 +98,7 @@ struct PremergedJoin {
          join_state.refresh(jk);  // previous records are joined
       // add the new record to the cache
       join_state.emplace(k, v);
-      emplace_cnt++;
+      stats.emplace_cnt++;
    }
 
    std::optional<std::tuple<K, V, JK>> scan_next(bool to_emplace = true)
@@ -78,90 +123,101 @@ struct PremergedJoin {
    }
 
    template <typename R>
-   bool seek_next(const JK& seek_jk)
+   bool seek_next(const JK& to_jk)
    {
-      typename R::Key k{seek_jk};
+      typename R::Key k{to_jk};
       merged_scanner.template seek<R>(k);
-      seek_cnt++;
+      stats.seek_cnt++;
       auto t = scan_next();
       if (!t.has_value()) {
          return false;  // exhausted scanner
       }
       auto [scanned_k, scanned_v, scanned_jk] = t.value();
-      int cmp = scanned_jk.match(seek_jk);
+      int cmp = scanned_jk.match(to_jk);
       assert(cmp >= 0);
       return cmp == 0;  // true if the cached record matches the seek_jk
    }
 
-   bool scan_filter_next(const JK& seek_jk)
+   template <typename R>
+   bool scan_filter_next(const JK& to_jk, bool tentative = false)
    {
       // scan until we find the first record with the right jk
-      scan_filter_cnt++;
-      while (true) {
-         auto t = scan_next(false);  // decide later whether to emplace
+      int bytes_scanned = 0;
+      while (!tentative || bytes_scanned < 4096 * 2) {  // HARDCODED page size, scan 2 pages (2 next page calls)
+         auto t = scan_next(false);                     // decide later whether to emplace
          if (!t.has_value()) {
             return false;  // exhausted scanner
          }
          auto [k, v, jk] = t.value();
-         int cmp = jk.match(seek_jk);
+         bytes_scanned += sizeof(k) + sizeof(v);
+         int cmp = jk.match(to_jk);
          if (cmp < 0) {
             continue;  // skip this record, it is before the seek_jk
          }
+         stats.scan_filter_success++;
          emplace(k, v, jk);  // emplace the record, it is either the right one or the first one after the seek_jk, which will be needed later
          return cmp == 0;
       }
+      stats.scan_filter_fail++;
+      // tentative scan did not return
+      return seek_next<R>(to_jk);  // seek the first record with the right jk
+   }
+
+   template <typename R>
+   bool right_next(const JK& to_jk)
+   {
+      stats.right_next_cnt++;
+      auto t = scan_next();
+      if (!t.has_value()) {
+         return false;  // exhausted scanner
+      }
+      auto [scanned_k, scanned_v, scanned_jk] = t.value();
+      int cmp = scanned_jk.match(to_jk);
+      assert(cmp >= 0);
+      return cmp == 0;  // true if the cached record matches the seek_jk
    }
 
    template <typename R, size_t I>
-   bool get_next(const JK& seek_jk, bool& info_exhausted)
+   bool get_next(const JK& full_jk, bool& info_exhausted)
    {
+      // CHECK IF INFORMATION IS EXHAUSTED IN FULL_JK
       if (info_exhausted) {  // no more seeks needed
          return true;
       }
-      JK jk_r = SKBuilder<JK>::template get<R>(seek_jk);
+      JK to_jk_r = SKBuilder<JK>::template get<R>(full_jk);
       info_exhausted =
-          info_exhausted || jk_r == seek_jk;  // seek_jk has more info only when there is additional non-zero fields, i.e., seek_jk > jk_r
+          info_exhausted || to_jk_r == full_jk;  // seek_jk has more info only when there is additional non-zero fields, i.e., seek_jk > jk_r
       // if info_exhausted, stop getting the next R
-      // 1. seek first record at all times
+
+      // SEEK FIRST RECORD AT ALL TIMES
       if (join_state.jk_to_join == JK::max()) {
-         return seek_next<R>(seek_jk);
+         return seek_next<R>(to_jk_r);
       }
-      // 2. have sought before...
-      auto [_, base, dist] = distance(jk_r);
+
+      if (FLAGS_skipping == 0) {
+         return seek_next<R>(to_jk_r);  // no skipping, always seek
+      } else if (FLAGS_skipping == 1) {
+         return scan_filter_next<R>(to_jk_r, true);
+      }
+
+      // SMART SKIPPING
+      assert(FLAGS_skipping == 2);
+      auto [_, base, dist] = distance(to_jk_r);
       assert(dist >= 0);  // unexhausted info
-      // 2.1 scanned and cached, or no selection at this field
+      // 1 scanned and cached, or no selection at this field
       if (dist == 0) {  // can happen b/c seeks has to start from the first R, or when the last key has no selection (==0)
          return true;   // no scan or seek needed
       }
-      // 2.2 right the next record
+      // 2 right the next record
       if (base == 0 && dist == 1) {
-         right_next_cnt++;
-         auto t = scan_next();
-         if (!t.has_value()) {
-            return false;  // exhausted scanner
-         }
-         auto [scanned_k, scanned_v, scanned_jk] = t.value();
-         int cmp = scanned_jk.match(seek_jk);
-         assert(cmp >= 0);
-         return cmp == 0;  // true if the cached record matches the seek_jk
+         return right_next<R>(to_jk_r);
       }
-      // decide between scan_filter_next() and seek
-      auto last_kv_in_page = merged_scanner.last_in_page();
-      // 2.3 if the last record in the page is larger than the seek_jk, we scan the page
-      if (last_kv_in_page.has_value()) {
-         auto [k, v] = last_kv_in_page.value();
-         JK last_jk = SKBuilder<JK>::create(k, v);
-         if (last_jk > jk_r) {  // required jk in page
-            return scan_filter_next(seek_jk);
-         } else if (last_jk == jk_r) {  // The right record is the very last record in the page
-            scan_filter_cnt++;
-            emplace(k, v, last_jk);
-            merged_scanner.go_to_last_in_page();  // last_in_page returns to the previous cursor position
-            return true;                          // no scan or seek needed
-         }
+      // 3 downstream record types, tentatively scan 2 pages
+      if (I >= sizeof...(Rs) - 2) {                  // HARDCODED: the last 2 record types, city & customer2
+         return scan_filter_next<R>(to_jk_r, true);  // tentatively scan 2 pages. Seek if not found.
+      } else {                                       // 4 seek directly
+         return seek_next<R>(to_jk_r);
       }
-      // 2.4 if the last record in the page is smaller than the seek_jk, we need to seek
-      return seek_next<R>(seek_jk);
    }
 
    template <size_t... Is>
@@ -179,11 +235,6 @@ struct PremergedJoin {
          if (all_records_exists_for_seek_jk) {  // go to scan_next() in the while loop, yielding a record == seek_jk
             assert(!join_state.has_next());     // previous records would only yield a record < seek_jk
          }  // else go to scan_next() in the while loop, yielding a record > seek_jk
-      } else if (join_state.jk_to_join != JK::max() && seek_jk != JK::max()) {
-         // std::cerr << "PremergedJoin::next() call with meaningful seek_jk (" << seek_jk << ") here should only happen when join_state.jk_to_join ==
-         // JK::max(), i.e., "
-         //  "immediately after PremergedJoin construction."
-         //  << std::endl;
       }
 
       while (!join_state.has_next()) {

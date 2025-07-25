@@ -3,19 +3,20 @@
 #include <iostream>
 #include <vector>
 #include "workload.hpp"
+#include "../shared/merge-join/premerged_join.hpp"
 
 DEFINE_bool(log_progress, true, "Log progress of the workload execution");
 
 void SumStats::log(std::ostream& csv_sum, bool csv_sum_exists)
 {
    if (!csv_sum_exists) {  // no header
-      csv_sum << "method,tx,DRAM (GiB),scale,";
+      csv_sum << "method,tx,DRAM (GiB),scale,skipping,";
       for (auto& h : header) {
          csv_sum << h << ",";
       }
       csv_sum << "size (MiB)" << endl;
    }
-   csv_sum << method << "," << tx << "," << FLAGS_dram_gib << "," << FLAGS_tpch_scale_factor << ",";
+   csv_sum << method << "," << tx << "," << FLAGS_dram_gib << "," << FLAGS_tpch_scale_factor << "," << FLAGS_skipping << ",";
    for (auto& d : data) {
       csv_sum << d << ",";
    }

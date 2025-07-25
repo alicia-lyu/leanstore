@@ -40,7 +40,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
             std::cout << "\rLoading nation " << n << "/" << params.nation_count << ", state " << s << "/" << state_cnt << "...";
          load_1state(n, s); 
       }
-   }
+   } 
    std::cout << std::endl << "Loaded " << load_state.county_sum << " counties and " << load_state.city_sum << " cities." << std::endl;
    // load view
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();

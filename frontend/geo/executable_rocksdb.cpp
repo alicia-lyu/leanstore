@@ -19,6 +19,7 @@ DEFINE_int32(
     0,
     "Storage structure: 0 to force reload, 1 for traditional indexes, 2 for materialized views, 3 for merged indexes, 4 for 2 merged indexes");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds");  // flush out loading data from the buffer pool
+DEFINE_int32(skipping, 0, "0 for seek, 1 for scan_filter, 2 for smart skipping");
 
 using namespace geo_join;
 
