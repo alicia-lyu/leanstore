@@ -219,7 +219,7 @@ class GeoJoin
    {
       last_customer_id_old = workload.last_customer_id;
       size_t num_customers = last_customer_id_old / 100;
-      std::cout << "Doing a full scan of customers to randomly select "  << num_customers << " for insertion..." << std::endl;
+      std::cout << "Doing a full scan of cities to randomly select "  << num_customers << " for insertion...";
       to_insert.reserve(num_customers);  // insert 1% of customers
       auto scanner = city.getScanner();
       while (true) {
@@ -238,10 +238,11 @@ class GeoJoin
                to_insert.at(j) = sk;
             }
          }
-         if (i % 10000 == 1) {
+         if (i % 100 == 1) {
             std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
          }
       }
+      std::cout << std::endl;
    }
 
    bool insertion_complete() { return maintain_processed >= to_insert.size(); }
