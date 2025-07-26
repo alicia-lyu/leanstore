@@ -19,7 +19,7 @@ DEFINE_int32(
     0,
     "Storage structure: 0 to force reload, 1 for traditional indexes, 2 for materialized views, 3 for merged indexes, 4 for 2 merged indexes");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds");  // flush out loading data from the buffer pool
-DEFINE_int32(skipping, 0, "0 for seek, 1 for scan_filter, 2 for smart skipping");
+DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping"); // empirical optimal value
 
 using namespace geo_join;
 
@@ -75,21 +75,21 @@ int main(int argc, char** argv)
 
    switch (FLAGS_storage_structure) {
       case 1: {
-         EH helper_base(rocks_db, "base", tpch, tpchGeoJoin, std::bind(&GJ::get_indexes_size, &tpchGeoJoin),
+         EH helper_base(rocks_db, "base_idx", tpch, tpchGeoJoin, std::bind(&GJ::get_indexes_size, &tpchGeoJoin),
                         std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes,
                         std::bind(&GJ::cleanup_base, &tpchGeoJoin));
          helper_base.run();
          break;
       }
       case 2: {
-         EH helper_view(rocks_db, "view", tpch, tpchGeoJoin, std::bind(&GJ::get_view_size, &tpchGeoJoin),
+         EH helper_view(rocks_db, "mat_view", tpch, tpchGeoJoin, std::bind(&GJ::get_view_size, &tpchGeoJoin),
                         std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes,
                         std::bind(&GJ::cleanup_view, &tpchGeoJoin));
          helper_view.run();
          break;
       }
       case 3: {
-         EH helper_merged(rocks_db, "merged", tpch, tpchGeoJoin, std::bind(&GJ::get_merged_size, &tpchGeoJoin),
+         EH helper_merged(rocks_db, "merged_idx", tpch, tpchGeoJoin, std::bind(&GJ::get_merged_size, &tpchGeoJoin),
                           std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged,
                           params.tput_prefixes, std::bind(&GJ::cleanup_merged, &tpchGeoJoin));
          helper_merged.run();

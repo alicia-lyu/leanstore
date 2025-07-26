@@ -4,7 +4,7 @@
 #include <fstream>
 #include "join_state.hpp"
 
-DECLARE_int32(skipping);
+DECLARE_int32(tentative_skip_bytes);
 
 struct PremergedJoinStats {
    static PremergedJoinStats last_stats;
@@ -45,22 +45,26 @@ struct PremergedJoinStats {
    {
       std::filesystem::path premerged_join_log_path = std::filesystem::path(FLAGS_csv_path) / "premerged_join.csv";
       std::ofstream premerged_join_log(premerged_join_log_path, std::ios::app);
-      if (*this != last_stats &&  // log only if the stats changed
-          repeat_count > 0        // exclude the first stats
-      ) {
-         premerged_join_log << repeat_count << "x! record types: " << last_stats.record_type_count << ", seek_cnt: " << last_stats.seek_cnt
-                            << ", right_next_cnt: " << last_stats.right_next_cnt << ", scan_filter_success: " << last_stats.scan_filter_success
-                            << ", scan_filter_fail: " << last_stats.scan_filter_fail << ", emplace_cnt: " << last_stats.emplace_cnt << std::endl;
+      if (*this != last_stats) {  // log only if the stats changed
+         if (repeat_count > 0) {  // exclude the first stats
+            premerged_join_log << repeat_count << "x! record types: " << last_stats.record_type_count << ", seek_cnt: " << last_stats.seek_cnt
+                               << ", right_next_cnt: " << last_stats.right_next_cnt << ", scan_filter_success: " << last_stats.scan_filter_success
+                               << ", scan_filter_fail: " << last_stats.scan_filter_fail << ", emplace_cnt: " << last_stats.emplace_cnt << std::endl;
+         }
+         // reset
          last_stats = *this;
-         repeat_count = 1;  // reset repeat count
+         repeat_count = 0;  
       }
-      if (repeat_count == 1) {
+      if (repeat_count == 0) {
          premerged_join_log << "remaining_records_to_join\tproduced" << std::endl;  // header
       }
       premerged_join_log << remaining_records_to_join << "\t\t" << produced << std::endl;
+      repeat_count++;
       premerged_join_log.close();
    }
 };
+
+inline PremergedJoinStats PremergedJoinStats::last_stats{0};
 
 // merged_scanner -> join_state -> yield joined records
 template <template <typename...> class MergedScannerType, typename JK, typename JR, typename... Rs>
@@ -143,8 +147,8 @@ struct PremergedJoin {
    {
       // scan until we find the first record with the right jk
       int bytes_scanned = 0;
-      while (!tentative || bytes_scanned < 4096 * 2) {  // HARDCODED page size, scan 2 pages (2 next page calls)
-         auto t = scan_next(false);                     // decide later whether to emplace
+      while (!tentative || bytes_scanned < FLAGS_tentative_skip_bytes) {  // HARDCODED page size, scan 2 pages (2 next page calls)
+         auto t = scan_next(false);                                       // decide later whether to emplace
          if (!t.has_value()) {
             return false;  // exhausted scanner
          }
@@ -193,15 +197,10 @@ struct PremergedJoin {
       if (join_state.jk_to_join == JK::max()) {
          return seek_next<R>(to_jk_r);
       }
-
-      if (FLAGS_skipping == 0) {
+      // No tentative skipping
+      if (FLAGS_tentative_skip_bytes == 0) {
          return seek_next<R>(to_jk_r);  // no skipping, always seek
-      } else if (FLAGS_skipping == 1) {
-         return scan_filter_next<R>(to_jk_r, true);
       }
-
-      // SMART SKIPPING
-      assert(FLAGS_skipping == 2);
       auto [_, base, dist] = distance(to_jk_r);
       assert(dist >= 0);  // unexhausted info
       // 1 scanned and cached, or no selection at this field

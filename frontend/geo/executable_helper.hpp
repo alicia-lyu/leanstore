@@ -226,9 +226,9 @@ struct ExecutableHelper {
       std::cout << "#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;
 
       auto end = std::chrono::high_resolution_clock::now();
-      auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+      long duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = (double)count.load() / duration * 1e6;
-      tpch.logger.log(static_cast<long>(std::round(tput)), count.load(), tx, method, size_cb());
+      tpch.logger.log(tput, count.load(), tx, method, size_cb());
       running_threads_counter--;
    }
 };
