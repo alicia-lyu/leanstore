@@ -10,13 +10,13 @@ DEFINE_bool(log_progress, true, "Log progress of the workload execution");
 void SumStats::log(std::ostream& csv_sum, bool csv_sum_exists)
 {
    if (!csv_sum_exists) {  // no header
-      csv_sum << "method,tx,DRAM (GiB),scale,skipping,";
+      csv_sum << "method,tx,DRAM (GiB),scale,tentative_skip_bytes,";
       for (auto& h : header) {
          csv_sum << h << ",";
       }
       csv_sum << "size (MiB)" << endl;
    }
-   csv_sum << method << "," << tx << "," << FLAGS_dram_gib << "," << FLAGS_tpch_scale_factor << "," << FLAGS_skipping << ",";
+   csv_sum << method << "," << tx << "," << FLAGS_dram_gib << "," << FLAGS_tpch_scale_factor << "," << FLAGS_tentative_skip_bytes << ",";
    for (auto& d : data) {
       csv_sum << d << ",";
    }
@@ -41,6 +41,18 @@ void SumStats::print()
       table.column(c_id).format().width(header.length() + 2);
    }
    print(table);
+}
+
+std::string SumStats::elapsed_or_tput() const
+{
+   {
+      if (column_name == ColumnName::ELAPSED) {
+         return std::to_string(elapsed);
+      } else {
+         // 2 decimal places
+         return Logger::to_fixed(tput);
+      }
+   }
 }
 
 void Logger::log_size()
@@ -71,7 +83,7 @@ void Logger::summarize_shared_stats()
    auto& header = stats.header;
    auto& data = stats.data;
    header.push_back(to_string(stats.column_name));
-   data.push_back(std::to_string(stats.elapsed_or_tput));
+   data.push_back(stats.elapsed_or_tput());
 
    switch (stats.column_name) {
       case ColumnName::ELAPSED:

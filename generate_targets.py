@@ -101,7 +101,7 @@ class Experiment:
         self.class_flags["csv_path"] = str(self.runtime_dir)
         self.class_flags["csv_truncate"] = "false"
         self.class_flags["log_progress"] = "true" if "debug" in str(self.build_dir) else "false"
-        self.class_flags["skipping"] = "$(skipping)"
+        self.class_flags["tentative_skip_bytes"] = "$(tentative_skip_bytes)"
     
     def generate_all_targets(self) -> None:
         """Generates all Makefile targets for this experiment."""
@@ -245,7 +245,7 @@ class Experiment:
         vscode_flags: dict[str, str] = self.class_flags.copy()
         vscode_flags.update(rem_flags.copy())
         for k, v in vscode_flags.items():
-            vscode_flags[k] = str(v).replace("$(dram)", "1").replace("$(scale)", "10").replace("$(skipping)", "0")
+            vscode_flags[k] = str(v).replace("$(dram)", "1").replace("$(scale)", "10").replace("$(tentative_skip_bytes)", "8092")
         
         # rule to run the experiment in LLDB
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")

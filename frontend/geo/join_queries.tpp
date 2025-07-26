@@ -157,7 +157,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::qu
    std::cout << "Enumerating materialized join_view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "join", "view", get_view_size());
+   logger.log(t, "join", "mat_view", get_view_size());
 }
 
 template <template <typename> class AdapterType,
@@ -175,7 +175,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::qu
 
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "join", "merged", get_merged_size());
+   logger.log(t, "join", "merged_idx", get_merged_size());
 }
 
 template <template <typename> class AdapterType,
@@ -194,7 +194,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::qu
 
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "join", "base", get_indexes_size());
+   logger.log(t, "join", "base_idx", get_indexes_size());
 }
 
 template <template <typename> class AdapterType,

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include "../tpc-h/workload.hpp"
+#include "leanstore/Config.hpp"
 #include "load.hpp"
 #include "views.hpp"
 
@@ -238,7 +239,7 @@ class GeoJoin
                to_insert.at(j) = sk;
             }
          }
-         if (i % 100 == 1) {
+         if (i % 100 == 1 && FLAGS_log_progress) {
             std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
          }
       }

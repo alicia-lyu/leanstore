@@ -36,7 +36,8 @@ inline std::string to_short_string(ColumnName column)
 }
 
 struct SumStats {
-   long elapsed_or_tput;
+   double tput;
+   long elapsed;
    int tx_count;
    std::string tx;
    std::string method;
@@ -78,9 +79,10 @@ struct SumStats {
 
    void print();
 
-   void init(long tput, int tx_count, std::string tx, std::string method, double size)
+   void init(double tput, int tx_count, std::string tx, std::string method, double size)
    {
-      elapsed_or_tput = tput;
+      elapsed = 0;
+      this->tput = tput;
       this->tx_count = tx_count;
       this->tx = std::move(tx);
       this->method = std::move(method);
@@ -90,13 +92,16 @@ struct SumStats {
 
    void init(long elapsed, std::string tx, std::string method, double size)
    {
-      elapsed_or_tput = elapsed;
+      this->elapsed = elapsed;
+      this->tput = 0;
       this->tx_count = 1;
       this->tx = std::move(tx);
       this->method = std::move(method);
       this->size = size;
       column_name = ColumnName::ELAPSED;
    }
+
+   std::string elapsed_or_tput() const;
 };
 
 // virtual class for logging
@@ -117,17 +122,6 @@ class Logger
 
    void log_summary();
 
-   static inline std::string to_fixed(double value)
-   {
-      std::ostringstream oss;
-      if (value >= 0 && value <= 1) {
-         oss << std::defaultfloat << std::setprecision(4) << value;
-      } else {
-         oss << std::fixed << std::setprecision(2) << value;
-      }
-      return oss.str();
-   }
-
    void log_detail_table(leanstore::profiling::ProfilingTable& t);
 
   public:
@@ -147,7 +141,7 @@ class Logger
       configs_table.next();
    }
 
-   void log(long tput, int tx_count, std::string tx, std::string method, double size)
+   void log(double tput, int tx_count, std::string tx, std::string method, double size)
    {
       cpu_table.next();
       configs_table.next();
@@ -171,4 +165,15 @@ class Logger
    virtual void prepare() = 0;
 
    void log_loading() { log(0, "load", "", 0); }
+
+   static inline std::string to_fixed(double value)
+   {
+      std::ostringstream oss;
+      if (value >= 0 && value <= 1) {
+         oss << std::defaultfloat << std::setprecision(4) << value;
+      } else {
+         oss << std::fixed << std::setprecision(2) << value;
+      }
+      return oss.str();
+   }
 };

@@ -16,7 +16,7 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 # Experiment flags
 dram                := 1
 scale 			    := 10
-skipping            := 0
+tentative_skip_bytes := 0 # do no tentative skip bytes
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
@@ -36,11 +36,15 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp:
-	-$(MAKE) geo_btree_3 dram=0.3 skipping=2
-	-$(MAKE) geo_lsm_3 dram=0.2 skipping=2
-	-$(MAKE) geo_btree dram=0.3 skipping=0
-	-$(MAKE) geo_lsm dram=0.2 skipping=0
-	
+	-$(MAKE) geo_btree dram=0.3
+	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=12288
+	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=8192
+	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=16384
+	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=8192
+	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=12288
+	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=16384
+	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=20480
+	-$(MAKE) geo_lsm dram=0.2
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
