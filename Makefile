@@ -37,14 +37,15 @@ include targets.mk
 
 temp:
 	-$(MAKE) geo_btree dram=0.3
-	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=12288
+	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=4096
 	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=8192
-	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=16384
+	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=12288
+	-$(MAKE) geo_lsm dram=0.2
+	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=4096
 	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=8192
 	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=12288
 	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=16384
 	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=20480
-	-$(MAKE) geo_lsm dram=0.2
-
+	
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
