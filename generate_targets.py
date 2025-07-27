@@ -16,6 +16,7 @@ vscode_launch_obj = {
 
 build_dirs = ["build", "build-debug"]
 exec_names = ["geo_btree", "geo_lsm"]
+data_disk = Path("/mnt/ssd/")
 shared_flags: dict[str, str] = {
     "vi": "false",
     "mv": "false",
@@ -42,9 +43,9 @@ def get_build_vars(build_dir: Path):
 def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, Path]:
     exec_path = build_dir / "frontend" / exec_fname
     if "lsm" in exec_fname:
-        image_path = Path("/mnt/hdd/rocksdb_images") / build_dir / exec_fname / f"{SCALE_ENV}"
+        image_path = data_disk / "rocksdb_images" / exec_fname / f"{SCALE_ENV}"
     else:
-        image_path = Path("/mnt/hdd/leanstore_images") / build_dir / exec_fname / f"{SCALE_ENV}.image"
+        image_path = data_disk / "leanstore_images" / exec_fname / f"{SCALE_ENV}.image"
     recover_file = build_dir / exec_fname / f"{SCALE_ENV}.json" # do recover
     runtime_dir = build_dir / exec_fname / f"{SCALE_ENV}-in-{DRAM_ENV}"
     return (
@@ -141,6 +142,8 @@ class Experiment:
         print()
         
     def generate_image(self) -> None:
+        if Path(build_dirs[0]).resolve() == self.build_dir.resolve():
+            return # only generate image once (all builds use the same image)
         self.makefile_subsection("Generate image file/dir")
         create_image_cmd, copy_image_cmd = get_image_command("lsm" in self.exec_fname, self.image_path)
         
@@ -172,7 +175,7 @@ class Experiment:
         loading_files = get_loading_files(self.exec_fname)
         loading_files_str = " ".join(loading_files)
         # rule to load database and create recovery file
-        print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str}")
+        print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
         prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else ""
         rem_flags = self.remaining_flags(
@@ -192,8 +195,10 @@ class Experiment:
             f"2>{self.runtime_dir}/stderr.txt",
             sep=" "
         )
+        print("\techo \"Image size:\";", f"du -sh {self.image_path}")
+        print("\techo \"Data disk size:\";", f"du -sh {data_disk}")
         print("\n") # 2 lines
-
+        
     def experiment_flags(self) -> tuple[dict[str, str], str]:
         
         image_dep = self.image_path if "lsm" in self.exec_fname else f"{self.image_path}_temp"
