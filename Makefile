@@ -51,8 +51,6 @@ temp_lsm:
 	-$(MAKE) geo_lsm_3 tentative_skip_bytes=20480
 
 temp:
-	-$(MAKE) temp_btree
-	-$(MAKE) temp_lsm
 	-$(MAKE) temp_btree dram=0.1
 	-$(MAKE) temp_lsm dram=0.1
 

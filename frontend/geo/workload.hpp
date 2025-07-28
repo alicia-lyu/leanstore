@@ -325,7 +325,9 @@ class GeoJoin
    double get_view_size()
    {
       if (view_size == 0.0) {
-         view_size = get_indexes_size() + join_view.size();
+         auto mixed_view_size = mixed_view.size();
+         std::cout << "Mixed view size: " << mixed_view_size << std::endl;
+         view_size = get_indexes_size() + join_view.size() + mixed_view_size;
       }
       return view_size;
    }
