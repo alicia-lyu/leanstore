@@ -177,7 +177,8 @@ class Experiment:
         # rule to load database and create recovery file
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
-        prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else ""
+        prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else 'script -q -c "'
+        suffix = '' if "debug" in str(self.build_dir) else f'" {self.runtime_dir}/load.log'
         rem_flags = self.remaining_flags(
                 recover_file="./leanstore.json", # do not recover
                 persist_file=self.recover_file, # do persist
@@ -193,6 +194,7 @@ class Experiment:
             kv_to_str(self.class_flags),
             kv_to_str(rem_flags),
             f"2>{self.runtime_dir}/stderr.txt",
+            suffix,
             sep=" "
         )
         print("\techo \"Image size:\";", f"du -sh {self.image_path}")

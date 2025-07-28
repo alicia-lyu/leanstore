@@ -135,10 +135,13 @@ struct LeanStoreMergedScanner
       }
    }
 
-   void go_to_last_in_page()
+   int go_to_last_in_page()
    {
       assert(it->leaf->count > 0);
+      
+      u16 bytes_advanced = it->leaf->getOffsetDiff(it->cur, it->leaf->count - 1);
       it->cur = it->leaf->count - 1;
+      return static_cast<int>(bytes_advanced);
    }
 
    // void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})

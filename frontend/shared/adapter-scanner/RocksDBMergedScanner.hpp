@@ -119,8 +119,9 @@ struct RocksDBMergedScanner {
       return std::nullopt; // a page/block is not necessarily continuous
    }
 
-   void go_to_last_in_page()
+   int go_to_last_in_page()
    {
       assert(false); // should never be called
+      return 0;
    }
 };

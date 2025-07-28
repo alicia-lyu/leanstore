@@ -1,5 +1,6 @@
 #pragma once
 #include <gflags/gflags_declare.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include "join_state.hpp"
@@ -53,7 +54,7 @@ struct PremergedJoinStats {
          }
          // reset
          last_stats = *this;
-         repeat_count = 0;  
+         repeat_count = 0;
       }
       if (repeat_count == 0) {
          premerged_join_log << "remaining_records_to_join\tproduced" << std::endl;  // header
@@ -143,12 +144,12 @@ struct PremergedJoin {
    }
 
    template <typename R>
-   bool scan_filter_next(const JK& to_jk, bool tentative = false)
+   bool scan_filter_next(const JK& to_jk, bool tentative = false, int tentative_skip_bytes = FLAGS_tentative_skip_bytes)
    {
       // scan until we find the first record with the right jk
       int bytes_scanned = 0;
-      while (!tentative || bytes_scanned < FLAGS_tentative_skip_bytes) {  // HARDCODED page size, scan 2 pages (2 next page calls)
-         auto t = scan_next(false);                                       // decide later whether to emplace
+      while (!tentative || bytes_scanned < tentative_skip_bytes) {  // HARDCODED page size, scan 2 pages (2 next page calls)
+         auto t = scan_next(false);                                 // decide later whether to emplace
          if (!t.has_value()) {
             return false;  // exhausted scanner
          }
@@ -157,6 +158,9 @@ struct PremergedJoin {
          int cmp = jk.match(to_jk);
          if (cmp < 0) {
             continue;  // skip this record, it is before the seek_jk
+         }
+         if (!tentative) {                                                  // not tentative, should always find in this page
+            assert(bytes_scanned <= std::max(tentative_skip_bytes, 4096));  // HARDCODED page size
          }
          stats.scan_filter_success++;
          emplace(k, v, jk);  // emplace the record, it is either the right one or the first one after the seek_jk, which will be needed later
@@ -211,10 +215,27 @@ struct PremergedJoin {
       if (base == 0 && dist == 1) {
          return right_next<R>(to_jk_r);
       }
-      // 3 downstream record types, tentatively scan 2 pages
-      if (I >= sizeof...(Rs) - 2) {                  // HARDCODED: the last 2 record types, city & customer2
-         return scan_filter_next<R>(to_jk_r, true);  // tentatively scan 2 pages. Seek if not found.
-      } else {                                       // 4 seek directly
+      // 3 For downstream record types, tentatively scan
+      if (I >= sizeof...(Rs) - 2) {  // HARDCODED: the last 2 record types, city & customer2
+         auto last_kv_in_page = merged_scanner.last_in_page();
+         int bytes_advanced = 0;
+         if (last_kv_in_page.has_value()) {
+            auto [last_k, last_v] = last_kv_in_page.value();
+            JK last_jk = SKBuilder<JK>::create(last_k, last_v);
+            int cmp = last_jk.match(to_jk_r);
+            if (cmp < 0) {  // last key is before the seek_jk, required jk not in this page
+               bytes_advanced = merged_scanner.go_to_last_in_page();
+               // do tentative skipping below
+            } else if (cmp == 0) {  // last key is the seek_jk, found it
+               emplace(last_k, last_v, last_jk);
+               merged_scanner.go_to_last_in_page();
+               return true;                                 // no scan or seek needed
+            } else {                                        // cmp > 0, last key is after the seek_jk, scan filter in this page
+               return scan_filter_next<R>(to_jk_r, false);  // not tentative scanning
+            }
+         }  // do tentative skipping below
+         return scan_filter_next<R>(to_jk_r, true, FLAGS_tentative_skip_bytes - bytes_advanced);  // tentatively scan 2 pages. Seek if not found.
+      } else {                                                                                    // 4 seek directly
          return seek_next<R>(to_jk_r);
       }
    }
