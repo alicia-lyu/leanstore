@@ -100,7 +100,15 @@ struct BaseJoiner {
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
 struct MergedJoiner {
    std::unique_ptr<MergedScannerType<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>> merged_scanner;
-   std::optional<PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>> joiner;
+   std::optional<PremergedJoin<MergedScannerType<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>,
+                               sort_key_t,
+                               view_t,
+                               nation2_t,
+                               states_t,
+                               county_t,
+                               city_t,
+                               customer2_t>>
+       joiner;
    sort_key_t seek_key;
    const sort_key_t seek_max = sort_key_t::max();
 
@@ -133,8 +141,8 @@ template <template <typename...> class MergedAdapterType, template <typename...>
 struct Merged2Joiner {
    std::unique_ptr<MergedScannerType<sort_key_t, ns_t, nation2_t, states_t>> merged_scanner_ns;
    std::unique_ptr<MergedScannerType<sort_key_t, ccc_t, county_t, city_t, customer2_t>> merged_scanner_ccc;
-   std::optional<PremergedJoin<MergedScannerType, sort_key_t, ns_t, nation2_t, states_t>> joiner_ns;
-   std::optional<PremergedJoin<MergedScannerType, sort_key_t, ccc_t, county_t, city_t, customer2_t>> joiner_ccc;
+   std::optional<PremergedJoin<MergedScannerType<sort_key_t, ns_t, nation2_t, states_t>, sort_key_t, ns_t, nation2_t, states_t>> joiner_ns;
+   std::optional<PremergedJoin<MergedScannerType<sort_key_t, ccc_t, county_t, city_t, customer2_t>, sort_key_t, ccc_t, county_t, city_t, customer2_t>> joiner_ccc;
    std::optional<BinaryMergeJoin<sort_key_t, view_t, ns_t, ccc_t>> joiner_view;
    sort_key_t seek_key;
    const sort_key_t seek_max = sort_key_t::max();

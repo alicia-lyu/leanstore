@@ -20,9 +20,7 @@ class GeoJoin
 
    MergedTree& merged;
 
-   AdapterType<ns_t>& ns_view;
-   AdapterType<nsc_t>& nsc_view;
-   AdapterType<nscci_t>& nscci_view;
+   AdapterType<mixed_view_t>& mixed_view;
    AdapterType<view_t>& join_view;
 
    MergedAdapterType<nation2_t, states_t>& ns;
@@ -62,9 +60,7 @@ class GeoJoin
   public:
    GeoJoin(TPCH& workload,
            MergedTree& m,
-           AdapterType<ns_t>& ns_view,
-           AdapterType<nsc_t>& nsc_view,
-           AdapterType<nscci_t>& nscci_view,
+           AdapterType<mixed_view_t>& mixed_view,
            AdapterType<view_t>& v,
            MergedAdapterType<nation2_t, states_t>& ns,
            MergedAdapterType<county_t, city_t, customer2_t>& ccc,
@@ -75,9 +71,7 @@ class GeoJoin
            AdapterType<customer2_t>& customer2)
        : workload(workload),
          merged(m),
-         ns_view(ns_view),
-         nsc_view(nsc_view),
-         nscci_view(nscci_view),
+         mixed_view(mixed_view),
          join_view(v),
          ns(ns),
          ccc(ccc),
@@ -369,17 +363,14 @@ class GeoJoin
    void mixed_query_by_view();
    void mixed_query_by_merged();
    void mixed_query_by_base();
-   void mixed_query_by_2merged();
 
    void point_mixed_query_by_view();
    void point_mixed_query_by_merged();
    void point_mixed_query_by_base();
-   void point_mixed_query_by_2merged();
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
 #include "join_w_search.tpp"  // IWYU pragma: keep
-#include "join_w_slicing.tpp"  // IWYU pragma: keep
 #include "load.tpp"          // IWYU pragma: keep
 #include "maintain.tpp"      // IWYU pragma: keep
 #include "mixed_query.tpp"   // IWYU pragma: keep

@@ -68,9 +68,9 @@ struct PremergedJoinStats {
 inline PremergedJoinStats PremergedJoinStats::last_stats{0};
 
 // merged_scanner -> join_state -> yield joined records
-template <template <typename...> class MergedScannerType, typename JK, typename JR, typename... Rs>
+template <typename MergedScannerType, typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
-   MergedScannerType<JK, JR, Rs...>& merged_scanner;
+   MergedScannerType& merged_scanner;
    JoinState<JK, JR, Rs...> join_state;
    PremergedJoinStats stats{sizeof...(Rs)};
 
@@ -78,14 +78,14 @@ struct PremergedJoin {
    using V = std::variant<Rs...>;
 
    PremergedJoin(
-       MergedScannerType<JK, JR, Rs...>& merged_scanner,
+       MergedScannerType& merged_scanner,
        std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
        : merged_scanner(merged_scanner), join_state("PremergedJoin", consume_joined)
    {
    }
 
    template <template <typename> class AdapterType>
-   PremergedJoin(MergedScannerType<JK, JR, Rs...>& merged_scanner, AdapterType<JR>& joinedAdapter)
+   PremergedJoin(MergedScannerType& merged_scanner, AdapterType<JR>& joinedAdapter)
        : merged_scanner(merged_scanner), join_state("PremergedJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
    }
@@ -216,7 +216,7 @@ struct PremergedJoin {
          return right_next<R>(to_jk_r);
       }
       // 3 For downstream record types, tentatively scan
-      if (I >= sizeof...(Rs) - 2) {  // HARDCODED: the last 2 record types, city & customer2
+      if (I >= sizeof...(Rs) - 3) {  // HARDCODED: the last 3 record types, county & city & customer2
          auto last_kv_in_page = merged_scanner.last_in_page();
          int bytes_advanced = 0;
          if (last_kv_in_page.has_value()) {

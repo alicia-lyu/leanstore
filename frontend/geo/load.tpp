@@ -1,6 +1,7 @@
 #pragma once
 #include "views.hpp"
 #include "workload.hpp"
+#include "mixed_query.tpp"
 
 namespace geo_join
 {
@@ -15,6 +16,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
                           [this](int n, int s, int c, int ci, int cu, bool insert_view) { load_1customer(n, s, c, ci, cu, insert_view); });
    seq_load();
    load_state.advance_customers_to_hot_cities();
+   // load mixed view
+   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> merged_counter(merged, mixed_view);
+   merged_counter.run();
    log_sizes();
 };
 
@@ -44,7 +48,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
    std::cout << std::endl << "Loaded " << load_state.county_sum << " counties and " << load_state.city_sum << " cities." << std::endl;
    // load view
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
-   PremergedJoin<MergedScannerType, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
+   PremergedJoin<MergedScannerType<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>, sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t> joiner(*merged_scanner, join_view);
    joiner.run();
 }
 
