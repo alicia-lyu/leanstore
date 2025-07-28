@@ -1,7 +1,7 @@
 #pragma once
 #include <rocksdb/db.h>
-#include "Exceptions.hpp"
 #include "../RocksDB.hpp"
+#include "Exceptions.hpp"
 #include "RocksDBMergedScanner.hpp"
 #include "Units.hpp"
 #include "leanstore/KVInterface.hpp"
@@ -31,14 +31,12 @@ struct RocksDBMergedAdapter {
    void get_handle()
    {
       assert(map.tx_db != nullptr);
-      ColumnFamilyHandle* handle = map.cf_handles.at(idx + 1); // +1 because cf_handles[0] is the default column family
+      ColumnFamilyHandle* handle = map.cf_handles.at(idx + 1);  // +1 because cf_handles[0] is the default column family
       assert(handle != nullptr);
       cf_handle = handle;
    }
 
-   ~RocksDBMergedAdapter()
-   {
-   }
+   ~RocksDBMergedAdapter() {}
    // -------------------------------------------------------------------------------------
    template <class Record>
    void insert(const typename Record::Key& key, const Record& record)
@@ -85,14 +83,17 @@ struct RocksDBMergedAdapter {
    u64 estimatePages() { UNREACHABLE(); }
    u64 estimateLeafs() { UNREACHABLE(); }
 
-   double size()
-   {
-      return map.get_size(cf_handle, std::max({Records::maxFoldLength()...}), name);
-   }
+   double size() { return map.get_size(cf_handle, std::max({Records::maxFoldLength()...}), name); }
 
    template <typename JK, typename JR>
    std::unique_ptr<RocksDBMergedScanner<JK, JR, Records...>> getScanner()
    {
       return std::make_unique<RocksDBMergedScanner<JK, JR, Records...>>(cf_handle, map);
+   }
+
+   template <typename JK, typename JR, typename... RsSubset>
+   std::unique_ptr<RocksDBMergedScanner<JK, JR, RsSubset...>> getSelectiveScanner()
+   {
+      return std::make_unique<RocksDBMergedScanner<JK, JR, RsSubset...>>(cf_handle, map);
    }
 };

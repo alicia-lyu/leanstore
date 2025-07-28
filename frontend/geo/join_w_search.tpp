@@ -44,6 +44,36 @@ struct BaseJoiner {
       final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); });
    }
 
+   BaseJoiner(AdapterType<nation2_t>& nation,
+              AdapterType<states_t>& states,
+              AdapterType<county_t>& county,
+              AdapterType<city_t>& city,
+              AdapterType<customer2_t>& customer2,
+              AdapterType<ns_t>& ns,
+              AdapterType<nsc_t>& nsc,
+              AdapterType<nscci_t>& nscci,
+              AdapterType<view_t>& join_view,
+              sort_key_t seek_key = sort_key_t::max())
+       : nation_scanner(nation.getScanner()),
+         states_scanner(states.getScanner()),
+         county_scanner(county.getScanner()),
+         city_scanner(city.getScanner()),
+         customer2_scanner(customer2.getScanner())
+   {
+      if (seek_key != sort_key_t::max()) {
+         seek(seek_key);
+      }
+      // std::function<void(const typename JR::Key&, const JR&)>&
+      joiner_ns.emplace([this]() { return nation_scanner->next(); }, [this]() { return states_scanner->next(); },
+                        [this, &ns](const typename ns_t::Key& k, const ns_t& v) { ns.insert(k, v); });
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); },
+                         [this, &nsc](const typename nsc_t::Key& k, const nsc_t& v) { nsc.insert(k, v); });
+      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); },
+                           [this, &nscci](const typename nscci_t::Key& k, const nscci_t& v) { nscci.insert(k, v); });
+      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); },
+                           [this, &join_view](const typename view_t::Key& k, const view_t& v) { join_view.insert(k, v); });
+   }
+
    void run() { final_joiner->run(); }
 
    std::optional<std::pair<view_t::Key, view_t>> next() { return final_joiner->next(); }
@@ -154,7 +184,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::qu
           return true;
        },
        [&]() {});
-   std::cout << "Enumerating materialized join_view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
+   std::cout << "Enumerated materialized join_view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
    logger.log(t, "join", "mat_view", get_view_size());

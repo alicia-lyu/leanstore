@@ -43,9 +43,9 @@ def get_build_vars(build_dir: Path):
 def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, Path]:
     exec_path = build_dir / "frontend" / exec_fname
     if "lsm" in exec_fname:
-        image_path = data_disk / "rocksdb_images" / exec_fname / f"{SCALE_ENV}"
+        image_path = data_disk / exec_fname / f"{SCALE_ENV}"
     else:
-        image_path = data_disk / "leanstore_images" / exec_fname / f"{SCALE_ENV}.image"
+        image_path = data_disk / exec_fname / f"{SCALE_ENV}.image"
     recover_file = build_dir / exec_fname / f"{SCALE_ENV}.json" # do recover
     runtime_dir = build_dir / exec_fname / f"{SCALE_ENV}-in-{DRAM_ENV}"
     return (
@@ -155,7 +155,7 @@ class Experiment:
 
         # rule to copy image file to a temporary "test field"
         if "lsm" not in self.exec_fname:
-            print(f"{self.image_path}_temp: {self.image_path} FORCE") # force duplicate
+            print(f"{self.image_path}_temp: {self.recover_file} {self.image_path} FORCE") # force duplicate; check recover target before image_path target
             self.console_print_subsection(f"Copying image file {self.image_path} to {self.image_path}_temp")
             print(f"\t{copy_image_cmd}")
 
@@ -197,8 +197,8 @@ class Experiment:
             suffix,
             sep=" "
         )
-        print("\techo \"Image size:\";", f"du -sh {self.image_path}")
-        print("\techo \"Data disk size:\";", f"du -sh {data_disk}")
+        print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path}")
+        print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk}")
         print("\n") # 2 lines
         
     def experiment_flags(self) -> tuple[dict[str, str], str]:

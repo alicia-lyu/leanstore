@@ -19,6 +19,10 @@ class GeoJoin
    using MergedTree = MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>;
 
    MergedTree& merged;
+
+   AdapterType<ns_t>& ns_view;
+   AdapterType<nsc_t>& nsc_view;
+   AdapterType<nscci_t>& nscci_view;
    AdapterType<view_t>& join_view;
 
    MergedAdapterType<nation2_t, states_t>& ns;
@@ -58,6 +62,9 @@ class GeoJoin
   public:
    GeoJoin(TPCH& workload,
            MergedTree& m,
+           AdapterType<ns_t>& ns_view,
+           AdapterType<nsc_t>& nsc_view,
+           AdapterType<nscci_t>& nscci_view,
            AdapterType<view_t>& v,
            MergedAdapterType<nation2_t, states_t>& ns,
            MergedAdapterType<county_t, city_t, customer2_t>& ccc,
@@ -68,6 +75,9 @@ class GeoJoin
            AdapterType<customer2_t>& customer2)
        : workload(workload),
          merged(m),
+         ns_view(ns_view),
+         nsc_view(nsc_view),
+         nscci_view(nscci_view),
          join_view(v),
          ns(ns),
          ccc(ccc),
@@ -142,70 +152,70 @@ class GeoJoin
    size_t range_query_by_2merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
    // Find all joined rows for the same nationkey, statekeyZ
-   void ns_view()
+   void ns5join_view()
    {
       ns_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
-   void ns_merged()
+   void ns5join_merged()
    {
       ns_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
-   void ns_base()
+   void ns5join_base()
    {
       ns_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
 
-   void ns_by_2merged()
+   void ns5join_2merged()
    {
       ns_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
 
    // Find all joined rows for the same nationkey, statekey, countykey
-   void nsc_view()
+   void nsc5join_view()
    {
       nsc_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
-   void nsc_merged()
+   void nsc5join_merged()
    {
       nsc_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
-   void nsc_base()
+   void nsc5join_base()
    {
       nsc_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
 
-   void nsc_by_2merged()
+   void nsc5join_2merged()
    {
       nsc_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
 
-   void nscci_by_view()
+   void nscci5join_view()
    {
       nscci_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
-   void nscci_by_merged()
+   void nscci5join_merged()
    {
       nscci_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
-   void nscci_by_base()
+   void nscci5join_base()
    {
       nscci_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
-   void nscci_by_2merged()
+   void nscci5join_2merged()
    {
       nscci_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
@@ -220,7 +230,7 @@ class GeoJoin
    {
       last_customer_id_old = workload.last_customer_id;
       size_t num_customers = last_customer_id_old / 100;
-      std::cout << "Doing a full scan of cities to randomly select "  << num_customers << " for insertion...";
+      std::cout << "Doing a full scan of cities to randomly select " << num_customers << " for insertion...";
       to_insert.reserve(num_customers);  // insert 1% of customers
       auto scanner = city.getScanner();
       while (true) {
@@ -368,7 +378,8 @@ class GeoJoin
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
-#include "join_queries.tpp"  // IWYU pragma: keep
+#include "join_w_search.tpp"  // IWYU pragma: keep
+#include "join_w_slicing.tpp"  // IWYU pragma: keep
 #include "load.tpp"          // IWYU pragma: keep
 #include "maintain.tpp"      // IWYU pragma: keep
 #include "mixed_query.tpp"   // IWYU pragma: keep

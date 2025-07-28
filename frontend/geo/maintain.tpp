@@ -57,8 +57,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    county.lookup1(county_t::Key{sk}, [&](const county_t& c) { cv = c; });
    city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { civ = ci; });
    customer2_t::Key cuk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++workload.last_customer_id};
-   view_t::Key vk{cuk};
    customer2_t cuv = customer2_t::generateRandomRecord(sv.name, cv.name, civ.name);
+   customer2.insert(cuk, cuv);
+   view_t::Key vk{cuk};
    view_t vv{nv, sv, cv, civ, cuv};
    join_view.insert(vk, vv);
 }

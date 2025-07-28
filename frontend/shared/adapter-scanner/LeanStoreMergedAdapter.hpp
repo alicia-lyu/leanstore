@@ -224,4 +224,15 @@ struct LeanStoreMergedAdapter {
          return std::make_unique<LeanStoreMergedScanner<JK, JR, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
    }
+
+   template <typename JK, typename JR, typename... RsSubset>
+   std::unique_ptr<LeanStoreMergedScanner<JK, JR, RsSubset...>> getSelectiveScanner()
+   {
+      if (FLAGS_vi) {
+         return std::make_unique<LeanStoreMergedScanner<JK, JR, RsSubset...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+      } else {
+         return std::make_unique<LeanStoreMergedScanner<JK, JR, RsSubset...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+      }
+   }
+
 };
