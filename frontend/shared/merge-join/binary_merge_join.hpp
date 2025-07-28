@@ -11,8 +11,10 @@ struct BinaryMergeJoin {
    std::optional<std::pair<typename R2::Key, R2>> next_right;
 
    BinaryMergeJoin(std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left_func,
-                   std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right_func)
-       : join_state("BinaryMergeJoin"),
+                   std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right_func,
+                   const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
+
+       : join_state("BinaryMergeJoin", consume_joined),
          fetch_left(std::move(fetch_left_func)),
          fetch_right(std::move(fetch_right_func)),
          next_left(fetch_left()),

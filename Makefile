@@ -35,17 +35,31 @@ targets.mk: generate_targets.py
 # Include all of the repetitive rules
 include targets.mk
 
+temp_btree:
+	-$(MAKE) geo_btree
+	-$(MAKE) geo_btree_3 tentative_skip_bytes=4096
+	-$(MAKE) geo_btree_3 tentative_skip_bytes=8192
+	-$(MAKE) geo_btree_3 tentative_skip_bytes=12288
+	-$(MAKE) geo_btree_3 tentative_skip_bytes=16384
+	-$(MAKE) geo_btree_3 tentative_skip_bytes=20480
+temp_lsm:
+	-$(MAKE) geo_lsm
+	-$(MAKE) geo_lsm_3 tentative_skip_bytes=4096
+	-$(MAKE) geo_lsm_3 tentative_skip_bytes=8192
+	-$(MAKE) geo_lsm_3 tentative_skip_bytes=12288
+	-$(MAKE) geo_lsm_3 tentative_skip_bytes=16384
+	-$(MAKE) geo_lsm_3 tentative_skip_bytes=20480
+
 temp:
-	-$(MAKE) geo_btree dram=0.3
-	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=4096
-	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=8192
-	-$(MAKE) geo_btree_3 dram=0.3 tentative_skip_bytes=12288
-	-$(MAKE) geo_lsm dram=0.2
-	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=4096
-	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=8192
-	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=12288
-	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=16384
-	-$(MAKE) geo_lsm_3 dram=0.2 tentative_skip_bytes=20480
-	
+	-$(MAKE) temp_btree
+	-$(MAKE) temp_lsm
+	-$(MAKE) temp_btree dram=0.1
+	-$(MAKE) temp_lsm dram=0.1
+
+view_lldb:
+	-$(MAKE) geo_btree_lldb_2 dram=0.1
+	-$(MAKE) geo_btree_lldb_2 dram=1
+
+
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1

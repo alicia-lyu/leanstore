@@ -572,7 +572,7 @@ LeanStore::~LeanStore()
    while (bg_threads_counter) {
    }
    if (FLAGS_persist) {
-      std::cout << "Writing all buffer frames to disk..." << std::endl;
+      std::cout << "Writing all buffer frames to disk: " << FLAGS_ssd_path << "..." << std::endl;
       buffer_manager->writeAllBufferFrames();
       serializeState();
    }

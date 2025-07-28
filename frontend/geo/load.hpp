@@ -69,7 +69,7 @@ struct Params {
    Params()
    {
       nation_count = 25 * nation_multiplier;
-      state_max = 80;
+      state_max = 60;
       county_max = 20 * county_multiplier;
       city_max = std::floor(4 * city_multiplier);
       customer_max = 2;
