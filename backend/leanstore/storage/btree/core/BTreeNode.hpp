@@ -131,6 +131,13 @@ struct BTreeNode : public BTreeNodeHeader {
    inline u8* getPayload(u16 slotId) { return ptr() + slot[slotId].offset + slot[slotId].key_len; }
    inline SwipType& getChild(u16 slotId) { return *reinterpret_cast<SwipType*>(getPayload(slotId)); }
    inline u16 getKVConsumedSpace(u16 slot_id) { return sizeof(Slot) + getKeyLen(slot_id) + getPayloadLength(slot_id); }
+   inline u16 getOffsetDiff(u16 slot_id_small, u16 slot_id_large)
+   {
+      if (slot_id_large >= count) {
+         return slot[slot_id_small].offset - data_offset;
+      }
+      return slot[slot_id_small].offset - slot[slot_id_large].offset;
+   }
    // -------------------------------------------------------------------------------------
    // Attention: the caller has to hold a copy of the existing payload
    inline void shortenPayload(u16 slotId, u16 len)

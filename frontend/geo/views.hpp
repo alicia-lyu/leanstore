@@ -1,9 +1,9 @@
 #pragma once
 
 #include <variant>
-#include "../tpc-h/tables.hpp"
 #include "../shared/variant_tuple_utils.hpp"
 #include "../shared/view_templates.hpp"
+#include "../tpc-h/tables.hpp"
 
 // id range: 10s + 20s (only one such namespace are included in each executable)
 namespace geo_join
@@ -125,6 +125,21 @@ struct customer2_t {
    {
       return customer2_t{randomastring<25>(25, 25),       randomastring<40>(0, 40),  randomastring<15>(15, 15),
                          randomNumeric(0.0000, 100.0000), randomastring<10>(10, 10), randomastring<117>(117, 117)};
+   }
+   static customer2_t generateRandomRecord(const Varchar<25>& state_name, const Varchar<25>& county_name, const Varchar<25>& city_name)
+   {
+      // fill address with state, county, city names
+      std::string address_str = state_name.toString() + ", " + county_name.toString() + ", " + city_name.toString();
+      if (address_str.length() > 40) {
+         address_str = address_str.substr(0, 40);
+      } else if (address_str.length() < 40) {
+         // append random characters
+         for (int i = address_str.length(); i < 40; ++i) {
+            address_str += char('a' + (rand() % 26));  // random lowercase letter
+         }
+      }
+      return customer2_t{randomastring<25>(1, 25),        Varchar<40>(address_str.c_str()), randomastring<15>(15, 15),
+                         randomNumeric(0.0000, 100.0000), randomastring<10>(10, 10),        randomastring<117>(117, 117)};
    }
 };
 

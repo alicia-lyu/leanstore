@@ -250,7 +250,7 @@ class GeoJoin
 
    size_t maintain_processed = 0;
 
-   std::pair<customer2_t::Key, customer2_t> maintain_base();
+   void maintain_base();
 
    void maintain_merged();
 
