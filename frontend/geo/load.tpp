@@ -44,7 +44,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
             std::cout << "\rLoading nation " << n << "/" << params.nation_count << ", state " << s << "/" << state_cnt << "...";
          load_1state(n, s); 
       }
-   } 
+   }
    std::cout << std::endl << "Loaded " << load_state.county_sum << " counties and " << load_state.city_sum << " cities." << std::endl;
    // load view
    auto merged_scanner = merged.template getScanner<sort_key_t, view_t>();
@@ -152,7 +152,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
 
    double join_view_size = join_view.size();
    // double city_count_per_county_size = city_count_per_county.size();
-   double view_size = join_view_size;  // + city_count_per_county_size;
+   double mixed_view_size = mixed_view.size();
+   double view_size = join_view_size + mixed_view_size;
 
    double merged_size = merged.size();
    double ns_size = ns.size();
@@ -164,8 +165,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
                                           {"city", city_size},
                                           {"customer2", customer2_size},
                                           {"indexes", indexes_size},
+                                          {"join_view", join_view_size},
+                                          {"mixed_view", mixed_view_size},
                                           {"view", view_size},
-                                          // {"city_count_per_county", city_count_per_county_size},
                                           {"merged", merged_size},
                                           {"ns", ns_size},
                                           {"ccc", ccc_size}};

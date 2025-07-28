@@ -23,7 +23,13 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    std::cout << "GeoJoin::mixed_query_by_view()" << std::endl;
    auto start = std::chrono::high_resolution_clock::now();
    // scan mixed_view
-   mixed_view.scan(mixed_view_t::Key{sort_key_t{}}, [&](const mixed_view_t::Key&, const mixed_view_t&) { return true; }, []() {});
+   long long produced = 0;
+   mixed_view.scan(mixed_view_t::Key{sort_key_t{}}, [&](const mixed_view_t::Key&, const mixed_view_t&) { 
+      if (produced % 1000 == 0)
+         std::cout << "\rEnumerating mixed_view... " << ++produced / 1000 << "k records";
+      return true;
+   }, []() {});
+   std::cout << "\rEnumerated mixed_view with " << produced << " records." << std::endl;
    auto end = std::chrono::high_resolution_clock::now();
    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
    logger.log(t, "mixed", "mat_view", get_view_size());
@@ -82,10 +88,10 @@ struct MergedScannerCounter {
       std::optional<K> output_k = std::nullopt;
       std::visit(overloaded{[&](const nation2_t::Key& nk) { output_k = K{nk}; }, [&](const states_t::Key& sk) { output_k = K{sk}; },
                             [&](const county_t::Key& ck) { output_k = K{ck}; }, [&](const city_t::Key& cik) { output_k = K{cik}; },
-                            [&](const customer2_t::Key&) { assert(last_sk == sort_key_t::max() || curr_sk == last_sk); }},
+                            [&](const customer2_t::Key&) { assert(last_sk == sort_key_t::max() || SKBuilder<sort_key_t>::get<customer_count_t>(curr_sk) == last_sk); }},
                  k);
       if (!output_k.has_value()) {
-         return next(curr_sk, ++customer_count);
+         return next(SKBuilder<sort_key_t>::get<customer_count_t>(curr_sk), ++customer_count);
       }
       std::optional<V> output_v = std::nullopt;
       std::visit(overloaded{[&](const nation2_t& n) { output_v = V{n}; }, [&](const states_t& s) { output_v = V{s}; },
