@@ -2,6 +2,7 @@
 #include "views.hpp"
 #include "workload.hpp"
 #include "mixed_query.tpp"
+#include "join_instance_count.tpp"
 
 namespace geo_join
 {
@@ -19,6 +20,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    // load mixed view
    MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> merged_counter(merged, mixed_view);
    merged_counter.run();
+   // load ccc view
+   MergedJoinerCCC<AdapterType, MergedAdapterType, MergedScannerType> ccc_joiner(merged, ccc_view);
+   ccc_joiner.run();
    log_sizes();
 };
 

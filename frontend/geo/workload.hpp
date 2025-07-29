@@ -22,6 +22,7 @@ class GeoJoin
 
    AdapterType<mixed_view_t>& mixed_view;
    AdapterType<view_t>& join_view;
+   AdapterType<ccc_t>& ccc_view;
 
    MergedAdapterType<nation2_t, states_t>& ns;
    MergedAdapterType<county_t, city_t, customer2_t>& ccc;
@@ -62,6 +63,7 @@ class GeoJoin
            MergedTree& m,
            AdapterType<mixed_view_t>& mixed_view,
            AdapterType<view_t>& v,
+           AdapterType<ccc_t>& ccc_view,
            MergedAdapterType<nation2_t, states_t>& ns,
            MergedAdapterType<county_t, city_t, customer2_t>& ccc,
            AdapterType<nation2_t>& n,
@@ -73,6 +75,7 @@ class GeoJoin
          merged(m),
          mixed_view(mixed_view),
          join_view(v),
+         ccc_view(ccc_view),
          ns(ns),
          ccc(ccc),
          nation(n),
