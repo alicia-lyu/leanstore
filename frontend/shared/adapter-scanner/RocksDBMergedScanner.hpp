@@ -29,7 +29,7 @@ struct RocksDBMergedScanner {
       requires std::disjunction_v<std::is_same<Record, Records>...>
    {
       std::string key_buf;
-      rocksdb::Slice k_slice = map.template fold_key<Record>(key, key_buf);
+      rocksdb::Slice k_slice = map.template fold_key<Record>(key, key_buf, false);
       it->Seek(k_slice);
       after_seek = true;
    }
@@ -39,7 +39,7 @@ struct RocksDBMergedScanner {
       requires std::disjunction_v<std::is_same<Record, Records>...>
    {
       std::string key_buf;
-      rocksdb::Slice k_slice = map.template fold_key<Record>(key, key_buf);
+      rocksdb::Slice k_slice = map.template fold_key<Record>(key, key_buf, false);
       it->SeekForPrev(k_slice);
       after_seek = true;
    }

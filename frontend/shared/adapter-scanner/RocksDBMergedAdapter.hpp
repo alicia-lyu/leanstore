@@ -41,37 +41,37 @@ struct RocksDBMergedAdapter {
    template <class Record>
    void insert(const typename Record::Key& key, const Record& record)
    {
-      map.template insert<Record>(cf_handle, key, record);
+      map.template insert<Record>(cf_handle, key, record, false); // no prefix_sep
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
    void lookup1(const typename Record::Key& key, const std::function<void(const Record&)>& cb)
    {
-      map.template lookup1<Record>(cf_handle, key, cb);
+      map.template lookup1<Record>(cf_handle, key, cb, false);
    }
 
    template <class Record>
    bool tryLookup(const typename Record::Key& key, const std::function<void(const Record&)>& cb)
    {
-      return map.template tryLookup<Record>(cf_handle, key, cb);
+      return map.template tryLookup<Record>(cf_handle, key, cb, false);
    }
 
    template <class Record>
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& fn, leanstore::UpdateSameSizeInPlaceDescriptor&)
    {
-      map.template update1<Record>(cf_handle, key, fn);
+      map.template update1<Record>(cf_handle, key, fn, false);
    }
 
    template <class Record>
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb)
    {
-      map.template update1<Record>(cf_handle, key, cb);
+      map.template update1<Record>(cf_handle, key, cb, false);
    }
    // -------------------------------------------------------------------------------------
    template <class Record>
    bool erase(const typename Record::Key& key)
    {
-      return map.template erase<Record>(cf_handle, key);
+      return map.template erase<Record>(cf_handle, key, false);
    }
    // -------------------------------------------------------------------------------------
    template <class Field, class Record>
@@ -83,7 +83,7 @@ struct RocksDBMergedAdapter {
    u64 estimatePages() { UNREACHABLE(); }
    u64 estimateLeafs() { UNREACHABLE(); }
 
-   double size() { return map.get_size(cf_handle, std::max({Records::maxFoldLength()...}), name); }
+   double size() { return map.get_size(cf_handle, name); }
 
    template <typename JK, typename JR>
    std::unique_ptr<RocksDBMergedScanner<JK, JR, Records...>> getScanner()
