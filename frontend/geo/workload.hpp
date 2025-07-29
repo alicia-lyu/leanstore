@@ -372,7 +372,8 @@ class GeoJoin
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
-#include "join_w_search.tpp"  // IWYU pragma: keep
+#include "join_search_count.tpp"  // IWYU pragma: keep
+#include "join_instance_count.tpp"  // IWYU pragma: keep
 #include "load.tpp"          // IWYU pragma: keep
 #include "maintain.tpp"      // IWYU pragma: keep
 #include "mixed_query.tpp"   // IWYU pragma: keep

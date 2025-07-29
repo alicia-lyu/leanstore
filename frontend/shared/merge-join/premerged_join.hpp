@@ -216,7 +216,7 @@ struct PremergedJoin {
          return right_next<R>(to_jk_r);
       }
       // 3 For downstream record types, tentatively scan
-      if (I >= sizeof...(Rs) - 3) {  // HARDCODED: the last 3 record types, county & city & customer2
+      if (I >= sizeof...(Rs) - 2) {  // HARDCODED: the last 2 record types, county & city & customer2
          auto last_kv_in_page = merged_scanner.last_in_page();
          int bytes_advanced = 0;
          if (last_kv_in_page.has_value()) {
