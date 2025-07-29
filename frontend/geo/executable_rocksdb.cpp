@@ -54,6 +54,7 @@ int main(int argc, char** argv)
    // Views
    RocksDBAdapter<mixed_view_t> mixed_view(rocks_db);
    RocksDBAdapter<view_t> view(rocks_db);
+   RocksDBAdapter<ccc_t> ccc_view(rocks_db);
    RocksDBMergedAdapter<nation2_t, states_t, county_t, city_t, customer2_t> mergedGeoJoin(rocks_db);
    RocksDBMergedAdapter<nation2_t, states_t> ns(rocks_db);
    RocksDBMergedAdapter<county_t, city_t, customer2_t> ccc(rocks_db);
@@ -62,7 +63,7 @@ int main(int argc, char** argv)
 
    RocksDBLogger logger(rocks_db);
    TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, mixed_view, view, ns, ccc, nation2, states, county, city, customer2);
+   GJ tpchGeoJoin(tpch, mergedGeoJoin, mixed_view, view, ccc_view, ns, ccc, nation2, states, county, city, customer2);
    if (!FLAGS_recover || FLAGS_storage_structure == 0) {
       tpchGeoJoin.load();
       return 0;
