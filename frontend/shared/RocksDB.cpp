@@ -138,8 +138,11 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
    }
 }
 
-double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int, const std::string& name)
+double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
 {
+   if (default_cf_size > 0.0) {
+      return default_cf_size; // avoid frequent compactions
+   }
    // compact so that every experiment starts with a clean slate for fair comparison
    std::cout << "Compacting " << name << "..." << std::flush;
    rocksdb::CompactRangeOptions cr_options;
@@ -198,5 +201,6 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const int, const std::st
    }
    sstable_csv.close();
 
-   return live_data_size_bytes / 1024.0 / 1024.0;
+   default_cf_size = (double) live_data_size_bytes / 1024.0 / 1024.0;
+   return default_cf_size;
 }

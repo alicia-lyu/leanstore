@@ -56,12 +56,19 @@ struct MergedScannerCCC {
       if (!full_kv.has_value()) {
          return std::nullopt;
       }
-      auto [k, v] = *full_kv;
-      std::visit(overloaded{[&](const nation2_t::Key&) { return next(); }, [&](const states_t::Key&) { return next(); },  // discard
-                            [&](const county_t::Key& ck) { return std::make_pair(K{ck}, V{std::get<county_t>(v)}); },
-                            [&](const city_t::Key& ci) { return std::make_pair(K{ci}, V{std::get<city_t>(v)}); },
-                            [&](const customer2_t::Key& cu) { return std::make_pair(K{cu}, V{std::get<customer2_t>(v)}); }},
+      auto [k, structured_v] = *full_kv;  // 'v' is a structured binding, not a real variable
+      auto& v = structured_v;             // Create a real reference variable that can be captured
+      std::optional<std::pair<K, V>> ret = std::nullopt;
+      std::visit(overloaded{[&](const nation2_t::Key&) {}, [&](const states_t::Key&) {},
+                            [&](const county_t::Key& ck) { ret = std::make_pair(K{ck}, V{std::get<county_t>(v)}); },
+                            [&](const city_t::Key& ci) { ret = std::make_pair(K{ci}, V{std::get<city_t>(v)}); },
+                            [&](const customer2_t::Key& cu) { ret = std::make_pair(K{cu}, V{std::get<customer2_t>(v)}); }},
                  k);
+      if (!ret.has_value()) {
+         return next();  // skip invalid keys
+      } else {
+         return ret;
+      }
    }
 
    std::optional<std::pair<K, V>> last_in_page()
@@ -70,12 +77,19 @@ struct MergedScannerCCC {
       if (!full_kv.has_value()) {
          return std::nullopt;
       }
-      auto [k, v] = *full_kv;
-      std::visit(overloaded{[&](const nation2_t::Key&) { return std::nullopt; }, [&](const states_t::Key&) { return std::nullopt; },  // discard
-                            [&](const county_t::Key& ck) { return std::make_pair(K{ck}, V{std::get<county_t>(v)}); },
-                            [&](const city_t::Key& ci) { return std::make_pair(K{ci}, V{std::get<city_t>(v)}); },
-                            [&](const customer2_t::Key& cu) { return std::make_pair(K{cu}, V{std::get<customer2_t>(v)}); }},
+      auto [k, structured_v] = *full_kv;  // 'v' is a structured binding, not a real variable
+      auto& v = structured_v;             // Create a real reference variable that can be captured
+      std::optional<std::pair<K, V>> ret = std::nullopt;
+      std::visit(overloaded{[&](const nation2_t::Key&) {}, [&](const states_t::Key&) {},  // discard
+                            [&](const county_t::Key& ck) { ret = std::make_pair(K{ck}, V{std::get<county_t>(v)}); },
+                            [&](const city_t::Key& ci) { ret = std::make_pair(K{ci}, V{std::get<city_t>(v)}); },
+                            [&](const customer2_t::Key& cu) { ret = std::make_pair(K{cu}, V{std::get<customer2_t>(v)}); }},
                  k);
+      if (!ret.has_value()) {
+         return std::nullopt;
+      } else {
+         return ret;
+      }
    }
 
    int go_to_last_in_page() { return full_scanner->go_to_last_in_page(); }

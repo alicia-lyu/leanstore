@@ -11,6 +11,7 @@
 #include <rocksdb/wide_columns.h>
 
 // -------------------------------------------------------------------------------------
+#include "Types.hpp"
 #include "Units.hpp"
 #include "leanstore/Config.hpp"
 #include "leanstore/KVInterface.hpp"
@@ -154,8 +155,27 @@ struct RocksDB {
       delete txn;
       txn = nullptr;
    }
+   double default_cf_size = 0.0;
+   double get_size(ColumnFamilyHandle* cf_handle, const std::string& name = "default");
 
-   double get_size(ColumnFamilyHandle* cf_handle, const int max_fold_len, const std::string& name);
+   template <typename Record>
+   double get_size()
+   {
+      // rocksdb::Slice min_key{0, 1};
+      // rocksdb::Slice max_key{255, max_fold_len};
+      std::vector<u8> min_key(1, Record::id);
+      std::vector<u8> max_key(1, Record::id + 1);
+      rocksdb::Slice min_slice(reinterpret_cast<const char*>(min_key.data()), min_key.size());
+      rocksdb::Slice max_slice(reinterpret_cast<const char*>(max_key.data()), max_key.size());
+      double default_full_size = get_size(cf_handles[0]);
+      u64 size = 0;
+      rocksdb::Range range(min_slice, max_slice);
+      tx_db->GetApproximateSizes(cf_handles[0], &range, 1, &size);
+      double size_in_mib = static_cast<double>(size) / (1024 * 1024);
+      std::cout << "RocksDB: Approximate size for Record id " << Record::id << " is " << size_in_mib
+                << " MiB (default full size: " << default_full_size << " MiB)" << std::endl;
+      return size_in_mib;
+   };
 
    bool Put(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key, const rocksdb::Slice& value);
 
@@ -166,10 +186,20 @@ struct RocksDB {
    bool Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key);
 
    template <typename Record>
-   rocksdb::Slice fold_key(const typename Record::Key& key, std::string& key_buf)
+   rocksdb::Slice fold_key(const typename Record::Key& key, std::string& key_buf, bool prefix_sep)
    {
-      key_buf.resize(Record::maxFoldLength());
-      const unsigned pos = Record::foldKey(reinterpret_cast<u8*>(key_buf.data()), key);
+      u8* record_begin = nullptr;
+      unsigned pos = 0;
+      if (prefix_sep) {
+         u8 sep = static_cast<u8>(Record::id);
+         key_buf.resize(Record::maxFoldLength() + 1);
+         pos += fold(reinterpret_cast<u8*>(key_buf.data()), sep);
+         record_begin = reinterpret_cast<u8*>(key_buf.data()) + pos;
+      } else {
+         key_buf.resize(Record::maxFoldLength());
+         record_begin = reinterpret_cast<u8*>(key_buf.data());
+      }
+      pos += Record::foldKey(record_begin, key);
       return RSlice(reinterpret_cast<const char*>(key_buf.data()), pos);
    }
 
@@ -181,17 +211,17 @@ struct RocksDB {
    }
 
    template <typename Record>
-   void insert(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const Record& record)
+   void insert(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const Record& record, bool prefix_sep)
    {
       std::string key_buf;
-      Put(cf_handle, fold_key<Record>(key, key_buf), fold_record<Record>(record));
+      Put(cf_handle, fold_key<Record>(key, key_buf, prefix_sep), fold_record<Record>(record));
    }
 
    template <typename Record>
-   void lookup1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb)
+   void lookup1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb, bool prefix_sep)
    {
       std::string key_buf;
-      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf);
+      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf, prefix_sep);
       rocksdb::PinnableSlice value;
       Get(cf_handle, k_slice, &value);
       const Record& record = *reinterpret_cast<const Record*>(value.data());
@@ -200,10 +230,10 @@ struct RocksDB {
    }
 
    template <typename Record>
-   bool tryLookup(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb)
+   bool tryLookup(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(const Record&)>& cb, bool prefix_sep)
    {
       std::string key_buf;
-      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf);
+      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf, prefix_sep);
       rocksdb::PinnableSlice value;
       Status s = tx_db->Get(ro, cf_handle, k_slice, &value);  // force not as part of txn
       if (!s.ok()) {
@@ -225,13 +255,13 @@ struct RocksDB {
    }
 
    template <class Record>
-   void update1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(Record&)>& cb)
+   void update1(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, const std::function<void(Record&)>& cb, bool prefix_sep)
    {
       Record r;
       rocksdb::PinnableSlice r_slice;
       r_slice.PinSelf(RSlice(&r, sizeof(r)));
       std::string key_buf;
-      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf);
+      rocksdb::Slice k_slice = fold_key<Record>(key, key_buf, prefix_sep);
       GetForUpdate(cf_handle, k_slice, &r_slice);
       Record r_lookedup = *reinterpret_cast<const Record*>(r_slice.data());
       cb(r_lookedup);
@@ -240,10 +270,10 @@ struct RocksDB {
    }
 
    template <class Record>
-   bool erase(ColumnFamilyHandle* cf_handle, const typename Record::Key& key)
+   bool erase(ColumnFamilyHandle* cf_handle, const typename Record::Key& key, bool prefix_sep)
    {
       std::string key_buf;
-      Delete(cf_handle, fold_key<Record>(key, key_buf));
+      Delete(cf_handle, fold_key<Record>(key, key_buf, prefix_sep));
       return true;
    }
 
