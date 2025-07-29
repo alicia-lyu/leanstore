@@ -51,13 +51,8 @@ temp_lsm:
 	-$(MAKE) geo_lsm_3 tentative_skip_bytes=20480
 
 temp:
-	-$(MAKE) temp_btree dram=0.1
-	-$(MAKE) temp_lsm dram=0.1
-
-view_lldb:
-	-$(MAKE) geo_btree_lldb_2 dram=0.1
-	-$(MAKE) geo_btree_lldb_2 dram=1
-
+	-$(MAKE) temp_btree dram=0.08
+	-$(MAKE) temp_lsm dram=0.03
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
