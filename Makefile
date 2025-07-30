@@ -44,12 +44,12 @@ temp_btree:
 	-$(MAKE) geo_btree_3 tentative_skip_bytes=20480
 
 temp_lsm:
-	-$(MAKE) geo_lsm scale=30
-	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=4096
-	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=8192
-	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=12288
-	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=16384
-	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=20480
+	-$(MAKE) geo_lsm scale=40
+	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=4096
+	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=8192
+	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=12288
+	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=16384
+	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=20480
 
 temp:
 	-$(MAKE) temp_btree dram=0.1

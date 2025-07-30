@@ -7,16 +7,20 @@
 #include <thread>
 #include "../shared/RocksDB.hpp"
 #include "../tpc-h/workload.hpp"
+#include "../tpc-h/logger.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "workload.hpp"
+
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
 DECLARE_int32(tx_seconds);
 
+static constexpr u64 BG_WORKER = 0;
+static constexpr u64 MAIN_WORKER = 1;
+
 struct DBTraits {
-   virtual void run_tx(std::function<void()> cb) = 0;
-   virtual void schedule_warmup(std::function<void()> cb) = 0;
+   virtual void run_tx(std::function<void()> cb, u64 worker_id = MAIN_WORKER) = 0;
    virtual std::string name() = 0;
    virtual void cleanup_thread() = 0;
    virtual void cleanup_tx() = 0;
@@ -27,18 +31,9 @@ struct LeanStoreTraits : public DBTraits {
    leanstore::cr::CRManager& crm;
    explicit LeanStoreTraits(leanstore::cr::CRManager& crm) : crm(crm) { std::cout << "Running experiment with " << name() << std::endl; }
    ~LeanStoreTraits() = default;
-   void run_tx(std::function<void()> cb)
+   void run_tx(std::function<void()> cb, u64 worker_id)
    {
-      crm.scheduleJobSync(1, [&]() {
-         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE);
-         cb();
-         leanstore::cr::Worker::my().commitTX();
-      });
-   }
-
-   void schedule_warmup(std::function<void()> cb)
-   {
-      crm.scheduleJobAsync(0, [&]() {
+      crm.scheduleJobSync(worker_id, [&]() {
          leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE);
          cb();
          leanstore::cr::Worker::my().commitTX();
@@ -56,17 +51,11 @@ struct RocksDBTraits : public DBTraits {
    RocksDB& rocks_db;
    explicit RocksDBTraits(RocksDB& rocks_db) : rocks_db(rocks_db) { std::cout << "Running experiment with " << name() << std::endl; }
    ~RocksDBTraits() = default;
-   void run_tx(std::function<void()> cb)
+   void run_tx(std::function<void()> cb, u64)
    {
       rocks_db.startTX();
       cb();
       rocks_db.commitTX();
-   }
-   void schedule_warmup(std::function<void()> cb)
-   {
-      std::thread([&]() {
-         cb();
-      }).detach();
    }
    void cleanup_thread()
    {  // No cleanup needed for RocksDB threads
@@ -85,6 +74,7 @@ struct ExecutableHelper {
    std::string method;
 
    std::function<void()> lookup_cb;
+   std::function<void()> update_cb;
    std::vector<std::function<void()>> elapsed_cbs;
    std::vector<std::function<void()>> tput_cbs;
    std::vector<std::string> tput_prefixes;
@@ -94,8 +84,8 @@ struct ExecutableHelper {
    std::function<double()> size_cb;
    std::function<void()> cleanup_cb = []() {};
 
-   std::atomic<bool> keep_running_warmup = true;
-   std::atomic<u64> lookup_count = 0;
+   std::atomic<bool> keep_running_bg_tx = true;
+   std::atomic<u64> bg_tx_count = 0;
    std::atomic<u64> running_threads_counter = 0;
 
    ExecutableHelper(leanstore::cr::CRManager& crm,
@@ -104,12 +94,14 @@ struct ExecutableHelper {
                     geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join,
                     std::function<double()> size_cb,
                     std::function<void()> lookup_cb,
+                    std::function<void()> update_cb,
                     std::vector<std::function<void()>> elapsed_cbs,
                     std::vector<std::function<void()>> tput_cbs,
                     std::vector<std::string> tput_prefixes)
        : db_traits(std::make_unique<LeanStoreTraits>(crm)),
          method(method),
          lookup_cb(lookup_cb),
+         update_cb(update_cb),
          elapsed_cbs(elapsed_cbs),
          tput_cbs(tput_cbs),
          tput_prefixes(tput_prefixes),
@@ -124,14 +116,16 @@ struct ExecutableHelper {
                     TPCHWorkload<AdapterType>& tpch,
                     geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join,
                     std::function<double()> size_cb,
-                    std::function<void()> lookup,
+                    std::function<void()> lookup_cb,
+                    std::function<void()> update_cb,
                     std::vector<std::function<void()>> elapsed_cbs,
                     std::vector<std::function<void()>> tput_cbs,
                     std::vector<std::string> tput_prefixes,
                     std::function<void()> cleanup_cb)
        : db_traits(std::make_unique<RocksDBTraits>(rocks_db)),
          method(method),
-         lookup_cb(lookup),
+         lookup_cb(lookup_cb),
+         update_cb(update_cb),
          elapsed_cbs(elapsed_cbs),
          tput_cbs(tput_cbs),
          tput_prefixes(tput_prefixes),
@@ -147,7 +141,7 @@ struct ExecutableHelper {
       std::cout << std::string(20, '=') << method << "," << size_cb() << std::string(20, '=') << std::endl;
       tpch.prepare();
 
-      warmup();
+      schedule_bg_txs();
 
       for (auto& cb : elapsed_cbs) {
          running_threads_counter++;
@@ -159,7 +153,9 @@ struct ExecutableHelper {
          tput_tx(tput_cbs[i], tput_prefixes[i]);
       }
 
-      keep_running_warmup = false;
+      tput_tx(update_cb, "maintain");  // isolate update perf
+
+      keep_running_bg_tx = false;
 
       while (running_threads_counter > 0) {
          std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
@@ -168,32 +164,37 @@ struct ExecutableHelper {
       std::cout << "All threads finished. Cleaning up inserted data from maintenance phase..." << std::endl;
       db_traits->run_tx(cleanup_cb);
    }
-   void warmup()
+   void schedule_bg_txs()
    {
-      db_traits->schedule_warmup([this]() { warmup_phase(); });
-      sleep(FLAGS_warmup_seconds);
-   }
-
-   void warmup_phase()
-   {
-      running_threads_counter++;
-      while (keep_running_warmup) {
-         jumpmuTry()
-         {
-            lookup_cb();
-            lookup_count++;
+      std::thread([this]() {
+         running_threads_counter++;
+         while (keep_running_bg_tx) {
+            int lottery = rand() % 100;
+            std::string tx_type;
+            jumpmuTry()
+            {
+               if (lottery < FLAGS_bgw_pct) {
+                  db_traits->run_tx(update_cb, BG_WORKER);
+                  tx_type = "update";
+               } else {
+                  db_traits->run_tx(lookup_cb, BG_WORKER);
+                  tx_type = "lookup";
+               }
+               bg_tx_count++;
+            }
+            jumpmuCatchNoPrint()
+            {
+               std::cerr << "#" << bg_tx_count.load() << " bg " << tx_type << " tx failed." << std::endl;
+            }
+            if (bg_tx_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
+               std::cout << "\r#" << bg_tx_count.load() << " bg tx performed.";
          }
-         jumpmuCatchNoPrint()
-         {
-            std::cerr << "#" << lookup_count.load() << " point lookups failed." << std::endl;
-         }
-         if (lookup_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
-            std::cout << "\r#" << lookup_count.load() << " warm-up point lookups performed.";
-      }
-      std::cout << std::endl;
-      std::cout << "#" << lookup_count.load() << " warm-up point lookups in total performed." << std::endl;
-      db_traits->cleanup_thread();
-      running_threads_counter--;
+         std::cout << std::endl;
+         std::cout << "#" << bg_tx_count.load() << " bg tx in total performed." << std::endl;
+         db_traits->cleanup_thread();
+         running_threads_counter--;
+      }).detach();
+      sleep(FLAGS_warmup_seconds); // warmup phase; then background phase
    }
 
    void tput_tx(std::function<void()> cb, std::string tx)
