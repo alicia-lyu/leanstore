@@ -57,28 +57,19 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    states.lookup1(states_t::Key{sk}, [&](const states_t& s) { sv = s; });
    county.lookup1(county_t::Key{sk}, [&](const county_t& c) { cv = c; });
    city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { civ = ci; });
-   bool customer_exists = false; // There can be no customers in this city yet
-   customer2.scan(
-       customer2_t::Key{sk},
-       [&](const customer2_t::Key& cuk, const customer2_t& cuv) {
-          sort_key_t curr_sk = SKBuilder<sort_key_t>::create(cuk, cuv);
-          if (curr_sk.match(sk) == 0) {
-             customer_exists = true;
-          }
-          return false;  // If exists, must be the first one scanned
-       },
-       []() {});
    customer2_t::Key cuk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++workload.last_customer_id};
    customer2_t cuv = customer2_t::generateRandomRecord(sv.name, cv.name, civ.name);
    customer2.insert(cuk, cuv);
    view_t::Key vk{cuk};
    view_t vv{nv, sv, cv, civ, cuv};
    join_view.insert(vk, vv);
+   mixed_view_t::Key mixed_vk{sk};
+   bool customer_exists = mixed_view.tryLookup(mixed_vk, [&](const mixed_view_t&) {});
    if (customer_exists) {
       UpdateDescriptorGenerator1(mixed_update_descriptor, mixed_view_t, payloads);
-      mixed_view.update1(mixed_view_t::Key{sk}, [&](mixed_view_t& mv) { std::get<4>(mv.payloads).customer_count++; }, mixed_update_descriptor);
+      mixed_view.update1(mixed_vk, [&](mixed_view_t& mv) { std::get<4>(mv.payloads).customer_count++; }, mixed_update_descriptor);
    } else {
-      mixed_view.insert(mixed_view_t::Key{sk}, mixed_view_t{nv, sv, cv, civ, customer_count_t{1}});
+      mixed_view.insert(mixed_vk, mixed_view_t{nv, sv, cv, civ, customer_count_t{1}});
    }
 }
 

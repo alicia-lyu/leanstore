@@ -48,18 +48,18 @@ struct PremergedJoinStats {
       std::ofstream premerged_join_log(premerged_join_log_path, std::ios::app);
       if (*this != last_stats) {  // log only if the stats changed
          if (repeat_count > 0) {  // exclude the first stats
-            premerged_join_log << repeat_count << "x! record types: " << last_stats.record_type_count << ", seek_cnt: " << last_stats.seek_cnt
-                               << ", right_next_cnt: " << last_stats.right_next_cnt << ", scan_filter_success: " << last_stats.scan_filter_success
-                               << ", scan_filter_fail: " << last_stats.scan_filter_fail << ", emplace_cnt: " << last_stats.emplace_cnt << std::endl;
+            // premerged_join_log << repeat_count << "x! record types: " << last_stats.record_type_count << ", seek_cnt: " << last_stats.seek_cnt
+            //                    << ", right_next_cnt: " << last_stats.right_next_cnt << ", scan_filter_success: " << last_stats.scan_filter_success
+            //                    << ", scan_filter_fail: " << last_stats.scan_filter_fail << ", emplace_cnt: " << last_stats.emplace_cnt << std::endl;
          }
          // reset
          last_stats = *this;
          repeat_count = 0;
       }
       if (repeat_count == 0) {
-         premerged_join_log << "remaining_records_to_join\tproduced" << std::endl;  // header
+         // premerged_join_log << "remaining_records_to_join\tproduced" << std::endl;  // header
       }
-      premerged_join_log << remaining_records_to_join << "\t\t" << produced << std::endl;
+      // premerged_join_log << remaining_records_to_join << "\t\t" << produced << std::endl;
       repeat_count++;
       premerged_join_log.close();
    }

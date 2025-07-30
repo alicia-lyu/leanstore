@@ -42,17 +42,18 @@ temp_btree:
 	-$(MAKE) geo_btree_3 tentative_skip_bytes=12288
 	-$(MAKE) geo_btree_3 tentative_skip_bytes=16384
 	-$(MAKE) geo_btree_3 tentative_skip_bytes=20480
+
 temp_lsm:
-	-$(MAKE) geo_lsm
-	-$(MAKE) geo_lsm_3 tentative_skip_bytes=4096
-	-$(MAKE) geo_lsm_3 tentative_skip_bytes=8192
-	-$(MAKE) geo_lsm_3 tentative_skip_bytes=12288
-	-$(MAKE) geo_lsm_3 tentative_skip_bytes=16384
-	-$(MAKE) geo_lsm_3 tentative_skip_bytes=20480
+	-$(MAKE) geo_lsm scale=30
+	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=4096
+	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=8192
+	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=12288
+	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=16384
+	-$(MAKE) geo_lsm_3 scale=30 tentative_skip_bytes=20480
 
 temp:
-	-$(MAKE) temp_btree dram=0.08
-	-$(MAKE) temp_lsm dram=0.03
+	-$(MAKE) temp_btree dram=0.1
+	-$(MAKE) temp_lsm dram=0.1
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1

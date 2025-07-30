@@ -196,7 +196,7 @@ struct states_t {
    static states_t generateRandomRecord(int county_cnt) { return states_t{randomastring<25>(1, 25), randomastring<152>(0, 152), county_cnt}; }
 };
 
-struct ns_t : public joined_t<21, sort_key_t, nation2_t, states_t> {
+struct ns_t : public joined_t<21, sort_key_t, false, nation2_t, states_t> {
    ns_t() = default;
    ns_t(const nation2_t& n, const states_t& s) : joined_t{std::make_tuple(n, s)} {}
    struct Key : public joined_t::Key {
@@ -235,7 +235,7 @@ struct county_t {
    static county_t generateRandomRecord(int city_cnt) { return county_t{randomastring<25>(1, 25), randomastring<152>(0, 152), city_cnt}; }
 };
 
-struct nsc_t : public joined_t<20, sort_key_t, ns_t, county_t> {
+struct nsc_t : public joined_t<20, sort_key_t, false, ns_t, county_t> {
    template <typename... Args>
    explicit nsc_t(Args&&... args) : joined_t{std::forward<Args>(args)...}
    {
@@ -289,7 +289,7 @@ struct city_t {
    static city_t generateRandomRecord() { return city_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
 };
 
-struct ccc_t : public joined_t<23, sort_key_t, county_t, city_t, customer2_t> {
+struct ccc_t : public joined_t<23, sort_key_t, false, county_t, city_t, customer2_t> {
    ccc_t() = default;
    ccc_t(const county_t& c, const city_t& ci, const customer2_t& cu) : joined_t{std::make_tuple(c, ci, cu)} {}
    struct Key : public joined_t::Key {
@@ -305,7 +305,7 @@ struct ccc_t : public joined_t<23, sort_key_t, county_t, city_t, customer2_t> {
    std::tuple<county_t, city_t, customer2_t> flatten() const { return this->payloads; }
 };
 
-struct nscci_t : public joined_t<22, sort_key_t, nsc_t, city_t> {
+struct nscci_t : public joined_t<22, sort_key_t, false, nsc_t, city_t> {
    template <typename... Args>
    explicit nscci_t(Args&&... args) : joined_t{std::forward<Args>(args)...}
    {
@@ -358,7 +358,7 @@ struct customer_count_t {
    ADD_RECORD_TRAITS(customer_count_t);
 };
 
-struct mixed_view_t : public joined_t<25, sort_key_t, nation2_t, states_t, county_t, city_t, customer_count_t> {
+struct mixed_view_t : public joined_t<25, sort_key_t, false, nation2_t, states_t, county_t, city_t, customer_count_t> {
    mixed_view_t() = default;
    mixed_view_t(const nation2_t& n, const states_t& s, const county_t& c, const city_t& ci, const customer_count_t& cuc)
        : joined_t{std::make_tuple(n, s, c, ci, cuc)}
@@ -393,7 +393,7 @@ struct mixed_view_t : public joined_t<25, sort_key_t, nation2_t, states_t, count
    };
 };
 
-struct view_t : public joined_t<24, sort_key_t, nation2_t, states_t, county_t, city_t, customer2_t> {
+struct view_t : public joined_t<24, sort_key_t, false, nation2_t, states_t, county_t, city_t, customer2_t> {
    view_t() = default;
    // view_t(const nsc_t& nsc, const city_t& c) : joined_t{std::tuple_cat(nsc.flatten(), std::make_tuple(c))} {}
    view_t(const nscci_t& nscci, const customer2_t& cu) : joined_t{std::tuple_cat(nscci.flatten(), std::make_tuple(cu))} {}

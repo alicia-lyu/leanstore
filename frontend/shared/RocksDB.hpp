@@ -51,6 +51,7 @@ struct RocksDB {
 
    rocksdb::Options db_options;
    rocksdb::BlockBasedTableOptions table_opts;
+   rocksdb::CacheUsageOptions cache_opts;
    rocksdb::WriteOptions wo;
    rocksdb::ReadOptions ro;
    rocksdb::ReadOptions iterator_ro;
@@ -86,12 +87,6 @@ struct RocksDB {
          block_share = 0.8;
          memtable_share = 0.2;
       }
-      LRUCacheOptions cache_opts;
-      std::cout << "RocksDB: total_cache_bytes = " << total_cache_bytes << std::endl;
-      cache_opts.capacity = total_cache_bytes * block_share;
-      cache_opts.strict_capacity_limit = true;
-      block_cache = NewLRUCache(cache_opts);
-
       set_options();
    }
 
@@ -143,7 +138,9 @@ struct RocksDB {
    void startTX()
    {
       assert(tx_db != nullptr);
-      assert(txn == nullptr);
+      while (txn != nullptr) {
+         std::cerr << "WARNING: RocksDB::startTX() called when txn != nullptr." << std::endl;
+      } // wait for the previous transaction to finish
       rocksdb::Status s;
       txn = tx_db->BeginTransaction(wo, {});
    }
@@ -154,6 +151,16 @@ struct RocksDB {
       s = txn->Commit();
       delete txn;
       txn = nullptr;
+   }
+
+   void rollbackTX()
+   {
+      assert(tx_db != nullptr);
+      rocksdb::Status s;
+      s = txn->Rollback();
+      delete txn;
+      txn = nullptr;
+      
    }
    double default_cf_size = 0.0;
    double get_size(ColumnFamilyHandle* cf_handle, const std::string& name = "default");

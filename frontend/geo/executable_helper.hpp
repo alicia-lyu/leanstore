@@ -19,6 +19,7 @@ struct DBTraits {
    virtual void schedule_warmup(std::function<void()> cb) = 0;
    virtual std::string name() = 0;
    virtual void cleanup_thread() = 0;
+   virtual void cleanup_tx() = 0;
    virtual ~DBTraits() = default;
 };
 
@@ -46,6 +47,8 @@ struct LeanStoreTraits : public DBTraits {
 
    void cleanup_thread() { leanstore::cr::Worker::my().shutdown(); }
 
+   void cleanup_tx() {}
+
    std::string name() { return "LeanStore"; }
 };
 
@@ -61,11 +64,15 @@ struct RocksDBTraits : public DBTraits {
    }
    void schedule_warmup(std::function<void()> cb)
    {
-      std::thread([&]() { cb(); }).detach();
+      std::thread([&]() {
+         cb();
+      }).detach();
    }
    void cleanup_thread()
    {  // No cleanup needed for RocksDB threads
    }
+
+   void cleanup_tx() { rocks_db.rollbackTX(); }
    std::string name() { return "RocksDB"; }
 };
 
@@ -200,12 +207,13 @@ struct ExecutableHelper {
       atomic<bool> keep_running_tx = true;
       std::thread([&] {
          std::this_thread::sleep_for(std::chrono::seconds(FLAGS_tx_seconds));
+         std::cout << "keeping_running = false";
          keep_running_tx = false;
       }).detach();
 
       running_threads_counter++;
 
-      while (keep_running_tx || count.load() < 10) {
+      while (keep_running_tx) {
          if (tx == "maintain" && geo_join.insertion_complete()) {
             std::cout << "Maintenance phase completed. No more insertions." << std::endl;
             break;
@@ -219,8 +227,9 @@ struct ExecutableHelper {
          {
             std::cerr << "#" << count.load() << " " << tx << "for " << method << " failed." << std::endl;
          }
-         if (count.load() % 1000 == 1 && FLAGS_log_progress)
+         if ((count.load() % 1000 == 1 && FLAGS_log_progress) || keep_running_tx == false) {
             std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
+         }
       }
 
       std::cout << "#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;

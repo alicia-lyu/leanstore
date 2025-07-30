@@ -8,7 +8,7 @@
 #include <vector>
 #include "table_traits.hpp"
 
-template <int TID, typename JK, typename... Ts>
+template <int TID, typename JK, bool fold_pks, typename... Ts>
 struct joined_t {
    static constexpr int id = TID;
 
@@ -43,7 +43,9 @@ struct joined_t {
    {
       unsigned pos = 0;
       pos += JK::keyfold(out + pos, key.jk);
-      ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::foldKey(out + pos, std::get<Is>(key.keys))), ...);
+      if (fold_pks) {
+         ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::foldKey(out + pos, std::get<Is>(key.keys))), ...);
+      }
       return pos;
    }
 
@@ -58,7 +60,11 @@ struct joined_t {
    {
       unsigned pos = 0;
       pos += JK::keyunfold(in + pos, key.jk);
-      ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::unfoldKey(in + pos, std::get<Is>(key.keys))), ...);
+      if (fold_pks) {
+         ((pos += std::tuple_element_t<Is, std::tuple<Ts...>>::unfoldKey(in + pos, std::get<Is>(key.keys))), ...);
+      } else { // reconstruct pks from jk
+         ((std::get<Is>(key.keys) = typename Ts::Key{key.jk}), ...);
+      }
       return pos;
    }
 
@@ -141,7 +147,7 @@ struct merged_t {
       // else {
       //    key = Key{key.jk};
       // }
-      
+
       if (extra_id == ExtraID::PKID) {
          u8 id;
          pos += unfold(in + pos, id);
