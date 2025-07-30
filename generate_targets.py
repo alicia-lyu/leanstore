@@ -259,6 +259,7 @@ class Experiment:
         # rules for separate runs
         for structure in [0] + STRUCTURE_OPTIONS[self.exec_fname]:
             print(f"{self.exec_fname}_lldb_{structure}: {self.exec_path} {self.recover_file} check_perf_event_paranoid {img_dep}")
+            print(f"\trm stderr.txt && touch stderr.txt") # reset stderr.txt
             print(f"\tmkdir -p {self.runtime_dir}")
             print(
                 f"\tlldb -o run --",

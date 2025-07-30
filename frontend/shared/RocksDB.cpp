@@ -9,7 +9,6 @@
 
 using ROCKSDB_NAMESPACE::CacheEntryRole;
 using ROCKSDB_NAMESPACE::CacheEntryRoleOptions;
-using ROCKSDB_NAMESPACE::CacheUsageOptions;
 using ROCKSDB_NAMESPACE::NewGenericRateLimiter;
 
 void RocksDB::set_options()
@@ -31,7 +30,11 @@ void RocksDB::set_options()
    db_options.compaction_style = rocksdb::kCompactionStyleLevel;
    db_options.target_file_size_base = 1 * 1024 * 1024;  // default is 64 MB, but our dataset is smaller
    db_options.target_file_size_multiplier = 2;
-
+   // BLOCK CACHE
+   rocksdb::LRUCacheOptions lru_cache_opts;
+   lru_cache_opts.capacity = total_cache_bytes * block_share;
+   lru_cache_opts.strict_capacity_limit = true;
+   block_cache = NewLRUCache(lru_cache_opts);
    table_opts.block_cache = block_cache;
    // charge all memory usage to the block cache except memtables
    // FILTER & INDEX
@@ -42,13 +45,14 @@ void RocksDB::set_options()
    table_opts.pin_l0_filter_and_index_blocks_in_cache = true;
    table_opts.partition_filters = true;
    // MEMORY ACCOUNTING
-   CacheUsageOptions cache_opts;
    CacheEntryRoleOptions cache_entry_opts;
    cache_entry_opts.charged = CacheEntryRoleOptions::Decision::kEnabled;
    cache_opts.options_overrides = {{CacheEntryRole::kCompressionDictionaryBuildingBuffer, cache_entry_opts},  // entry opts will be copied
                                    {CacheEntryRole::kFilterConstruction, cache_entry_opts},
                                    {CacheEntryRole::kBlockBasedTableReader, cache_entry_opts},
                                    {CacheEntryRole::kFileMetadata, cache_entry_opts}};
+   table_opts.cache_usage_options = cache_opts;
+   db_options.table_factory = std::shared_ptr<rocksdb::TableFactory>(rocksdb::NewBlockBasedTableFactory(table_opts));
 
    // MEMTABLES
    size_t memtable_budget = memtable_share * total_cache_bytes;
@@ -141,7 +145,7 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
 double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
 {
    if (default_cf_size > 0.0) {
-      return default_cf_size; // avoid frequent compactions
+      return default_cf_size;  // avoid frequent compactions
    }
    // compact so that every experiment starts with a clean slate for fair comparison
    std::cout << "Compacting " << name << "..." << std::flush;
@@ -201,6 +205,6 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
    }
    sstable_csv.close();
 
-   default_cf_size = (double) live_data_size_bytes / 1024.0 / 1024.0;
+   default_cf_size = (double)live_data_size_bytes / 1024.0 / 1024.0;
    return default_cf_size;
 }
