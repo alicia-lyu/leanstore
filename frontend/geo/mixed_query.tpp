@@ -27,7 +27,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mi
    mixed_view.scan(
        mixed_view_t::Key{sort_key_t{}},
        [&](const mixed_view_t::Key&, const mixed_view_t&) {
-          if (produced % 1000 == 0)
+          if (produced % 1000 == 0 && FLAGS_log_progress)
              std::cout << "\rEnumerating mixed_view... " << produced / 1000 << "k records";
           produced++;
           return true;

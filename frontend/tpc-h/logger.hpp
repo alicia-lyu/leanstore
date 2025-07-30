@@ -9,6 +9,8 @@
 #include "leanstore/profiling/tables/ConfigsTable.hpp"
 #include "tabulate/table.hpp"
 
+DECLARE_int32(bgw_pct);
+
 enum class ColumnName { ELAPSED, TPUT };
 
 inline std::string to_string(ColumnName column)
