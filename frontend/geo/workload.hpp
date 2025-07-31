@@ -265,10 +265,67 @@ class GeoJoin
 
    void maintain_2merged();
 
+   size_t maintain_erased = 0;
+
+   void adjust_maintain_ptrs()
+   {
+      maintain_processed = maintain_processed % to_insert.size();  // as long as erase is active, allow maintain_processed to wrap around
+      // insertions go rounds and rounds with no regard for erases
+      if (maintain_erased == to_insert.size()) {  // erase just also go rounds and rounds, as long as erased customer was inserted
+                                                  // (last_customer_id_old <= workload.last_customer_id)
+         std::cout << "Resetting maintain_erased to 0. inserted last_customer_id = " << workload.last_customer_id
+                   << ", erased last_customer_id = " << last_customer_id_old << std::endl;
+         maintain_erased = 0;
+      }
+   }
+
+   int remaining_customers_to_erase() const { return workload.last_customer_id - last_customer_id_old; }
+
+   bool erase_base()
+   {
+      if (last_customer_id_old == workload.last_customer_id) {
+         return false;  // no more customers to erase
+      }
+      const sort_key_t& sk = to_insert.at(maintain_erased++);
+      customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
+      customer2.erase(cust_key);
+      adjust_maintain_ptrs();
+      return true;
+   }
+
+   bool erase_merged()
+   {
+      if (last_customer_id_old == workload.last_customer_id) {
+         return false;  // no more customers to erase
+      }
+      const sort_key_t& sk = to_insert.at(maintain_erased++);
+      customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
+      merged.template erase<customer2_t>(cust_key);
+      adjust_maintain_ptrs();
+      return true;
+   }
+
+   bool erase_view()
+   {
+      if (last_customer_id_old == workload.last_customer_id) {
+         return false;  // no more customers to erase
+      }
+      const sort_key_t& sk = to_insert.at(maintain_erased++);
+      view_t::Key vk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
+      join_view.erase(vk);
+      customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
+      customer2.erase(cust_key);
+      adjust_maintain_ptrs();
+      return true;
+   }
+
+   bool erase_2merged() { throw std::runtime_error("erase_2merged not implemented"); }
+
    void cleanup_base()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : to_insert) {
+      for (; maintain_erased < to_insert.size(); maintain_erased++) {
+         const sort_key_t& sk = to_insert.at(maintain_erased++);
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          customer2.erase(cust_key);
       }
@@ -278,7 +335,8 @@ class GeoJoin
    void cleanup_merged()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : to_insert) {
+      for (; maintain_erased < to_insert.size(); maintain_erased++) {
+         const sort_key_t& sk = to_insert.at(maintain_erased++);
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          merged.template erase<customer2_t>(cust_key);
       }
@@ -288,11 +346,11 @@ class GeoJoin
    void cleanup_view()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : to_insert) {
-         sort_key_t cust_sk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-         view_t::Key vk{cust_sk};
+      for (; maintain_erased < to_insert.size(); maintain_erased++) {
+         const sort_key_t& sk = to_insert.at(maintain_erased++);
+         view_t::Key vk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          join_view.erase(vk);
-         customer2_t::Key cust_key{cust_sk};
+         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          customer2.erase(cust_key);
       }
       assert(last_customer_id_old == workload.last_customer_id);
@@ -301,9 +359,8 @@ class GeoJoin
    void cleanup_2merged()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (const sort_key_t& sk : to_insert) {
-         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-         ccc.template erase<customer2_t>(cust_key);
+      for (; maintain_erased < to_insert.size(); maintain_erased++) {
+         erase_2merged();
       }
       assert(last_customer_id_old == workload.last_customer_id);
    }
@@ -376,6 +433,6 @@ class GeoJoin
 // #include "groupby_query.tpp"  // IWYU pragma: keep
 #include "join_search_count.tpp"  // IWYU pragma: keep
 // #include "join_instance_count.tpp"  // IWYU pragma: keep
-#include "load.tpp"          // IWYU pragma: keep
-#include "maintain.tpp"      // IWYU pragma: keep
-#include "mixed_query.tpp"   // IWYU pragma: keep
+#include "load.tpp"         // IWYU pragma: keep
+#include "maintain.tpp"     // IWYU pragma: keep
+#include "mixed_query.tpp"  // IWYU pragma: keep
