@@ -9,6 +9,7 @@
 
 namespace geo_join
 {
+
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
@@ -284,6 +285,14 @@ class GeoJoin
       }
    }
 
+   void reset_maintain_ptrs()
+   {
+      maintain_processed = 0;
+      maintain_erased = 0;
+      last_customer_id_old = workload.last_customer_id;
+      std::cout << "Resetting maintain pointers. Last customer id: " << last_customer_id_old << std::endl;
+   }
+
    int remaining_customers_to_erase() const { return workload.last_customer_id - last_customer_id_old; }
 
    bool erase_base()
@@ -341,7 +350,7 @@ class GeoJoin
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (; maintain_erased < to_insert.size(); maintain_erased++) {
-         const sort_key_t& sk = to_insert.at(maintain_erased++);
+         const sort_key_t& sk = to_insert.at(maintain_erased);
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          customer2.erase(cust_key);
       }
@@ -352,7 +361,7 @@ class GeoJoin
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (; maintain_erased < to_insert.size(); maintain_erased++) {
-         const sort_key_t& sk = to_insert.at(maintain_erased++);
+         const sort_key_t& sk = to_insert.at(maintain_erased);
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          merged.template erase<customer2_t>(cust_key);
       }
@@ -363,7 +372,7 @@ class GeoJoin
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (; maintain_erased < to_insert.size(); maintain_erased++) {
-         const sort_key_t& sk = to_insert.at(maintain_erased++);
+         const sort_key_t& sk = to_insert.at(maintain_erased);
          view_t::Key vk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          join_view.erase(vk);
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};

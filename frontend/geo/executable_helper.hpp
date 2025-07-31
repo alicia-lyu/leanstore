@@ -8,8 +8,8 @@
 #include "../shared/RocksDB.hpp"
 #include "../tpc-h/logger.hpp"
 #include "../tpc-h/workload.hpp"
+#include "per_structure_workload.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
-#include "workload.hpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
@@ -65,7 +65,7 @@ struct RocksDBTraits : public DBTraits {
    RocksDB& rocks_db;
    explicit RocksDBTraits(RocksDB& rocks_db) : rocks_db(rocks_db) { std::cout << "Running experiment with " << name() << std::endl; }
    ~RocksDBTraits() = default;
-   void run_tx(std::function<void()> cb, u64) // worker id determined by caller thread
+   void run_tx(std::function<void()> cb, u64)  // worker id determined by caller thread
    {
       rocks_db.startTX();
       cb();
@@ -85,93 +85,41 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 struct ExecutableHelper {
    std::unique_ptr<DBTraits> db_traits;
-   std::string method;
+   std::unique_ptr<PerStructureWorkload> workload;
 
-   std::function<void()> lookup_cb;
-   std::function<void()> update_cb;
-   std::function<bool()> erase_cb;
-
-   std::vector<std::function<void()>> elapsed_cbs;
-   std::vector<std::function<void()>> tput_cbs;
-   std::vector<std::string> tput_prefixes;
    TPCHWorkload<AdapterType>& tpch;
-   geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join;
-
-   std::function<double()> size_cb;
-   std::function<void()> cleanup_cb = []() {};
 
    std::atomic<bool> keep_running_bg_tx = true;
    std::atomic<u64> bg_tx_count = 0;
    std::atomic<u64> running_threads_counter = 0;
 
-   ExecutableHelper(leanstore::cr::CRManager& crm,
-                    std::string method,
-                    TPCHWorkload<AdapterType>& tpch,
-                    geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join,
-                    std::function<double()> size_cb,
-                    std::function<void()> lookup_cb,
-                    std::function<void()> update_cb,
-                    std::function<bool()> erase_cb,
-                    std::vector<std::function<void()>> elapsed_cbs,
-                    std::vector<std::function<void()>> tput_cbs,
-                    std::vector<std::string> tput_prefixes)
-       : db_traits(std::make_unique<LeanStoreTraits>(crm)),
-         method(method),
-         lookup_cb(lookup_cb),
-         update_cb(update_cb),
-         erase_cb(erase_cb),
-         elapsed_cbs(elapsed_cbs),
-         tput_cbs(tput_cbs),
-         tput_prefixes(tput_prefixes),
-         tpch(tpch),
-         geo_join(geo_join),
-         size_cb(size_cb)
+   ExecutableHelper(leanstore::cr::CRManager& crm, std::unique_ptr<PerStructureWorkload> workload, TPCHWorkload<AdapterType>& tpch)
+       : db_traits(std::make_unique<LeanStoreTraits>(crm)), workload(std::move(workload)), tpch(tpch)
    {
    }
 
-   ExecutableHelper(RocksDB& rocks_db,
-                    std::string method,
-                    TPCHWorkload<AdapterType>& tpch,
-                    geo_join::GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& geo_join,
-                    std::function<double()> size_cb,
-                    std::function<void()> lookup_cb,
-                    std::function<void()> update_cb,
-                    std::function<bool()> erase_cb,
-                    std::vector<std::function<void()>> elapsed_cbs,
-                    std::vector<std::function<void()>> tput_cbs,
-                    std::vector<std::string> tput_prefixes,
-                    std::function<void()> cleanup_cb)
-       : db_traits(std::make_unique<RocksDBTraits>(rocks_db)),
-         method(method),
-         lookup_cb(lookup_cb),
-         update_cb(update_cb),
-         erase_cb(erase_cb),
-         elapsed_cbs(elapsed_cbs),
-         tput_cbs(tput_cbs),
-         tput_prefixes(tput_prefixes),
-         tpch(tpch),
-         geo_join(geo_join),
-         size_cb(size_cb),
-         cleanup_cb(cleanup_cb)
+   ExecutableHelper(RocksDB& rocks_db, std::unique_ptr<PerStructureWorkload> workload, TPCHWorkload<AdapterType>& tpch)
+       : db_traits(std::make_unique<RocksDBTraits>(rocks_db)), workload(std::move(workload)), tpch(tpch)
    {
    }
 
    void run()
    {
-      std::cout << std::string(20, '=') << method << "," << size_cb() << std::string(20, '=') << std::endl;
+      std::cout << std::string(20, '=') << workload->get_name() << "," << workload->get_size() << std::string(20, '=') << std::endl;
       tpch.prepare();
 
       schedule_bg_txs();
 
-      for (auto& cb : elapsed_cbs) {
-         running_threads_counter++;
-         db_traits->run_tx_w_rollback(cb, "elapsed");
-         running_threads_counter--;
-      }
+      running_threads_counter++;
+      db_traits->run_tx_w_rollback([this]() { workload->join(); }, "join");
+      db_traits->run_tx_w_rollback([this]() { workload->mixed(); }, "mixed");
+      running_threads_counter--;
 
-      for (size_t i = 0; i < tput_cbs.size(); i++) {
-         tput_tx(tput_cbs[i], tput_prefixes[i]);
-      }
+      // tput_tx(tput_cbs[i], tput_prefixes[i]);
+      tput_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "ns5join");
+      tput_tx(std::bind(&PerStructureWorkload::nsc5join, workload.get()), "nsc5join");
+      tput_tx(std::bind(&PerStructureWorkload::nscci5join, workload.get()), "nscci5join");
+      tput_tx(std::bind(&PerStructureWorkload::mixed_point, workload.get()), "mixed_point");
 
       keep_running_bg_tx = false;
       // wait for background thread to finish
@@ -179,14 +127,12 @@ struct ExecutableHelper {
          std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
       }
 
-      tput_tx(update_cb, "maintain");  // isolate update perf
-
-      while (running_threads_counter > 0) {
-         std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
-      }
+      tput_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), "insert1");
 
       std::cout << "All threads finished. Cleaning up inserted data from maintenance phase..." << std::endl;
-      db_traits->run_tx_w_rollback(cleanup_cb, "cleanup");
+
+      db_traits->run_tx_w_rollback(std::bind(&PerStructureWorkload::cleanup_updates, workload.get()), "cleanup");
+
       db_traits->cleanup_thread(MAIN_WORKER);
    }
    void schedule_bg_txs()
@@ -201,16 +147,16 @@ struct ExecutableHelper {
             {
                if (lottery < FLAGS_bgw_pct) {
                   if ((lottery < FLAGS_bgw_pct / 2 && customer_to_erase) ||  // half of the time erase if we have customers to erase
-                      geo_join.insertion_complete()) {                       // or when insertion needs to be reset
-                     db_traits->run_tx([&]() { customer_to_erase = erase_cb(); }, BG_WORKER);
+                      workload->insertion_complete()) {                      // or when insertion needs to be reset
+                     db_traits->run_tx([&]() { customer_to_erase = workload->erase1(); }, BG_WORKER);
                      tx_type = "erase";
                   } else {
-                     db_traits->run_tx(update_cb, BG_WORKER);
+                     db_traits->run_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), BG_WORKER);
                      tx_type = "update";
                      customer_to_erase = true;
                   }
                } else {
-                  db_traits->run_tx(lookup_cb, BG_WORKER);
+                  db_traits->run_tx(std::bind(&PerStructureWorkload::bg_lookup, workload.get()), BG_WORKER);
                   tx_type = "lookup";
                }
                bg_tx_count++;
@@ -223,11 +169,11 @@ struct ExecutableHelper {
             if (bg_tx_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
                std::cout << "\r#" << bg_tx_count.load() << " bg tx performed.";
          }
-         std::cout << "Remaining customers to erase = " << geo_join.remaining_customers_to_erase() << std::endl;
+         std::cout << "Remaining customers to erase = " << workload->remaining_customers_to_erase() << std::endl;
          while (customer_to_erase) {
-            db_traits->run_tx_w_rollback([&]() { customer_to_erase = erase_cb(); }, "erase", BG_WORKER);
+            db_traits->run_tx_w_rollback([&]() { customer_to_erase = workload->erase1(); }, "erase", BG_WORKER);
          }
-         std::cout << std::endl;
+         workload->reset_maintain_ptrs();
          std::cout << "#" << bg_tx_count.load() << " bg tx in total performed." << std::endl;
          db_traits->cleanup_thread(BG_WORKER);
          running_threads_counter--;
@@ -241,7 +187,7 @@ struct ExecutableHelper {
       auto start = std::chrono::high_resolution_clock::now();
       atomic<int> count = 0;
 
-      std::cout << "Running " << tx << " on " << method << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
+      std::cout << "Running " << tx << " on " << workload->get_name() << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
 
       atomic<bool> keep_running_tx = true;
       std::thread([&] {
@@ -253,7 +199,7 @@ struct ExecutableHelper {
       running_threads_counter++;
 
       while (keep_running_tx) {
-         if (tx == "maintain" && geo_join.insertion_complete()) {
+         if (tx == "maintain" && workload->insertion_complete()) {
             std::cout << "Maintenance phase completed. No more insertions." << std::endl;
             break;
          }
@@ -265,19 +211,19 @@ struct ExecutableHelper {
          jumpmuCatchNoPrint()
          {
             db_traits->rollback_tx(MAIN_WORKER);
-            std::cerr << "#" << count.load() << " " << tx << "for " << method << " failed." << std::endl;
+            std::cerr << "#" << count.load() << " " << tx << "for " << workload->get_name() << " failed." << std::endl;
          }
          if ((count.load() % 1000 == 1 && FLAGS_log_progress) || keep_running_tx == false) {
-            std::cout << "\r#" << count.load() << " " << tx << " for " << method << " performed.";
+            std::cout << "\r#" << count.load() << " " << tx << " for " << workload->get_name() << " performed.";
          }
       }
 
-      std::cout << "#" << count.load() << " " << tx << " for " << method << " performed." << std::endl;
+      std::cout << "#" << count.load() << " " << tx << " for " << workload->get_name() << " performed." << std::endl;
 
       auto end = std::chrono::high_resolution_clock::now();
       long duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = (double)count.load() / duration * 1e6;
-      tpch.logger.log(tput, count.load(), tx, method, size_cb());
+      tpch.logger.log(tput, count.load(), tx, workload->get_name(), workload->get_size());
       running_threads_counter--;
    }
 };
