@@ -15,7 +15,7 @@
 using namespace leanstore;
 
 DEFINE_int32(tpch_scale_factor, 10, "TPC-H scale factor");
-DEFINE_int32(tx_seconds, 30, "Number of seconds to run each type of transactions");
+DEFINE_int32(tx_seconds, 15, "Number of seconds to run each type of transactions");
 DEFINE_int32(
     storage_structure,
     0,
@@ -87,7 +87,7 @@ int main(int argc, char** argv)
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
    GJ tpchGeoJoin(tpch, mergedGeoJoin, mixed_view, view, ccc_view, ns, ccc, nation2, states, county, city, customer2);
 
-   if (!FLAGS_recover || FLAGS_storage_structure == 0) {
+   if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;
       crm.scheduleJobSync(0, [&]() {
          cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
@@ -97,7 +97,6 @@ int main(int argc, char** argv)
       return 0;
    } else {
       tpch.recover_last_ids();
-      tpchGeoJoin.select_to_insert();
    }
 
    switch (FLAGS_storage_structure) {

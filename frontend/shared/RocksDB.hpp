@@ -47,7 +47,7 @@ struct RocksDB {
    std::vector<ColumnFamilyDescriptor> cf_descs;
    std::vector<ColumnFamilyHandle*> cf_handles;
    std::vector<std::function<void()>> get_handle_cbs;
-   static thread_local rocksdb::Transaction* txn; // allows multiple transactions as long as called by different threads
+   static thread_local rocksdb::Transaction* txn;  // allows multiple transactions as long as called by different threads
 
    rocksdb::Options db_options;
    rocksdb::BlockBasedTableOptions table_opts;
@@ -67,7 +67,7 @@ struct RocksDB {
    {
       assert(type == DB_TYPE::TransactionDB);  // only allow TransactionDB for now
       // PERSIST & RECOVER
-      if (FLAGS_trunc == false && std::filesystem::exists(FLAGS_ssd_path)) {
+      if (std::filesystem::exists(FLAGS_ssd_path) && FLAGS_recover_file != "./leanstore.json") {
          FLAGS_recover = true;
          std::cout << "RocksDB: recovering from " << FLAGS_ssd_path << std::endl;
       } else {  // load DB from scratch
