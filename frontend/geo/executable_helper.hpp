@@ -116,10 +116,10 @@ struct ExecutableHelper {
       running_threads_counter--;
 
       // tput_tx(tput_cbs[i], tput_prefixes[i]);
-      tput_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "ns5join");
-      tput_tx(std::bind(&PerStructureWorkload::nsc5join, workload.get()), "nsc5join");
-      tput_tx(std::bind(&PerStructureWorkload::nscci5join, workload.get()), "nscci5join");
-      tput_tx(std::bind(&PerStructureWorkload::mixed_point, workload.get()), "mixed_point");
+      tput_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "join-ns");
+      tput_tx(std::bind(&PerStructureWorkload::nsc5join, workload.get()), "join-nsc");
+      tput_tx(std::bind(&PerStructureWorkload::nscci5join, workload.get()), "join-nscci");
+      tput_tx(std::bind(&PerStructureWorkload::mixed_point, workload.get()), "mixed-point");
 
       keep_running_bg_tx = false;
       // wait for background thread to finish
@@ -127,7 +127,7 @@ struct ExecutableHelper {
          std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
       }
 
-      tput_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), "insert1");
+      tput_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), "maintain");
 
       std::cout << "All threads finished. Cleaning up inserted data from maintenance phase..." << std::endl;
 
