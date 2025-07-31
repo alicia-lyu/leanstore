@@ -4,10 +4,11 @@
 #include "../tpc-h/leanstore_logger.hpp"
 #include "../tpc-h/tables.hpp"
 #include "executable_helper.hpp"
-#include "executable_params.hpp"
+#include "per_structure_workload.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
+#include "per_structure_workload.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -99,34 +100,25 @@ int main(int argc, char** argv)
       tpchGeoJoin.select_to_insert();
    }
 
-   ExeParams<GJ> params(tpchGeoJoin);
-
    switch (FLAGS_storage_structure) {
       case 1: {
-         EH helper(crm, "base_idx", tpch, tpchGeoJoin, std::bind(&GJ::get_indexes_size, &tpchGeoJoin),
-                   std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_base, &tpchGeoJoin),
-                   std::bind(&GJ::erase_base, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes);
+         auto base_workload =
+             std::make_unique<BaseWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
+         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(base_workload)), tpch);
          helper.run();
          break;
       }
       case 2: {
-         EH helper(crm, "mat_view", tpch, tpchGeoJoin, std::bind(&GJ::get_view_size, &tpchGeoJoin),
-                   std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_view, &tpchGeoJoin),
-                   std::bind(&GJ::erase_view, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes);
+         auto view_workload =
+             std::make_unique<ViewWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
+         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(view_workload)), tpch);
          helper.run();
          break;
       }
       case 3: {
-         EH helper(crm, "merged_idx", tpch, tpchGeoJoin, std::bind(&GJ::get_merged_size, &tpchGeoJoin),
-                   std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_merged, &tpchGeoJoin),
-                   std::bind(&GJ::erase_merged, &tpchGeoJoin), params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes);
-         helper.run();
-         break;
-      }
-      case 4: {
-         EH helper(crm, "2merged", tpch, tpchGeoJoin, std::bind(&GJ::get_2merged_size, &tpchGeoJoin),
-                   std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_2merged, &tpchGeoJoin),
-                   std::bind(&GJ::erase_2merged, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes);
+         auto merged_workload =
+             std::make_unique<MergedWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
+         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(merged_workload)), tpch);
          helper.run();
          break;
       }

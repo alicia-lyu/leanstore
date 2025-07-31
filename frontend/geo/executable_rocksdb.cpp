@@ -6,7 +6,7 @@
 #include "../tpc-h/rocksdb_logger.hpp"
 #include "../tpc-h/tables.hpp"
 #include "executable_helper.hpp"
-#include "executable_params.hpp"
+#include "per_structure_workload.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -73,44 +73,32 @@ int main(int argc, char** argv)
       tpchGeoJoin.select_to_insert();
    }
 
-   ExeParams<GJ> params(tpchGeoJoin);
-
    switch (FLAGS_storage_structure) {
       case 1: {
-         EH helper_base(rocks_db, "base_idx", tpch, tpchGeoJoin, std::bind(&GJ::get_indexes_size, &tpchGeoJoin),
-                        std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_base, &tpchGeoJoin),
-                        std::bind(&GJ::erase_base, &tpchGeoJoin), params.elapsed_cbs_base, params.tput_cbs_base, params.tput_prefixes,
-                        std::bind(&GJ::cleanup_base, &tpchGeoJoin));
-         helper_base.run();
+         auto base_workload =
+             std::make_unique<BaseWorkload<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>(tpchGeoJoin);
+         EH helper(rocks_db, std::unique_ptr<PerStructureWorkload>(std::move(base_workload)), tpch);
+         helper.run();
          break;
       }
       case 2: {
-         EH helper_view(rocks_db, "mat_view", tpch, tpchGeoJoin, std::bind(&GJ::get_view_size, &tpchGeoJoin),
-                        std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_view, &tpchGeoJoin),
-                        std::bind(&GJ::erase_view, &tpchGeoJoin), params.elapsed_cbs_view, params.tput_cbs_view, params.tput_prefixes,
-                        std::bind(&GJ::cleanup_view, &tpchGeoJoin));
-         helper_view.run();
+         auto view_workload =
+             std::make_unique<ViewWorkload<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>(tpchGeoJoin);
+         EH helper(rocks_db, std::unique_ptr<PerStructureWorkload>(std::move(view_workload)), tpch);
+         helper.run();
          break;
       }
       case 3: {
-         EH helper_merged(rocks_db, "merged_idx", tpch, tpchGeoJoin, std::bind(&GJ::get_merged_size, &tpchGeoJoin),
-                          std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_merged, &tpchGeoJoin),
-                          std::bind(&GJ::erase_merged, &tpchGeoJoin),
-
-                          params.elapsed_cbs_merged, params.tput_cbs_merged, params.tput_prefixes, std::bind(&GJ::cleanup_merged, &tpchGeoJoin));
-         helper_merged.run();
+         auto merged_workload =
+             std::make_unique<MergedWorkload<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>(tpchGeoJoin);
+         EH helper(rocks_db, std::unique_ptr<PerStructureWorkload>(std::move(merged_workload)), tpch);
+         helper.run();
          break;
       }
-      case 4: {
-         EH helper_2merged(rocks_db, "2merged", tpch, tpchGeoJoin, std::bind(&GJ::get_2merged_size, &tpchGeoJoin),
-                           std::bind(&GJ::point_lookups_of_rest, &tpchGeoJoin), std::bind(&GJ::maintain_2merged, &tpchGeoJoin),
-                           std::bind(&GJ::erase_2merged, &tpchGeoJoin), params.elapsed_cbs_2merged, params.tput_cbs_2merged, params.tput_prefixes,
-                           std::bind(&GJ::cleanup_2merged, &tpchGeoJoin));
-         helper_2merged.run();
-         break;
-      }
-      default:
+      default: {
+         std::cerr << "Invalid storage structure option: " << FLAGS_storage_structure << std::endl;
          return -1;
+      }
    }
 
    return 0;
