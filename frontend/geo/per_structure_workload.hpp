@@ -6,6 +6,7 @@ namespace geo_join
 {
 
 struct PerStructureWorkload {
+   virtual ~PerStructureWorkload() = default;
    virtual std::string get_name() const = 0;
    virtual void join() = 0;
    virtual void ns5join() = 0;
