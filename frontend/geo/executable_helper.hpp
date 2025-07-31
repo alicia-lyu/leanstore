@@ -20,9 +20,21 @@ static constexpr u64 MAIN_WORKER = 1;
 
 struct DBTraits {
    virtual void run_tx(std::function<void()> cb, u64 worker_id = MAIN_WORKER) = 0;
+   virtual void run_tx_w_rollback(std::function<void()> cb, std::string tx, u64 worker_id = MAIN_WORKER)
+   {
+      jumpmuTry()
+      {
+         run_tx(cb, worker_id);
+      }
+      jumpmuCatch()
+      {
+         rollback_tx(worker_id);
+         std::cerr << "Transaction " << tx << " failed." << std::endl;
+      }
+   }
    virtual std::string name() = 0;
-   virtual void cleanup_thread() = 0;
-   virtual void cleanup_tx() = 0;
+   virtual void cleanup_thread(u64 worker_id) = 0;
+   virtual void rollback_tx(u64 worker_id) = 0;
    virtual ~DBTraits() = default;
 };
 
@@ -39,9 +51,12 @@ struct LeanStoreTraits : public DBTraits {
       });
    }
 
-   void cleanup_thread() { leanstore::cr::Worker::my().shutdown(); }
+   void cleanup_thread(u64 worker_id)
+   {
+      crm.scheduleJobSync(worker_id, [&]() { leanstore::cr::Worker::my().shutdown(); });
+   }
 
-   void cleanup_tx() {}
+   void rollback_tx(u64) {}
 
    std::string name() { return "LeanStore"; }
 };
@@ -50,17 +65,17 @@ struct RocksDBTraits : public DBTraits {
    RocksDB& rocks_db;
    explicit RocksDBTraits(RocksDB& rocks_db) : rocks_db(rocks_db) { std::cout << "Running experiment with " << name() << std::endl; }
    ~RocksDBTraits() = default;
-   void run_tx(std::function<void()> cb, u64)
+   void run_tx(std::function<void()> cb, u64) // worker id determined by caller thread
    {
       rocks_db.startTX();
       cb();
       rocks_db.commitTX();
    }
-   void cleanup_thread()
+   void cleanup_thread(u64)
    {  // No cleanup needed for RocksDB threads
    }
 
-   void cleanup_tx() { rocks_db.rollbackTX(); }
+   void rollback_tx(u64) { rocks_db.rollbackTX(); }
    std::string name() { return "RocksDB"; }
 };
 
@@ -150,7 +165,7 @@ struct ExecutableHelper {
 
       for (auto& cb : elapsed_cbs) {
          running_threads_counter++;
-         db_traits->run_tx(cb);
+         db_traits->run_tx_w_rollback(cb, "elapsed");
          running_threads_counter--;
       }
 
@@ -171,7 +186,8 @@ struct ExecutableHelper {
       }
 
       std::cout << "All threads finished. Cleaning up inserted data from maintenance phase..." << std::endl;
-      db_traits->run_tx(cleanup_cb);
+      db_traits->run_tx_w_rollback(cleanup_cb, "cleanup");
+      db_traits->cleanup_thread(MAIN_WORKER);
    }
    void schedule_bg_txs()
    {
@@ -201,6 +217,7 @@ struct ExecutableHelper {
             }
             jumpmuCatchNoPrint()
             {
+               db_traits->rollback_tx(BG_WORKER);
                std::cerr << "#" << bg_tx_count.load() << " bg " << tx_type << " tx failed." << std::endl;
             }
             if (bg_tx_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
@@ -208,11 +225,11 @@ struct ExecutableHelper {
          }
          std::cout << "Remaining customers to erase = " << geo_join.remaining_customers_to_erase() << std::endl;
          while (customer_to_erase) {
-            db_traits->run_tx([&]() { customer_to_erase = erase_cb(); }, BG_WORKER);
+            db_traits->run_tx_w_rollback([&]() { customer_to_erase = erase_cb(); }, "erase", BG_WORKER);
          }
          std::cout << std::endl;
          std::cout << "#" << bg_tx_count.load() << " bg tx in total performed." << std::endl;
-         db_traits->cleanup_thread();
+         db_traits->cleanup_thread(BG_WORKER);
          running_threads_counter--;
       }).detach();
       sleep(FLAGS_warmup_seconds);  // warmup phase; then background phase
@@ -247,6 +264,7 @@ struct ExecutableHelper {
          }
          jumpmuCatchNoPrint()
          {
+            db_traits->rollback_tx(MAIN_WORKER);
             std::cerr << "#" << count.load() << " " << tx << "for " << method << " failed." << std::endl;
          }
          if ((count.load() % 1000 == 1 && FLAGS_log_progress) || keep_running_tx == false) {
