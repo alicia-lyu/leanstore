@@ -1,9 +1,9 @@
 #pragma once
 #include "Adapter.hpp"
 // -------------------------------------------------------------------------------------
+#include "LeanStoreScanner.hpp"
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/LeanStore.hpp"
-#include "LeanStoreScanner.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 // -------------------------------------------------------------------------------------
@@ -66,23 +66,12 @@ struct LeanStoreAdapter : Adapter<Record> {
    // -------------------------------------------------------------------------------------
    void insert(const typename Record::Key& key, const Record& record) final
    {
-      
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
       const OP_RESULT res = btree->insert(folded_key, folded_key_len, (u8*)(&record), sizeof(Record));
       if (res != leanstore::OP_RESULT::OK && res != leanstore::OP_RESULT::ABORT_TX) {
-         std::cerr << "LeanStoreAdapter<" << Record::id << ">::insert failed with res value " << std::to_string((int) res) << ", key: " << key << std::endl;
-         // print hex
-         std::cerr << "LeanstoreAdapter::insert: folded key length: " << folded_key_len << std::endl;
-         for (size_t i = 0; i < folded_key_len; ++i) {
-            std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)folded_key[i] << " ";
-         }
-         std::cerr << std::dec << std::endl;
-         // try unfold
-         typename Record::Key typed_key;
-         Record::unfoldKey(folded_key, typed_key);
-         std::cerr << "unfolded key: " << typed_key << std::endl;
-         throw std::runtime_error("insert failed with res value " + std::to_string((int) res));
+         bad_res(res, key, "insert");
+         throw std::runtime_error("insert failed with res value " + std::to_string((int)res));
       }
       if (res == leanstore::OP_RESULT::ABORT_TX) {
          cr::Worker::my().abortTX();
@@ -137,6 +126,24 @@ struct LeanStoreAdapter : Adapter<Record> {
       }
    }
    // -------------------------------------------------------------------------------------
+   void bad_res(const OP_RESULT res, const typename Record::Key& key, std::string operation)
+   {
+      std::cerr << "LeanStoreAdapter<" << Record::id << ">::" << operation << " failed with res value " << std::to_string((int)res)
+                << ", key: " << key << std::endl;
+      // print hex
+      u8 folded_key[Record::maxFoldLength()];
+      u16 folded_key_len = Record::foldKey(folded_key, key);
+      std::cerr << "LeanstoreAdapter::" << operation << ": folded key length: " << folded_key_len << std::endl;
+      for (size_t i = 0; i < folded_key_len; ++i) {
+         std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)folded_key[i] << " ";
+      }
+      std::cerr << std::dec << std::endl;
+      // try unfold
+      typename Record::Key typed_key;
+      Record::unfoldKey(folded_key, typed_key);
+      std::cerr << "unfolded key: " << typed_key << std::endl;
+   }
+
    void update1(const typename Record::Key& key, const std::function<void(Record&)>& cb, UpdateSameSizeInPlaceDescriptor& update_descriptor) final
    {
       u8 folded_key[Record::maxFoldLength()];
@@ -160,7 +167,10 @@ struct LeanStoreAdapter : Adapter<Record> {
              cb(typed_payload);
           },
           update_descriptor);
-      ensure(res != leanstore::OP_RESULT::NOT_FOUND);
+      if (res == leanstore::OP_RESULT::NOT_FOUND) {
+         bad_res(res, key, "update1");
+         throw std::runtime_error("update1 failed with res value " + std::to_string((int)res));
+      }
       if (res == leanstore::OP_RESULT::ABORT_TX) {
          cr::Worker::my().abortTX();
       }
@@ -217,7 +227,7 @@ struct LeanStoreAdapter : Adapter<Record> {
    }
    // -------------------------------------------------------------------------------------
    template <class Field>
-   Field lookupField(const typename Record::Key& key, Field Record::*f)
+   Field lookupField(const typename Record::Key& key, Field Record::* f)
    {
       u8 folded_key[Record::maxFoldLength()];
       u16 folded_key_len = Record::foldKey(folded_key, key);
@@ -236,20 +246,24 @@ struct LeanStoreAdapter : Adapter<Record> {
    // -------------------------------------------------------------------------------------
    u64 count() { return btree->countEntries(); }
 
-   std::unique_ptr<LeanStoreScanner<Record>> getScanner() {
+   std::unique_ptr<LeanStoreScanner<Record>> getScanner()
+   {
       std::unique_ptr<LeanStoreScanner<Record>> scanner;
       if (FLAGS_vi) {
-         scanner = std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
+         scanner = std::make_unique<LeanStoreScanner<Record>>(
+             *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
       } else {
-         scanner = std::make_unique<LeanStoreScanner<Record>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
+         scanner = std::make_unique<LeanStoreScanner<Record>>(
+             *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
       }
       return scanner;
    }
 
    u64 estimatePages() final { return btree->estimatePages(); }
-   
-   double size() { 
-      double s = estimatePages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0; // MiB
+
+   double size()
+   {
+      double s = estimatePages() * EFFECTIVE_PAGE_SIZE / 1024.0 / 1024.0;  // MiB
       return s;
    }
 

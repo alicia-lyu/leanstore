@@ -370,15 +370,7 @@ struct mixed_view_t : public joined_t<25, sort_key_t, false, nation2_t, states_t
    struct Key : public joined_t::Key {
       Key() = default;
 
-      Key(sort_key_t jk)
-          : joined_t::Key{jk,
-                          nation2_t::Key{jk.nationkey},
-                          states_t::Key{jk.nationkey, jk.statekey},
-                          county_t::Key{jk.nationkey, jk.statekey, jk.countykey},
-                          city_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey},
-                          customer_count_t::Key{jk.nationkey, jk.statekey, jk.countykey, jk.citykey}}
-      {
-      }
+      Key(sort_key_t jk) : joined_t::Key{jk, nation2_t::Key{jk}, states_t::Key{jk}, county_t::Key{jk}, city_t::Key{jk}, customer_count_t::Key{jk}} {}
 
       Key(const nation2_t::Key& n, const states_t::Key& s, const county_t::Key& c, const city_t::Key& ci, const customer_count_t::Key& cuc)
           : joined_t::Key{sort_key_t{n.nationkey, s.statekey, c.countykey, ci.citykey, 0}, std::make_tuple(n, s, c, ci, cuc)}

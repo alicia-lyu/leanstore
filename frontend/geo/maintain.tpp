@@ -12,7 +12,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_base()
 {
-   sort_key_t sk = to_insert.at(maintain_processed++);
+   const sort_key_t& sk = to_insert.at(maintain_processed++);
 
    Varchar<25> state_name, county_name, city_name;
    states.lookup1(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });
@@ -30,7 +30,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_merged()
 {
-   sort_key_t sk = to_insert.at(maintain_processed++);
+   const sort_key_t& sk = to_insert.at(maintain_processed++);
 
    Varchar<25> state_name, county_name, city_name;
    merged.template lookup1<states_t>(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });
@@ -48,7 +48,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_view()
 {
-   sort_key_t sk = to_insert.at(maintain_processed++);
+   const sort_key_t& sk = to_insert.at(maintain_processed++);
    nation2_t nv;
    states_t sv;
    county_t cv;
@@ -79,7 +79,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::maintain_2merged()
 {
-   sort_key_t sk = to_insert.at(maintain_processed++);
+   const sort_key_t& sk = to_insert.at(maintain_processed++);
 
    Varchar<25> state_name, county_name, city_name;
    ns.template lookup1<states_t>(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });

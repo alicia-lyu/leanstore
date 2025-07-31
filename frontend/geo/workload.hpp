@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include "../shared/adapter-scanner/Adapter.hpp"
 #include "../tpc-h/workload.hpp"
 #include "leanstore/Config.hpp"
 #include "load.hpp"
@@ -108,7 +109,11 @@ class GeoJoin
       find_rdkey_scans = 0;
    }
 
-   ~GeoJoin() { reset_sum_counts(); }
+   ~GeoJoin()
+   {
+      reset_sum_counts();
+      std::cout << "Inserted/erased customers till " << workload.last_customer_id << std::endl;
+   }
 
    // -------------------------------------------------------------
    // ---------------------- POINT LOOKUPS ------------------------
@@ -271,10 +276,10 @@ class GeoJoin
    {
       maintain_processed = maintain_processed % to_insert.size();  // as long as erase is active, allow maintain_processed to wrap around
       // insertions go rounds and rounds with no regard for erases
-      if (maintain_erased == to_insert.size()) {  // erase just also go rounds and rounds, as long as erased customer was inserted
-                                                  // (last_customer_id_old <= workload.last_customer_id)
-         std::cout << "Resetting maintain_erased to 0. inserted last_customer_id = " << workload.last_customer_id
-                   << ", erased last_customer_id = " << last_customer_id_old << std::endl;
+      if (maintain_erased == to_insert.size() && FLAGS_log_progress) {  // erase just also go rounds and rounds, as long as erased customer was
+                                                                        // inserted (last_customer_id_old <= workload.last_customer_id)
+         std::cout << "Resetting maintain_erased to 0. customer_ids that remain in db: " << last_customer_id_old << "--------"
+                   << workload.last_customer_id << std::endl;
          maintain_erased = 0;
       }
    }
@@ -283,38 +288,49 @@ class GeoJoin
 
    bool erase_base()
    {
-      if (last_customer_id_old == workload.last_customer_id) {
+      if (last_customer_id_old >= workload.last_customer_id) {
          return false;  // no more customers to erase
       }
       const sort_key_t& sk = to_insert.at(maintain_erased++);
       customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-      customer2.erase(cust_key);
+      bool ret = customer2.erase(cust_key);
+      if (!ret)
+         std::cerr << "Error erasing customer with key: " << cust_key << std::endl;
       adjust_maintain_ptrs();
       return true;
    }
 
    bool erase_merged()
    {
-      if (last_customer_id_old == workload.last_customer_id) {
+      if (last_customer_id_old >= workload.last_customer_id) {
          return false;  // no more customers to erase
       }
       const sort_key_t& sk = to_insert.at(maintain_erased++);
       customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-      merged.template erase<customer2_t>(cust_key);
+      bool ret = merged.template erase<customer2_t>(cust_key);
+      if (!ret)
+         std::cerr << "Error erasing customer with key: " << cust_key << std::endl;
       adjust_maintain_ptrs();
       return true;
    }
 
    bool erase_view()
    {
-      if (last_customer_id_old == workload.last_customer_id) {
+      if (last_customer_id_old >= workload.last_customer_id) {
          return false;  // no more customers to erase
       }
       const sort_key_t& sk = to_insert.at(maintain_erased++);
-      view_t::Key vk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-      join_view.erase(vk);
-      customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-      customer2.erase(cust_key);
+      customer2_t::Key cust_key{sk};
+      cust_key.custkey = ++last_customer_id_old;
+      view_t::Key vk{cust_key};
+      bool ret_jv = join_view.erase(vk);
+      bool ret_c = customer2.erase(cust_key);
+      if (!ret_jv || !ret_c) {
+         throw std::runtime_error("Error erasing customer in view, ret_jv: " + std::to_string(ret_jv) + ", ret_c: " + std::to_string(ret_c));
+      }
+      mixed_view_t::Key mixed_vk{sk};
+      UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
+      mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
       adjust_maintain_ptrs();
       return true;
    }

@@ -47,7 +47,7 @@ struct RocksDB {
    std::vector<ColumnFamilyDescriptor> cf_descs;
    std::vector<ColumnFamilyHandle*> cf_handles;
    std::vector<std::function<void()>> get_handle_cbs;
-   static thread_local rocksdb::Transaction* txn;
+   static thread_local rocksdb::Transaction* txn; // allows multiple transactions as long as called by different threads
 
    rocksdb::Options db_options;
    rocksdb::BlockBasedTableOptions table_opts;
@@ -139,8 +139,11 @@ struct RocksDB {
    {
       assert(tx_db != nullptr);
       while (txn != nullptr) {
-         std::cerr << "WARNING: RocksDB::startTX() called when txn != nullptr." << std::endl;
-      } // wait for the previous transaction to finish
+         auto thread_id = std::this_thread::get_id();
+         std::cerr << "WARNING: RocksDB::startTX() called when txn != nullptr in thread " << thread_id
+                   << ". Waiting for previous transaction to finish..." << std::endl;
+         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
       rocksdb::Status s;
       txn = tx_db->BeginTransaction(wo, {});
    }
@@ -160,7 +163,6 @@ struct RocksDB {
       s = txn->Rollback();
       delete txn;
       txn = nullptr;
-      
    }
    double default_cf_size = 0.0;
    double get_size(ColumnFamilyHandle* cf_handle, const std::string& name = "default");
