@@ -60,7 +60,7 @@ struct BaseJoiner {
       auto ci_ret = city_scanner->seek(city_t::Key{sk});
       auto cu_ret = customer2_scanner->seek(customer2_t::Key{sk});
       if ((!n_ret || !s_ret || !c_ret || !ci_ret || !cu_ret) && sk.nationkey != 25) {  // HARDCODED max nationkey
-         std::cout << "WARNING: BaseJoiner::seek() failed to seek to " << sk << "nation: " << n_ret << ", states: " << s_ret << ", county: " << c_ret
+         std::cerr << "WARNING: BaseJoiner::seek() failed to seek to " << sk << "nation: " << n_ret << ", states: " << s_ret << ", county: " << c_ret
                    << ", city: " << ci_ret << ", customer2: " << cu_ret << std::endl;
       }
    }

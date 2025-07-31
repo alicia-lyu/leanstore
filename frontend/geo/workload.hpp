@@ -60,6 +60,8 @@ class GeoJoin
 
    std::vector<sort_key_t> to_insert;
 
+   int insert_city_count = 0;
+
   public:
    GeoJoin(TPCH& workload,
            MergedTree& m,
@@ -231,10 +233,13 @@ class GeoJoin
 
    void select_to_insert()
    {
+      if (insert_city_count == 0) {
+         insert_city_count = workload.last_customer_id / 20; // 5% is hardcoded
+      }
       last_customer_id_old = workload.last_customer_id;
-      size_t num_customers = last_customer_id_old / 100;
-      std::cout << "Doing a full scan of cities to randomly select " << num_customers << " for insertion...";
-      to_insert.reserve(num_customers);  // insert 1% of customers
+      std::cout << "Doing a full scan of cities to randomly select " << insert_city_count << " for insertion...";
+      to_insert.clear();
+      to_insert.reserve(insert_city_count);  // insert 1% of customers
       auto scanner = city.getScanner();
       while (true) {
          auto kv = scanner->next();
@@ -244,11 +249,11 @@ class GeoJoin
          auto [k, v] = *kv;
          sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
          size_t i = to_insert.size();
-         if (i < num_customers) {  // First, fill to_insert with the first 1% of cities
+         if (i < insert_city_count) {  // First, fill to_insert with the first 1% of cities
             to_insert.push_back(sk);
          } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
             size_t j = rand() % (i + 1);
-            if (j < num_customers) {
+            if (j < insert_city_count) {
                to_insert.at(j) = sk;
             }
          }
@@ -257,6 +262,7 @@ class GeoJoin
          }
       }
       std::cout << std::endl;
+      reset_maintain_ptrs();
    }
 
    bool insertion_complete() { return maintain_processed >= to_insert.size(); }
@@ -277,10 +283,12 @@ class GeoJoin
    {
       maintain_processed = maintain_processed % to_insert.size();  // as long as erase is active, allow maintain_processed to wrap around
       // insertions go rounds and rounds with no regard for erases
-      if (maintain_erased == to_insert.size() && FLAGS_log_progress) {  // erase just also go rounds and rounds, as long as erased customer was
-                                                                        // inserted (last_customer_id_old <= workload.last_customer_id)
-         std::cout << "Resetting maintain_erased to 0. customer_ids that remain in db: " << last_customer_id_old << "--------"
-                   << workload.last_customer_id << std::endl;
+      if (maintain_erased == to_insert.size()) {  // erase just also go rounds and rounds, as long as erased customer was
+         // inserted (last_customer_id_old <= workload.last_customer_id)
+         if (FLAGS_log_progress) {
+            std::cout << "Resetting maintain_erased to 0. customer_ids that remain in db: " << last_customer_id_old << "--------"
+                      << workload.last_customer_id << std::endl;
+         }
          maintain_erased = 0;
       }
    }
@@ -373,10 +381,13 @@ class GeoJoin
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
       for (; maintain_erased < to_insert.size(); maintain_erased++) {
          const sort_key_t& sk = to_insert.at(maintain_erased);
-         view_t::Key vk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-         join_view.erase(vk);
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          customer2.erase(cust_key);
+         view_t::Key vk{cust_key};
+         join_view.erase(vk);
+         mixed_view_t::Key mixed_vk{sk};
+         UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
+         mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
       }
       assert(last_customer_id_old == workload.last_customer_id);
    }

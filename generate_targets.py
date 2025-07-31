@@ -228,8 +228,6 @@ class Experiment:
             print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {self.recover_file} {image_dep}")
             print(f"\tmkdir -p {self.runtime_dir}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
-            if structure == 0:
-                rem_flags["persist_file"] = self.recover_file
             print(
                 f'\tscript -q -c "{self.exec_path}',
                 kv_to_str(self.class_flags),
@@ -240,7 +238,10 @@ class Experiment:
                 sep=" "
             )
             print()
-        print(f"{self.exec_fname}_reload: {self.exec_fname}_0")
+        print(f"{self.exec_fname}_reload: ")
+        print(f"\trm -f {self.recover_file}") # reset recover file
+        print(f"\t$(MAKE) {self.recover_file}")
+        
     
     def debug_experiment(self) -> None:
         print(f"#{self.sep} Debug experiment {self.sep}")
@@ -282,7 +283,9 @@ class Experiment:
                 "stopOnEntry": False
             }
             vscode_launch_obj["configurations"].append(vscode_configs)
-        print(f"{self.exec_fname}_lldb_reload: {self.exec_fname}_lldb_0")
+        print(f"{self.exec_fname}_lldb_reload:")
+        print(f"\trm -f {self.recover_file}")
+        print(f"\t$(MAKE) {self.recover_file}")
 
 LOADING_META_FILE = "./frontend/tpc-h/workload.hpp"
 
@@ -312,7 +315,7 @@ def main() -> None:
         print(f"\trm -rf {dir}")
 
     # phony declaration
-    phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + exec_names + [f"{e}_lldb" for e in exec_names] + [f"{e}_reload" for e in exec_names] + [f"{e}_reload_debug" for e in exec_names]
+    phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + exec_names + [f"{e}_lldb" for e in exec_names] + [f"{e}_reload" for e in exec_names] + [f"{e}_lldb_reload" for e in exec_names]
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")

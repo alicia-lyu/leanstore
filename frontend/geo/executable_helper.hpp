@@ -8,8 +8,8 @@
 #include "../shared/RocksDB.hpp"
 #include "../tpc-h/logger.hpp"
 #include "../tpc-h/workload.hpp"
-#include "per_structure_workload.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
+#include "per_structure_workload.hpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
@@ -90,6 +90,7 @@ struct ExecutableHelper {
    TPCHWorkload<AdapterType>& tpch;
 
    std::atomic<bool> keep_running_bg_tx = true;
+   std::atomic<bool> run_main_thread = false;
    std::atomic<u64> bg_tx_count = 0;
    std::atomic<u64> running_threads_counter = 0;
 
@@ -103,6 +104,16 @@ struct ExecutableHelper {
    {
    }
 
+   void elapsed_tx(std::function<void()> cb, std::string tx)
+   {
+      running_threads_counter++;
+      while (!run_main_thread) {
+      }
+      db_traits->run_tx_w_rollback(cb, tx, MAIN_WORKER);
+      running_threads_counter--;
+      run_main_thread = false;
+   }
+
    void run()
    {
       std::cout << std::string(20, '=') << workload->get_name() << "," << workload->get_size() << std::string(20, '=') << std::endl;
@@ -110,10 +121,8 @@ struct ExecutableHelper {
 
       schedule_bg_txs();
 
-      running_threads_counter++;
-      db_traits->run_tx_w_rollback([this]() { workload->join(); }, "join");
-      db_traits->run_tx_w_rollback([this]() { workload->mixed(); }, "mixed");
-      running_threads_counter--;
+      elapsed_tx(std::bind(&PerStructureWorkload::join, workload.get()), "join");
+      elapsed_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "join-ns");
 
       // tput_tx(tput_cbs[i], tput_prefixes[i]);
       tput_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "join-ns");
@@ -129,35 +138,59 @@ struct ExecutableHelper {
 
       tput_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), "maintain");
 
-      std::cout << "All threads finished. Cleaning up inserted data from maintenance phase..." << std::endl;
+      std::cout << "All threads finished. Cleaning up inserted data..." << std::endl;
 
       db_traits->run_tx_w_rollback(std::bind(&PerStructureWorkload::cleanup_updates, workload.get()), "cleanup");
 
       db_traits->cleanup_thread(MAIN_WORKER);
    }
+
+   void erase_remaining_customers(bool& customer_to_erase, long long& bg_erase_count)
+   {
+      std::cout << "Remaining customers to erase = " << workload->remaining_customers_to_erase() << std::endl;
+      while (customer_to_erase) {
+         db_traits->run_tx_w_rollback([&]() { customer_to_erase = workload->erase1(); }, "erase", BG_WORKER);
+         bg_erase_count++;
+      }
+   }
+
    void schedule_bg_txs()
    {
       std::thread([this]() {
          running_threads_counter++;
          bool customer_to_erase = false;
+         long long bg_insert_count = 0;
+         long long bg_erase_count = 0;
+         long long bg_lookup_count = 0;
+         std::function<void()> periodic_reset = [&]() {
+            erase_remaining_customers(customer_to_erase, bg_erase_count);
+            workload->select_to_insert();
+            run_main_thread = true;
+         };
          while (keep_running_bg_tx) {
             int lottery = rand() % 100;
             std::string tx_type;
             jumpmuTry()
             {
+               if (running_threads_counter.load() == 1) {
+                  periodic_reset();
+               }
                if (lottery < FLAGS_bgw_pct) {
                   if ((lottery < FLAGS_bgw_pct / 2 && customer_to_erase) ||  // half of the time erase if we have customers to erase
                       workload->insertion_complete()) {                      // or when insertion needs to be reset
                      db_traits->run_tx([&]() { customer_to_erase = workload->erase1(); }, BG_WORKER);
                      tx_type = "erase";
+                     bg_erase_count++;
                   } else {
                      db_traits->run_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), BG_WORKER);
                      tx_type = "update";
                      customer_to_erase = true;
+                     bg_insert_count++;
                   }
                } else {
                   db_traits->run_tx(std::bind(&PerStructureWorkload::bg_lookup, workload.get()), BG_WORKER);
                   tx_type = "lookup";
+                  bg_lookup_count++;
                }
                bg_tx_count++;
             }
@@ -169,12 +202,9 @@ struct ExecutableHelper {
             if (bg_tx_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
                std::cout << "\r#" << bg_tx_count.load() << " bg tx performed.";
          }
-         std::cout << "Remaining customers to erase = " << workload->remaining_customers_to_erase() << std::endl;
-         while (customer_to_erase) {
-            db_traits->run_tx_w_rollback([&]() { customer_to_erase = workload->erase1(); }, "erase", BG_WORKER);
-         }
-         workload->reset_maintain_ptrs();
-         std::cout << "#" << bg_tx_count.load() << " bg tx in total performed." << std::endl;
+         periodic_reset();
+         std::cout << "#" << bg_tx_count.load() << " bg tx in total performed. " << bg_insert_count << " inserts, " << bg_erase_count << " erases, "
+                   << bg_lookup_count << " lookups." << std::endl;
          db_traits->cleanup_thread(BG_WORKER);
          running_threads_counter--;
       }).detach();
@@ -183,6 +213,8 @@ struct ExecutableHelper {
 
    void tput_tx(std::function<void()> cb, std::string tx)
    {
+      while (!run_main_thread) {
+      }
       tpch.logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
       atomic<int> count = 0;
@@ -225,5 +257,6 @@ struct ExecutableHelper {
       double tput = (double)count.load() / duration * 1e6;
       tpch.logger.log(tput, count.load(), tx, workload->get_name(), workload->get_size());
       running_threads_counter--;
+      run_main_thread = false;
    }
 };

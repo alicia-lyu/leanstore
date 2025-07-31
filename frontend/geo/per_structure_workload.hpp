@@ -22,6 +22,7 @@ struct PerStructureWorkload {
    virtual void bg_lookup() = 0;
    virtual int remaining_customers_to_erase() = 0;
    virtual void reset_maintain_ptrs() = 0;
+   virtual void select_to_insert() = 0;
 };
 
 template <template <typename> class AdapterType,
@@ -47,6 +48,7 @@ struct BaseWorkload : public PerStructureWorkload {
    void bg_lookup() override { workload.point_lookups_of_rest(); }
    int remaining_customers_to_erase() override { return workload.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.reset_maintain_ptrs(); }
+   void select_to_insert() override { workload.select_to_insert(); }
 };
 
 template <template <typename> class AdapterType,
@@ -71,6 +73,7 @@ struct ViewWorkload : public PerStructureWorkload {
    void bg_lookup() override { workload.point_lookups_of_rest(); }
    int remaining_customers_to_erase() override { return workload.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.reset_maintain_ptrs(); }
+   void select_to_insert() override { workload.select_to_insert(); }
 };
 
 template <template <typename> class AdapterType,
@@ -95,6 +98,7 @@ struct MergedWorkload : public PerStructureWorkload {
    void bg_lookup() override { workload.point_lookups_of_rest(); }
    int remaining_customers_to_erase() override { return workload.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.reset_maintain_ptrs(); }
+   void select_to_insert() override { workload.select_to_insert(); }
 };
 
 }  // namespace geo_join
