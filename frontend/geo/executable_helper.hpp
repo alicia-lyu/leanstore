@@ -6,11 +6,10 @@
 #include <memory>
 #include <thread>
 #include "../shared/RocksDB.hpp"
-#include "../tpc-h/workload.hpp"
 #include "../tpc-h/logger.hpp"
+#include "../tpc-h/workload.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "workload.hpp"
-
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
@@ -75,6 +74,8 @@ struct ExecutableHelper {
 
    std::function<void()> lookup_cb;
    std::function<void()> update_cb;
+   std::function<bool()> erase_cb;
+
    std::vector<std::function<void()>> elapsed_cbs;
    std::vector<std::function<void()>> tput_cbs;
    std::vector<std::string> tput_prefixes;
@@ -95,6 +96,7 @@ struct ExecutableHelper {
                     std::function<double()> size_cb,
                     std::function<void()> lookup_cb,
                     std::function<void()> update_cb,
+                    std::function<bool()> erase_cb,
                     std::vector<std::function<void()>> elapsed_cbs,
                     std::vector<std::function<void()>> tput_cbs,
                     std::vector<std::string> tput_prefixes)
@@ -102,6 +104,7 @@ struct ExecutableHelper {
          method(method),
          lookup_cb(lookup_cb),
          update_cb(update_cb),
+         erase_cb(erase_cb),
          elapsed_cbs(elapsed_cbs),
          tput_cbs(tput_cbs),
          tput_prefixes(tput_prefixes),
@@ -118,6 +121,7 @@ struct ExecutableHelper {
                     std::function<double()> size_cb,
                     std::function<void()> lookup_cb,
                     std::function<void()> update_cb,
+                    std::function<bool()> erase_cb,
                     std::vector<std::function<void()>> elapsed_cbs,
                     std::vector<std::function<void()>> tput_cbs,
                     std::vector<std::string> tput_prefixes,
@@ -126,6 +130,7 @@ struct ExecutableHelper {
          method(method),
          lookup_cb(lookup_cb),
          update_cb(update_cb),
+         erase_cb(erase_cb),
          elapsed_cbs(elapsed_cbs),
          tput_cbs(tput_cbs),
          tput_prefixes(tput_prefixes),
@@ -153,9 +158,13 @@ struct ExecutableHelper {
          tput_tx(tput_cbs[i], tput_prefixes[i]);
       }
 
-      tput_tx(update_cb, "maintain");  // isolate update perf
-
       keep_running_bg_tx = false;
+      // wait for background thread to finish
+      while (running_threads_counter > 0) {
+         std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
+      }
+
+      tput_tx(update_cb, "maintain");  // isolate update perf
 
       while (running_threads_counter > 0) {
          std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
@@ -168,14 +177,22 @@ struct ExecutableHelper {
    {
       std::thread([this]() {
          running_threads_counter++;
+         bool customer_to_erase = false;
          while (keep_running_bg_tx) {
             int lottery = rand() % 100;
             std::string tx_type;
             jumpmuTry()
             {
                if (lottery < FLAGS_bgw_pct) {
-                  db_traits->run_tx(update_cb, BG_WORKER);
-                  tx_type = "update";
+                  if ((lottery < FLAGS_bgw_pct / 2 && customer_to_erase) ||  // half of the time erase if we have customers to erase
+                      geo_join.insertion_complete()) {                       // or when insertion needs to be reset
+                     db_traits->run_tx([&]() { customer_to_erase = erase_cb(); }, BG_WORKER);
+                     tx_type = "erase";
+                  } else {
+                     db_traits->run_tx(update_cb, BG_WORKER);
+                     tx_type = "update";
+                     customer_to_erase = true;
+                  }
                } else {
                   db_traits->run_tx(lookup_cb, BG_WORKER);
                   tx_type = "lookup";
@@ -189,12 +206,16 @@ struct ExecutableHelper {
             if (bg_tx_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
                std::cout << "\r#" << bg_tx_count.load() << " bg tx performed.";
          }
+         std::cout << "Remaining customers to erase = " << geo_join.remaining_customers_to_erase() << std::endl;
+         while (customer_to_erase) {
+            db_traits->run_tx([&]() { customer_to_erase = erase_cb(); }, BG_WORKER);
+         }
          std::cout << std::endl;
          std::cout << "#" << bg_tx_count.load() << " bg tx in total performed." << std::endl;
          db_traits->cleanup_thread();
          running_threads_counter--;
       }).detach();
-      sleep(FLAGS_warmup_seconds); // warmup phase; then background phase
+      sleep(FLAGS_warmup_seconds);  // warmup phase; then background phase
    }
 
    void tput_tx(std::function<void()> cb, std::string tx)
