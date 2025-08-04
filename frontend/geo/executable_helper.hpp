@@ -121,13 +121,14 @@ struct ExecutableHelper {
 
       schedule_bg_txs();
 
-      elapsed_tx(std::bind(&PerStructureWorkload::join, workload.get()), "join");
-      elapsed_tx(std::bind(&PerStructureWorkload::mixed, workload.get()), "mixed");
+      // elapsed_tx(std::bind(&PerStructureWorkload::join, workload.get()), "join");
 
-      tput_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "join-ns");
-      tput_tx(std::bind(&PerStructureWorkload::nsc5join, workload.get()), "join-nsc");
-      tput_tx(std::bind(&PerStructureWorkload::nscci5join, workload.get()), "join-nscci");
-      tput_tx(std::bind(&PerStructureWorkload::mixed_point, workload.get()), "mixed-point");
+      tput_tx(std::bind(&PerStructureWorkload::join_ns, workload.get()), "join-ns");
+      tput_tx(std::bind(&PerStructureWorkload::join_nsc, workload.get()), "join-nsc");
+      tput_tx(std::bind(&PerStructureWorkload::join_nscci, workload.get()), "join-nscci");
+      tput_tx(std::bind(&PerStructureWorkload::mixed_ns, workload.get()), "mixed-ns");
+      tput_tx(std::bind(&PerStructureWorkload::mixed_nsc, workload.get()), "mixed-nsc");
+      tput_tx(std::bind(&PerStructureWorkload::mixed_nscci, workload.get()), "mixed-nscci");
 
       keep_running_bg_tx = false;
       // wait for background thread to finish

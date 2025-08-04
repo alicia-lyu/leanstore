@@ -1,6 +1,5 @@
 #pragma once
 
-#include <iostream>
 #include <optional>
 #include "views.hpp"
 #include "workload.hpp"
@@ -12,48 +11,27 @@
 
 namespace geo_join
 {
-
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mixed_query_by_view()
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_view(sort_key_t select_sk)
 {
-   logger.reset();
-   std::cout << "GeoJoin::mixed_query_by_view()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-   // scan mixed_view
-   long long produced = 0;
+   long cust_sum = 0;
    mixed_view.scan(
-       mixed_view_t::Key{sort_key_t{}},
-       [&](const mixed_view_t::Key&, const mixed_view_t&) {
-          if (produced % 1000 == 0 && FLAGS_log_progress)
-             std::cout << "\rEnumerating mixed_view " << produced / 1000 << "k records...";
-          produced++;
+       mixed_view_t::Key{select_sk},
+       [&](const mixed_view_t::Key& mk, const mixed_view_t& mv) {
+          auto curr_sk = SKBuilder<sort_key_t>::create(mk, mv);
+          if (cust_sum == 0) {
+             update_sk(select_sk, curr_sk);
+          } else if (curr_sk.match(select_sk) != 0) {
+             return false;
+          }
+          cust_sum += std::get<4>(mv.payloads).customer_count;
           return true;
        },
        []() {});
-   std::cout << "\rEnumerated mixed_view with " << produced << " records." << std::endl;
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "mixed", "mat_view", get_view_size());
-}
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_view()
-{
-   sort_key_t sk{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
-   // point lookup in mixed_view
-   mixed_view.scan(
-       mixed_view_t::Key{sk},
-       [&](const mixed_view_t::Key&, const mixed_view_t& v) {
-          mixed_point_customer_sum += std::get<4>(v.payloads).customer_count;
-          return false;
-       },
-       []() {});
+   return cust_sum;
 }
 
 template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -207,31 +185,23 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mixed_query_by_merged()
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_merged(sort_key_t select_sk)
 {
-   logger.reset();
-   std::cout << "GeoJoin::mixed_query_by_merged()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> counter(merged);
-   counter.run();
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "mixed", "merged_idx", get_merged_size());
-}
+   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> counter(merged, select_sk);
 
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_merged()
-{
-   sort_key_t sk{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0};
-   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> counter(merged, sk);
-   auto kv = counter.next();
-   mixed_point_tx_count++;
-   if (kv != std::nullopt) {
-      mixed_point_customer_sum += std::get<4>(kv->second.payloads).customer_count;
+   long cust_sum = 0;
+   while (!counter.went_past(select_sk)) {
+      auto kv = counter.next();
+      if (kv == std::nullopt)
+         break;
+      auto [k, v] = *kv;
+      sort_key_t curr_sk = SKBuilder<sort_key_t>::create(k, v);
+      if (cust_sum == 0) {
+         update_sk(select_sk, curr_sk);
+      }
+      cust_sum += std::get<4>(v.payloads).customer_count;
    }
+   return cust_sum;
 }
 
 template <template <typename> class AdapterType, template <typename> class ScannerType>
@@ -307,34 +277,21 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::mixed_query_by_base()
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_base(sort_key_t select_sk)
 {
-   logger.reset();
-   std::cout << "GeoJoin::mixed_query_by_base()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-
-   BaseCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2);
-   counter.run();
-
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "mixed", "base_idx", get_indexes_size());
-}
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::point_mixed_query_by_base()
-{
-   BaseCounter<AdapterType, ScannerType> counter(
-       nation, states, county, city, customer2,
-       sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
-   auto kv = counter.next();
-   mixed_point_tx_count++;
-   if (kv != std::nullopt) {
-      mixed_point_customer_sum += std::get<4>(kv->second.payloads).customer_count;
+   BaseCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, select_sk);
+   long cust_sum = 0;
+   while (!counter.went_past(select_sk)) {
+      auto kv = counter.next();
+      if (kv == std::nullopt)
+         break;
+      auto [k, v] = *kv;
+      sort_key_t curr_sk = SKBuilder<sort_key_t>::create(k, v);
+      if (cust_sum == 0) {
+         update_sk(select_sk, curr_sk);
+      }
+      cust_sum += std::get<4>(v.payloads).customer_count;
    }
+   return cust_sum;
 }
-
 }  // namespace geo_join

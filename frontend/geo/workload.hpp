@@ -10,6 +10,71 @@
 namespace geo_join
 {
 
+template <typename E>
+inline void scan_urand_next(std::vector<E>& container, std::function<E()> next_element)
+{
+   size_t i = container.size();
+   if (i < container.capacity()) {  // First, fill city_reservoir with the first 1% of cities
+      container.push_back(next_element());
+   } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
+      size_t j = rand() % (i + 1);
+      if (j < container.capacity()) {
+         container.at(j) = next_element();
+      }
+   }
+   if (i % 100 == 1 && FLAGS_log_progress) {
+      std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
+   }
+};
+
+struct MaintenanceState {
+   std::vector<sort_key_t> city_reservoir;  // reservoir sampling for cities
+   int& inserted_last_id_ref;
+   int erased_last_id;
+   size_t city_count;
+   size_t processed_idx = 0;
+   size_t erased_idx = 0;
+
+   MaintenanceState(int& inserted_last_id_ref, size_t city_count)
+       : inserted_last_id_ref(inserted_last_id_ref), erased_last_id(inserted_last_id_ref), city_count(city_count)
+   {
+      city_reservoir.reserve(city_count);
+   }
+
+   MaintenanceState(int& inserted_last_id_ref) : inserted_last_id_ref(inserted_last_id_ref), erased_last_id(inserted_last_id_ref), city_count(0) {}
+
+   void adjust_ptrs();
+
+   void reset_cities(size_t city_count)
+   {
+      city_reservoir.clear();
+      if (this->city_count == city_count) {
+         return;  // already reserved
+      }
+      city_reservoir.reserve(city_count);
+      this->city_count = city_count;
+   }
+
+   void reset()
+   {
+      city_reservoir.clear();
+      processed_idx = 0;
+      erased_idx = 0;
+      erased_last_id = inserted_last_id_ref;
+   }
+   bool insertion_complete() const { return processed_idx >= city_reservoir.size(); }
+   size_t remaining_customers_to_erase() const { return inserted_last_id_ref - erased_last_id; }
+   bool customer_to_erase() const { return remaining_customers_to_erase() > 0; }
+
+   void select(const sort_key_t& sk);
+
+   sort_key_t next_cust_to_erase();
+
+   sort_key_t next_cust_to_insert();
+
+   void cleanup(std::function<void(const sort_key_t&)> erase_func);
+};
+
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
@@ -60,8 +125,6 @@ class GeoJoin
 
    std::vector<sort_key_t> to_insert;
 
-   int insert_city_count = 0;
-
   public:
    GeoJoin(TPCH& workload,
            MergedTree& m,
@@ -87,7 +150,8 @@ class GeoJoin
          county(c),
          city(ci),
          customer2(customer2),
-         logger(workload.logger)
+         logger(workload.logger),
+         maintenance_state(workload.last_customer_id)
    {
       if (FLAGS_tpch_scale_factor > 1000) {
          throw std::runtime_error("GeoJoin does not support scale factor larger than 1000");
@@ -157,70 +221,70 @@ class GeoJoin
    size_t range_query_by_2merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
    // Find all joined rows for the same nationkey, statekeyZ
-   void ns5join_view()
+   void join_ns_view()
    {
       ns_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
-   void ns5join_merged()
+   void join_ns_merged()
    {
       ns_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
-   void ns5join_base()
+   void join_ns_base()
    {
       ns_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
 
-   void ns5join_2merged()
+   void join_ns_2merged()
    {
       ns_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), 0, 0);
       ns_count++;
    }
 
    // Find all joined rows for the same nationkey, statekey, countykey
-   void nsc5join_view()
+   void join_nsc_view()
    {
       nsc_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
-   void nsc5join_merged()
+   void join_nsc_merged()
    {
       nsc_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
-   void nsc5join_base()
+   void join_nsc_base()
    {
       nsc_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
 
-   void nsc5join_2merged()
+   void join_nsc_2merged()
    {
       nsc_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
       nsc_count++;
    }
 
-   void nscci5join_view()
+   void join_nscci_view()
    {
       nscci_sum += range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
-   void nscci5join_merged()
+   void join_nscci_merged()
    {
       nscci_sum += range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
-   void nscci5join_base()
+   void join_nscci_base()
    {
       nscci_sum += range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
    }
 
-   void nscci5join_2merged()
+   void join_nscci_2merged()
    {
       nscci_sum += range_query_by_2merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
       nscci_count++;
@@ -228,77 +292,11 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- MAINTAIN -----------------------------
+   MaintenanceState maintenance_state;
 
-   int last_customer_id_old;
+   void select_merged_to_insert();
 
-   void fill_and_replace(const sort_key_t& sk)
-   {
-      size_t i = to_insert.size();
-      if (i < insert_city_count) {  // First, fill to_insert with the first 1% of cities
-         to_insert.push_back(sk);
-      } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
-         size_t j = rand() % (i + 1);
-         if (j < insert_city_count) {
-            to_insert.at(j) = sk;
-         }
-      }
-      if (i % 100 == 1 && FLAGS_log_progress) {
-         std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
-      }
-   }
-
-   void select_merged_to_insert()
-   {
-      if (insert_city_count == 0) {
-         insert_city_count = workload.last_customer_id / 20;  // 5% is hardcoded
-      }
-      last_customer_id_old = workload.last_customer_id;
-      std::cout << "Doing a full scan of cities to randomly select " << insert_city_count << " for insertion...";
-      to_insert.clear();
-      to_insert.reserve(insert_city_count);  // insert 1% of customers
-      auto scanner = merged.template getScanner<sort_key_t, view_t>();
-      while (true) {
-         auto kv = scanner->next();
-         if (!kv.has_value()) {
-            break;  // no more cities
-         }
-         auto [k, v] = *kv;
-         sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
-         if (sk.citykey == 0 || sk.custkey != 0) {
-            continue;  // skip non-city records
-         }
-         fill_and_replace(sk);
-      }
-      std::cout << std::endl;
-      reset_maintain_ptrs();
-   }
-
-   void select_to_insert()
-   {
-      if (insert_city_count == 0) {
-         insert_city_count = workload.last_customer_id / 20;  // 5% is hardcoded
-      }
-      last_customer_id_old = workload.last_customer_id;
-      std::cout << "Doing a full scan of cities to randomly select " << insert_city_count << " for insertion...";
-      to_insert.clear();
-      to_insert.reserve(insert_city_count);  // insert 1% of customers
-      auto scanner = city.getScanner();
-      while (true) {
-         auto kv = scanner->next();
-         if (!kv.has_value()) {
-            break;  // no more cities
-         }
-         auto [k, v] = *kv;
-         sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
-         fill_and_replace(sk);
-      }
-      std::cout << std::endl;
-      reset_maintain_ptrs();
-   }
-
-   bool insertion_complete() { return maintain_processed >= to_insert.size(); }
-
-   size_t maintain_processed = 0;
+   void select_to_insert();
 
    void maintain_base();
 
@@ -306,129 +304,39 @@ class GeoJoin
 
    void maintain_view();
 
-   void maintain_2merged();
+   void maintain_2merged() { throw std::runtime_error("maintain_2merged not implemented"); }
 
-   size_t maintain_erased = 0;
+   bool erase_base();
 
-   void adjust_maintain_ptrs()
-   {
-      maintain_processed = maintain_processed % to_insert.size();  // as long as erase is active, allow maintain_processed to wrap around
-      // insertions go rounds and rounds with no regard for erases
-      if (maintain_erased == to_insert.size()) {  // erase just also go rounds and rounds, as long as erased customer was
-         // inserted (last_customer_id_old <= workload.last_customer_id)
-         if (FLAGS_log_progress) {
-            std::cout << "Resetting maintain_erased to 0. customer_ids that remain in db: " << last_customer_id_old << "--------"
-                      << workload.last_customer_id << std::endl;
-         }
-         maintain_erased = 0;
-      }
-   }
+   bool erase_merged();
 
-   void reset_maintain_ptrs()
-   {
-      maintain_processed = 0;
-      maintain_erased = 0;
-      last_customer_id_old = workload.last_customer_id;
-      std::cout << "Resetting maintain pointers. Last customer id: " << last_customer_id_old << std::endl;
-   }
-
-   int remaining_customers_to_erase() const { return workload.last_customer_id - last_customer_id_old; }
-
-   bool erase_base()
-   {
-      if (last_customer_id_old >= workload.last_customer_id) {
-         return false;  // no more customers to erase
-      }
-      const sort_key_t& sk = to_insert.at(maintain_erased++);
-      customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-      bool ret = customer2.erase(cust_key);
-      if (!ret)
-         std::cerr << "Error erasing customer with key: " << cust_key << std::endl;
-      adjust_maintain_ptrs();
-      return true;
-   }
-
-   bool erase_merged()
-   {
-      if (last_customer_id_old >= workload.last_customer_id) {
-         return false;  // no more customers to erase
-      }
-      const sort_key_t& sk = to_insert.at(maintain_erased++);
-      customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-      bool ret = merged.template erase<customer2_t>(cust_key);
-      if (!ret)
-         std::cerr << "Error erasing customer with key: " << cust_key << std::endl;
-      adjust_maintain_ptrs();
-      return true;
-   }
-
-   bool erase_view()
-   {
-      if (last_customer_id_old >= workload.last_customer_id) {
-         return false;  // no more customers to erase
-      }
-      const sort_key_t& sk = to_insert.at(maintain_erased++);
-      customer2_t::Key cust_key{sk};
-      cust_key.custkey = ++last_customer_id_old;
-      view_t::Key vk{cust_key};
-      bool ret_jv = join_view.erase(vk);
-      bool ret_c = customer2.erase(cust_key);
-      if (!ret_jv || !ret_c) {
-         throw std::runtime_error("Error erasing customer in view, ret_jv: " + std::to_string(ret_jv) + ", ret_c: " + std::to_string(ret_c));
-      }
-      mixed_view_t::Key mixed_vk{sk};
-      UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
-      mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
-      adjust_maintain_ptrs();
-      return true;
-   }
+   bool erase_view();
 
    bool erase_2merged() { throw std::runtime_error("erase_2merged not implemented"); }
 
-   void check_last_customer_id()
-   {
-      if (last_customer_id_old != workload.last_customer_id) {
-         std::cerr << "Error: last_customer_id_old (" << last_customer_id_old << ") does not match workload.last_customer_id ("
-                   << workload.last_customer_id << ")" << std::endl;
-      }
-   }
-
    void cleanup_base()
    {
-      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (; maintain_erased < to_insert.size(); maintain_erased++) {
-         const sort_key_t& sk = to_insert.at(maintain_erased);
-         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-         customer2.erase(cust_key);
-      }
-      check_last_customer_id();
+      maintenance_state.cleanup([this](const customer2_t::Key& cust_key) { customer2.erase(cust_key); });
    }
 
    void cleanup_merged()
    {
-      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (; maintain_erased < to_insert.size(); maintain_erased++) {
-         const sort_key_t& sk = to_insert.at(maintain_erased);
-         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-         merged.template erase<customer2_t>(cust_key);
-      }
-      check_last_customer_id();
+      maintenance_state.cleanup([this](const customer2_t::Key& cust_key) { merged.template erase<customer2_t>(cust_key); });
    }
 
    void cleanup_view()
    {
-      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (; maintain_erased < to_insert.size(); maintain_erased++) {
-         const sort_key_t& sk = to_insert.at(maintain_erased);
-         customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
-         customer2.erase(cust_key);
+      maintenance_state.cleanup([this](const customer2_t::Key& cust_key) {
          view_t::Key vk{cust_key};
-         join_view.erase(vk);
-         mixed_view_t::Key mixed_vk{sk};
+         bool ret_jv = join_view.erase(vk);
+         bool ret_c = customer2.erase(cust_key);
+         if (!ret_jv || !ret_c) {
+            throw std::runtime_error("Error erasing customer in view, ret_jv: " + std::to_string(ret_jv) + ", ret_c: " + std::to_string(ret_c));
+         }
+         mixed_view_t::Key mixed_vk{cust_key};
          UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
          mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
-      }
-      check_last_customer_id();
+      });
    }
 
    // -------------------------------------------------------------
@@ -487,13 +395,70 @@ class GeoJoin
    // -------------------------------------------------------------
    // ---------------------- JOIN + GROUP-BY ----------------------
 
-   void mixed_query_by_view();
-   void mixed_query_by_merged();
-   void mixed_query_by_base();
+   long long ns_cust_sum = 0;
+   long long ns_mixed_count = 0;
+   long long nsc_cust_sum = 0;
+   long long nsc_mixed_count = 0;
+   long long nscci_cust_sum = 0;
+   long long nscci_mixed_count = 0;
 
-   void point_mixed_query_by_view();
-   void point_mixed_query_by_merged();
-   void point_mixed_query_by_base();
+   long range_mixed_query_by_view(sort_key_t select_sk);
+   long range_mixed_query_by_merged(sort_key_t select_sk);
+   long range_mixed_query_by_base(sort_key_t select_sk);
+
+   void mixed_ns_base()
+   {
+      ns_cust_sum += range_mixed_query_by_base(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
+      ns_mixed_count++;
+   }
+
+   void mixed_nsc_base()
+   {
+      nsc_cust_sum += range_mixed_query_by_base(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
+      nsc_mixed_count++;
+   }
+
+   void mixed_nscci_base()
+   {
+      nscci_cust_sum += range_mixed_query_by_base(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
+      nscci_mixed_count++;
+   }
+
+   void mixed_ns_view()
+   {
+      ns_cust_sum += range_mixed_query_by_view(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
+      ns_mixed_count++;
+   }
+
+   void mixed_nsc_view()
+   {
+      nsc_cust_sum += range_mixed_query_by_view(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
+      nsc_mixed_count++;
+   }
+
+   void mixed_nscci_view()
+   {
+      nscci_cust_sum += range_mixed_query_by_view(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
+      nscci_mixed_count++;
+   }
+
+   void mixed_ns_merged()
+   {
+      ns_cust_sum += range_mixed_query_by_merged(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
+      ns_mixed_count++;
+   }
+
+   void mixed_nsc_merged()
+   {
+      nsc_cust_sum += range_mixed_query_by_merged(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
+      nsc_mixed_count++;
+   }
+
+   void mixed_nscci_merged()
+   {
+      nscci_cust_sum += range_mixed_query_by_merged(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
+      nscci_mixed_count++;
+   }
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
