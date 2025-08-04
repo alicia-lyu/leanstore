@@ -231,10 +231,52 @@ class GeoJoin
 
    int last_customer_id_old;
 
+   void fill_and_replace(const sort_key_t& sk)
+   {
+      size_t i = to_insert.size();
+      if (i < insert_city_count) {  // First, fill to_insert with the first 1% of cities
+         to_insert.push_back(sk);
+      } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
+         size_t j = rand() % (i + 1);
+         if (j < insert_city_count) {
+            to_insert.at(j) = sk;
+         }
+      }
+      if (i % 100 == 1 && FLAGS_log_progress) {
+         std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
+      }
+   }
+
+   void select_merged_to_insert()
+   {
+      if (insert_city_count == 0) {
+         insert_city_count = workload.last_customer_id / 20;  // 5% is hardcoded
+      }
+      last_customer_id_old = workload.last_customer_id;
+      std::cout << "Doing a full scan of cities to randomly select " << insert_city_count << " for insertion...";
+      to_insert.clear();
+      to_insert.reserve(insert_city_count);  // insert 1% of customers
+      auto scanner = merged.template getScanner<sort_key_t, view_t>();
+      while (true) {
+         auto kv = scanner->next();
+         if (!kv.has_value()) {
+            break;  // no more cities
+         }
+         auto [k, v] = *kv;
+         sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
+         if (sk.citykey == 0 || sk.custkey != 0) {
+            continue;  // skip non-city records
+         }
+         fill_and_replace(sk);
+      }
+      std::cout << std::endl;
+      reset_maintain_ptrs();
+   }
+
    void select_to_insert()
    {
       if (insert_city_count == 0) {
-         insert_city_count = workload.last_customer_id / 20; // 5% is hardcoded
+         insert_city_count = workload.last_customer_id / 20;  // 5% is hardcoded
       }
       last_customer_id_old = workload.last_customer_id;
       std::cout << "Doing a full scan of cities to randomly select " << insert_city_count << " for insertion...";
@@ -248,18 +290,7 @@ class GeoJoin
          }
          auto [k, v] = *kv;
          sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
-         size_t i = to_insert.size();
-         if (i < insert_city_count) {  // First, fill to_insert with the first 1% of cities
-            to_insert.push_back(sk);
-         } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
-            size_t j = rand() % (i + 1);
-            if (j < insert_city_count) {
-               to_insert.at(j) = sk;
-            }
-         }
-         if (i % 100 == 1 && FLAGS_log_progress) {
-            std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
-         }
+         fill_and_replace(sk);
       }
       std::cout << std::endl;
       reset_maintain_ptrs();
@@ -354,6 +385,14 @@ class GeoJoin
 
    bool erase_2merged() { throw std::runtime_error("erase_2merged not implemented"); }
 
+   void check_last_customer_id()
+   {
+      if (last_customer_id_old != workload.last_customer_id) {
+         std::cerr << "Error: last_customer_id_old (" << last_customer_id_old << ") does not match workload.last_customer_id ("
+                   << workload.last_customer_id << ")" << std::endl;
+      }
+   }
+
    void cleanup_base()
    {
       std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
@@ -362,7 +401,7 @@ class GeoJoin
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          customer2.erase(cust_key);
       }
-      assert(last_customer_id_old == workload.last_customer_id);
+      check_last_customer_id();
    }
 
    void cleanup_merged()
@@ -373,7 +412,7 @@ class GeoJoin
          customer2_t::Key cust_key{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++last_customer_id_old};
          merged.template erase<customer2_t>(cust_key);
       }
-      assert(last_customer_id_old == workload.last_customer_id);
+      check_last_customer_id();
    }
 
    void cleanup_view()
@@ -389,16 +428,7 @@ class GeoJoin
          UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
          mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
       }
-      assert(last_customer_id_old == workload.last_customer_id);
-   }
-
-   void cleanup_2merged()
-   {
-      std::cout << "Cleaning up " << to_insert.size() << " customers..." << std::endl;
-      for (; maintain_erased < to_insert.size(); maintain_erased++) {
-         erase_2merged();
-      }
-      assert(last_customer_id_old == workload.last_customer_id);
+      check_last_customer_id();
    }
 
    // -------------------------------------------------------------

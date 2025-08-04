@@ -60,9 +60,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    customer2_t::Key cuk{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, ++workload.last_customer_id};
    customer2_t cuv = customer2_t::generateRandomRecord(sv.name, cv.name, civ.name);
    customer2.insert(cuk, cuv);
-   view_t::Key vk{cuk};
-   view_t vv{nv, sv, cv, civ, cuv};
-   join_view.insert(vk, vv);
+   // view_t::Key vk{cuk};
+   // view_t vv{nv, sv, cv, civ, cuv};
+   // join_view.insert(vk, vv);
    mixed_view_t::Key mixed_vk{sk};
    bool customer_exists = mixed_view.tryLookup(mixed_vk, [&](const mixed_view_t&) {});
    if (customer_exists) {
