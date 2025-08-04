@@ -57,11 +57,12 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::select_merged_to_insert()
 {
-   size_t city_count = workload.last_customer_id / 20;
-   maintenance_state.reset_cities(city_count);  // 5% is hardcoded
+   size_t city_count = workload.last_customer_id / 50;
+   maintenance_state.reset_cities(city_count);
    std::cout << "Doing a full scan of cities to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = merged.template getScanner<sort_key_t, view_t>();
-   while (true) {
+   long long scanned = 0;
+   while (scanned++) {
       auto kv = scanner->next();
       if (!kv.has_value()) {
          break;  // no more cities
@@ -72,6 +73,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
          continue;  // skip non-city records
       }
       maintenance_state.select(sk);
+      if (scanned % 1000 == 0 && FLAGS_log_progress) {
+         std::cout << "\rScanned " << scanned << " cities...";
+      }
    }
    std::cout << std::endl;
 }
@@ -81,11 +85,12 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::select_to_insert()
 {
-   size_t city_count = workload.last_customer_id / 20;  // 5% is hardcoded
+   size_t city_count = workload.last_customer_id / 50;
    maintenance_state.reset_cities(city_count);
    std::cout << "Doing a full scan of cities to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = city.getScanner();
-   while (true) {
+   long long scanned = 0;
+   while (scanned++) {
       auto kv = scanner->next();
       if (!kv.has_value()) {
          break;  // no more cities
@@ -93,6 +98,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       auto [k, v] = *kv;
       sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
       maintenance_state.select(sk);
+      if (scanned % 1000 == 0 && FLAGS_log_progress) {
+         std::cout << "\rScanned " << scanned << " cities...";
+      }
    }
    std::cout << std::endl;
 }
@@ -204,7 +212,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { civ = ci; });
    customer2_t::Key cuk{sk};
    customer2_t cuv = customer2_t::generateRandomRecord(sv.name, cv.name, civ.name);
-   
+
    customer2.insert(cuk, cuv);
    view_t::Key vk{sk};
    view_t v{nv, sv, cv, civ, cuv};
