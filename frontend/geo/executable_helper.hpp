@@ -163,8 +163,13 @@ struct ExecutableHelper {
          long long bg_erase_count = 0;
          long long bg_lookup_count = 0;
          std::function<void()> periodic_reset = [&]() {
+            // start time
+            auto start = std::chrono::system_clock::now();
             erase_remaining_customers(customer_to_erase, bg_erase_count);
             workload->select_to_insert();
+            auto end = std::chrono::system_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
+            std::cout << "Periodic reset took " << elapsed << " seconds." << std::endl;
             run_main_thread = true;
          };
          while (keep_running_bg_tx) {

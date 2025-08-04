@@ -59,7 +59,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
 {
    size_t city_count = workload.last_customer_id / 20;
    maintenance_state.reset_cities(city_count);  // 5% is hardcoded
-   std::cout << "Doing a full scan of cities to randomly select " << city_count << " for insertion...";
+   std::cout << "Doing a full scan of cities to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = merged.template getScanner<sort_key_t, view_t>();
    while (true) {
       auto kv = scanner->next();
@@ -83,7 +83,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
 {
    size_t city_count = workload.last_customer_id / 20;  // 5% is hardcoded
    maintenance_state.reset_cities(city_count);
-   std::cout << "Doing a full scan of cities to randomly select " << city_count << " for insertion...";
+   std::cout << "Doing a full scan of cities to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = city.getScanner();
    while (true) {
       auto kv = scanner->next();
@@ -204,7 +204,12 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { civ = ci; });
    customer2_t::Key cuk{sk};
    customer2_t cuv = customer2_t::generateRandomRecord(sv.name, cv.name, civ.name);
+   
    customer2.insert(cuk, cuv);
+   view_t::Key vk{sk};
+   view_t v{nv, sv, cv, civ, cuv};
+   join_view.insert(vk, v);
+
    mixed_view_t::Key mixed_vk{sk};
    bool customer_exists = mixed_view.tryLookup(mixed_vk, [&](const mixed_view_t&) {});
    if (customer_exists) {
