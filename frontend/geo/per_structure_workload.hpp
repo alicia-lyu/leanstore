@@ -98,7 +98,7 @@ struct MergedWorkload : public PerStructureWorkload {
    void bg_lookup() override { workload.point_lookups_of_rest(); }
    int remaining_customers_to_erase() override { return workload.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.reset_maintain_ptrs(); }
-   void select_to_insert() override { workload.select_to_insert(); }
+   void select_to_insert() override { workload.select_merged_to_insert(); }
 };
 
 }  // namespace geo_join

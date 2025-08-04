@@ -106,9 +106,9 @@ struct ExecutableHelper {
 
    void elapsed_tx(std::function<void()> cb, std::string tx)
    {
-      running_threads_counter++;
       while (!run_main_thread) {
       }
+      running_threads_counter++;
       db_traits->run_tx_w_rollback(cb, tx, MAIN_WORKER);
       running_threads_counter--;
       run_main_thread = false;
@@ -122,9 +122,8 @@ struct ExecutableHelper {
       schedule_bg_txs();
 
       elapsed_tx(std::bind(&PerStructureWorkload::join, workload.get()), "join");
-      elapsed_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "join-ns");
+      elapsed_tx(std::bind(&PerStructureWorkload::mixed, workload.get()), "mixed");
 
-      // tput_tx(tput_cbs[i], tput_prefixes[i]);
       tput_tx(std::bind(&PerStructureWorkload::ns5join, workload.get()), "join-ns");
       tput_tx(std::bind(&PerStructureWorkload::nsc5join, workload.get()), "join-nsc");
       tput_tx(std::bind(&PerStructureWorkload::nscci5join, workload.get()), "join-nscci");
@@ -203,6 +202,7 @@ struct ExecutableHelper {
                std::cout << "\r#" << bg_tx_count.load() << " bg tx performed.";
          }
          periodic_reset();
+
          std::cout << "#" << bg_tx_count.load() << " bg tx in total performed. " << bg_insert_count << " inserts, " << bg_erase_count << " erases, "
                    << bg_lookup_count << " lookups." << std::endl;
          db_traits->cleanup_thread(BG_WORKER);

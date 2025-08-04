@@ -14,9 +14,10 @@ BUILD_DIRS          := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 EXEC_NAMES          := basic_join basic_group basic_group_variant
 
 # Experiment flags
-dram                := 1
-scale 			    := 10
-tentative_skip_bytes := 0 # do no tentative skip bytes
+dram                	:= 0.1
+scale 			    	:= 10
+tentative_skip_bytes	:= 0 # do no tentative skip bytes
+bgw_pct 		  		:= 10 # background write percentage	
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
@@ -36,15 +37,11 @@ targets.mk: generate_targets.py
 include targets.mk
 
 temp_btree:
-	-$(MAKE) geo_btree scale=15
-# 	-$(MAKE) geo_btree_3 tentative_skip_bytes=4096
-# 	-$(MAKE) geo_btree_3 tentative_skip_bytes=8192
+	-$(MAKE) geo_btree_2 scale=15
 # 	-$(MAKE) geo_btree_3 tentative_skip_bytes=12288
-# 	-$(MAKE) geo_btree_3 tentative_skip_bytes=16384
-# 	-$(MAKE) geo_btree_3 tentative_skip_bytes=20480
 
 temp_lsm:
-	-$(MAKE) geo_lsm scale=40
+	-$(MAKE) geo_lsm_2 scale=40
 # 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=4096
 # 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=8192
 # 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=12288
@@ -52,8 +49,8 @@ temp_lsm:
 # 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=20480
 
 temp:
-	-$(MAKE) temp_btree dram=0.1
-	-$(MAKE) temp_lsm dram=0.1
+	-$(MAKE) temp_btree
+	-$(MAKE) temp_lsm
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
