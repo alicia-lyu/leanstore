@@ -3,77 +3,12 @@
 #include <cstddef>
 #include "../shared/adapter-scanner/Adapter.hpp"
 #include "../tpc-h/workload.hpp"
-#include "leanstore/Config.hpp"
 #include "load.hpp"
 #include "views.hpp"
+#include "workload_helpers.hpp"
 
 namespace geo_join
 {
-
-template <typename E>
-inline void scan_urand_next(std::vector<E>& container, std::function<E()> next_element)
-{
-   size_t i = container.size();
-   if (i < container.capacity()) {  // First, fill city_reservoir with the first 1% of cities
-      container.push_back(next_element());
-   } else {  // Then, for each subsequent key i, replace a random element in the reservoir with the new key with probability k/i.
-      size_t j = rand() % (i + 1);
-      if (j < container.capacity()) {
-         container.at(j) = next_element();
-      }
-   }
-   if (i % 100 == 1 && FLAGS_log_progress) {
-      std::cout << "\rScanned " << i + 1 << " cities..." << std::flush;
-   }
-};
-
-struct MaintenanceState {
-   std::vector<sort_key_t> city_reservoir;  // reservoir sampling for cities
-   int& inserted_last_id_ref;
-   int erased_last_id;
-   size_t city_count;
-   size_t processed_idx = 0;
-   size_t erased_idx = 0;
-
-   MaintenanceState(int& inserted_last_id_ref, size_t city_count)
-       : inserted_last_id_ref(inserted_last_id_ref), erased_last_id(inserted_last_id_ref), city_count(city_count)
-   {
-      city_reservoir.reserve(city_count);
-   }
-
-   MaintenanceState(int& inserted_last_id_ref) : inserted_last_id_ref(inserted_last_id_ref), erased_last_id(inserted_last_id_ref), city_count(0) {}
-
-   void adjust_ptrs();
-
-   void reset_cities(size_t city_count)
-   {
-      city_reservoir.clear();
-      if (this->city_count == city_count) {
-         return;  // already reserved
-      }
-      city_reservoir.reserve(city_count);
-      this->city_count = city_count;
-   }
-
-   void reset()
-   {
-      city_reservoir.clear();
-      processed_idx = 0;
-      erased_idx = 0;
-      erased_last_id = inserted_last_id_ref;
-   }
-   bool insertion_complete() const { return processed_idx >= city_reservoir.size(); }
-   size_t remaining_customers_to_erase() const { return inserted_last_id_ref - erased_last_id; }
-   bool customer_to_erase() const { return remaining_customers_to_erase() > 0; }
-
-   void select(const sort_key_t& sk);
-
-   sort_key_t next_cust_to_erase();
-
-   sort_key_t next_cust_to_insert();
-
-   void cleanup(std::function<void(const sort_key_t&)> erase_func);
-};
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
@@ -89,10 +24,6 @@ class GeoJoin
 
    AdapterType<mixed_view_t>& mixed_view;
    AdapterType<view_t>& join_view;
-   AdapterType<ccc_t>& ccc_view;
-
-   MergedAdapterType<nation2_t, states_t>& ns;
-   MergedAdapterType<county_t, city_t, customer2_t>& ccc;
 
    AdapterType<nation2_t>& nation;
    AdapterType<states_t>& states;
@@ -116,11 +47,6 @@ class GeoJoin
    long long nscci_sum = 0;
    long long nscci_count = 0;
 
-   long long mixed_point_customer_sum = 0;
-   long long mixed_point_tx_count = 0;
-
-   long long find_rdkey_scans = 0;
-
    Logger& logger;
 
    std::vector<sort_key_t> to_insert;
@@ -130,9 +56,6 @@ class GeoJoin
            MergedTree& m,
            AdapterType<mixed_view_t>& mixed_view,
            AdapterType<view_t>& v,
-           AdapterType<ccc_t>& ccc_view,
-           MergedAdapterType<nation2_t, states_t>& ns,
-           MergedAdapterType<county_t, city_t, customer2_t>& ccc,
            AdapterType<nation2_t>& n,
            AdapterType<states_t>& s,
            AdapterType<county_t>& c,
@@ -142,9 +65,6 @@ class GeoJoin
          merged(m),
          mixed_view(mixed_view),
          join_view(v),
-         ccc_view(ccc_view),
-         ns(ns),
-         ccc(ccc),
          nation(n),
          states(s),
          county(c),
@@ -161,19 +81,18 @@ class GeoJoin
 
    void reset_sum_counts()
    {
-      std::cout << "Average ns produced: " << (ns_count > 0 ? (double)ns_sum / ns_count : 0) << std::endl;
-      std::cout << "Average nsc produced: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
-      std::cout << "Average nscci produced: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
-      std::cout << "Average customer count in mixed point tx: "
-                << (mixed_point_tx_count > 0 ? (double)mixed_point_customer_sum / mixed_point_tx_count : 0) << std::endl;
-      std::cout << "Total find_rdkey_scans: " << find_rdkey_scans << std::endl;
+      std::cout << "join-ns produced on avg: " << (ns_count > 0 ? (double)ns_sum / ns_count : 0) << std::endl;
+      std::cout << "join-nsc produced on avg: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
+      std::cout << "join-nscci produced on avg: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
+      std::cout << "mixed-ns customer_count per query: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
+      std::cout << "mixed-nsc customer_count per query: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
+      std::cout << "mixed-nscci customer_count per query: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
       ns_sum = 0;
       ns_count = 0;
       nsc_sum = 0;
       nsc_count = 0;
       nscci_sum = 0;
       nscci_count = 0;
-      find_rdkey_scans = 0;
    }
 
    ~GeoJoin()
@@ -204,16 +123,6 @@ class GeoJoin
    void query_by_merged();
 
    void query_by_base();
-
-   void query_by_2merged();
-
-   // -------------------------------------------------------------------
-   // ---------------------- POINT JOIN QUERIES --------------------------
-   // Find all joined rows for the same join key
-
-   // -------------------------------------------------------------------
-   // ---------------------- RANGE JOIN QUERIES ------------------------
-   // Find all joined rows for the same nationkey
 
    size_t range_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    size_t range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
@@ -316,24 +225,23 @@ class GeoJoin
 
    void cleanup_base()
    {
-      maintenance_state.cleanup([this](const customer2_t::Key& cust_key) { customer2.erase(cust_key); });
+      maintenance_state.cleanup([this](const sort_key_t& sk) { customer2.erase(customer2_t::Key{sk}); });
    }
 
    void cleanup_merged()
    {
-      maintenance_state.cleanup([this](const customer2_t::Key& cust_key) { merged.template erase<customer2_t>(cust_key); });
+      maintenance_state.cleanup([this](const sort_key_t& sk) { merged.template erase<customer2_t>(customer2_t::Key{sk}); });
    }
 
    void cleanup_view()
    {
-      maintenance_state.cleanup([this](const customer2_t::Key& cust_key) {
-         view_t::Key vk{cust_key};
-         bool ret_jv = join_view.erase(vk);
-         bool ret_c = customer2.erase(cust_key);
+      maintenance_state.cleanup([this](const sort_key_t& sk) {
+         bool ret_jv = join_view.erase(view_t::Key{sk});
+         bool ret_c = customer2.erase(customer2_t::Key{sk});
          if (!ret_jv || !ret_c) {
             throw std::runtime_error("Error erasing customer in view, ret_jv: " + std::to_string(ret_jv) + ", ret_c: " + std::to_string(ret_c));
          }
-         mixed_view_t::Key mixed_vk{cust_key};
+         mixed_view_t::Key mixed_vk{sk};
          UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
          mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
       });
@@ -384,10 +292,7 @@ class GeoJoin
 
    double get_2merged_size()
    {
-      if (merged2_size == 0.0) {
-         merged2_size = ns.size() + ccc.size();
-      }
-      return merged2_size;
+      throw std::runtime_error("get_2merged_size not implemented");
    }
 
    void log_sizes();

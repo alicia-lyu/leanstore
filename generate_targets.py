@@ -46,7 +46,7 @@ def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, P
         image_path = data_disk / exec_fname / f"{SCALE_ENV}"
     else:
         image_path = data_disk / exec_fname / f"{SCALE_ENV}.image"
-    recover_file = build_dir / exec_fname / f"{SCALE_ENV}.json" # do recover
+    recover_file = data_disk / exec_fname / f"{SCALE_ENV}.json" # do recover
     runtime_dir = build_dir / exec_fname / f"{SCALE_ENV}-in-{DRAM_ENV}"
     return (
         exec_path,
