@@ -57,12 +57,13 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::select_merged_to_insert()
 {
-   size_t city_count = workload.last_customer_id / 50;
+   size_t city_count = workload.last_customer_id / 20;
    maintenance_state.reset_cities(city_count);
-   std::cout << "Doing a full scan of cities to randomly select " << maintenance_state.city_count << " for insertion...";
+   std::cout << "Doing a full scan of merged to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = merged.template getScanner<sort_key_t, view_t>();
    long long scanned = 0;
-   while (scanned++) {
+   while (true) {
+      scanned++;
       auto kv = scanner->next();
       if (!kv.has_value()) {
          break;  // no more cities
@@ -85,12 +86,13 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::select_to_insert()
 {
-   size_t city_count = workload.last_customer_id / 50;
+   size_t city_count = workload.last_customer_id / 20;
    maintenance_state.reset_cities(city_count);
    std::cout << "Doing a full scan of cities to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = city.getScanner();
    long long scanned = 0;
-   while (scanned++) {
+   while (true) {
+      scanned++;
       auto kv = scanner->next();
       if (!kv.has_value()) {
          break;  // no more cities
@@ -151,7 +153,9 @@ bool GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::er
    bool ret_jv = join_view.erase(vk);
    bool ret_c = customer2.erase(customer2_t::Key{sk});
    if (!ret_jv || !ret_c) {
-      throw std::runtime_error("Error erasing customer in view, ret_jv: " + std::to_string(ret_jv) + ", ret_c: " + std::to_string(ret_c));
+      std::stringstream ss;
+      ss << "Error erasing customer in view, ret_jv: " << ret_jv << ", ret_c: " << ret_c << ", sk: " << sk;
+      throw std::runtime_error(ss.str());
    }
    mixed_view_t::Key mixed_vk{sk};
    UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
@@ -210,10 +214,11 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    states.lookup1(states_t::Key{sk}, [&](const states_t& s) { sv = s; });
    county.lookup1(county_t::Key{sk}, [&](const county_t& c) { cv = c; });
    city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { civ = ci; });
+
    customer2_t::Key cuk{sk};
    customer2_t cuv = customer2_t::generateRandomRecord(sv.name, cv.name, civ.name);
-
    customer2.insert(cuk, cuv);
+   
    view_t::Key vk{sk};
    view_t v{nv, sv, cv, civ, cuv};
    join_view.insert(vk, v);

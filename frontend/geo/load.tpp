@@ -10,8 +10,8 @@ template <template <typename> class AdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
-{
-   workload.load(); 
+{ 
+   workload.load();
    load_state = LoadState(workload.last_customer_id,
                           [this](int n, int s, int c, int ci, int cu, bool insert_view) { load_1customer(n, s, c, ci, cu, insert_view); });
    seq_load();
