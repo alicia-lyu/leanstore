@@ -42,7 +42,7 @@ sort_key_t MaintenanceState::next_cust_to_insert()
 
 void MaintenanceState::cleanup(std::function<void(const sort_key_t&)> erase_func)
 {
-   while (erased_idx < city_reservoir.size()) {
+   while (erased_idx < city_reservoir.size() && erased_last_id < inserted_last_id_ref) { // can happen when not all cities have a customer inserted when maintenance runs slowly
       erase_func(next_cust_to_erase());
    }
    if (remaining_customers_to_erase() != 0) {
@@ -70,8 +70,12 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       }
       auto [k, v] = *kv;
       sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
-      if (sk.citykey == 0 || sk.custkey != 0) {
-         continue;  // skip non-city records
+      if (sk.citykey == 0) {
+         continue;  // skip nation, states, county records
+      } else if (sk.custkey != 0) {
+         // do search to avoid scanning many customers in one city
+         scanner->seekJK(sort_key_t{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, std::numeric_limits<Integer>::max()});
+         continue;
       }
       maintenance_state.select(sk);
       if (scanned % 1000 == 0 && FLAGS_log_progress) {

@@ -180,7 +180,9 @@ class GeoJoin
          bool ret_jv = join_view.erase(view_t::Key{sk});
          bool ret_c = customer2.erase(customer2_t::Key{sk});
          if (!ret_jv || !ret_c) {
-            throw std::runtime_error("Error erasing customer in view, ret_jv: " + std::to_string(ret_jv) + ", ret_c: " + std::to_string(ret_c));
+            std::stringstream ss;
+            ss << "Error erasing customer in view, ret_jv: " << ret_jv << ", ret_c: " << ret_c << ", sk: " << sk;
+            throw std::runtime_error(ss.str());
          }
          mixed_view_t::Key mixed_vk{sk};
          UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
@@ -199,7 +201,7 @@ class GeoJoin
    void load_1state(int n, int s);
    void load_1county(int n, int s, int c);
    void load_1city(int n, int s, int c, int ci);
-   void load_1customer(int n, int s, int c, int ci, int cu, bool insert_view);
+   void load_1customer(int n, int s, int c, int ci, int cu);
 
    double get_view_size()
    {

@@ -67,7 +67,7 @@ struct BaseJoiner {
 
    bool went_past(const sort_key_t& sk) { return final_joiner->went_past(sk); }
 };
-template <template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
+template <template <typename> class AdapterType, template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
 struct MergedJoiner {
    std::unique_ptr<MergedScannerType<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>> merged_scanner;
    std::optional<PremergedJoin<MergedScannerType<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>,
@@ -87,6 +87,13 @@ struct MergedJoiner {
    {
       // seek handled by PremergedJoin
       joiner.emplace(*merged_scanner);
+   }
+
+   MergedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, AdapterType<view_t>& join_view)
+       : merged_scanner(merged.template getScanner<sort_key_t, view_t>()), seek_key(sort_key_t::max())
+   {
+      // seek handled by PremergedJoin
+      joiner.emplace(*merged_scanner, join_view);
    }
 
    void run() { joiner->run(); }
@@ -143,7 +150,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::qu
    std::cout << "GeoJoin::query_by_merged()" << std::endl;
    auto start = std::chrono::high_resolution_clock::now();
 
-   MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged);
+   MergedJoiner<AdapterType, MergedAdapterType, MergedScannerType> merged_joiner(merged);
    merged_joiner.run();
 
    auto end = std::chrono::high_resolution_clock::now();
@@ -227,7 +234,7 @@ size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 
-   MergedJoiner<MergedAdapterType, MergedScannerType> merged_joiner(merged, sk);
+   MergedJoiner<AdapterType, MergedAdapterType, MergedScannerType> merged_joiner(merged, sk);
    auto kv = merged_joiner.next();
    if (!kv.has_value()) {
       return 0;  // no record is scanned (too large a key)
