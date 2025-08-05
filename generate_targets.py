@@ -46,7 +46,7 @@ def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, P
         image_path = data_disk / exec_fname / f"{SCALE_ENV}"
     else:
         image_path = data_disk / exec_fname / f"{SCALE_ENV}.image"
-    recover_file = data_disk / exec_fname / f"{SCALE_ENV}.json" # do recover
+    recover_file = data_disk / exec_fname / build_dir / f"{SCALE_ENV}.json" # do recover
     runtime_dir = build_dir / exec_fname / f"{SCALE_ENV}-in-{DRAM_ENV}"
     return (
         exec_path,
@@ -117,6 +117,7 @@ class Experiment:
             self.run_experiment()
         else:
             self.debug_experiment()
+        self.reload()
 
     def makefile_subsection(self, title: str) -> None:
         print(f"#{self.sep} {title} {self.sep}")
@@ -129,6 +130,7 @@ class Experiment:
         # rule to create runtime directory
         print(f"{self.runtime_dir}: ")
         print(f"\t@mkdir -p {self.runtime_dir}")
+        print()
     
     def generate_executable(self) -> None:
         self.makefile_subsection("Generate executable")
@@ -159,6 +161,7 @@ class Experiment:
             print(f"{self.image_path}_temp: {self.recover_file} {self.image_path} FORCE") # force duplicate; check recover target before image_path target
             self.console_print_subsection(f"Copying image file {self.image_path} to {self.image_path}_temp")
             print(f"\t{copy_image_cmd}")
+            print()
 
     def remaining_flags(self, recover_file: str, persist_file: str, trunc: bool, ssd_path: str, scale: int, dram_gib: int) -> dict[str, str]:
         flags = {
@@ -172,14 +175,13 @@ class Experiment:
         return flags
         
     def generate_recover_file(self) -> None:
-        if Path(build_dirs[0]).resolve() == self.build_dir.resolve():
-            return # only generate recovery file once (all builds use the same recovery file)
         self.makefile_subsection("Generate recovery file")
         loading_files = get_loading_files(self.exec_fname)
         loading_files_str = " ".join(loading_files)
         # rule to load database and create recovery file
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
+        print(f"\tmkdir -p {self.recover_file}")
         prefix = "lldb -b -o run -o bt -- " if "debug" in str(self.build_dir) else 'script -q -c "'
         suffix = '' if "debug" in str(self.build_dir) else f'" {self.runtime_dir}/load.log'
         rem_flags = self.remaining_flags(
@@ -200,9 +202,15 @@ class Experiment:
             suffix,
             sep=" "
         )
+        # copy recovery file to all other possible locations
+        for b in build_dirs:
+            b = Path(b)
+            if b.resolve() == self.build_dir.resolve():
+                continue
+            print(f"\tcp -f {self.recover_file} {data_disk / b / self.exec_fname / f'{SCALE_ENV}.json'}")
         print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path}")
         print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk}")
-        print("\n") # 2 lines
+        print()
         
     def experiment_flags(self) -> tuple[dict[str, str], str]:
         
@@ -241,9 +249,6 @@ class Experiment:
                 sep=" "
             )
             print()
-        print(f"{self.exec_fname}_reload: ")
-        print(f"\trm -f {self.recover_file}") # reset recover file
-        print(f"\t$(MAKE) {self.recover_file}")
         
     
     def debug_experiment(self) -> None:
@@ -266,7 +271,7 @@ class Experiment:
             print(f"\trm stderr.txt && touch stderr.txt") # reset stderr.txt
             print(f"\tmkdir -p {self.runtime_dir}")
             print(
-                f"\tlldb -o run --",
+                f"\tlldb -b -o run -o bt --",
                 f"{self.exec_path}",
                 kv_to_str(self.class_flags),
                 kv_to_str(rem_flags),
@@ -286,9 +291,15 @@ class Experiment:
                 "stopOnEntry": False
             }
             vscode_launch_obj["configurations"].append(vscode_configs)
-        print(f"{self.exec_fname}_lldb_reload:")
-        print(f"\trm -f {self.recover_file}")
+            
+    def reload(self):
+        midfix = "_lldb" if "debug" in str(self.build_dir) else ""
+        print(f"{self.exec_fname}{midfix}_reload:")
+        # print(f"\trm -f {self.recover_file}")
+        for b in build_dirs:
+            print(f"\trm -f {data_disk / b / self.exec_fname / f'{SCALE_ENV}.json'}")
         print(f"\t$(MAKE) {self.recover_file}")
+        print()
 
 LOADING_META_FILE = "./frontend/tpc-h/workload.hpp"
 
@@ -311,14 +322,14 @@ def main() -> None:
             exp.generate_all_targets()
     
     print(f"executables: {' '.join([str(e) for e in executables])}\n")
-    print("run_all: " + " ".join(exec_names))
-    print("lldb_all: " + " ".join([f"{e}_lldb" for e in exec_names]))
+    print("all: " + " ".join(exec_names))
+    print("all_lldb: " + " ".join([f"{e}_lldb" for e in exec_names]))
     print(f"clean_runtime_dirs:")
     for dir in runtime_dirs:
         print(f"\trm -rf {dir}")
 
     # phony declaration
-    phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "run_all", "lldb_all"] + exec_names + [f"{e}_lldb" for e in exec_names] + [f"{e}_reload" for e in exec_names] + [f"{e}_lldb_reload" for e in exec_names]
+    phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "all", "all_lldb"] + exec_names + [f"{e}_lldb" for e in exec_names] + [f"{e}_reload" for e in exec_names] + [f"{e}_lldb_reload" for e in exec_names]
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")

@@ -1,38 +1,56 @@
 #pragma once
 #include <gflags/gflags_declare.h>
 #include <algorithm>
-#include <filesystem>
 #include <fstream>
+#include <functional>
+#include <mutex>
+#include <variant>
 #include "join_state.hpp"
 
 DECLARE_int32(tentative_skip_bytes);
 
-struct PremergedJoinStats {
+struct PremergedJoinStats; // Forward declaration
+
+// Centralized logger class
+class StatsLogger
+{
+  public:
+   // This is the main interface for logging stats
+   static void log(const PremergedJoinStats& stats, size_t remaining_records_to_join, long produced);
+   // Flushes any pending stats to the log file.
+   static void flush();
+
+  private:
+   // All members are private and static to create a singleton-like logger
+   StatsLogger() = default;  // Prevent instantiation
+   static void init();
+   static void write_row();
+
+   static std::ofstream log_file;
    static PremergedJoinStats last_stats;
-   inline static int repeat_count = 0;
-   const size_t record_type_count;
+   static long long remaining_records_to_join_accumulated;
+   static long long produced_accumulated;
+   static size_t repeat_count;
+   static bool is_initialized;
+   static std::mutex mtx;
+};
+
+// Forward declaration
+struct PremergedJoinStats {
+   // Removed static members for logging, they now live in StatsLogger
+   size_t record_type_count;
    size_t seek_cnt = 0;
    size_t right_next_cnt = 0;
    size_t scan_filter_success = 0;
    size_t scan_filter_fail = 0;
-   size_t emplace_cnt = 0;  // not necessarily equal to merged_scanner.produced
+   size_t emplace_cnt = 0;
 
-   PremergedJoinStats(size_t record_type_count) : record_type_count(record_type_count) {}
+   // Default constructor for static initialization
    PremergedJoinStats() : record_type_count(0) {}
+   PremergedJoinStats(size_t record_type_count) : record_type_count(record_type_count) {}
 
-   // copy assignment operator
-   PremergedJoinStats& operator=(const PremergedJoinStats& other)
-   {
-      if (this != &other) {
-         // record_type_count is const and cannot be assigned
-         seek_cnt = other.seek_cnt;
-         right_next_cnt = other.right_next_cnt;
-         scan_filter_success = other.scan_filter_success;
-         scan_filter_fail = other.scan_filter_fail;
-         emplace_cnt = other.emplace_cnt;
-      }
-      return *this;
-   }
+   // Copy assignment operator is now correct without the const member
+   PremergedJoinStats& operator=(const PremergedJoinStats& other) = default;
 
    bool operator==(const PremergedJoinStats& other) const
    {
@@ -41,31 +59,7 @@ struct PremergedJoinStats {
    }
 
    bool operator!=(const PremergedJoinStats& other) const { return !(*this == other); }
-
-   void log(size_t remaining_records_to_join, long produced)
-   {
-      std::filesystem::path premerged_join_log_path = std::filesystem::path(FLAGS_csv_path) / "premerged_join.csv";
-      std::ofstream premerged_join_log(premerged_join_log_path, std::ios::app);
-      if (*this != last_stats) {  // log only if the stats changed
-         if (repeat_count > 0) {  // exclude the first stats
-            // premerged_join_log << repeat_count << "x! record types: " << last_stats.record_type_count << ", seek_cnt: " << last_stats.seek_cnt
-            //                    << ", right_next_cnt: " << last_stats.right_next_cnt << ", scan_filter_success: " << last_stats.scan_filter_success
-            //                    << ", scan_filter_fail: " << last_stats.scan_filter_fail << ", emplace_cnt: " << last_stats.emplace_cnt << std::endl;
-         }
-         // reset
-         last_stats = *this;
-         repeat_count = 0;
-      }
-      if (repeat_count == 0) {
-         // premerged_join_log << "remaining_records_to_join\tproduced" << std::endl;  // header
-      }
-      // premerged_join_log << remaining_records_to_join << "\t\t" << produced << std::endl;
-      repeat_count++;
-      premerged_join_log.close();
-   }
 };
-
-inline PremergedJoinStats PremergedJoinStats::last_stats{0};
 
 // merged_scanner -> join_state -> yield joined records
 template <typename MergedScannerType, typename JK, typename JR, typename... Rs>
@@ -90,7 +84,7 @@ struct PremergedJoin {
    {
    }
 
-   ~PremergedJoin() { stats.log(join_state.get_remaining_records_to_join(), join_state.get_produced()); }
+   ~PremergedJoin() { StatsLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced()); }
 
    bool went_past(const JK& ballpark_jk) const { return join_state.went_past(ballpark_jk); }
 
