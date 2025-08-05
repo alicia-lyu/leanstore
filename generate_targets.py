@@ -172,13 +172,15 @@ class Experiment:
         return flags
         
     def generate_recover_file(self) -> None:
+        if Path(build_dirs[0]).resolve() == self.build_dir.resolve():
+            return # only generate recovery file once (all builds use the same recovery file)
         self.makefile_subsection("Generate recovery file")
         loading_files = get_loading_files(self.exec_fname)
         loading_files_str = " ".join(loading_files)
         # rule to load database and create recovery file
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
-        prefix = "lldb -o run -- " if "debug" in str(self.build_dir) else 'script -q -c "'
+        prefix = "lldb -b -o run -o bt -- " if "debug" in str(self.build_dir) else 'script -q -c "'
         suffix = '' if "debug" in str(self.build_dir) else f'" {self.runtime_dir}/load.log'
         rem_flags = self.remaining_flags(
                 recover_file="./leanstore.json", # do not recover
@@ -254,7 +256,7 @@ class Experiment:
         vscode_flags: dict[str, str] = self.class_flags.copy()
         vscode_flags.update(rem_flags.copy())
         for k, v in vscode_flags.items():
-            vscode_flags[k] = str(v).replace("$(dram)", "1").replace("$(scale)", "10").replace("$(tentative_skip_bytes)", "8092").replace("$(bgw_pct)", "10")
+            vscode_flags[k] = str(v).replace("$(dram)", "0.1").replace("$(scale)", "15").replace("$(tentative_skip_bytes)", "0").replace("$(bgw_pct)", "10")
         
         # rule to run the experiment in LLDB
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")

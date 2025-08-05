@@ -177,7 +177,7 @@ struct ExecutableHelper {
             std::string tx_type;
             jumpmuTry()
             {
-               if (running_threads_counter.load() == 1) {
+               if (run_main_thread == false) {
                   periodic_reset();
                }
                if (lottery < FLAGS_bgw_pct) {
@@ -230,7 +230,7 @@ struct ExecutableHelper {
       atomic<bool> keep_running_tx = true;
       std::thread([&] {
          std::this_thread::sleep_for(std::chrono::seconds(FLAGS_tx_seconds));
-         std::cout << "keeping_running = false";
+         std::cout << "ExecutableHelper::tput_tx keeping_running = false";
          keep_running_tx = false;
       }).detach();
 
