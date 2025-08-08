@@ -2,20 +2,13 @@
 #include <iostream>
 #include "premerged_join.hpp"
 
-std::ofstream StatsLogger::log_file;
-PremergedJoinStats StatsLogger::last_stats;
-long long StatsLogger::remaining_records_to_join_accumulated = 0;
-long long StatsLogger::produced_accumulated = 0;
-size_t StatsLogger::repeat_count = 0;
-bool StatsLogger::is_initialized = false;
-std::mutex StatsLogger::mtx;
+PremergedJoinStats StatsLogger::last_stats; // cannot be inlined because PremergedJoinStats was an incomplete type in the header
 
-// A helper object whose destructor will call flush() at program exit
 struct LoggerFlusher {
    ~LoggerFlusher() { StatsLogger::flush(); }
 };
-// This static instance ensures flush() is called automatically
-static LoggerFlusher final_flusher;
+// This static instance ensures flush() is called automatically at the end of the program
+const static LoggerFlusher final_flusher;
 
 // --- Implementation of StatsLogger methods ---
 
@@ -23,7 +16,7 @@ void StatsLogger::init()
 {
    if (!is_initialized) {
       // You can get this path from your FLAGS or config
-      std::filesystem::path log_path = "premerged_join_stats.csv";
+      std::filesystem::path log_path = std::filesystem::path(FLAGS_csv_path) / "premerged_join_stats.csv";
       log_file.open(log_path, std::ios::trunc);  // Use trunc to overwrite old logs
 
       // Write a clean CSV header

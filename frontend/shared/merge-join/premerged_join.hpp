@@ -26,13 +26,13 @@ class StatsLogger
    static void init();
    static void write_row();
 
-   static std::ofstream log_file;
+   inline static std::ofstream log_file;
    static PremergedJoinStats last_stats;
-   static long long remaining_records_to_join_accumulated;
-   static long long produced_accumulated;
-   static size_t repeat_count;
-   static bool is_initialized;
-   static std::mutex mtx;
+   inline static long long remaining_records_to_join_accumulated = 0;
+   inline static long long produced_accumulated = 0;
+   inline static size_t repeat_count = 0;
+   inline static bool is_initialized = false;
+   inline static std::mutex mtx;
 };
 
 // Forward declaration
