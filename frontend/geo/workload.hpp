@@ -35,11 +35,6 @@ class GeoJoin
 
    WorkloadStats stats;
 
-   double indexes_size = 0.0;
-   double view_size = 0.0;
-   double merged_size = 0.0;
-   double merged2_size = 0.0;
-
    Logger& logger;
 
    std::vector<sort_key_t> to_insert;
@@ -205,27 +200,22 @@ class GeoJoin
 
    double get_view_size()
    {
-      if (view_size == 0.0) {
-         auto mixed_view_size = mixed_view.size();
-         view_size = get_indexes_size() + join_view.size() + mixed_view_size;
-      }
+      static auto mixed_view_size = mixed_view.size(); // local static: initialized once
+      static auto indexes_size = get_indexes_size();
+      static auto join_view_size = join_view.size();
+      static auto view_size = mixed_view_size + indexes_size + join_view_size;
       return view_size;
    }
 
    double get_indexes_size()
    {
-      // return nation.size() + states.size() + county.size() + city.size() + customer2.size();
-      if (indexes_size == 0.0) {
-         indexes_size = nation.size() + states.size() + county.size() + city.size() + customer2.size();
-      }
+      static auto indexes_size = nation.size() + states.size() + county.size() + city.size() + customer2.size();
       return indexes_size;
    }
 
    double get_merged_size()
    {
-      if (merged_size == 0.0) {
-         merged_size = merged.size();
-      }
+      static auto merged_size = merged.size();
       return merged_size;
    }
 

@@ -61,14 +61,14 @@ struct TPCHWorkload {
       loadRegion();
    }
 
-   static Integer PART_SCALE;
-   static Integer SUPPLIER_SCALE;
-   static Integer CUSTOMER_SCALE;
-   static Integer ORDERS_SCALE;
-   static Integer LINEITEM_SCALE;
-   static Integer PARTSUPP_SCALE;
-   static Integer NATION_COUNT;
-   static Integer REGION_COUNT;
+   inline static Integer PART_SCALE = 200;
+   inline static Integer SUPPLIER_SCALE = 10;
+   inline static Integer CUSTOMER_SCALE = 150;
+   inline static Integer ORDERS_SCALE = 1500;
+   inline static Integer LINEITEM_SCALE = 6000;
+   inline static Integer PARTSUPP_SCALE = 800;
+   inline static Integer NATION_COUNT = 25;
+   inline static Integer REGION_COUNT = 5;
 
    Integer last_part_id;
    Integer last_supplier_id;
@@ -376,20 +376,3 @@ struct TPCHWorkload {
       produced++;
    }
 };
-
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::PART_SCALE = 200;
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::SUPPLIER_SCALE = 10;
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::CUSTOMER_SCALE = 150;
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::ORDERS_SCALE = 1500;
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::LINEITEM_SCALE = 6000;
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::PARTSUPP_SCALE = 800;
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::NATION_COUNT = 25;
-template <template <typename> class AdapterType>
-Integer TPCHWorkload<AdapterType>::REGION_COUNT = 5;

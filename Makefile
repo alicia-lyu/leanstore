@@ -54,7 +54,7 @@ temp_lsm:
 
 temp:
 	-$(MAKE) temp_btree
-# 	-$(MAKE) temp_lsm
+	-$(MAKE) temp_lsm
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
