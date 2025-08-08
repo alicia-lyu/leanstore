@@ -7,9 +7,9 @@
 #include <set>
 #include <vector>
 
-#include "tables.hpp"
+#include "tpch_tables.hpp"
 
-#include "../tpc-h/logger.hpp"
+#include "../shared/logger/logger.hpp"
 
 DECLARE_int32(tpch_scale_factor);
 

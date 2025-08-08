@@ -1,8 +1,8 @@
 #include <gflags/gflags.h>
 #include "../shared/adapter-scanner/LeanStoreAdapter.hpp"
 #include "../shared/adapter-scanner/LeanStoreMergedAdapter.hpp"
-#include "../tpc-h/leanstore_logger.hpp"
-#include "../tpc-h/tables.hpp"
+#include "../shared/logger/leanstore_logger.hpp"
+#include "tpch_tables.hpp"
 #include "executable_helper.hpp"
 #include "per_structure_workload.hpp"
 #include "leanstore/LeanStore.hpp"
