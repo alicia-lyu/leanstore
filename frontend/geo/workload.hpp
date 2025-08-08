@@ -2,7 +2,7 @@
 
 #include <cstddef>
 #include "../shared/adapter-scanner/Adapter.hpp"
-#include "../tpc-h/workload.hpp"
+#include "tpch_workload.hpp"
 #include "load.hpp"
 #include "views.hpp"
 #include "workload_helpers.hpp"

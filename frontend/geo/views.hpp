@@ -3,7 +3,7 @@
 #include <variant>
 #include "../shared/variant_tuple_utils.hpp"
 #include "../shared/view_templates.hpp"
-#include "../tpc-h/tables.hpp"
+#include "tpch_tables.hpp"
 
 // id range: 10s + 20s (only one such namespace are included in each executable)
 namespace geo_join

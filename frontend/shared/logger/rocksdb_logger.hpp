@@ -9,7 +9,7 @@
 #include <rocksdb/statistics.h>
 #include <rocksdb/table.h>
 #include <rocksdb/wide_columns.h>
-#include "../shared/RocksDB.hpp"
+#include "../RocksDB.hpp"
 
 struct RocksDBStats {
    u64 sst_read_us;

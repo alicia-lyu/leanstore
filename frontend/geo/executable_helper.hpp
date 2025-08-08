@@ -6,8 +6,8 @@
 #include <memory>
 #include <thread>
 #include "../shared/RocksDB.hpp"
-#include "../tpc-h/logger.hpp"
-#include "../tpc-h/workload.hpp"
+#include "../shared/logger/logger.hpp"
+#include "tpch_workload.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "per_structure_workload.hpp"
 

@@ -2,8 +2,8 @@
 #include <fstream>
 #include <iostream>
 #include <vector>
-#include "../shared/merge-join/premerged_join.hpp"
-#include "workload.hpp"
+#include "../merge-join/premerged_join.hpp"
+#include "../../geo/tpch_workload.hpp"
 
 DEFINE_bool(log_progress, true, "Log progress of the workload execution");
 
