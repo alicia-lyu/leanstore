@@ -11,7 +11,7 @@
 #include <rocksdb/wide_columns.h>
 
 // -------------------------------------------------------------------------------------
-#include "Types.hpp"
+#include "./Types.hpp"
 #include "Units.hpp"
 #include "leanstore/Config.hpp"
 #include "leanstore/KVInterface.hpp"

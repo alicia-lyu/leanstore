@@ -197,7 +197,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view(Integer nationkey,
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view(Integer nationkey,
                                                                                                     Integer statekey,
                                                                                                     Integer countykey,
                                                                                                     Integer citykey)
@@ -227,7 +227,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged(Integer nationkey,
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged(Integer nationkey,
                                                                                                       Integer statekey,
                                                                                                       Integer countykey,
                                                                                                       Integer citykey)
@@ -255,7 +255,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-size_t GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base(Integer nationkey,
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base(Integer nationkey,
                                                                                                     Integer statekey,
                                                                                                     Integer countykey,
                                                                                                     Integer citykey)

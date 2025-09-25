@@ -14,6 +14,7 @@
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
 DECLARE_int32(tx_seconds);
+DEFINE_bool(log_progress, true, "Log progress of the workload execution");
 
 static constexpr u64 BG_WORKER = 0;
 static constexpr u64 MAIN_WORKER = 1;

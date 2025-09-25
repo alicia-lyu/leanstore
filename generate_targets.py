@@ -181,7 +181,7 @@ class Experiment:
         # rule to load database and create recovery file
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
-        print(f"\tmkdir -p {self.recover_file}")
+        print(f"\tmkdir -p {self.recover_file.parent}")
         prefix = "lldb -b -o run -o bt -- " if "debug" in str(self.build_dir) else 'script -q -c "'
         suffix = '' if "debug" in str(self.build_dir) else f'" {self.runtime_dir}/load.log'
         rem_flags = self.remaining_flags(
@@ -301,7 +301,7 @@ class Experiment:
         print(f"\t$(MAKE) {self.recover_file}")
         print()
 
-LOADING_META_FILE = "./frontend/tpc-h/workload.hpp"
+LOADING_META_FILE = "./frontend/geo/tpch_workload.hpp"
 
 DIFF_DIRS = {
  "geo_lsm": "geo",
