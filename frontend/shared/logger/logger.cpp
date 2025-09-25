@@ -5,8 +5,6 @@
 #include "../merge-join/premerged_join.hpp"
 #include "../../geo/tpch_workload.hpp"
 
-DEFINE_bool(log_progress, true, "Log progress of the workload execution");
-
 void SumStats::log(std::ostream& csv_sum, bool csv_sum_exists)
 {
    if (!csv_sum_exists) {  // no header
