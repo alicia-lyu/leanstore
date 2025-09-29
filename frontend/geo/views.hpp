@@ -123,7 +123,7 @@ struct customer2_t {
 
    void print(std::ostream& os) const
    {
-      os << c_name << "|" << c_address << "|" << c_phone << "|" << c_acctbal << "|" << c_mktsegment << "|" << c_comment;
+      os << c_name << "," << c_address << "," << c_phone << "," << c_acctbal << "," << c_mktsegment << "," << c_comment;
    }
 
    static customer2_t generateRandomRecord()
@@ -175,7 +175,7 @@ struct nation2_t {
 
    ADD_RECORD_TRAITS(nation2_t)
 
-   void print(std::ostream& os) const { os << n_name << "|" << n_comment << "|" << last_statekey; }
+   void print(std::ostream& os) const { os << n_name << "," << n_comment << "," << last_statekey; }
 
    static nation2_t generateRandomRecord(int state_cnt) { return nation2_t{randomastring<25>(1, 25), randomastring<152>(0, 152), state_cnt}; }
 };
@@ -200,7 +200,7 @@ struct states_t {
    Integer last_countykey;
    ADD_RECORD_TRAITS(states_t)
 
-   void print(std::ostream& os) const { os << name << "|" << comment << "|" << last_countykey; }
+   void print(std::ostream& os) const { os << name << "," << comment << "," << last_countykey; }
 
    static states_t generateRandomRecord(int county_cnt) { return states_t{randomastring<25>(1, 25), randomastring<152>(0, 152), county_cnt}; }
 };
@@ -241,7 +241,7 @@ struct county_t {
    Integer last_citykey;
    ADD_RECORD_TRAITS(county_t)
 
-   void print(std::ostream& os) const { os << name << "|" << comment << "|" << last_citykey; }
+   void print(std::ostream& os) const { os << name << "," << comment << "," << last_citykey; }
 
    static county_t generateRandomRecord(int city_cnt) { return county_t{randomastring<25>(1, 25), randomastring<152>(0, 152), city_cnt}; }
 };
@@ -297,7 +297,7 @@ struct city_t {
    Varchar<152> comment;
    ADD_RECORD_TRAITS(city_t)
 
-   void print(std::ostream& os) const { os << name << "|" << comment; }
+   void print(std::ostream& os) const { os << name << "," << comment; }
 
    static city_t generateRandomRecord() { return city_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
 };

@@ -7,25 +7,29 @@
 template <typename Adapter, typename Record>
 void write_table_to_stream(Adapter& table)
 {
-   std::string filename = FLAGS_ssd_path + "/" + table.name + ".dat";
+   std::filesystem::path dat_dir = std::filesystem::path(FLAGS_persist_file).parent_path() / std::filesystem::path(FLAGS_persist_file).stem();
+   std::filesystem::create_directories(dat_dir);
+   std::filesystem::path filename = dat_dir / (table.name + ".dat");
    std::ofstream out(filename);
-   std::cout << "Writing to a .dat file for table " << table.name << "...";
+   std::cout << "Writing to " << filename << "...";
    // 1. Write the number of records as a header for this table
    size_t record_count = 0;
    // Write a dummy record count at the beginning
-   out.write(reinterpret_cast<const char*>(&record_count), sizeof(record_count));
+   // out << record_count << "\n";
 
    table.scan(
-      typename Record::Key{},
-      [&](const auto& key, const auto& value) {
-      out << key << "|" << value << "\n";
-      record_count++;
-      if (record_count % 1000 == 0)
-         std::cout << "\rWriting to a .dat file for table " << table.name << ": " << record_count << " records...";
-      return true;
-   }, [&]() { });
-   out.seekp(0);
-   out.write(reinterpret_cast<const char*>(&record_count), sizeof(record_count));
+       typename Record::Key{},
+       [&](const auto& key, const auto& value) {
+          out << key << value << "\n";
+          record_count++;
+          if (record_count % 1000 == 0)
+             std::cout << "\rWriting to " << filename << " for " << table.name << ": " << record_count << " records...";
+          return true;
+       },
+       [&]() {});
+   // out.seekp(0);
+   // out << record_count;
+   out.close();
 }
 
 namespace geo_join
@@ -37,8 +41,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
 {
    workload.load();
-   load_state =
-       LoadState(workload.last_customer_id, [this](int n, int s, int c, int ci, int cu) { load_1customer(n, s, c, ci, cu); });
+   load_state = LoadState(workload.last_customer_id, [this](int n, int s, int c, int ci, int cu) { load_1customer(n, s, c, ci, cu); });
    seq_load();
    load_state.advance_customers_to_hot_cities();
    // load join view
@@ -111,7 +114,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    county.insert(ck, cv);
    merged.insert(ck, cv);
    for (int ci = 1; ci <= city_cnt; ci++) {
-      load_1city(n, s, c, ci);
+      load_1city(n, s, c, ci); 
    }
 }
 

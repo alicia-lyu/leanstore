@@ -21,13 +21,12 @@ Varchar<maxLength> randomastring(Integer minLenStr, Integer maxLenStr)
    Integer len = rnd(maxLenStr - minLenStr + 1) + minLenStr;
    Varchar<maxLength> result;
    for (Integer index = 0; index < len; index++) {
-      Integer i = rnd(62);
+      // alphanumeric only
+      Integer i = rnd(36);
       if (i < 10)
          result.append(48 + i);
-      else if (i < 36)
-         result.append(64 - 10 + i);
       else
-         result.append(96 - 36 + i);
+         result.append(64 - 10 + i);
    }
    return result;
 }
