@@ -184,7 +184,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    customer2_t cust_val = customer2_t::generateRandomRecord(state_name, county_name, city_name);
    customer2_t::Key cust_key{sk};
    customer2.insert(cust_key, cust_val);
-   maintenance_state.delta_table << cust_key << "|" << cust_val << "\n";
+   if (maintenance_state.erased_idx == 0)
+      maintenance_state.delta_table << cust_key << cust_val << "\n";
 }
 
 template <template <typename> class AdapterType,

@@ -1,7 +1,8 @@
 #pragma once
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <vector>
-#include <fstream>
 #include "leanstore/Config.hpp"  // IWYU pragma: keep
 #include "views.hpp"
 
@@ -16,7 +17,7 @@ class WorkloadStats
    long nsc_count = 0;
    long nscci_sum = 0;
    long nscci_count = 0;
-   
+
    long ns_cust_sum = 0;
    long ns_mixed_count = 0;
    long nsc_cust_sum = 0;
@@ -104,14 +105,19 @@ struct MaintenanceState {
    size_t erased_idx = 0;
    std::ofstream delta_table;
 
-   MaintenanceState(int& inserted_last_id_ref)
-      : inserted_last_id_ref(inserted_last_id_ref),
-        erased_last_id(inserted_last_id_ref),
-        city_count(0),
-        delta_table(std::string(FLAGS_ssd_path + "/delta_table.dat"))
-   {}
+   MaintenanceState(int& inserted_last_id_ref) : inserted_last_id_ref(inserted_last_id_ref), erased_last_id(inserted_last_id_ref), city_count(0)
+   {
+      std::filesystem::path dat_dir = std::filesystem::path(FLAGS_recover_file).parent_path() / std::filesystem::path(FLAGS_recover_file).stem();
+      std::filesystem::create_directories(dat_dir);
+      std::filesystem::path filename = dat_dir / "customer2.dat";
+      delta_table.open(filename, std::ios::out | std::ios::app);
+   }
 
-   ~MaintenanceState() { std::cout << "MaintenanceState: Inserted/erased customers till " << inserted_last_id_ref << std::endl; }
+   ~MaintenanceState()
+   {
+      delta_table.close();
+      std::cout << "MaintenanceState: Inserted/erased customers till " << inserted_last_id_ref << std::endl;
+   }
 
    void adjust_ptrs();
 

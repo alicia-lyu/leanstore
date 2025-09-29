@@ -9,7 +9,7 @@ template <typename K, auto K::*... Members>
 struct key_traits {
    static std::ostream& print(std::ostream& os, const K& k)
    {
-      ((os << k.*Members << "|"), ...);
+      ((os << k.*Members << ","), ...);
       return os;
    }
 
