@@ -1,8 +1,32 @@
 #pragma once
+#include "join_search_count.tpp"
+#include "mixed_query.tpp"
 #include "views.hpp"
 #include "workload.hpp"
-#include "mixed_query.tpp"
-#include "join_search_count.tpp"
+
+template <typename Adapter, typename Record>
+void write_table_to_stream(Adapter& table)
+{
+   std::string filename = FLAGS_ssd_path + "/" + table.name + ".dat";
+   std::ofstream out(filename);
+   std::cout << "Writing to a .dat file for table " << table.name << "...";
+   // 1. Write the number of records as a header for this table
+   size_t record_count = 0;
+   // Write a dummy record count at the beginning
+   out.write(reinterpret_cast<const char*>(&record_count), sizeof(record_count));
+
+   table.scan(
+      typename Record::Key{},
+      [&](const auto& key, const auto& value) {
+      out << key << "|" << value << "\n";
+      record_count++;
+      if (record_count % 1000 == 0)
+         std::cout << "\rWriting to a .dat file for table " << table.name << ": " << record_count << " records...";
+      return true;
+   }, [&]() { });
+   out.seekp(0);
+   out.write(reinterpret_cast<const char*>(&record_count), sizeof(record_count));
+}
 
 namespace geo_join
 {
@@ -11,10 +35,10 @@ template <template <typename> class AdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
-{ 
+{
    workload.load();
-   load_state = LoadState(workload.last_customer_id,
-                          [this](int n, int s, int c, int ci, int cu, bool insert_view) { load_1customer(n, s, c, ci, cu); });
+   load_state =
+       LoadState(workload.last_customer_id, [this](int n, int s, int c, int ci, int cu) { load_1customer(n, s, c, ci, cu); });
    seq_load();
    load_state.advance_customers_to_hot_cities();
    // load join view
@@ -24,6 +48,12 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> merged_counter(merged, mixed_view);
    merged_counter.run();
    log_sizes();
+   write_table_to_stream<AdapterType<nation2_t>, nation2_t>(nation);
+   write_table_to_stream<AdapterType<states_t>, states_t>(states);
+   write_table_to_stream<AdapterType<county_t>, county_t>(county);
+   write_table_to_stream<AdapterType<city_t>, city_t>(city);
+   write_table_to_stream<AdapterType<customer2_t>, customer2_t>(customer2);
+   write_table_to_stream<AdapterType<customerh_t>, customerh_t>(workload.customer);
 };
 
 template <template <typename> class AdapterType,
@@ -33,7 +63,7 @@ template <template <typename> class AdapterType,
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::seq_load()
 {
    for (int n = 1; n <= params.nation_count; n++) {
-      // load_1nation(n); 
+      // load_1nation(n);
       int state_cnt = params.get_state_cnt();
       nation2_t::Key nk{n};
       nation2_t nv = nation2_t::generateRandomRecord(state_cnt);
@@ -45,7 +75,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       for (int s = 1; s <= state_cnt; s++) {
          if (FLAGS_log_progress)
             std::cout << "\rLoading nation " << n << "/" << params.nation_count << ", state " << s << "/" << state_cnt << "...";
-         load_1state(n, s); 
+         load_1state(n, s);
       }
    }
    std::cout << std::endl << "Loaded " << load_state.county_sum << " counties and " << load_state.city_sum << " cities." << std::endl;
@@ -138,16 +168,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
 
    double merged_size = merged.size();
 
-   std::map<std::string, double> sizes = {{"nation", nation_size},
-                                          {"states", states_size},
-                                          {"county", county_size},
-                                          {"city", city_size},
-                                          {"customer2", customer2_size},
-                                          {"indexes", indexes_size},
-                                          {"join_view", join_view_size},
-                                          {"mixed_view", mixed_view_size},
-                                          {"view", view_size},
-                                          {"merged", merged_size}};
+   std::map<std::string, double> sizes = {
+       {"nation", nation_size},   {"states", states_size},       {"county", county_size},         {"city", city_size}, {"customer2", customer2_size},
+       {"indexes", indexes_size}, {"join_view", join_view_size}, {"mixed_view", mixed_view_size}, {"view", view_size}, {"merged", merged_size}};
    logger.log_sizes(sizes);
 };
 }  // namespace geo_join

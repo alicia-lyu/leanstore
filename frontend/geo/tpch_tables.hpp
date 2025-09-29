@@ -26,6 +26,12 @@ struct part_t {
 
    ADD_RECORD_TRAITS(part_t)
 
+   void print(std::ostream& os) const
+   {
+      os << p_name << "|" << p_mfgr << "|" << p_brand << "|" << p_type << "|" << p_size << "|" << p_container << "|" << p_retailprice << "|"
+         << p_comment;
+   }
+
    static part_t generateRandomRecord()
    {
       return part_t{randomastring<55>(0, 55), randomastring<25>(25, 25), randomastring<10>(10, 10),       randomastring<25>(0, 25),
@@ -50,6 +56,11 @@ struct supplier_t {
 
    ADD_RECORD_TRAITS(supplier_t)
 
+   void print(std::ostream& os) const
+   {
+      os << s_name << "|" << s_address << "|" << s_nationkey << "|" << s_phone << "|" << s_acctbal << "|" << s_comment;
+   }
+
    static supplier_t generateRandomRecord(std::function<int()> generate_nationkey)
    {
       return supplier_t{randomastring<25>(25, 25), randomastring<40>(0, 40),        generate_nationkey(),
@@ -72,6 +83,11 @@ struct partsupp_t {
 
    ADD_RECORD_TRAITS(partsupp_t)
 
+   void print(std::ostream& os) const
+   {
+      os << ps_availqty << "|" << ps_supplycost << "|" << ps_comment;
+   }
+
    static partsupp_t generateRandomRecord() { return partsupp_t{urand(1, 100000), randomNumeric(0.0000, 100.0000), randomastring<199>(0, 199)}; }
 };
 
@@ -92,6 +108,11 @@ struct customerh_t {
    Varchar<117> c_comment;
 
    ADD_RECORD_TRAITS(customerh_t)
+
+   void print(std::ostream& os) const
+   {
+      os << c_name << "|" << c_address << "|" << c_nationkey << "|" << c_phone << "|" << c_acctbal << "|" << c_mktsegment << "|" << c_comment;
+   }
 
    static customerh_t generateRandomRecord(std::function<int()> generate_nationkey)
    {
@@ -118,6 +139,12 @@ struct orders_t {
    Varchar<79> o_comment;
 
    ADD_RECORD_TRAITS(orders_t)
+
+   void print(std::ostream& os) const
+   {
+      os << o_custkey << "|" << o_orderstatus << "|" << o_totalprice << "|" << o_orderdate << "|" << o_orderpriority << "|" << o_clerk << "|"
+         << o_shippriority << "|" << o_comment;
+   }
 
    static orders_t generateRandomRecord(std::function<int()> generate_custkey)
    {
@@ -154,6 +181,13 @@ struct lineitem_t {
 
    ADD_RECORD_TRAITS(lineitem_t)
 
+   void print(std::ostream& os) const
+   {
+      os << l_partkey << "|" << l_suppkey << "|" << l_quantity << "|" << l_extendedprice << "|" << l_discount << "|" << l_tax << "|"
+         << l_returnflag << "|" << l_linestatus << "|" << l_shipdate << "|" << l_commitdate << "|" << l_receiptdate << "|"
+         << l_shipinstruct << "|" << l_shipmode << "|" << l_comment;
+   }
+
    static lineitem_t generateRandomRecord(std::function<int()> generate_partkey, std::function<int()> generate_suppkey)
    {
       return lineitem_t{generate_partkey(),
@@ -187,6 +221,11 @@ struct nation_t {
 
    ADD_RECORD_TRAITS(nation_t)
 
+   void print(std::ostream& os) const
+   {
+      os << n_regionkey << "|" << n_name << "|" << n_comment;
+   }
+
    static nation_t generateRandomRecord(std::function<int()> generate_regionkey)
    {
       return nation_t{generate_regionkey(), randomastring<25>(1, 25), randomastring<152>(0, 152)};
@@ -205,6 +244,11 @@ struct region_t {
    Varchar<152> r_comment;
 
    ADD_RECORD_TRAITS(region_t)
+
+   void print(std::ostream& os) const
+   {
+      os << r_name << "|" << r_comment;
+   }
 
    static region_t generateRandomRecord() { return region_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
 };

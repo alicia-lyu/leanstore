@@ -9,7 +9,7 @@ template <typename K, auto K::*... Members>
 struct key_traits {
    static std::ostream& print(std::ostream& os, const K& k)
    {
-      ((os << k.*Members << ", "), ...);
+      ((os << k.*Members << "|"), ...);
       return os;
    }
 
@@ -135,5 +135,6 @@ struct record_traits {
    }                                                                         \
    friend std::ostream& operator<<(std::ostream& os, const RECORD_TYPE& rec) \
    {                                                                         \
-      return traits::print(os, rec);                                         \
+      rec.print(os);                                                         \
+      return os;                                                             \
    }

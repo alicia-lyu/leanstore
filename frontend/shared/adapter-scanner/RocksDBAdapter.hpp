@@ -20,6 +20,7 @@ template <class Record>
 struct RocksDBAdapter : public Adapter<Record> {
    ColumnFamilyHandle* cf_handle;
    RocksDB& map;
+   std::string name;
    RocksDBAdapter(RocksDB& map) : map(map)
    {
       map.get_handle_cbs.push_back([this]() { get_handle(); });
@@ -29,6 +30,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    {
       assert(map.tx_db != nullptr);
       cf_handle = map.cf_handles.at(0);  // default column family
+      name = cf_handle->GetName();
    }
 
    ~RocksDBAdapter() {}
