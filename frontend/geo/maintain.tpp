@@ -182,7 +182,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { city_name = ci.name; });
 
    customer2_t cust_val = customer2_t::generateRandomRecord(state_name, county_name, city_name);
-   customer2.insert(customer2_t::Key{sk}, cust_val);
+   customer2_t::Key cust_key{sk};
+   customer2.insert(cust_key, cust_val);
+   maintenance_state.delta_table << cust_key << "|" << cust_val << "\n";
 }
 
 template <template <typename> class AdapterType,

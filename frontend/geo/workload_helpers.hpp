@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <vector>
+#include <fstream>
 #include "leanstore/Config.hpp"  // IWYU pragma: keep
 #include "views.hpp"
 
@@ -101,8 +102,14 @@ struct MaintenanceState {
    size_t city_count;
    size_t processed_idx = 0;
    size_t erased_idx = 0;
+   std::ofstream delta_table;
 
-   MaintenanceState(int& inserted_last_id_ref) : inserted_last_id_ref(inserted_last_id_ref), erased_last_id(inserted_last_id_ref), city_count(0) {}
+   MaintenanceState(int& inserted_last_id_ref)
+      : inserted_last_id_ref(inserted_last_id_ref),
+        erased_last_id(inserted_last_id_ref),
+        city_count(0),
+        delta_table(std::string(FLAGS_ssd_path + "/delta_table.dat"))
+   {}
 
    ~MaintenanceState() { std::cout << "MaintenanceState: Inserted/erased customers till " << inserted_last_id_ref << std::endl; }
 
