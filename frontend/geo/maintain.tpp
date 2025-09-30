@@ -176,12 +176,13 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
 {
    sort_key_t sk = maintenance_state.next_cust_to_insert();
 
-   Varchar<25> state_name, county_name, city_name;
-   states.lookup1(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });
-   county.lookup1(county_t::Key{sk}, [&](const county_t& c) { county_name = c.name; });
-   city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { city_name = ci.name; });
+   // Varchar<25> state_name, county_name, city_name;
+   // states.lookup1(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });
+   // county.lookup1(county_t::Key{sk}, [&](const county_t& c) { county_name = c.name; });
+   // city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { city_name = ci.name; });
 
-   customer2_t cust_val = customer2_t::generateRandomRecord(state_name, county_name, city_name);
+   customer2_t cust_val = customer2_t::generateRandomRecord();
+      // state_name, county_name, city_name);
    customer2_t::Key cust_key{sk};
    customer2.insert(cust_key, cust_val);
    if (maintenance_state.erased_idx == 0)
@@ -197,12 +198,13 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    sort_key_t sk = maintenance_state.next_cust_to_insert();
 
    Varchar<25> state_name, county_name, city_name;
-   merged.template lookup1<states_t>(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });
-   merged.template lookup1<county_t>(county_t::Key{sk}, [&](const county_t& c) { county_name = c.name; });
-   merged.template lookup1<city_t>(city_t::Key{sk}, [&](const city_t& ci) { city_name = ci.name; });
+   // merged.template lookup1<states_t>(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });
+   // merged.template lookup1<county_t>(county_t::Key{sk}, [&](const county_t& c) { county_name = c.name; });
+   // merged.template lookup1<city_t>(city_t::Key{sk}, [&](const city_t& ci) { city_name = ci.name; });
 
    customer2_t::Key cust_key{sk};
-   customer2_t cust_val = customer2_t::generateRandomRecord(state_name, county_name, city_name);
+   customer2_t cust_val = customer2_t::generateRandomRecord();
+      // state_name, county_name, city_name);
    merged.insert(cust_key, cust_val);
 }
 
@@ -223,7 +225,8 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    city.lookup1(city_t::Key{sk}, [&](const city_t& ci) { civ = ci; });
 
    customer2_t::Key cuk{sk};
-   customer2_t cuv = customer2_t::generateRandomRecord(sv.name, cv.name, civ.name);
+   customer2_t cuv = customer2_t::generateRandomRecord();
+      // sv.name, cv.name, civ.name);
    customer2.insert(cuk, cuv);
    
    view_t::Key vk{sk};
