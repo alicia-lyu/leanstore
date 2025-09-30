@@ -8,6 +8,7 @@ namespace geo_join
 struct PerStructureWorkload {
    virtual ~PerStructureWorkload() = default;
    virtual std::string get_name() const = 0;
+   virtual void join() = 0;
    virtual void join_ns() = 0;
    virtual void join_nsc() = 0;
    virtual void join_nscci() = 0;
@@ -34,6 +35,7 @@ struct BaseWorkload : public PerStructureWorkload {
    BaseWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
 
    std::string get_name() const override { return "base_idx"; }
+   void join() override { workload.query_by_base(); };
    void join_ns() override { workload.join_ns_base(); };
    void join_nsc() override { workload.join_nsc_base(); };
    void join_nscci() override { workload.join_nscci_base(); };
@@ -59,6 +61,7 @@ struct ViewWorkload : public PerStructureWorkload {
    GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload;
    ViewWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
    std::string get_name() const override { return "mat_view"; }
+   void join() override { workload.query_by_view(); };
    void join_ns() override { workload.join_ns_view(); };
    void join_nsc() override { workload.join_nsc_view(); };
    void join_nscci() override { workload.join_nscci_view(); };
@@ -84,6 +87,7 @@ struct MergedWorkload : public PerStructureWorkload {
    GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload;
    MergedWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
    std::string get_name() const override { return "merged_idx"; }
+   void join() override { workload.query_by_merged(); };
    void join_ns() override { workload.join_ns_merged(); };
    void join_nsc() override { workload.join_nsc_merged(); };
    void join_nscci() override { workload.join_nscci_merged(); };
