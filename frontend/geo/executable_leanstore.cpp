@@ -115,6 +115,13 @@ int main(int argc, char** argv)
          helper.run();
          break;
       }
+      case 4: {
+         auto geo_join_workload =
+             std::make_unique<HashWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
+         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(geo_join_workload)), tpch);
+         helper.run();
+         break;
+      }
       default: {
          std::cerr << "Invalid storage structure option: " << FLAGS_storage_structure << std::endl;
          return -1;

@@ -57,6 +57,38 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
+struct HashWorkload : public PerStructureWorkload {
+   GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload;
+   HashWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
+   std::string get_name() const override { return "hash"; }
+   void join() override { workload.query_hash(); };
+   void join_ns() override { workload.join_ns_hash(); };
+   void join_nsc() override { workload.join_nsc_hash(); };
+   void join_nscci() override { workload.join_nscci_hash(); };
+   void mixed_ns() override { 
+      // not implemented
+   };
+   void mixed_nsc() override { 
+      // not implemented
+   };
+   void mixed_nscci() override { 
+      // not implemented
+    };
+   void insert1() override { workload.maintain_base(); };
+   bool erase1() override { return workload.erase_base(); };
+   void cleanup_updates() override { workload.cleanup_base(); }
+   double get_size() override { return workload.get_indexes_size(); }
+   bool insertion_complete() const override { return workload.maintenance_state.insertion_complete(); }
+   void bg_lookup() override { workload.point_lookups_of_rest(); }
+   int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
+   void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
+   void select_to_insert() override { workload.select_to_insert(); }
+};
+
+template <template <typename> class AdapterType,
+          template <typename...> class MergedAdapterType,
+          template <typename> class ScannerType,
+          template <typename...> class MergedScannerType>
 struct ViewWorkload : public PerStructureWorkload {
    GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload;
    ViewWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}

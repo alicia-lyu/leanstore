@@ -2,17 +2,14 @@
 #include <iostream>
 #include "premerged_join.hpp"
 
-PremergedJoinStats StatsLogger::last_stats; // cannot be inlined because PremergedJoinStats was an incomplete type in the header
+PremergedJoinStats PremergedJoinLogger::last_stats; // cannot be inlined because PremergedJoinStats was an incomplete type in the header
 
-struct LoggerFlusher {
-   ~LoggerFlusher() { StatsLogger::flush(); }
-};
 // This static instance ensures flush() is called automatically at the end of the program
-const static LoggerFlusher final_flusher;
+const static LoggerFlusher<PremergedJoinLogger> final_flusher;
 
-// --- Implementation of StatsLogger methods ---
+// --- Implementation of PremergedJoinLogger methods ---
 
-void StatsLogger::init()
+void PremergedJoinLogger::init()
 {
    if (!is_initialized) {
       // You can get this path from your FLAGS or config
@@ -27,7 +24,7 @@ void StatsLogger::init()
    }
 }
 
-void StatsLogger::write_row()
+void PremergedJoinLogger::write_row()
 {
    if (repeat_count > 0) {
       log_file << repeat_count << ',' << last_stats.record_type_count << ',' << last_stats.seek_cnt << ',' << last_stats.right_next_cnt << ','
@@ -36,7 +33,7 @@ void StatsLogger::write_row()
    }
 }
 
-void StatsLogger::log(const PremergedJoinStats& current_stats, size_t remaining_records_to_join, long produced)
+void PremergedJoinLogger::log(const PremergedJoinStats& current_stats, size_t remaining_records_to_join, long produced)
 {
    std::lock_guard<std::mutex> lock(mtx);
 
@@ -64,7 +61,7 @@ void StatsLogger::log(const PremergedJoinStats& current_stats, size_t remaining_
    produced_accumulated += produced;
 }
 
-void StatsLogger::flush()
+void PremergedJoinLogger::flush()
 {
    std::lock_guard<std::mutex> lock(mtx);
    if (!is_initialized)

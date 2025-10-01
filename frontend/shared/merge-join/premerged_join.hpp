@@ -12,7 +12,7 @@ DECLARE_int32(tentative_skip_bytes);
 struct PremergedJoinStats; // Forward declaration
 
 // Centralized logger class
-class StatsLogger
+class PremergedJoinLogger
 {
   public:
    // This is the main interface for logging stats
@@ -22,7 +22,7 @@ class StatsLogger
 
   private:
    // All members are private and static to create a singleton-like logger
-   StatsLogger() = default;  // Prevent instantiation
+   PremergedJoinLogger() = default;  // Prevent instantiation
    static void init();
    static void write_row();
 
@@ -37,7 +37,7 @@ class StatsLogger
 
 // Forward declaration
 struct PremergedJoinStats {
-   // Removed static members for logging, they now live in StatsLogger
+   // Removed static members for logging, they now live in PremergedJoinLogger
    size_t record_type_count;
    size_t seek_cnt = 0;
    size_t right_next_cnt = 0;
@@ -84,7 +84,7 @@ struct PremergedJoin {
    {
    }
 
-   ~PremergedJoin() { StatsLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced()); }
+   ~PremergedJoin() { PremergedJoinLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced()); }
 
    bool went_past(const JK& ballpark_jk) const { return join_state.went_past(ballpark_jk); }
 
