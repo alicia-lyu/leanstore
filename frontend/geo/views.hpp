@@ -68,18 +68,29 @@ struct sort_key_t {
 
 } // namespace geo_join
 
-// sort_key_t is hashable
+template <typename T>
+T rol(T value, size_t count) {
+    const size_t bits = std::numeric_limits<T>::digits;
+    count %= bits; // Ensure count is within the valid bit range
+    if (count == 0) return value;
+    return (value << count) | (value >> (bits - count));
+}
+
 namespace std
 {
 template <>
 struct hash<geo_join::sort_key_t> {
    std::size_t operator()(const geo_join::sort_key_t& k) const
    {
-      using std::hash;
-      using std::size_t;
-      using std::string;
-      return ((hash<Integer>()(k.nationkey) ^ (hash<Integer>()(k.statekey) << 1)) >> 1) ^ (hash<Integer>()(k.countykey) << 1) ^ (hash<Integer>()(k.citykey) << 1)
-             ^ (hash<Integer>()(k.custkey) << 1);
+      std::size_t h = std::hash<Integer>()(k.nationkey);
+
+      // Sequentially combine the hashes of the other members
+      h = rol(h, 5) ^ std::hash<Integer>()(k.statekey);
+      h = rol(h, 5) ^ std::hash<Integer>()(k.countykey);
+      h = rol(h, 5) ^ std::hash<Integer>()(k.citykey);
+      h = rol(h, 5) ^ std::hash<Integer>()(k.custkey);
+
+      return h;
    }
 };
 }  // namespace std

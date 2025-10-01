@@ -4,8 +4,8 @@
 #include <cstddef>
 
 #include "../shared/merge-join/binary_merge_join.hpp"
-#include "../shared/merge-join/premerged_join.hpp"
 #include "../shared/merge-join/hash_join.hpp"
+#include "../shared/merge-join/premerged_join.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -76,10 +76,10 @@ struct HashJoiner {
    std::unique_ptr<ScannerType<county_t>> county_scanner;
    std::unique_ptr<ScannerType<city_t>> city_scanner;
    std::unique_ptr<ScannerType<customer2_t>> customer2_scanner;
-   std::optional<HashJoin<ScannerType, sort_key_t, ns_t, nation2_t, states_t>> joiner_ns;
-   std::optional<HashJoin<ScannerType, sort_key_t, nsc_t, ns_t, county_t>> joiner_nsc;
-   std::optional<HashJoin<ScannerType, sort_key_t, nscci_t, nsc_t, city_t>> joiner_nscci;
-   std::optional<HashJoin<ScannerType, sort_key_t, view_t, nscci_t, customer2_t>> final_joiner;
+   std::optional<HashJoin<sort_key_t, ns_t, nation2_t, states_t>> joiner_ns;
+   std::optional<HashJoin<sort_key_t, nsc_t, ns_t, county_t>> joiner_nsc;
+   std::optional<HashJoin<sort_key_t, nscci_t, nsc_t, city_t>> joiner_nscci;
+   std::optional<HashJoin<sort_key_t, view_t, nscci_t, customer2_t>> final_joiner;
 
    HashJoiner(AdapterType<nation2_t>& nation,
               AdapterType<states_t>& states,
@@ -93,20 +93,29 @@ struct HashJoiner {
          city_scanner(city.getScanner()),
          customer2_scanner(customer2.getScanner())
    {
-      joiner_ns.emplace([this]() { return nation_scanner->next(); }, *states_scanner, seek_key);
-      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, *county_scanner, seek_key);
-      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, *city_scanner, seek_key);
-      final_joiner.emplace([this]() { return joiner_nscci->next(); }, *customer2_scanner, seek_key);
+      if (seek_key != sort_key_t::max()) {
+         seek(seek_key);
+      }
+      joiner_ns.emplace([this]() { return nation_scanner->next(); }, [this]() { return states_scanner->next(); }, seek_key);
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); }, seek_key);
+      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); }, seek_key);
+      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); }, seek_key);
    }
 
-   void run()
-   {
-      final_joiner->run();
-   }
+   void run() { final_joiner->run(); }
 
    std::optional<std::pair<view_t::Key, view_t>> next() { return final_joiner->next(); }
 
    long produced() const { return final_joiner->produced(); }
+
+   void seek(const sort_key_t& sk)
+   {
+      auto n_ret = nation_scanner->seek(nation2_t::Key{sk});
+      auto s_ret = states_scanner->seek(states_t::Key{sk});
+      auto c_ret = county_scanner->seek(county_t::Key{sk});
+      auto ci_ret = city_scanner->seek(city_t::Key{sk});
+      auto cu_ret = customer2_scanner->seek(customer2_t::Key{sk});
+   }
 };
 
 template <template <typename> class AdapterType, template <typename...> class MergedAdapterType, template <typename...> class MergedScannerType>
@@ -259,9 +268,9 @@ template <template <typename> class AdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
 long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_view(Integer nationkey,
-                                                                                                    Integer statekey,
-                                                                                                    Integer countykey,
-                                                                                                    Integer citykey)
+                                                                                                  Integer statekey,
+                                                                                                  Integer countykey,
+                                                                                                  Integer citykey)
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
    bool start = true;
@@ -289,9 +298,9 @@ template <template <typename> class AdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
 long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_merged(Integer nationkey,
-                                                                                                      Integer statekey,
-                                                                                                      Integer countykey,
-                                                                                                      Integer citykey)
+                                                                                                    Integer statekey,
+                                                                                                    Integer countykey,
+                                                                                                    Integer citykey)
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 
@@ -317,9 +326,9 @@ template <template <typename> class AdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
 long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_by_base(Integer nationkey,
-                                                                                                    Integer statekey,
-                                                                                                    Integer countykey,
-                                                                                                    Integer citykey)
+                                                                                                  Integer statekey,
+                                                                                                  Integer countykey,
+                                                                                                  Integer citykey)
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 
@@ -345,9 +354,9 @@ template <template <typename> class AdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
 long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_query_hash(Integer nationkey,
-                                                                                                    Integer statekey,
-                                                                                                    Integer countykey,
-                                                                                                    Integer citykey)
+                                                                                               Integer statekey,
+                                                                                               Integer countykey,
+                                                                                               Integer citykey)
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 

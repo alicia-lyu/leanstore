@@ -243,6 +243,26 @@ class GeoJoin
    long range_mixed_query_by_view(sort_key_t select_sk);
    long range_mixed_query_by_merged(sort_key_t select_sk);
    long range_mixed_query_by_base(sort_key_t select_sk);
+   long range_mixed_query_hash(sort_key_t select_sk);
+
+   void mixed_ns_hash()
+   {
+      long cust_sum = range_mixed_query_hash(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
+      stats.new_ns_mixed(cust_sum);
+   }
+
+   void mixed_nsc_hash()
+   {
+      long cust_sum = range_mixed_query_hash(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
+      stats.new_nsc_mixed(cust_sum);
+   }
+
+   void mixed_nscci_hash()
+   {
+      long cust_sum =
+          range_mixed_query_hash(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
+      stats.new_nscci_mixed(cust_sum);
+   }
 
    void mixed_ns_base()
    {
