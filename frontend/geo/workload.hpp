@@ -87,9 +87,29 @@ class GeoJoin
    void query_by_view();
    void query_by_merged();
    void query_by_base();
+   void query_hash();
    long range_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    long range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    long range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+   long range_query_hash(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
+
+   void join_ns_hash()
+   {
+      long produced = range_query_hash(params.get_nationkey(), params.get_statekey(), 0, 0);
+      stats.new_ns_join(produced);
+   }
+
+   void join_nsc_hash()
+   {
+      long produced = range_query_hash(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
+      stats.new_nsc_join(produced);
+   }
+
+   void join_nscci_hash()
+   {
+      long produced = range_query_hash(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
+      stats.new_nscci_join(produced);
+   }
 
    // Find all joined rows for the same nationkey, statekey
    void join_ns_view()

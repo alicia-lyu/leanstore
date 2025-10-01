@@ -1,45 +1,93 @@
 #pragma once
+#include <cassert>
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <optional>
 #include <unordered_map>
+#include "../view_templates.hpp"
 #include "join_state.hpp"
+#include "leanstore/Config.hpp"
+
+struct HashLogger {
+   inline static std::ofstream log_file;
+   inline static bool is_initialized = false;
+
+   inline static std::unordered_map<int, std::pair<long, double>> build_phase_time;
+
+   static void init()
+   {
+      if (!is_initialized) {
+         std::filesystem::path log_path = std::filesystem::path(FLAGS_csv_path) / "hash_stats.csv";
+         log_file.open(log_path, std::ios::app);
+         log_file << "log2_produced_count,build_ns\n";
+      }
+   }
+
+   static void log1(long produced_count, double build_us)
+   {
+      init();
+      double log2_produced_count_double = std::log2(produced_count + 1);
+      int log2_produced_count = std::round(log2_produced_count_double);
+      auto& [cnt, total_us] = build_phase_time[log2_produced_count];
+      cnt++;
+      total_us += build_us;
+   }
+
+   static void flush()
+   {
+      if (log_file.is_open()) {
+         for (const auto& [log2_produced_count, v] : build_phase_time) {
+            auto& [cnt, total_us] = v;
+            log_file << log2_produced_count << ',' << total_us / cnt << std::endl;
+         }
+      }
+      log_file.close();
+   }
+};
 
 // sources -> join_state -> yield joined records
 template <template <typename> class ScannerType, typename JK, typename JR, typename R1, typename R2>
 struct HashJoin {
-   JoinState<JK, JR, R1, R2> join_state;
-   const JK seek_jk;
-   ScannerType<R1>& left_scanner;
-   ScannerType<R2>& right_scanner;
-   std::unordered_multimap<JK, R1> left_hashtable;
-   std::unordered_multimap<JK, R2> right_hashtable;
+   const static LoggerFlusher<HashLogger> final_flusher;
 
-   std::unordered_multimap<JK, R1>::iterator left_it;
+   const JK seek_jk;
+   const std::function<void(const typename JR::Key&, const JR&)> consume_joined;
+
+   bool enable_logging = false;
+   long produced_count = 0;
+
+   std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left;
+   ScannerType<R2>& right_scanner;
+
+   typename std::unordered_multimap<JK, std::pair<typename R1::Key, R1>> left_hashtable;
 
    HashJoin(
-       ScannerType<R1>& left_scanner,
+       std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left,
        ScannerType<R2>& right_scanner,
        JK seek_jk,
        const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
-
-       : join_state("HashJoin", consume_joined), seek_jk(seek_jk), left_scanner(left_scanner), right_scanner(right_scanner)
+       : seek_jk(seek_jk), consume_joined(consume_joined), fetch_left(fetch_left), right_scanner(right_scanner)
    {
-      refresh_join_state();  // initialize the join state with the smallest JK
-      left_scanner.seek(typename R1::Key{seek_jk});
-      right_scanner.seek(typename R2::Key{seek_jk});
-      hash_phase<R1>(left_scanner, left_hashtable);
-      hash_phase<R2>(right_scanner, right_hashtable);
-      left_it = left_hashtable.begin();
+      if (seek_jk != JK::max()) {
+         right_scanner.seek(typename R2::Key{seek_jk});
+      }
+      build_phase();
    }
 
-   long hash_table_bytes() const
-   {
-      return left_hashtable.size() * (sizeof(JK) + sizeof(R1)) + right_hashtable.size() * (sizeof(JK) + sizeof(R2));
-   }
+   ~HashJoin() { HashLogger::log1(produced_count, build_us); }
 
-   template <typename R>
-   void hash_phase(ScannerType<R>& scanner, std::unordered_multimap<JK, R>& hashtable)
+   long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
+
+   double build_us = 0;
+
+   void build_phase()
    {
+      std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
       while (true) {
-         auto kv = scanner.next();
+         auto kv = fetch_left();
          if (!kv.has_value()) {
             break;
          }
@@ -48,46 +96,43 @@ struct HashJoin {
          if (curr_jk.match(seek_jk) != 0) {
             break;
          }
-         hashtable.emplace(curr_jk, v);
+         left_hashtable.emplace(curr_jk, std::make_pair(k, v));
       }
+      std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+      auto build_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+      build_us = build_ns / 1000.0;
    }
 
-   void refill_current_key()
+   std::vector<std::pair<typename JR::Key, JR>> cached_results;
+
+   bool probe_next()
    {
-      auto& [jk, _] = *left_it;
-      auto& [left_begin, left_end] = left_hashtable.equal_range(jk);
-      for (auto it = left_begin; it != left_end; ++it) {
-         join_state.template emplace<R1, 0>(typename R1::Key{jk}, it->second);
+      assert(cached_results.empty());
+      auto right_kv = right_scanner.next();
+      if (!right_kv.has_value()) {
+         return false;
       }
-      left_it = left_end;
-      auto& [right_begin, right_end] = right_hashtable.equal_range(jk);
-      for (auto it = right_begin; it != right_end; ++it) {
-         join_state.template emplace<R2, 1>(typename R2::Key{jk}, it->second);
+      auto& [rk, rv] = *right_kv;
+      JK curr_jk = SKBuilder<JK>::create(rk, rv);
+      if (curr_jk.match(seek_jk) != 0) {
+         return false;
       }
+      auto range = left_hashtable.equal_range(curr_jk);
+      for (auto it = range.first; it != range.second; ++it) {
+         auto& [jk, l] = *it;
+         auto& [lk, lv] = l;
+         typename JR::Key joined_key = typename JR::Key{lk, rk};
+         JR joined_rec = JR{lv, rv};
+         cached_results.emplace_back(joined_key, joined_rec);
+      }
+      return true;  // can probe next even if joined nothing
    }
 
-   void refresh_join_state()
-   {
-      JK jk = left_it != left_hashtable.end() ? left_it->first : JK::max();
-      // STILL NEED TO HANDLE BOTH JK?
-      // int comp = left_jk.match(right_jk);
-      // if (comp != 0) {  // cache the smaller one
-      join_state.refresh(jk);
-   }
-
-   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
-
-   bool has_cached_next() const { return join_state.has_next(); }
-
-   void next_jk()
-   {
-      refill_current_key();
-      refresh_join_state();
-   }
+   bool has_cached_next() const { return !cached_results.empty(); }
 
    void run()
    {
-      join_state.enable_logging();
+      enable_logging = true;
       std::optional<std::pair<typename JR::Key, JR>> ret = next();
       while (ret.has_value()) {
          ret = next();
@@ -96,12 +141,19 @@ struct HashJoin {
 
    std::optional<std::pair<typename JR::Key, JR>> next()
    {
-      while (!join_state.has_next() && left_it != left_hashtable.end()) {
-         next_jk();
+      if (has_cached_next()) {
+         auto res = cached_results.back();
+         cached_results.pop_back();
+         produced_count++;
+         return res;
       }
-      return join_state.next();
+      bool can_probe_next = true;
+      while (can_probe_next && cached_results.empty()) {
+         can_probe_next = probe_next();
+      }
+      return next();
    }
-
-   JK jk_to_join() const { return join_state.jk_to_join; }
-   long produced() const { return join_state.get_produced(); }
+   // tricky to implement went_past
+   // tricky to implement jk_to_join
+   long produced() const { return produced_count; }
 };

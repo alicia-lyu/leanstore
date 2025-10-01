@@ -10,6 +10,11 @@
 #include "../view_templates.hpp"
 #include "leanstore/Config.hpp"
 
+template<typename Logger>
+struct LoggerFlusher {
+   ~LoggerFlusher() { Logger::flush(); }
+};
+
 template <typename JK, typename JR, typename... Rs>
 class JoinState
 {

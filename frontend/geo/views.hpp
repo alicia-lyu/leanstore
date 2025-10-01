@@ -66,6 +66,27 @@ struct sort_key_t {
    }
 };
 
+} // namespace geo_join
+
+// sort_key_t is hashable
+namespace std
+{
+template <>
+struct hash<geo_join::sort_key_t> {
+   std::size_t operator()(const geo_join::sort_key_t& k) const
+   {
+      using std::hash;
+      using std::size_t;
+      using std::string;
+      return ((hash<Integer>()(k.nationkey) ^ (hash<Integer>()(k.statekey) << 1)) >> 1) ^ (hash<Integer>()(k.countykey) << 1) ^ (hash<Integer>()(k.citykey) << 1)
+             ^ (hash<Integer>()(k.custkey) << 1);
+   }
+};
+}  // namespace std
+
+
+namespace geo_join
+{
 struct customer2_t {
    static constexpr int id = 11;
    customer2_t() = default;
