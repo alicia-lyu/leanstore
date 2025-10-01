@@ -294,4 +294,92 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    }
    return cust_sum;
 }
+
+template <template <typename> class AdapterType, template <typename> class ScannerType>
+struct HashCounter {
+   std::unique_ptr<ScannerType<nation2_t>> nation;
+   std::unique_ptr<ScannerType<states_t>> states;
+   std::unique_ptr<ScannerType<county_t>> county;
+   std::unique_ptr<ScannerType<city_t>> city;
+   std::unique_ptr<ScannerType<customer2_t>> customer;
+
+   std::optional<HashJoin<sort_key_t, ns_t, nation2_t, states_t>> joiner_ns;
+   std::optional<HashJoin<sort_key_t, nsc_t, ns_t, county_t>> joiner_nsc;
+   std::optional<HashJoin<sort_key_t, nscci_t, nsc_t, city_t>> joiner_nscci;
+   std::optional<HashJoin<sort_key_t, mixed_view_t, nscci_t, customer_count_t>> final_joiner;
+
+   HashCounter(AdapterType<nation2_t>& n,
+               AdapterType<states_t>& s,
+               AdapterType<county_t>& c,
+               AdapterType<city_t>& ci,
+               AdapterType<customer2_t>& cu,
+               sort_key_t sk = sort_key_t::max())
+       : nation(n.getScanner()), states(s.getScanner()), county(c.getScanner()), city(ci.getScanner()), customer(cu.getScanner())
+   {
+      if (sk != sort_key_t::max()) {
+         seek(sk);
+      }
+      joiner_ns.emplace([this]() { return nation->next(); }, [this]() { return states->next(); });
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county->next(); });
+      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city->next(); });
+      final_joiner.emplace([this]() { return joiner_nscci->next(); },
+                           [this]() -> std::optional<std::pair<customer_count_t::Key, customer_count_t>> {
+                              int customer_count = 0;
+                              std::optional<customer_count_t::Key> curr_key = std::nullopt;
+                              while (true) {
+                                 auto kv = customer->next();
+                                 if (!kv.has_value()) {
+                                    return std::nullopt;
+                                 }
+                                 auto [k, v] = *kv;
+                                 if (curr_key == std::nullopt) {
+                                    curr_key = customer_count_t::Key{k};
+                                 } else if (curr_key->nationkey != k.nationkey || curr_key->statekey != k.statekey ||
+                                            curr_key->countykey != k.countykey || curr_key->citykey != k.citykey) {
+                                    customer->after_seek = true;  // rescan this customer
+                                    return std::make_pair(*curr_key, customer_count_t{customer_count});
+                                 }
+                                 customer_count++;
+                              }
+                           });
+   }
+
+   void run() { final_joiner->run(); }
+
+   std::optional<std::pair<mixed_view_t::Key, mixed_view_t>> next() { return final_joiner->next(); }
+
+   long produced() const { return final_joiner->produced(); }
+
+   void seek(const sort_key_t& sk)
+   {
+      [[maybe_unused]] auto n_ret = nation->seek(nation2_t::Key{sk});
+      [[maybe_unused]] auto s_ret = states->seek(states_t::Key{sk});
+      [[maybe_unused]] auto c_ret = county->seek(county_t::Key{sk});
+      [[maybe_unused]] auto ci_ret = city->seek(city_t::Key{sk});
+      [[maybe_unused]] auto cu_ret = customer->seek(customer2_t::Key{sk});
+   }
+};
+
+template <template <typename> class AdapterType,
+          template <typename...> class MergedAdapterType,
+          template <typename> class ScannerType,
+          template <typename...> class MergedScannerType>
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_hash(sort_key_t select_sk)
+{
+   HashCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, select_sk);
+   long cust_sum = 0;
+   while (!counter.went_past(select_sk)) {
+      auto kv = counter.next();
+      if (kv == std::nullopt)
+         break;
+      auto [k, v] = *kv;
+      sort_key_t curr_sk = SKBuilder<sort_key_t>::create(k, v);
+      if (cust_sum == 0) {
+         update_sk(select_sk, curr_sk);
+      }
+      cust_sum += std::get<4>(v.payloads).customer_count;
+   }
+   return cust_sum;
+}
+
 }  // namespace geo_join

@@ -15,33 +15,38 @@ struct HashLogger {
    inline static std::ofstream log_file;
    inline static bool is_initialized = false;
 
-   inline static std::unordered_map<int, std::pair<long, double>> build_phase_time;
+   inline static std::unordered_map<int, std::tuple<long, double, long long>> build_phase_time;
 
    static void init()
    {
       if (!is_initialized) {
          std::filesystem::path log_path = std::filesystem::path(FLAGS_csv_path) / "hash_stats.csv";
-         log_file.open(log_path, std::ios::app);
-         log_file << "log2_produced_count,build_ns\n";
+         log_file.open(log_path, std::ios::trunc);
+         log_file << "log2_produced_count,build_us,hash_table_bytes\n";
+         is_initialized = true;
       }
    }
 
-   static void log1(long produced_count, double build_us)
+   static void log1(long produced_count, double build_us, long hash_table_bytes)
    {
       init();
       double log2_produced_count_double = std::log2(produced_count + 1);
       int log2_produced_count = std::round(log2_produced_count_double);
-      auto& [cnt, total_us] = build_phase_time[log2_produced_count];
+      if (build_phase_time.find(log2_produced_count) == build_phase_time.end()) {
+         build_phase_time[log2_produced_count] = std::make_tuple(0, 0.0, 0LL);
+      }
+      auto& [cnt, total_us, total_ht_bytes] = build_phase_time[log2_produced_count];
       cnt++;
       total_us += build_us;
+      total_ht_bytes += static_cast<long long>(hash_table_bytes);
    }
 
    static void flush()
    {
       if (log_file.is_open()) {
          for (const auto& [log2_produced_count, v] : build_phase_time) {
-            auto& [cnt, total_us] = v;
-            log_file << log2_produced_count << ',' << total_us / cnt << std::endl;
+            auto& [cnt, total_us, total_ht_bytes] = v;
+            log_file << log2_produced_count << ',' << total_us / cnt << ',' << total_ht_bytes / cnt << std::endl;
          }
       }
       log_file.close();
@@ -49,7 +54,7 @@ struct HashLogger {
 };
 
 // sources -> join_state -> yield joined records
-template <template <typename> class ScannerType, typename JK, typename JR, typename R1, typename R2>
+template <typename JK, typename JR, typename R1, typename R2>
 struct HashJoin {
    const static LoggerFlusher<HashLogger> final_flusher;
 
@@ -60,24 +65,21 @@ struct HashJoin {
    long produced_count = 0;
 
    std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left;
-   ScannerType<R2>& right_scanner;
+   std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right;
 
    typename std::unordered_multimap<JK, std::pair<typename R1::Key, R1>> left_hashtable;
 
    HashJoin(
        std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left,
-       ScannerType<R2>& right_scanner,
+       std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right,
        JK seek_jk,
        const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
-       : seek_jk(seek_jk), consume_joined(consume_joined), fetch_left(fetch_left), right_scanner(right_scanner)
+       : seek_jk(seek_jk), consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
    {
-      if (seek_jk != JK::max()) {
-         right_scanner.seek(typename R2::Key{seek_jk});
-      }
       build_phase();
    }
 
-   ~HashJoin() { HashLogger::log1(produced_count, build_us); }
+   ~HashJoin() { HashLogger::log1(produced_count, build_us, hash_table_bytes()); }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
 
@@ -108,7 +110,7 @@ struct HashJoin {
    bool probe_next()
    {
       assert(cached_results.empty());
-      auto right_kv = right_scanner.next();
+      auto right_kv = fetch_right();
       if (!right_kv.has_value()) {
          return false;
       }
@@ -150,6 +152,9 @@ struct HashJoin {
       bool can_probe_next = true;
       while (can_probe_next && cached_results.empty()) {
          can_probe_next = probe_next();
+      }
+      if (cached_results.empty()) { // exit condition: can_probe_next == false
+         return std::nullopt;
       }
       return next();
    }
