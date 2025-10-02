@@ -271,7 +271,7 @@ class Experiment:
             print(f"\trm stderr.txt && touch stderr.txt") # reset stderr.txt
             print(f"\tmkdir -p {self.runtime_dir}")
             print(
-                f"\tlldb -o run --",
+                f"\tlldb --",
                 f"{self.exec_path}",
                 kv_to_str(self.class_flags),
                 kv_to_str(rem_flags),

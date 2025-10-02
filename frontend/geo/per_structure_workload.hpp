@@ -65,30 +65,9 @@ struct HashWorkload : public PerStructureWorkload {
    void join_ns() override { workload.join_ns_hash(); };
    void join_nsc() override { workload.join_nsc_hash(); };
    void join_nscci() override { workload.join_nscci_hash(); };
-   void mixed_ns() override
-   {
-      static bool warned = false;
-      if (!warned) {
-         std::cout << "WARNING: mixed_ns not implemented for hash indexes. Skipping..." << std::endl;
-         warned = true;
-      }
-   }
-   void mixed_nsc() override
-   {
-      static bool warned = false;
-      if (!warned) {
-         std::cout << "WARNING: mixed_nsc not implemented for hash indexes. Skipping..." << std::endl;
-         warned = true;
-      }
-   };
-   void mixed_nscci() override
-   {
-      static bool warned = false;
-      if (!warned) {
-         std::cout << "WARNING: mixed_nscci not implemented for hash indexes. Skipping..." << std::endl;
-         warned = true;
-      }
-   };
+   void mixed_ns() override { workload.mixed_ns_hash(); }
+   void mixed_nsc() override { workload.mixed_nsc_hash(); };
+   void mixed_nscci() override { workload.mixed_nscci_hash(); };
    void insert1() override { workload.maintain_base(); };
    bool erase1() override { return workload.erase_base(); };
    void cleanup_updates() override { workload.cleanup_base(); }
