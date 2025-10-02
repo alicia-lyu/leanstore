@@ -67,7 +67,7 @@ struct HashJoin {
    std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left;
    std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right;
 
-   typename std::unordered_multimap<JK, std::pair<typename R1::Key, R1>> left_hashtable;
+   typename std::unordered_multimap<JK, std::pair<typename R1::Key, R1>, std::hash<JK>> left_hashtable;
 
    HashJoin(
        std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left,
@@ -79,7 +79,12 @@ struct HashJoin {
       build_phase();
    }
 
-   ~HashJoin() { HashLogger::log1(produced_count, build_us, hash_table_bytes()); }
+   ~HashJoin() { 
+      if (enable_logging && FLAGS_log_progress && produced_count > 10000) {
+         std::cout << "\rHashJoin produced a total of " << (double)produced_count / 1000 << "k records. Final JK " << seek_jk << "          " << std::endl;
+      }
+      HashLogger::log1(produced_count, build_us, hash_table_bytes()); 
+   }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
 
@@ -95,7 +100,7 @@ struct HashJoin {
          }
          auto& [k, v] = *kv;
          JK curr_jk = SKBuilder<JK>::create(k, v);
-         if (curr_jk.match(seek_jk) != 0) {
+         if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
             break;
          }
          left_hashtable.emplace(curr_jk, std::make_pair(k, v));
@@ -116,16 +121,20 @@ struct HashJoin {
       }
       auto& [rk, rv] = *right_kv;
       JK curr_jk = SKBuilder<JK>::create(rk, rv);
-      if (curr_jk.match(seek_jk) != 0) {
+      if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
          return false;
       }
-      auto range = left_hashtable.equal_range(curr_jk);
-      for (auto it = range.first; it != range.second; ++it) {
-         auto& [jk, l] = *it;
-         auto& [lk, lv] = l;
-         typename JR::Key joined_key = typename JR::Key{lk, rk};
-         JR joined_rec = JR{lv, rv};
-         cached_results.emplace_back(joined_key, joined_rec);
+      auto keys_to_match = curr_jk.matching_less_specific_keys();
+      keys_to_match.emplace_back(curr_jk);
+      for (const auto& lsk : keys_to_match) {
+         auto range = left_hashtable.equal_range(lsk);
+         for (auto it = range.first; it != range.second; ++it) {
+            auto& [jk, l] = *it;
+            auto& [lk, lv] = l;
+            typename JR::Key joined_key = typename JR::Key{lk, rk};
+            JR joined_rec = JR{lv, rv};
+            cached_results.emplace_back(joined_key, joined_rec);
+         }
       }
       return true;  // can probe next even if joined nothing
    }
@@ -146,6 +155,9 @@ struct HashJoin {
       if (has_cached_next()) {
          auto res = cached_results.back();
          cached_results.pop_back();
+         if (enable_logging && FLAGS_log_progress && produced_count % 10000 == 0) {
+            std::cout << "\rHashJoin produced " << (double)(produced_count + 1) / 1000 << "k records. Current JK " << res.first.jk << "...";
+         }
          produced_count++;
          return res;
       }
@@ -153,7 +165,7 @@ struct HashJoin {
       while (can_probe_next && cached_results.empty()) {
          can_probe_next = probe_next();
       }
-      if (cached_results.empty()) { // exit condition: can_probe_next == false
+      if (cached_results.empty()) {  // exit condition: can_probe_next == false
          return std::nullopt;
       }
       return next();

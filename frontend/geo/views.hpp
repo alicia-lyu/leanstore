@@ -27,6 +27,24 @@ struct sort_key_t {
 
    friend int operator%(const sort_key_t& jk, const int& n) { return (jk.nationkey + jk.statekey + jk.countykey + jk.citykey) % n; }
 
+   std::vector<sort_key_t> matching_less_specific_keys()
+   {
+      std::vector<sort_key_t> result;
+      if (custkey != 0) {
+         result.push_back(sort_key_t{nationkey, statekey, countykey, citykey, 0});
+      }
+      if (citykey != 0) {
+         result.push_back(sort_key_t{nationkey, statekey, countykey, 0, 0});
+      }
+      if (countykey != 0) {
+         result.push_back(sort_key_t{nationkey, statekey, 0, 0, 0});
+      }
+      if (statekey != 0) {
+         result.push_back(sort_key_t{nationkey, 0, 0, 0, 0});
+      }
+      return result;
+   }
+
    int match(const sort_key_t& other) const
    {
       // {0, 0, 0, 0, 0} cannot be used as wildcard
@@ -66,14 +84,16 @@ struct sort_key_t {
    }
 };
 
-} // namespace geo_join
+}  // namespace geo_join
 
 template <typename T>
-T rol(T value, size_t count) {
-    const size_t bits = std::numeric_limits<T>::digits;
-    count %= bits; // Ensure count is within the valid bit range
-    if (count == 0) return value;
-    return (value << count) | (value >> (bits - count));
+T rol(T value, size_t count)
+{
+   const size_t bits = std::numeric_limits<T>::digits;
+   count %= bits;  // Ensure count is within the valid bit range
+   if (count == 0)
+      return value;
+   return (value << count) | (value >> (bits - count));
 }
 
 namespace std
@@ -94,7 +114,6 @@ struct hash<geo_join::sort_key_t> {
    }
 };
 }  // namespace std
-
 
 namespace geo_join
 {

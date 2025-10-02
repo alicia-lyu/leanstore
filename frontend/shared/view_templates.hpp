@@ -191,3 +191,10 @@ struct SKBuilder {
    //    UNREACHABLE();
    // }
 };  // sort key builder
+
+template <typename SK>
+struct MatchKeyEqual {
+   bool operator()(const SK& k1, const SK& k2) const {
+      return k1.match(k2) == 0;
+   }
+};
