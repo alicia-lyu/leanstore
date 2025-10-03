@@ -31,6 +31,7 @@ using EH = ExecutableHelper<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreS
 
 int main(int argc, char** argv)
 {
+   LoggerFlusher<HashLogger> final_flusher;
    gflags::SetUsageMessage("Leanstore GeoJoin TPC-H");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
    LeanStore db;
