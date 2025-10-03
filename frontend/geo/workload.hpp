@@ -93,6 +93,49 @@ class GeoJoin
    long range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    long range_query_hash(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
+   std::pair<int, bool> get_n() const
+   {
+      static std::vector<int> nation_keys;
+      if (nation_keys.empty()) {
+         nation_keys.resize(params.nation_count);
+         std::iota(nation_keys.begin(), nation_keys.end(), 1);
+         std::shuffle(nation_keys.begin(), nation_keys.end(), std::mt19937{std::random_device{}()});
+      }
+      static size_t n_i = 0;
+
+      int lottery = std::rand() % 2;
+      int n;
+      if (lottery == 0) {
+         n_i %= nation_keys.size();
+         n = nation_keys.at(n_i++); // can increment to nation_keys.size()
+      } else {
+         n = 1;  // hot nation
+      }
+      return std::make_pair(n, n_i == nation_keys.size());
+   }
+
+   void join_n_hash()
+   {
+      long produced = range_query_hash(get_n().first, 0, 0, 0);
+      stats.new_n_join(produced);
+   }
+   void join_n_view()
+   {
+      long produced = range_query_by_view(get_n().first, 0, 0, 0);
+      stats.new_n_join(produced);
+   }
+   void join_n_merged()
+   {
+      long produced = range_query_by_merged(get_n().first, 0, 0, 0);
+      stats.new_n_join(produced);
+   }
+
+   void join_n_base()
+   {
+      long produced = range_query_by_base(get_n().first, 0, 0, 0);
+      stats.new_n_join(produced);
+   }
+
    void join_ns_hash()
    {
       long produced = range_query_hash(params.get_nationkey(), params.get_statekey(), 0, 0);
@@ -244,6 +287,30 @@ class GeoJoin
    long range_mixed_query_by_merged(sort_key_t select_sk);
    long range_mixed_query_by_base(sort_key_t select_sk);
    long range_mixed_query_hash(sort_key_t select_sk);
+
+   void mixed_n_hash()
+   {
+      long cust_sum = range_mixed_query_hash(sort_key_t{get_n().first, 0, 0, 0, 0});
+      stats.new_n_mixed(cust_sum);
+   }
+
+   void mixed_n_view()
+   {
+      long cust_sum = range_mixed_query_by_view(sort_key_t{get_n().first, 0, 0, 0, 0});
+      stats.new_n_mixed(cust_sum);
+   }
+
+   void mixed_n_merged()
+   {
+      long cust_sum = range_mixed_query_by_merged(sort_key_t{get_n().first, 0, 0, 0, 0});
+      stats.new_n_mixed(cust_sum);
+   }
+
+   void mixed_n_base()
+   {
+      long cust_sum = range_mixed_query_by_base(sort_key_t{get_n().first, 0, 0, 0, 0});
+      stats.new_n_mixed(cust_sum);
+   }
 
    void mixed_ns_hash()
    {
