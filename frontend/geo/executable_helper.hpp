@@ -122,14 +122,14 @@ struct ExecutableHelper {
 
       schedule_bg_txs();
 
-      elapsed_tx(std::bind(&PerStructureWorkload::join, workload.get()), "join");
+      tput_tx(std::bind(&PerStructureWorkload::join_n, workload.get()), "join-n");
 
       tput_tx(std::bind(&PerStructureWorkload::join_ns, workload.get()), "join-ns");
       tput_tx(std::bind(&PerStructureWorkload::join_nsc, workload.get()), "join-nsc");
-      // tput_tx(std::bind(&PerStructureWorkload::join_nscci, workload.get()), "join-nscci");
+
+      tput_tx(std::bind(&PerStructureWorkload::mixed_n, workload.get()), "mixed-n");
       tput_tx(std::bind(&PerStructureWorkload::mixed_ns, workload.get()), "mixed-ns");
       tput_tx(std::bind(&PerStructureWorkload::mixed_nsc, workload.get()), "mixed-nsc");
-      // tput_tx(std::bind(&PerStructureWorkload::mixed_nscci, workload.get()), "mixed-nscci");
 
       keep_running_bg_tx = false;
       // wait for background thread to finish
@@ -218,6 +218,17 @@ struct ExecutableHelper {
       sleep(FLAGS_warmup_seconds);  // warmup phase; then background phase
    }
 
+   bool keep_running_condition(bool keep_running, std::string tx)
+   {
+      bool ret = keep_running;
+      if (tx == "maintain") {
+         ret = ret && !workload->insertion_complete();
+      } else if (tx == "join-n") {
+         return !workload->n_scan_finished(); // overriding
+      }
+      return ret;
+   }
+
    void tput_tx(std::function<void()> cb, std::string tx)
    {
       while (!run_main_thread) {
@@ -237,11 +248,7 @@ struct ExecutableHelper {
 
       running_threads_counter++;
 
-      while (keep_running_tx) {
-         if (tx == "maintain" && workload->insertion_complete()) {
-            std::cout << "Maintenance phase completed. No more insertions." << std::endl;
-            break;
-         }
+      while (keep_running_condition(keep_running_tx.load(), tx)) {
          jumpmuTry()
          {
             db_traits->run_tx(cb);

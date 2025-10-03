@@ -8,10 +8,11 @@ namespace geo_join
 struct PerStructureWorkload {
    virtual ~PerStructureWorkload() = default;
    virtual std::string get_name() const = 0;
-   virtual void join() = 0;
+   virtual void join_n() = 0;
    virtual void join_ns() = 0;
    virtual void join_nsc() = 0;
    virtual void join_nscci() = 0;
+   virtual void mixed_n() = 0;
    virtual void mixed_ns() = 0;
    virtual void mixed_nsc() = 0;
    virtual void mixed_nscci() = 0;
@@ -24,6 +25,7 @@ struct PerStructureWorkload {
    virtual int remaining_customers_to_erase() = 0;
    virtual void reset_maintain_ptrs() = 0;
    virtual void select_to_insert() = 0;
+   virtual bool n_scan_finished() const = 0;
 };
 
 template <template <typename> class AdapterType,
@@ -35,10 +37,11 @@ struct BaseWorkload : public PerStructureWorkload {
    BaseWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
 
    std::string get_name() const override { return "base_idx"; }
-   void join() override { workload.query_by_base(); };
+   void join_n() override { workload.join_n_base(); };
    void join_ns() override { workload.join_ns_base(); };
    void join_nsc() override { workload.join_nsc_base(); };
    void join_nscci() override { workload.join_nscci_base(); };
+   void mixed_n() override { workload.mixed_n_base(); };
    void mixed_ns() override { workload.mixed_ns_base(); };
    void mixed_nsc() override { workload.mixed_nsc_base(); };
    void mixed_nscci() override { workload.mixed_nscci_base(); };
@@ -51,6 +54,7 @@ struct BaseWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_to_insert(); }
+   bool n_scan_finished() const override { return workload.get_n().second; }
 };
 
 template <template <typename> class AdapterType,
@@ -61,10 +65,11 @@ struct HashWorkload : public PerStructureWorkload {
    GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload;
    HashWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
    std::string get_name() const override { return "hash"; }
-   void join() override { workload.query_hash(); };
+   void join_n() override { workload.join_n_hash(); };
    void join_ns() override { workload.join_ns_hash(); };
    void join_nsc() override { workload.join_nsc_hash(); };
    void join_nscci() override { workload.join_nscci_hash(); };
+   void mixed_n() override { workload.mixed_n_hash(); }
    void mixed_ns() override { workload.mixed_ns_hash(); }
    void mixed_nsc() override { workload.mixed_nsc_hash(); };
    void mixed_nscci() override { workload.mixed_nscci_hash(); };
@@ -77,6 +82,7 @@ struct HashWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_to_insert(); }
+   bool n_scan_finished() const override { return workload.get_n().second; }
 };
 
 template <template <typename> class AdapterType,
@@ -87,10 +93,11 @@ struct ViewWorkload : public PerStructureWorkload {
    GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload;
    ViewWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
    std::string get_name() const override { return "mat_view"; }
-   void join() override { workload.query_by_view(); };
+   void join_n() override { workload.join_n_view(); };
    void join_ns() override { workload.join_ns_view(); };
    void join_nsc() override { workload.join_nsc_view(); };
    void join_nscci() override { workload.join_nscci_view(); };
+   void mixed_n() override { workload.mixed_n_view(); };
    void mixed_ns() override { workload.mixed_ns_view(); };
    void mixed_nsc() override { workload.mixed_nsc_view(); };
    void mixed_nscci() override { workload.mixed_nscci_view(); };
@@ -103,6 +110,7 @@ struct ViewWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_to_insert(); }
+   bool n_scan_finished() const override { return workload.get_n().second; }
 };
 
 template <template <typename> class AdapterType,
@@ -113,10 +121,11 @@ struct MergedWorkload : public PerStructureWorkload {
    GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload;
    MergedWorkload(GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>& workload) : workload(workload) {}
    std::string get_name() const override { return "merged_idx"; }
-   void join() override { workload.query_by_merged(); };
+   void join_n() override { workload.join_n_merged(); };
    void join_ns() override { workload.join_ns_merged(); };
    void join_nsc() override { workload.join_nsc_merged(); };
    void join_nscci() override { workload.join_nscci_merged(); };
+   void mixed_n() override { workload.mixed_n_merged(); };
    void mixed_ns() override { workload.mixed_ns_merged(); };
    void mixed_nsc() override { workload.mixed_nsc_merged(); };
    void mixed_nscci() override { workload.mixed_nscci_merged(); };
@@ -129,6 +138,7 @@ struct MergedWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_merged_to_insert(); }
+   bool n_scan_finished() const override { return workload.get_n().second; }
 };
 
 }  // namespace geo_join

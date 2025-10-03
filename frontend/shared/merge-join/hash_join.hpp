@@ -8,7 +8,6 @@
 #include <optional>
 #include <unordered_map>
 #include "../view_templates.hpp"
-#include "join_state.hpp"
 #include "leanstore/Config.hpp"
 
 struct HashLogger {
@@ -43,10 +42,16 @@ struct HashLogger {
 
    static void flush()
    {
+      std::vector<std::ostream*> out_streams = {&std::cout};
       if (log_file.is_open()) {
-         for (const auto& [log2_produced_count, v] : build_phase_time) {
+         out_streams.emplace_back(&log_file);
+      } else {
+         std::cerr << "HashLogger::flush() log_file not open!" << std::endl;
+      }
+      for (const auto& [log2_produced_count, v] : build_phase_time) {
+         for (auto* os : out_streams) {
             auto& [cnt, total_us, total_ht_bytes] = v;
-            log_file << log2_produced_count << ',' << total_us / cnt << ',' << total_ht_bytes / cnt << std::endl;
+            *os << log2_produced_count << ',' << total_us / cnt << ',' << total_ht_bytes / cnt << std::endl;
          }
       }
       log_file.close();
@@ -56,8 +61,6 @@ struct HashLogger {
 // sources -> join_state -> yield joined records
 template <typename JK, typename JR, typename R1, typename R2>
 struct HashJoin {
-   const static LoggerFlusher<HashLogger> final_flusher;
-
    const JK seek_jk;
    const std::function<void(const typename JR::Key&, const JR&)> consume_joined;
 
@@ -79,11 +82,13 @@ struct HashJoin {
       build_phase();
    }
 
-   ~HashJoin() { 
+   ~HashJoin()
+   {
       if (enable_logging && FLAGS_log_progress && produced_count > 10000) {
-         std::cout << "\rHashJoin produced a total of " << (double)produced_count / 1000 << "k records. Final JK " << seek_jk << "          " << std::endl;
+         std::cout << "\rHashJoin produced a total of " << (double)produced_count / 1000 << "k records. Final JK " << seek_jk << "          "
+                   << std::endl;
       }
-      HashLogger::log1(produced_count, build_us, hash_table_bytes()); 
+      HashLogger::log1(produced_count, build_us, hash_table_bytes());
    }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }

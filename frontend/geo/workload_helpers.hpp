@@ -11,6 +11,8 @@ namespace geo_join
 
 class WorkloadStats
 {
+   long n_sum = 0;
+   long n_count = 0;
    long ns_sum = 0;
    long ns_count = 0;
    long nsc_sum = 0;
@@ -18,6 +20,8 @@ class WorkloadStats
    long nscci_sum = 0;
    long nscci_count = 0;
 
+   long n_cust_sum = 0;
+   long n_mixed_count = 0;
    long ns_cust_sum = 0;
    long ns_mixed_count = 0;
    long nsc_cust_sum = 0;
@@ -26,6 +30,11 @@ class WorkloadStats
    long nscci_mixed_count = 0;
 
   public:
+   void new_n_join(long produced)
+   {
+      n_sum += produced;
+      n_count++;
+   }
    void new_ns_join(long produced)
    {
       ns_sum += produced;
@@ -42,6 +51,12 @@ class WorkloadStats
    {
       nscci_sum += produced;
       nscci_count++;
+   }
+
+   void new_n_mixed(long cust_sum)
+   {
+      n_cust_sum += cust_sum;
+      n_mixed_count++;
    }
 
    void new_ns_mixed(long cust_sum)
