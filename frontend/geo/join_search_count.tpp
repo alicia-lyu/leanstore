@@ -110,11 +110,11 @@ struct HashJoiner {
 
    void seek(const sort_key_t& sk)
    {
-      auto n_ret = nation_scanner->seek(nation2_t::Key{sk});
-      auto s_ret = states_scanner->seek(states_t::Key{sk});
-      auto c_ret = county_scanner->seek(county_t::Key{sk});
-      auto ci_ret = city_scanner->seek(city_t::Key{sk});
-      auto cu_ret = customer2_scanner->seek(customer2_t::Key{sk});
+      nation_scanner->seek(nation2_t::Key{sk});
+      states_scanner->seek(states_t::Key{sk});
+      county_scanner->seek(county_t::Key{sk});
+      city_scanner->seek(city_t::Key{sk});
+      customer2_scanner->seek(customer2_t::Key{sk});
    }
 };
 

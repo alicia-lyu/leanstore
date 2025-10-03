@@ -223,7 +223,7 @@ struct ExecutableHelper {
       bool ret = keep_running;
       if (tx == "maintain") {
          ret = ret && !workload->insertion_complete();
-      } else if (tx == "join-n") {
+      } else if (tx == "join-n" || tx == "mixed-n") {
          return !workload->n_scan_finished(); // overriding
       }
       return ret;
@@ -259,7 +259,7 @@ struct ExecutableHelper {
             db_traits->rollback_tx(MAIN_WORKER);
             std::cerr << "#" << count.load() << " " << tx << "for " << workload->get_name() << " failed." << std::endl;
          }
-         if ((count.load() % 1000 == 1 && FLAGS_log_progress) || keep_running_tx == false) {
+         if ((count.load() % 1000 == 1 && FLAGS_log_progress) || keep_running_condition(keep_running_tx.load(), tx) == false) {
             std::cout << "\r#" << count.load() << " " << tx << " for " << workload->get_name() << " performed.";
          }
       }

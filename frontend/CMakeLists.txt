@@ -1,12 +1,9 @@
 add_library(PremergedJoinStatsLogger STATIC shared/merge-join/premerged_join_stats_logger.cpp)
 target_link_libraries(PremergedJoinStatsLogger PUBLIC leanstore)
 
-add_library(HashJoin STATIC shared/merge-join/hash_join.cpp)
-target_link_libraries(HashJoin PUBLIC leanstore)
-
 # loggers also provide shared libs and directories
 add_library(Logger STATIC shared/logger/logger.cpp)
-target_link_libraries(Logger PUBLIC PremergedJoinStatsLogger HashJoin)
+target_link_libraries(Logger PUBLIC PremergedJoinStatsLogger)
 target_include_directories(Logger PUBLIC ${SHARED_INCLUDE_DIRECTORY})
 
 add_library(LeanStoreLogger STATIC shared/logger/leanstore_logger.cpp)

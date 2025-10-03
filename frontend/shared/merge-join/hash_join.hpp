@@ -6,7 +6,7 @@
 #include <fstream>
 #include <functional>
 #include <optional>
-#include <unordered_map>
+#include <map>
 #include "../view_templates.hpp"
 #include "leanstore/Config.hpp"
 
@@ -14,16 +14,16 @@ struct HashLogger {
    inline static std::ofstream log_file;
    inline static bool is_initialized = false;
 
-   inline static std::unordered_map<int, std::tuple<long, double, long long>> build_phase_time;
+   inline static std::map<int, std::tuple<long, double, long long>> build_phase_time;
 
    static void init()
    {
-      if (!is_initialized) {
-         std::filesystem::path log_path = std::filesystem::path(FLAGS_csv_path) / "hash_stats.csv";
-         log_file.open(log_path, std::ios::trunc);
-         log_file << "log2_produced_count,build_us,hash_table_bytes\n";
-         is_initialized = true;
-      }
+      if (is_initialized)
+         return;
+      std::filesystem::path log_path = std::filesystem::path(FLAGS_csv_path) / "hash_stats.csv";
+      log_file.open(log_path, std::ios::trunc);
+      log_file << "log2_produced_count,build_us,hash_table_bytes\n";
+      is_initialized = true;
    }
 
    static void log1(long produced_count, double build_us, long hash_table_bytes)

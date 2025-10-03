@@ -111,6 +111,7 @@ class GeoJoin
       } else {
          n = 1;  // hot nation
       }
+      std::cout << "get_n(): returning nationkey = " << n << ", n_i = " << n_i << std::endl;
       return std::make_pair(n, n_i == nation_keys.size());
    }
 

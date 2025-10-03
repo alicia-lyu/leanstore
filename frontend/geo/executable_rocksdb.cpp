@@ -31,6 +31,7 @@ thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 
 int main(int argc, char** argv)
 {
+   LoggerFlusher<HashLogger> final_flusher;
    gflags::SetUsageMessage("Leanstore GeoJoin TPC-H");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
 
