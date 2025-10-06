@@ -5,8 +5,8 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <optional>
 #include <map>
+#include <optional>
 #include "../view_templates.hpp"
 #include "leanstore/Config.hpp"
 
@@ -61,7 +61,7 @@ struct HashLogger {
 // sources -> join_state -> yield joined records
 template <typename JK, typename JR, typename R1, typename R2>
 struct HashJoin {
-   const JK seek_jk;
+   JK seek_jk = JK::max();
    const std::function<void(const typename JR::Key&, const JR&)> consume_joined;
 
    bool enable_logging = false;
@@ -75,9 +75,8 @@ struct HashJoin {
    HashJoin(
        std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left,
        std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right,
-       JK seek_jk,
        const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
-       : seek_jk(seek_jk), consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
+       : consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
    {
       build_phase();
    }
@@ -90,6 +89,8 @@ struct HashJoin {
       }
       HashLogger::log1(produced_count, build_us, hash_table_bytes());
    }
+
+   void replace_sk(const JK& new_sk) { seek_jk = new_sk; }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
 
@@ -129,8 +130,7 @@ struct HashJoin {
       if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
          return false;
       }
-      auto keys_to_match = curr_jk.matching_less_specific_keys();
-      keys_to_match.emplace_back(curr_jk);
+      auto keys_to_match = curr_jk.matching_keys();
       for (const auto& lsk : keys_to_match) {
          auto range = left_hashtable.equal_range(lsk);
          for (auto it = range.first; it != range.second; ++it) {
@@ -140,6 +140,10 @@ struct HashJoin {
             JR joined_rec = JR{lv, rv};
             cached_results.emplace_back(joined_key, joined_rec);
          }
+      }
+      if (cached_results.empty()) {
+         std::cerr << "WARNING: HashJoin::probe_next() no match found for right key " << rk << " with JK " << curr_jk
+                   << ", violating integrity constraint" << std::endl;
       }
       return true;  // can probe next even if joined nothing
    }

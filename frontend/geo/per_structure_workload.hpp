@@ -54,7 +54,7 @@ struct BaseWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_to_insert(); }
-   bool n_scan_finished() const override { return workload.get_n().second; }
+   bool n_scan_finished() const override { return workload.get_n(true).second; }
 };
 
 template <template <typename> class AdapterType,
@@ -82,7 +82,7 @@ struct HashWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_to_insert(); }
-   bool n_scan_finished() const override { return workload.get_n().second; }
+   bool n_scan_finished() const override { return workload.get_n(true).second; }
 };
 
 template <template <typename> class AdapterType,
@@ -110,7 +110,7 @@ struct ViewWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_to_insert(); }
-   bool n_scan_finished() const override { return workload.get_n().second; }
+   bool n_scan_finished() const override { return workload.get_n(true).second; }
 };
 
 template <template <typename> class AdapterType,
@@ -138,7 +138,7 @@ struct MergedWorkload : public PerStructureWorkload {
    int remaining_customers_to_erase() override { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() override { workload.maintenance_state.reset(); }
    void select_to_insert() override { workload.select_merged_to_insert(); }
-   bool n_scan_finished() const override { return workload.get_n().second; }
+   bool n_scan_finished() const override { return workload.get_n(true).second; }
 };
 
 }  // namespace geo_join

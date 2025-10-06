@@ -1,6 +1,5 @@
 #pragma once
 #include <cassert>
-#include <chrono>
 #include <cstddef>
 
 #include "../shared/merge-join/binary_merge_join.hpp"
@@ -8,6 +7,20 @@
 #include "../shared/merge-join/premerged_join.hpp"
 #include "views.hpp"
 #include "workload.hpp"
+
+inline void update_sk(sort_key_t& sk, const sort_key_t& found_k)
+{
+   if (sk.nationkey != 0)
+      sk.nationkey = found_k.nationkey;
+   if (sk.statekey != 0)
+      sk.statekey = found_k.statekey;
+   if (sk.countykey != 0)
+      sk.countykey = found_k.countykey;
+   if (sk.citykey != 0)
+      sk.citykey = found_k.citykey;
+   if (sk.custkey != 0)
+      sk.custkey = found_k.custkey;
+}
 
 namespace geo_join
 {
@@ -43,6 +56,15 @@ struct BaseJoiner {
       joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); });
       joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); });
       final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); });
+
+      auto first_ret = final_joiner->next();
+      if (first_ret.has_value()) {
+         update_sk(seek_key, first_ret->first.jk);
+      }
+      joiner_ns->replace_sk(seek_key);
+      joiner_nsc->replace_sk(seek_key);
+      joiner_nscci->replace_sk(seek_key);
+      final_joiner->replace_sk(seek_key);
    }
 
    void run() { final_joiner->run(); }
@@ -65,8 +87,6 @@ struct BaseJoiner {
                    << ", city: " << ci_ret << ", customer2: " << cu_ret << std::endl;
       }
    }
-
-   bool went_past(const sort_key_t& sk) { return final_joiner->went_past(sk); }
 };
 
 template <template <typename> class AdapterType, template <typename> class ScannerType>
@@ -96,10 +116,19 @@ struct HashJoiner {
       if (seek_key != sort_key_t::max()) {
          seek(seek_key);
       }
-      joiner_ns.emplace([this]() { return nation_scanner->next(); }, [this]() { return states_scanner->next(); }, seek_key);
-      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); }, seek_key);
-      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); }, seek_key);
-      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); }, seek_key);
+      joiner_ns.emplace([this]() { return nation_scanner->next(); }, [this]() { return states_scanner->next(); });
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); });
+      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); });
+      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); });
+
+      auto first_ret = final_joiner->next();
+      if (first_ret.has_value()) {
+         update_sk(seek_key, first_ret->first.jk);
+      }
+      joiner_ns->replace_sk(seek_key);
+      joiner_nsc->replace_sk(seek_key);
+      joiner_nscci->replace_sk(seek_key);
+      final_joiner->replace_sk(seek_key);
    }
 
    void run() { final_joiner->run(); }
@@ -136,15 +165,15 @@ struct MergedJoiner {
    MergedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, sort_key_t seek_key = sort_key_t::max())
        : merged_scanner(merged.template getScanner<sort_key_t, view_t>()), seek_key(seek_key)
    {
-      // seek handled by PremergedJoin
       joiner.emplace(*merged_scanner);
+      next();  // first seek
    }
 
    MergedJoiner(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, AdapterType<view_t>& join_view)
        : merged_scanner(merged.template getScanner<sort_key_t, view_t>()), seek_key(sort_key_t::max())
    {
-      // seek handled by PremergedJoin
       joiner.emplace(*merged_scanner, join_view);
+      next();  // first seek
    }
 
    void run() { joiner->run(); }
@@ -153,115 +182,19 @@ struct MergedJoiner {
    {
       auto ret = joiner->next(seek_key);
       if (seek_key != seek_max) {
+         update_sk(seek_key, ret->first.jk);
+         joiner->replace_sk(seek_key);
          seek_key = seek_max;  // reset seek_key after the first result
       }
       return ret;
    }
 
-   sort_key_t current_jk() const { return joiner->current_jk(); }
    long produced() const { return joiner->produced(); }
    long consumed() const { return merged_scanner->produced; }
-
-   bool went_past(const sort_key_t& sk) const { return joiner->went_past(sk); }
 };
-// -------------------------------------------------------------
-// ------------------------ QUERIES -----------------------------
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::query_by_view()  // scan through the join_view
-{
-   logger.reset();
-   std::cout << "GeoJoin::query_by_view()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-   [[maybe_unused]] long produced = 0;
-   sort_key_t start_sk = sort_key_t{0, 0, 0, 0, 0};
-   join_view.scan(
-       view_t::Key{start_sk},
-       [&](const view_t::Key&, const view_t&) {
-          TPCH::inspect_produced("Enumerating materialized join_view: ", produced);
-          return true;
-       },
-       [&]() {});
-   std::cout << "Enumerated materialized join_view: " << (double)produced / 1000 << "k------------------------------------" << std::endl;
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "join", "mat_view", get_view_size());
-}
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::query_by_merged()
-{
-   logger.reset();
-   std::cout << "GeoJoin::query_by_merged()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-
-   MergedJoiner<AdapterType, MergedAdapterType, MergedScannerType> merged_joiner(merged);
-   merged_joiner.run();
-
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "join", "merged_idx", get_merged_size());
-}
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::query_by_base()
-{
-   logger.reset();
-   std::cout << "GeoJoin::query_by_base()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-
-   BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city, customer2);
-
-   base_joiner.run();
-
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "join", "base_idx", get_indexes_size());
-}
-
-template <template <typename> class AdapterType,
-          template <typename...> class MergedAdapterType,
-          template <typename> class ScannerType,
-          template <typename...> class MergedScannerType>
-void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::query_hash()
-{
-   logger.reset();
-   std::cout << "GeoJoin::query_hash()" << std::endl;
-   auto start = std::chrono::high_resolution_clock::now();
-
-   HashJoiner<AdapterType, ScannerType> hash_joiner(nation, states, county, city, customer2);
-
-   hash_joiner.run();
-
-   auto end = std::chrono::high_resolution_clock::now();
-   auto t = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-   logger.log(t, "join", "hash", get_indexes_size());
-}
 
 // -------------------------------------------------------------
 // ---------------------- RANGE QUERIES ------------------------
-inline void update_sk(sort_key_t& sk, const sort_key_t& found_k)
-{
-   if (sk.nationkey != 0)
-      sk.nationkey = found_k.nationkey;
-   if (sk.statekey != 0)
-      sk.statekey = found_k.statekey;
-   if (sk.countykey != 0)
-      sk.countykey = found_k.countykey;
-   if (sk.citykey != 0)
-      sk.citykey = found_k.citykey;
-   if (sk.custkey != 0)
-      sk.custkey = found_k.custkey;
-}
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
@@ -305,17 +238,9 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 
    MergedJoiner<AdapterType, MergedAdapterType, MergedScannerType> merged_joiner(merged, sk);
-   auto kv = merged_joiner.next();
-   if (!kv.has_value()) {
-      return 0;  // no record is scanned (too large a key)
-   }
-   update_sk(sk, kv->first.jk);
 
-   while (!merged_joiner.went_past(sk)) {
-      auto ret = merged_joiner.next();
-      if (ret == std::nullopt)
-         break;
-   }
+   merged_joiner.run();
+
    size_t produced = merged_joiner.produced();
    // std::cout << "range_query_by_merged produced " << produced << " records for sk: " << sk << std::endl;
    return produced;
@@ -333,17 +258,8 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 
    BaseJoiner<AdapterType, ScannerType> base_joiner(nation, states, county, city, customer2, sk);
-   auto kv = base_joiner.next();
-   if (!kv.has_value()) {
-      return 0;  // no record is scanned (too large a key)
-   }
-   update_sk(sk, kv->first.jk);
 
-   while (!base_joiner.went_past(sk)) {
-      auto ret = base_joiner.next();
-      if (ret == std::nullopt)
-         break;
-   }
+   base_joiner.run();
    long produced = base_joiner.produced();
    // std::cout << "range_query_by_base produced " << produced << " records for sk: " << sk << std::endl;
    return produced;
@@ -361,11 +277,6 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 
    HashJoiner<AdapterType, ScannerType> hash_joiner(nation, states, county, city, customer2, sk);
-   auto kv = hash_joiner.next();
-   if (!kv.has_value()) {
-      return 0;  // no record is scanned (too large a key)
-   }
-   update_sk(sk, kv->first.jk);
 
    hash_joiner.run();
    long produced = hash_joiner.produced();

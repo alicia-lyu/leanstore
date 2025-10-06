@@ -4,15 +4,17 @@
 // sources -> join_state -> yield joined records
 template <typename JK, typename JR, typename R1, typename R2>
 struct BinaryMergeJoin {
+   JK seek_jk = JK::max();
    JoinState<JK, JR, R1, R2> join_state;
    std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left;
    std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right;
    std::optional<std::pair<typename R1::Key, R1>> next_left;
    std::optional<std::pair<typename R2::Key, R2>> next_right;
 
-   BinaryMergeJoin(std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left_func,
-                   std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right_func,
-                   const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
+   BinaryMergeJoin(
+       std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left_func,
+       std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right_func,
+       const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
 
        : join_state("BinaryMergeJoin", consume_joined),
          fetch_left(std::move(fetch_left_func)),
@@ -23,6 +25,8 @@ struct BinaryMergeJoin {
       // assert(next_left || next_right);  // at least one source must be available
       refresh_join_state();  // initialize the join state with the smallest JK
    }
+
+   void replace_sk(const JK& new_sk) { seek_jk = new_sk; }
 
    void refill_current_key()
    {
@@ -39,7 +43,15 @@ struct BinaryMergeJoin {
    void refresh_join_state()
    {
       JK left_jk = next_left ? SKBuilder<JK>::create(next_left->first, next_left->second) : JK::max();
+      if (seek_jk != JK::max() && left_jk.match(seek_jk) != 0) {
+         left_jk = JK::max();
+         next_left = std::nullopt;
+      }
       JK right_jk = next_right ? SKBuilder<JK>::create(next_right->first, next_right->second) : JK::max();
+      if (seek_jk != JK::max() && right_jk.match(seek_jk) != 0) {
+         right_jk = JK::max();
+         next_right = std::nullopt;
+      }
 
       int comp = left_jk.match(right_jk);
 
@@ -52,8 +64,6 @@ struct BinaryMergeJoin {
          join_state.refresh(left_jk > right_jk ? left_jk : right_jk);
       }
    }
-
-   bool went_past(const JK& match_jk) const { return join_state.went_past(match_jk); }
 
    bool has_cached_next() const { return join_state.has_next(); }
 
