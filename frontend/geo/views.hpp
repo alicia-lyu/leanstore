@@ -27,7 +27,7 @@ struct sort_key_t {
 
    friend int operator%(const sort_key_t& jk, const int& n) { return (jk.nationkey + jk.statekey + jk.countykey + jk.citykey) % n; }
 
-   std::vector<sort_key_t> matching_less_specific_keys()
+   std::vector<sort_key_t> matching_keys()
    {
       std::vector<sort_key_t> result;
       if (custkey != 0) {
@@ -42,6 +42,7 @@ struct sort_key_t {
       if (statekey != 0) {
          result.push_back(sort_key_t{nationkey, 0, 0, 0, 0});
       }
+      result.push_back(*this);
       return result;
    }
 

@@ -146,6 +146,7 @@ struct MergedCounter {
    MergedCounter(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, sort_key_t sk = sort_key_t::max())
        : scanner_counter(merged), joiner(scanner_counter), seek_key(sk)
    {
+      next();  // first seek
    }
 
    MergedCounter(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged,
@@ -161,6 +162,7 @@ struct MergedCounter {
          mixed_view_ptr(&mixed_view),
          seek_key(sk)
    {
+      next();  // first seek
    }
 
    void run() { joiner.run(); }
@@ -169,16 +171,16 @@ struct MergedCounter {
    {
       auto ret = joiner.next(seek_key);
       if (seek_key != seek_max) {
+         auto& [k, v] = *ret;
+         update_sk(seek_key, k.jk);
+         joiner.replace_sk(seek_key);
          seek_key = seek_max;  // reset seek_key after the first result
       }
       return ret;
    }
 
-   sort_key_t current_jk() const { return joiner.current_jk(); }
    long produced() const { return joiner.produced(); }
    long consumed() const { return scanner_counter.produced; }
-
-   bool went_past(const sort_key_t& sk) const { return joiner.went_past(sk); }
 };
 
 template <template <typename> class AdapterType,
@@ -190,15 +192,11 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
    MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> counter(merged, select_sk);
 
    long cust_sum = 0;
-   while (!counter.went_past(select_sk)) {
+   while (true) {
       auto kv = counter.next();
       if (kv == std::nullopt)
          break;
       auto [k, v] = *kv;
-      sort_key_t curr_sk = SKBuilder<sort_key_t>::create(k, v);
-      if (cust_sum == 0) {
-         update_sk(select_sk, curr_sk);
-      }
       cust_sum += std::get<4>(v.payloads).customer_count;
    }
    return cust_sum;
@@ -251,13 +249,19 @@ struct BaseCounter {
                                  customer_count++;
                               }
                            });
+      auto first_ret = final_joiner->next();
+      if (first_ret.has_value()) {
+         update_sk(sk, first_ret->first.jk);
+      }
+      joiner_ns->replace_sk(sk);
+      joiner_nsc->replace_sk(sk);
+      joiner_nscci->replace_sk(sk);
+      final_joiner->replace_sk(sk);
    }
 
    void run() { final_joiner->run(); }
 
    std::optional<std::pair<mixed_view_t::Key, mixed_view_t>> next() { return final_joiner->next(); }
-
-   sort_key_t current_jk() const { return final_joiner->jk_to_join(); }
 
    long produced() const { return final_joiner->produced(); }
 
@@ -269,8 +273,6 @@ struct BaseCounter {
       [[maybe_unused]] auto ci_ret = city->seek(city_t::Key{sk});
       [[maybe_unused]] auto cu_ret = customer->seek(customer2_t::Key{sk});
    }
-
-   bool went_past(const sort_key_t& sk) { return final_joiner->went_past(sk); }
 };
 
 template <template <typename> class AdapterType,
@@ -281,15 +283,11 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
 {
    BaseCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, select_sk);
    long cust_sum = 0;
-   while (!counter.went_past(select_sk)) {
+   while (true) {
       auto kv = counter.next();
       if (kv == std::nullopt)
          break;
       auto [k, v] = *kv;
-      sort_key_t curr_sk = SKBuilder<sort_key_t>::create(k, v);
-      if (cust_sum == 0) {
-         update_sk(select_sk, curr_sk);
-      }
       cust_sum += std::get<4>(v.payloads).customer_count;
    }
    return cust_sum;
@@ -319,9 +317,9 @@ struct HashCounter {
       if (sk != sort_key_t::max()) {
          seek(sk);
       }
-      joiner_ns.emplace([this]() { return nation->next(); }, [this]() { return states->next(); }, sk);
-      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county->next(); }, sk);
-      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city->next(); }, sk);
+      joiner_ns.emplace([this]() { return nation->next(); }, [this]() { return states->next(); });
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county->next(); });
+      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city->next(); });
       final_joiner.emplace([this]() { return joiner_nscci->next(); },
                            [this]() -> std::optional<std::pair<customer_count_t::Key, customer_count_t>> {
                               int customer_count = 0;
@@ -341,8 +339,16 @@ struct HashCounter {
                                  }
                                  customer_count++;
                               }
-                           },
-                           sk);
+                           });
+
+      auto first_ret = final_joiner->next();
+      if (first_ret.has_value()) {
+         update_sk(sk, first_ret->first.jk);
+      }
+      joiner_ns->replace_sk(sk);
+      joiner_nsc->replace_sk(sk);
+      joiner_nscci->replace_sk(sk);
+      final_joiner->replace_sk(sk);
    }
 
    void run() { final_joiner->run(); }
@@ -369,15 +375,11 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
 {
    HashCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, select_sk);
    long cust_sum = 0;
-   while (true) { // went past delegated to hash join
+   while (true) {
       auto kv = counter.next();
       if (kv == std::nullopt)
          break;
       auto [k, v] = *kv;
-      sort_key_t curr_sk = SKBuilder<sort_key_t>::create(k, v);
-      if (cust_sum == 0) {
-         update_sk(select_sk, curr_sk);
-      }
       cust_sum += std::get<4>(v.payloads).customer_count;
    }
    return cust_sum;

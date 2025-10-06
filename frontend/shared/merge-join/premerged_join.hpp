@@ -64,6 +64,7 @@ struct PremergedJoinStats {
 // merged_scanner -> join_state -> yield joined records
 template <typename MergedScannerType, typename JK, typename JR, typename... Rs>
 struct PremergedJoin {
+   JK seek_jk = JK::max();
    MergedScannerType& merged_scanner;
    JoinState<JK, JR, Rs...> join_state;
    PremergedJoinStats stats{sizeof...(Rs)};
@@ -86,7 +87,7 @@ struct PremergedJoin {
 
    ~PremergedJoin() { PremergedJoinLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced()); }
 
-   bool went_past(const JK& ballpark_jk) const { return join_state.went_past(ballpark_jk); }
+   void replace_sk(const JK& new_sk) { seek_jk = new_sk; }
 
    bool has_cached_next() const { return join_state.has_next(); }
 
@@ -110,6 +111,9 @@ struct PremergedJoin {
       auto& v = kv->second;
       JK jk;
       std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
+      if (seek_jk != JK::max() && jk.match(seek_jk) != 0) {
+         return std::nullopt;  // past the seek_jk
+      }
       if (to_emplace)
          emplace(k, v, jk);
       return std::make_tuple(k, v, jk);

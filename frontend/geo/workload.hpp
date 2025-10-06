@@ -84,16 +84,12 @@ class GeoJoin
 
    // ------------------------ JOIN QUERIES -----------------------------
 
-   void query_by_view();
-   void query_by_merged();
-   void query_by_base();
-   void query_hash();
    long range_query_by_view(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    long range_query_by_merged(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    long range_query_by_base(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
    long range_query_hash(Integer nationkey, Integer statekey, Integer countykey, Integer citykey);
 
-   std::pair<int, bool> get_n() const
+   std::pair<int, bool> get_n(bool info_only = false) const
    {
       static std::vector<int> nation_keys;
       if (nation_keys.empty()) {
@@ -103,11 +99,16 @@ class GeoJoin
       }
       static size_t n_i = 0;
 
+      if (info_only) {
+         return std::make_pair(0, n_i == nation_keys.size());
+      }
+
       int lottery = std::rand() % 2;
       int n;
       if (lottery == 0) {
          n_i %= nation_keys.size();
-         n = nation_keys.at(n_i++); // can increment to nation_keys.size()
+         n = nation_keys.at(n_i); 
+         n_i++; // can increment to nation_keys.size()
       } else {
          n = 1;  // hot nation
       }

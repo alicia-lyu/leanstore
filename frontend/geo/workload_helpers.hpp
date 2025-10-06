@@ -80,6 +80,7 @@ class WorkloadStats
    ~WorkloadStats()
    {
       std::cout << "----- WorkloadStats -----" << std::endl;
+      std::cout << "join-n produced on avg: " << (n_count > 0 ? (double)n_sum / n_count : 0) << std::endl;
       std::cout << "join-ns produced on avg: " << (ns_count > 0 ? (double)ns_sum / ns_count : 0) << std::endl;
       std::cout << "join-nsc produced on avg: " << (nsc_count > 0 ? (double)nsc_sum / nsc_count : 0) << std::endl;
       std::cout << "join-nscci produced on avg: " << (nscci_count > 0 ? (double)nscci_sum / nscci_count : 0) << std::endl;
@@ -89,6 +90,10 @@ class WorkloadStats
       double row_count_per_county = avg_cust_per_city > 0 ? avg_cust_per_county / avg_cust_per_city : 0.0;
       double avg_cust_per_state = ns_count > 0 ? (double)ns_cust_sum / ns_mixed_count : 0.0;
       double row_count_per_state = avg_cust_per_city > 0 ? avg_cust_per_state / avg_cust_per_city : 0.0;
+      double avg_cust_per_nation = n_count > 0 ? (double)n_cust_sum / n_mixed_count : 0.0;
+      double row_count_per_nation = avg_cust_per_city > 0 ? avg_cust_per_nation / avg_cust_per_city : 0.0;
+      std::cout << "mixed-n customer_count per query: " << (avg_cust_per_nation)
+                << ", estimated produced row count per query: " << row_count_per_nation << std::endl;
       std::cout << "mixed-ns customer_count per query: " << (avg_cust_per_state)
                 << ", estimated produced row count per query: " << row_count_per_state << std::endl;
       std::cout << "mixed-nsc customer_count per query: " << (avg_cust_per_county)
