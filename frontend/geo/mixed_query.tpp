@@ -317,9 +317,9 @@ struct HashCounter {
       if (sk != sort_key_t::max()) {
          seek(sk);
       }
-      joiner_ns.emplace([this]() { return nation->next(); }, [this]() { return states->next(); });
-      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county->next(); });
-      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city->next(); });
+      joiner_ns.emplace([this]() { return nation->next(); }, [this]() { return states->next(); }, sk);
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county->next(); }, sk);
+      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city->next(); }, sk);
       final_joiner.emplace([this]() { return joiner_nscci->next(); },
                            [this]() -> std::optional<std::pair<customer_count_t::Key, customer_count_t>> {
                               int customer_count = 0;
@@ -339,7 +339,7 @@ struct HashCounter {
                                  }
                                  customer_count++;
                               }
-                           });
+                           }, sk);
 
       auto first_ret = final_joiner->next();
       if (first_ret.has_value()) {

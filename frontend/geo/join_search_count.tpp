@@ -116,14 +116,18 @@ struct HashJoiner {
       if (seek_key != sort_key_t::max()) {
          seek(seek_key);
       }
-      joiner_ns.emplace([this]() { return nation_scanner->next(); }, [this]() { return states_scanner->next(); });
-      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); });
-      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); });
-      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); });
+      joiner_ns.emplace([this]() { return nation_scanner->next(); }, [this]() { return states_scanner->next(); }, seek_key);
+      joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); }, seek_key);
+      joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); }, seek_key);
+      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); }, seek_key);
 
       auto first_ret = final_joiner->next();
       if (first_ret.has_value()) {
-         update_sk(seek_key, first_ret->first.jk);
+         auto new_sk = first_ret->first.jk;
+         if (seek_key.match(new_sk) != 0) {
+            std::cout << "HashJoiner::ctor() updating " << seek_key << " with " << new_sk << std::endl;
+         }
+         update_sk(seek_key, new_sk);
       }
       joiner_ns->replace_sk(seek_key);
       joiner_nsc->replace_sk(seek_key);
