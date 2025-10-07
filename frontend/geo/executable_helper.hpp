@@ -122,7 +122,7 @@ struct ExecutableHelper {
 
       schedule_bg_txs();
 
-      tput_tx(std::bind(&PerStructureWorkload::join_n, workload.get()), "join-n");
+      // tput_tx(std::bind(&PerStructureWorkload::join_n, workload.get()), "join-n");
 
       tput_tx(std::bind(&PerStructureWorkload::join_ns, workload.get()), "join-ns");
       tput_tx(std::bind(&PerStructureWorkload::join_nsc, workload.get()), "join-nsc");
@@ -259,7 +259,7 @@ struct ExecutableHelper {
             db_traits->rollback_tx(MAIN_WORKER);
             std::cerr << "#" << count.load() << " " << tx << "for " << workload->get_name() << " failed." << std::endl;
          }
-         if ((count.load() % 1000 == 1 && FLAGS_log_progress) || keep_running_condition(keep_running_tx.load(), tx) == false) {
+         if (count.load() % 1000 == 1 && (FLAGS_log_progress || !keep_running_tx.load())) {
             std::cout << "\r#" << count.load() << " " << tx << " for " << workload->get_name() << " performed.";
          }
       }

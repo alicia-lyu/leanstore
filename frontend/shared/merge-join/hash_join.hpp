@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <optional>
 #include "../view_templates.hpp"
@@ -75,8 +76,9 @@ struct HashJoin {
    HashJoin(
        std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left,
        std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right,
+       const JK& approx_jk,
        const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
-       : consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
+       : seek_jk(approx_jk), consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
    {
       build_phase();
    }
@@ -84,13 +86,23 @@ struct HashJoin {
    ~HashJoin()
    {
       if (enable_logging && FLAGS_log_progress && produced_count > 10000) {
-         std::cout << "\rHashJoin produced a total of " << (double)produced_count / 1000 << "k records. Final JK " << seek_jk << "          "
+         std::cout << "\rHashJoin produced a total of " << (double)produced_count / 1000 << "k records. Seek JK " << seek_jk << "          "
                    << std::endl;
       }
       HashLogger::log1(produced_count, build_us, hash_table_bytes());
    }
 
-   void replace_sk(const JK& new_sk) { seek_jk = new_sk; }
+   void replace_sk(const JK& new_sk)
+   {
+      bool rebuild = (seek_jk != new_sk);
+      if (rebuild) {
+         std::cout << "HashJoin::replace_sk() replacing " << seek_jk << " with " << new_sk << std::endl;
+         // build_phase();
+         auto range = left_hashtable.equal_range(new_sk);
+         assert(range.first != range.second);  // should have at least one match, ensured by hashing at least two records
+      }
+      seek_jk = new_sk;
+   }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
 
@@ -106,14 +118,15 @@ struct HashJoin {
          }
          auto& [k, v] = *kv;
          JK curr_jk = SKBuilder<JK>::create(k, v);
-         if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
+         if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0 &&
+             left_hashtable.size() >= 2) {  // hash 2 records to prevent off-by-1 error using approx_jk
             break;
          }
          left_hashtable.emplace(curr_jk, std::make_pair(k, v));
       }
       std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
       auto build_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-      build_us = build_ns / 1000.0;
+      build_us += build_ns / 1000.0;
    }
 
    std::vector<std::pair<typename JR::Key, JR>> cached_results;
@@ -127,7 +140,7 @@ struct HashJoin {
       }
       auto& [rk, rv] = *right_kv;
       JK curr_jk = SKBuilder<JK>::create(rk, rv);
-      if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
+      if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0 && produced_count > 0) {
          return false;
       }
       auto keys_to_match = curr_jk.matching_keys();
@@ -144,6 +157,8 @@ struct HashJoin {
       if (cached_results.empty()) {
          std::cerr << "WARNING: HashJoin::probe_next() no match found for right key " << rk << " with JK " << curr_jk
                    << ", violating integrity constraint" << std::endl;
+         std::cerr << "Left hashtable size: " << left_hashtable.size() << std::endl;
+         std::cerr << "Seek JK: " << seek_jk << std::endl;
       }
       return true;  // can probe next even if joined nothing
    }
@@ -164,7 +179,7 @@ struct HashJoin {
       if (has_cached_next()) {
          auto res = cached_results.back();
          cached_results.pop_back();
-         if (enable_logging && FLAGS_log_progress && produced_count % 10000 == 0) {
+         if (enable_logging && FLAGS_log_progress && produced_count % 1000 == 0) {
             std::cout << "\rHashJoin produced " << (double)(produced_count + 1) / 1000 << "k records. Current JK " << res.first.jk << "...";
          }
          produced_count++;

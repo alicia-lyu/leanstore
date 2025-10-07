@@ -100,7 +100,10 @@ class GeoJoin
       static size_t n_i = 0;
 
       if (info_only) {
-         return std::make_pair(0, n_i == nation_keys.size());
+         auto ret = std::make_pair(0, n_i == nation_keys.size());
+         std::cout << "get_n(info_only): returning n_i = " << n_i << std::endl;
+         n_i %= nation_keys.size();
+         return ret;
       }
 
       int lottery = std::rand() % 2;
