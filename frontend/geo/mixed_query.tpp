@@ -339,16 +339,8 @@ struct HashCounter {
                                  }
                                  customer_count++;
                               }
-                           }, sk);
-
-      auto first_ret = final_joiner->next();
-      if (first_ret.has_value()) {
-         update_sk(sk, first_ret->first.jk);
-      }
-      joiner_ns->replace_sk(sk);
-      joiner_nsc->replace_sk(sk);
-      joiner_nscci->replace_sk(sk);
-      final_joiner->replace_sk(sk);
+                           },
+                           sk);
    }
 
    void run() { final_joiner->run(); }
@@ -373,6 +365,14 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_hash(sort_key_t select_sk)
 {
+   city.scan(
+       city_t::Key{select_sk},
+       [&](const city_t::Key& cik, const city_t& civ) {
+          auto ci_sk = SKBuilder<sort_key_t>::create(cik, civ);
+          update_sk(select_sk, ci_sk);
+          return false;  // scan once
+       },
+       []() {});
    HashCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, select_sk);
    long cust_sum = 0;
    while (true) {

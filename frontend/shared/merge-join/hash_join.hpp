@@ -76,9 +76,9 @@ struct HashJoin {
    HashJoin(
        std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left,
        std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right,
-       const JK& approx_jk,
+       const JK& seek_jk,
        const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
-       : seek_jk(approx_jk), consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
+       : seek_jk(seek_jk), consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
    {
       build_phase();
    }
@@ -90,18 +90,6 @@ struct HashJoin {
                    << std::endl;
       }
       HashLogger::log1(produced_count, build_us, hash_table_bytes());
-   }
-
-   void replace_sk(const JK& new_sk)
-   {
-      bool rebuild = (seek_jk != new_sk);
-      if (rebuild) {
-         std::cout << "HashJoin::replace_sk() replacing " << seek_jk << " with " << new_sk << std::endl;
-         // build_phase();
-         auto range = left_hashtable.equal_range(new_sk);
-         assert(range.first != range.second);  // should have at least one match, ensured by hashing at least two records
-      }
-      seek_jk = new_sk;
    }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
@@ -118,8 +106,7 @@ struct HashJoin {
          }
          auto& [k, v] = *kv;
          JK curr_jk = SKBuilder<JK>::create(k, v);
-         if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0 &&
-             left_hashtable.size() >= 2) {  // hash 2 records to prevent off-by-1 error using approx_jk
+         if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
             break;
          }
          left_hashtable.emplace(curr_jk, std::make_pair(k, v));
@@ -140,7 +127,7 @@ struct HashJoin {
       }
       auto& [rk, rv] = *right_kv;
       JK curr_jk = SKBuilder<JK>::create(rk, rv);
-      if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0 && produced_count > 0) {
+      if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
          return false;
       }
       auto keys_to_match = curr_jk.matching_keys();

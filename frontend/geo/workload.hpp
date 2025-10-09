@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../shared/adapter-scanner/Adapter.hpp"
 #include "load.hpp"
 #include "tpch_workload.hpp"
 #include "views.hpp"
@@ -101,7 +100,7 @@ class GeoJoin
 
       if (info_only) {
          auto ret = std::make_pair(0, n_i == nation_keys.size());
-         std::cout << "get_n(info_only): returning n_i = " << n_i << std::endl;
+         // std::cout << "get_n(info_only): returning n_i = " << n_i << std::endl;
          n_i %= nation_keys.size();
          return ret;
       }
@@ -115,7 +114,7 @@ class GeoJoin
       } else {
          n = 1;  // hot nation
       }
-      std::cout << "get_n(): returning nationkey = " << n << ", n_i = " << n_i << std::endl;
+      // std::cout << "get_n(): returning nationkey = " << n << ", n_i = " << n_i << std::endl;
       return std::make_pair(n, n_i == nation_keys.size());
    }
 
@@ -244,8 +243,7 @@ class GeoJoin
             throw std::runtime_error(ss.str());
          }
          mixed_view_t::Key mixed_vk{sk};
-         UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
-         mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
+         mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; });
       });
    }
 
