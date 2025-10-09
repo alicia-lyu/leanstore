@@ -122,7 +122,7 @@ struct ExecutableHelper {
 
       schedule_bg_txs();
 
-      // tput_tx(std::bind(&PerStructureWorkload::join_n, workload.get()), "join-n");
+      tput_tx(std::bind(&PerStructureWorkload::join_n, workload.get()), "join-n");
 
       tput_tx(std::bind(&PerStructureWorkload::join_ns, workload.get()), "join-ns");
       tput_tx(std::bind(&PerStructureWorkload::join_nsc, workload.get()), "join-nsc");

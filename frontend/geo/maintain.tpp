@@ -1,5 +1,5 @@
 #pragma once
-#include "../shared/adapter-scanner/Adapter.hpp"
+
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -162,8 +162,7 @@ bool GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::er
       throw std::runtime_error(ss.str());
    }
    mixed_view_t::Key mixed_vk{sk};
-   UpdateDescriptorGenerator1(mixed_view_decrementer, mixed_view_t, payloads);
-   mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; }, mixed_view_decrementer);
+   mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; });
    maintenance_state.adjust_ptrs();
    return true;
 }
@@ -236,8 +235,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    mixed_view_t::Key mixed_vk{sk};
    bool customer_exists = mixed_view.tryLookup(mixed_vk, [&](const mixed_view_t&) {});
    if (customer_exists) {
-      UpdateDescriptorGenerator1(mixed_update_descriptor, mixed_view_t, payloads);
-      mixed_view.update1(mixed_vk, [&](mixed_view_t& mv) { std::get<4>(mv.payloads).customer_count++; }, mixed_update_descriptor);
+      mixed_view.update1(mixed_vk, [&](mixed_view_t& mv) { std::get<4>(mv.payloads).customer_count++; });
    } else {
       mixed_view.insert(mixed_vk, mixed_view_t{nv, sv, cv, civ, customer_count_t{1}});
    }

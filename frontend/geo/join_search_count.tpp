@@ -120,19 +120,6 @@ struct HashJoiner {
       joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county_scanner->next(); }, seek_key);
       joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city_scanner->next(); }, seek_key);
       final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this]() { return customer2_scanner->next(); }, seek_key);
-
-      auto first_ret = final_joiner->next();
-      if (first_ret.has_value()) {
-         auto new_sk = first_ret->first.jk;
-         if (seek_key.match(new_sk) != 0) {
-            std::cout << "HashJoiner::ctor() updating " << seek_key << " with " << new_sk << std::endl;
-         }
-         update_sk(seek_key, new_sk);
-      }
-      joiner_ns->replace_sk(seek_key);
-      joiner_nsc->replace_sk(seek_key);
-      joiner_nscci->replace_sk(seek_key);
-      final_joiner->replace_sk(seek_key);
    }
 
    void run() { final_joiner->run(); }
@@ -279,6 +266,15 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
                                                                                                Integer citykey)
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
+
+   city.scan(
+       city_t::Key{sk},
+       [&](const city_t::Key& cik, const city_t& civ) {
+          auto ci_sk = SKBuilder<sort_key_t>::create(cik, civ);
+          update_sk(sk, ci_sk);
+          return false; // scan once
+       },
+       []() {});
 
    HashJoiner<AdapterType, ScannerType> hash_joiner(nation, states, county, city, customer2, sk);
 
