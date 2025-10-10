@@ -9,6 +9,7 @@
 #include <map>
 #include <optional>
 #include "../view_templates.hpp"
+#include "join_state.hpp"
 #include "leanstore/Config.hpp"
 
 struct HashLogger {
@@ -37,7 +38,7 @@ struct HashLogger {
       double log2_produced_count_double = std::log2(produced_count + 1);
       int log2_produced_count = std::round(log2_produced_count_double);
       if (build_phase_time.find(log2_produced_count) == build_phase_time.end()) {
-         build_phase_time[log2_produced_count] = std::make_tuple(0, 0.0,0.0, 0LL);
+         build_phase_time[log2_produced_count] = std::make_tuple(0, 0.0, 0.0, 0LL);
       }
       auto& [cnt, total_build_us, total_wait_us, total_ht_bytes] = build_phase_time[log2_produced_count];
       cnt++;
@@ -70,9 +71,7 @@ template <typename JK, typename JR, typename R1, typename R2>
 struct HashJoin {
    JK seek_jk = JK::max();
    const std::function<void(const typename JR::Key&, const JR&)> consume_joined;
-
-   bool enable_logging = false;
-   long produced_count = 0;
+   JoinState<JK, JR, R1, R2> state;
 
    std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left;
    std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right;
@@ -86,7 +85,7 @@ struct HashJoin {
        std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right,
        const JK& seek_jk,
        const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
-       : seek_jk(seek_jk), consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
+       : seek_jk(seek_jk), consume_joined(consume_joined), state("HashJoin", consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
    {
       std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
       build_phase();
@@ -97,11 +96,7 @@ struct HashJoin {
 
    ~HashJoin()
    {
-      if (enable_logging && FLAGS_log_progress && produced_count > 10000) {
-         std::cout << "\rHashJoin produced a total of " << (double)produced_count / 1000 << "k records. Seek JK " << seek_jk << "          "
-                   << std::endl;
-      }
-      HashLogger::log1(produced_count, build_us, wait_us, hash_table_bytes());
+      HashLogger::log1(state.get_produced(), build_us, wait_us, hash_table_bytes());
    }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
@@ -131,11 +126,9 @@ struct HashJoin {
       build_us = build_ns / 1000.0;
    }
 
-   std::vector<std::pair<typename JR::Key, JR>> cached_results;
-
    bool probe_next()
    {
-      assert(cached_results.empty());
+      assert(!state.has_next());
       auto right_kv = fetch_right();
       if (!right_kv.has_value()) {
          return false;
@@ -145,18 +138,18 @@ struct HashJoin {
       if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
          return false;
       }
+      state.refresh(curr_jk);
+      state.template emplace<R2, 1>(rk, rv);
       auto keys_to_match = curr_jk.matching_keys();
       for (const auto& lsk : keys_to_match) {
          auto range = left_hashtable.equal_range(lsk);
          for (auto it = range.first; it != range.second; ++it) {
             auto& [jk, l] = *it;
             auto& [lk, lv] = l;
-            typename JR::Key joined_key = typename JR::Key{lk, rk};
-            JR joined_rec = JR{lv, rv};
-            cached_results.emplace_back(joined_key, joined_rec);
+            state.template emplace<R1, 0>(lk, lv);
          }
       }
-      if (cached_results.empty()) {
+      if (!state.has_next()) {
          std::cerr << "WARNING: HashJoin::probe_next() no match found for right key " << rk << " with JK " << curr_jk
                    << ", violating integrity constraint" << std::endl;
          std::cerr << "Left hashtable size: " << left_hashtable.size() << std::endl;
@@ -165,11 +158,9 @@ struct HashJoin {
       return true;  // can probe next even if joined nothing
    }
 
-   bool has_cached_next() const { return !cached_results.empty(); }
-
    void run()
    {
-      enable_logging = true;
+      state.enable_logging();
       std::optional<std::pair<typename JR::Key, JR>> ret = next();
       while (ret.has_value()) {
          ret = next();
@@ -178,25 +169,19 @@ struct HashJoin {
 
    std::optional<std::pair<typename JR::Key, JR>> next()
    {
-      if (has_cached_next()) {
-         auto res = cached_results.back();
-         cached_results.pop_back();
-         if (enable_logging && FLAGS_log_progress && produced_count % 1000 == 0) {
-            std::cout << "\rHashJoin produced " << (double)(produced_count + 1) / 1000 << "k records. Current JK " << res.first.jk << "...";
-         }
-         produced_count++;
-         return res;
+      if (state.has_next()) {
+         return state.next();
       }
       bool can_probe_next = true;
-      while (can_probe_next && cached_results.empty()) {
+      while (can_probe_next && !state.has_next()) {
          can_probe_next = probe_next();
       }
-      if (cached_results.empty()) {  // exit condition: can_probe_next == false
+      if (!state.has_next()) {  // exit condition: can_probe_next == false
          return std::nullopt;
       }
       return next();
    }
    // tricky to implement went_past
    // tricky to implement jk_to_join
-   long produced() const { return produced_count; }
+   long produced() const { return state.get_produced(); }
 };
