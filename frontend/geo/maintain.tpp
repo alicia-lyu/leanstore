@@ -196,7 +196,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
 {
    sort_key_t sk = maintenance_state.next_cust_to_insert();
 
-   Varchar<25> state_name, county_name, city_name;
+   // Varchar<25> state_name, county_name, city_name;
    // merged.template lookup1<states_t>(states_t::Key{sk}, [&](const states_t& s) { state_name = s.name; });
    // merged.template lookup1<county_t>(county_t::Key{sk}, [&](const county_t& c) { county_name = c.name; });
    // merged.template lookup1<city_t>(city_t::Key{sk}, [&](const city_t& ci) { city_name = ci.name; });
