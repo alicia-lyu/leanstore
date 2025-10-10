@@ -48,7 +48,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    MergedJoiner<AdapterType, MergedAdapterType, MergedScannerType> merged_joiner(merged, join_view);
    merged_joiner.run();
    // load mixed view
-   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> merged_counter(merged, mixed_view);
+   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> merged_counter(merged, mixed_view, false);
    merged_counter.run();
    log_sizes();
    write_table_to_stream<AdapterType<nation2_t>, nation2_t>(nation);

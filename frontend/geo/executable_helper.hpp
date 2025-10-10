@@ -7,9 +7,8 @@
 #include <thread>
 #include "../shared/RocksDB.hpp"
 #include "../shared/logger/logger.hpp"
-#include "tpch_workload.hpp"
 #include "leanstore/concurrency-recovery/CRMG.hpp"
-#include "per_structure_workload.hpp"
+#include "tpch_workload.hpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(warmup_seconds);
@@ -80,13 +79,14 @@ struct RocksDBTraits : public DBTraits {
    std::string name() { return "RocksDB"; }
 };
 
-template <template <typename> class AdapterType,
+template <typename PerStructureWorkloadFull,
+          template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
 struct ExecutableHelper {
    std::unique_ptr<DBTraits> db_traits;
-   std::unique_ptr<PerStructureWorkload> workload;
+   std::unique_ptr<PerStructureWorkloadFull> workload;
 
    TPCHWorkload<AdapterType>& tpch;
 
@@ -95,12 +95,12 @@ struct ExecutableHelper {
    std::atomic<u64> bg_tx_count = 0;
    std::atomic<u64> running_threads_counter = 0;
 
-   ExecutableHelper(leanstore::cr::CRManager& crm, std::unique_ptr<PerStructureWorkload> workload, TPCHWorkload<AdapterType>& tpch)
+   ExecutableHelper(leanstore::cr::CRManager& crm, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
        : db_traits(std::make_unique<LeanStoreTraits>(crm)), workload(std::move(workload)), tpch(tpch)
    {
    }
 
-   ExecutableHelper(RocksDB& rocks_db, std::unique_ptr<PerStructureWorkload> workload, TPCHWorkload<AdapterType>& tpch)
+   ExecutableHelper(RocksDB& rocks_db, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
        : db_traits(std::make_unique<RocksDBTraits>(rocks_db)), workload(std::move(workload)), tpch(tpch)
    {
    }
@@ -122,14 +122,14 @@ struct ExecutableHelper {
 
       schedule_bg_txs();
 
-      tput_tx(std::bind(&PerStructureWorkload::join_n, workload.get()), "join-n");
+      tput_tx(std::bind(&PerStructureWorkloadFull::join_n, workload.get()), "join-n");
 
-      tput_tx(std::bind(&PerStructureWorkload::join_ns, workload.get()), "join-ns");
-      tput_tx(std::bind(&PerStructureWorkload::join_nsc, workload.get()), "join-nsc");
+      tput_tx(std::bind(&PerStructureWorkloadFull::join_ns, workload.get()), "join-ns");
+      tput_tx(std::bind(&PerStructureWorkloadFull::join_nsc, workload.get()), "join-nsc");
 
-      tput_tx(std::bind(&PerStructureWorkload::mixed_n, workload.get()), "mixed-n");
-      tput_tx(std::bind(&PerStructureWorkload::mixed_ns, workload.get()), "mixed-ns");
-      tput_tx(std::bind(&PerStructureWorkload::mixed_nsc, workload.get()), "mixed-nsc");
+      tput_tx(std::bind(&PerStructureWorkloadFull::mixed_n, workload.get()), "mixed-n");
+      tput_tx(std::bind(&PerStructureWorkloadFull::mixed_ns, workload.get()), "mixed-ns");
+      tput_tx(std::bind(&PerStructureWorkloadFull::mixed_nsc, workload.get()), "mixed-nsc");
 
       keep_running_bg_tx = false;
       // wait for background thread to finish
@@ -137,12 +137,11 @@ struct ExecutableHelper {
          std::this_thread::sleep_for(std::chrono::milliseconds(100));  // sleep 0.1 sec
       }
 
-      tput_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), "maintain");
+      tput_tx(std::bind(&PerStructureWorkloadFull::insert1, workload.get()), "maintain");
 
       std::cout << "All threads finished. Cleaning up inserted data..." << std::endl;
 
-      db_traits->run_tx_w_rollback(std::bind(&PerStructureWorkload::cleanup_updates, workload.get()), "cleanup");
-
+      db_traits->run_tx_w_rollback(std::bind(&PerStructureWorkloadFull::cleanup_updates, workload.get()), "cleanup");
       db_traits->cleanup_thread(MAIN_WORKER);
    }
 
@@ -188,13 +187,13 @@ struct ExecutableHelper {
                      tx_type = "erase";
                      bg_erase_count++;
                   } else {
-                     db_traits->run_tx(std::bind(&PerStructureWorkload::insert1, workload.get()), BG_WORKER);
+                     db_traits->run_tx(std::bind(&PerStructureWorkloadFull::insert1, workload.get()), BG_WORKER);
                      tx_type = "update";
                      customer_to_erase = true;
                      bg_insert_count++;
                   }
                } else {
-                  db_traits->run_tx(std::bind(&PerStructureWorkload::bg_lookup, workload.get()), BG_WORKER);
+                  db_traits->run_tx(std::bind(&PerStructureWorkloadFull::bg_lookup, workload.get()), BG_WORKER);
                   tx_type = "lookup";
                   bg_lookup_count++;
                }
@@ -224,7 +223,7 @@ struct ExecutableHelper {
       if (tx == "maintain") {
          ret = ret && !workload->insertion_complete();
       } else if (tx == "join-n" || tx == "mixed-n") {
-         return !workload->n_scan_finished(); // overriding
+         return !workload->n_scan_finished();  // overriding
       }
       return ret;
    }
