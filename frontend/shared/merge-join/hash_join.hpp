@@ -14,8 +14,9 @@
 struct HashLogger {
    inline static std::ofstream log_file;
    inline static bool is_initialized = false;
+   inline static long max_hash_table_bytes = 0;
 
-   inline static std::map<int, std::tuple<long, double, long long>> build_phase_time;
+   inline static std::map<int, std::tuple<long, double, double, long long>> build_phase_time;
 
    static void init()
    {
@@ -23,21 +24,25 @@ struct HashLogger {
          return;
       std::filesystem::path log_path = std::filesystem::path(FLAGS_csv_path) / "hash_stats.csv";
       log_file.open(log_path, std::ios::trunc);
-      log_file << "log2_produced_count,build_us,hash_table_bytes\n";
+      log_file << "log2_produced_count,build_us,wait_us,hash_table_bytes\n";
       is_initialized = true;
    }
 
-   static void log1(long produced_count, double build_us, long hash_table_bytes)
+   static void log1(long produced_count, double build_us, double wait_us, long hash_table_bytes)
    {
       init();
+      if (hash_table_bytes > max_hash_table_bytes) {
+         max_hash_table_bytes = hash_table_bytes;
+      }
       double log2_produced_count_double = std::log2(produced_count + 1);
       int log2_produced_count = std::round(log2_produced_count_double);
       if (build_phase_time.find(log2_produced_count) == build_phase_time.end()) {
-         build_phase_time[log2_produced_count] = std::make_tuple(0, 0.0, 0LL);
+         build_phase_time[log2_produced_count] = std::make_tuple(0, 0.0,0.0, 0LL);
       }
-      auto& [cnt, total_us, total_ht_bytes] = build_phase_time[log2_produced_count];
+      auto& [cnt, total_build_us, total_wait_us, total_ht_bytes] = build_phase_time[log2_produced_count];
       cnt++;
-      total_us += build_us;
+      total_build_us += build_us;
+      total_wait_us += wait_us;
       total_ht_bytes += static_cast<long long>(hash_table_bytes);
    }
 
@@ -49,11 +54,12 @@ struct HashLogger {
       } else {
          std::cerr << "HashLogger::flush() log_file not open!" << std::endl;
       }
-      for (const auto& [log2_produced_count, v] : build_phase_time) {
-         for (auto* os : out_streams) {
-            auto& [cnt, total_us, total_ht_bytes] = v;
-            *os << log2_produced_count << ',' << total_us / cnt << ',' << total_ht_bytes / cnt << std::endl;
+      for (auto* os : out_streams) {
+         for (const auto& [log2_produced_count, v] : build_phase_time) {
+            auto& [cnt, total_build_us, total_wait_us, total_ht_bytes] = v;
+            *os << log2_produced_count << ',' << total_build_us / cnt << ',' << total_wait_us / cnt << ',' << total_ht_bytes / cnt << std::endl;
          }
+         *os << "nan,nan,nan," << max_hash_table_bytes << std::endl;
       }
       log_file.close();
    }
@@ -73,6 +79,8 @@ struct HashJoin {
 
    typename std::unordered_multimap<JK, std::pair<typename R1::Key, R1>, std::hash<JK>> left_hashtable;
 
+   double wait_us = 0;
+
    HashJoin(
        std::function<std::optional<std::pair<typename R1::Key, R1>>()> fetch_left,
        std::function<std::optional<std::pair<typename R2::Key, R2>>()> fetch_right,
@@ -80,7 +88,11 @@ struct HashJoin {
        const std::function<void(const typename JR::Key&, const JR&)>& consume_joined = [](const typename JR::Key&, const JR&) {})
        : seek_jk(seek_jk), consume_joined(consume_joined), fetch_left(fetch_left), fetch_right(fetch_right)
    {
+      std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
       build_phase();
+      std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+      auto d = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+      wait_us = d / 1000.0 - build_us;
    }
 
    ~HashJoin()
@@ -89,7 +101,7 @@ struct HashJoin {
          std::cout << "\rHashJoin produced a total of " << (double)produced_count / 1000 << "k records. Seek JK " << seek_jk << "          "
                    << std::endl;
       }
-      HashLogger::log1(produced_count, build_us, hash_table_bytes());
+      HashLogger::log1(produced_count, build_us, wait_us, hash_table_bytes());
    }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
@@ -98,9 +110,12 @@ struct HashJoin {
 
    void build_phase()
    {
-      std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+      std::optional<std::chrono::high_resolution_clock::time_point> start = std::nullopt;
       while (true) {
          auto kv = fetch_left();
+         if (!start.has_value()) {
+            start = std::chrono::high_resolution_clock::now();
+         }
          if (!kv.has_value()) {
             break;
          }
@@ -112,8 +127,8 @@ struct HashJoin {
          left_hashtable.emplace(curr_jk, std::make_pair(k, v));
       }
       std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
-      auto build_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
-      build_us += build_ns / 1000.0;
+      auto build_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - *start).count();
+      build_us = build_ns / 1000.0;
    }
 
    std::vector<std::pair<typename JR::Key, JR>> cached_results;
