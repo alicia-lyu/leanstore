@@ -77,6 +77,31 @@ class WorkloadStats
       nscci_mixed_count++;
    }
 
+   long n_distinct_mktsegment_sum = 0;
+   long n_distinct_qcount = 0;
+   long ns_distinct_mktsegment_sum = 0;
+   long ns_distinct_qcount = 0;
+   long nsc_distinct_mktsegment_sum = 0;
+   long nsc_distinct_qcount = 0;
+
+   void new_n_distinct(long distinct)
+   {
+      n_distinct_mktsegment_sum += distinct;
+      n_distinct_qcount++;
+   }
+
+   void new_ns_distinct(long distinct)
+   {
+      ns_distinct_mktsegment_sum += distinct;
+      ns_distinct_qcount++;
+   }
+
+   void new_nsc_distinct(long distinct)
+   {
+      nsc_distinct_mktsegment_sum += distinct;
+      nsc_distinct_qcount++;
+   }
+
    ~WorkloadStats()
    {
       std::cout << "----- WorkloadStats -----" << std::endl;

@@ -2,13 +2,12 @@
 #include "../shared/adapter-scanner/LeanStoreAdapter.hpp"
 #include "../shared/adapter-scanner/LeanStoreMergedAdapter.hpp"
 #include "../shared/logger/leanstore_logger.hpp"
-#include "tpch_tables.hpp"
 #include "executable_helper.hpp"
-#include "per_structure_workload.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "per_structure_workload.hpp"
+#include "tpch_tables.hpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -27,7 +26,10 @@ DEFINE_int32(bgw_pct, 10, "Percentage of writes in background transactions (0-10
 using namespace geo_join;
 
 using GJ = GeoJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
-using EH = ExecutableHelper<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
+using BaseWorkload = PerStructureWorkload<BaseGeoJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>;
+using ViewWorkload = PerStructureWorkload<ViewGeoJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>;
+using MergedWorkload = PerStructureWorkload<MergedGeoJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>;
+using HashWorkload = PerStructureWorkload<HashGeoJoin<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>;
 
 int main(int argc, char** argv)
 {
@@ -96,30 +98,30 @@ int main(int argc, char** argv)
 
    switch (FLAGS_storage_structure) {
       case 1: {
-         auto base_workload =
-             std::make_unique<BaseWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
-         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(base_workload)), tpch);
+         auto base_workload = std::make_unique<BaseWorkload>(tpchGeoJoin, "base_idx");
+         using EH = ExecutableHelper<BaseWorkload, LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
+         EH helper(crm, std::unique_ptr(std::move(base_workload)), tpch);
          helper.run();
          break;
       }
       case 2: {
-         auto view_workload =
-             std::make_unique<ViewWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
-         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(view_workload)), tpch);
+         auto view_workload = std::make_unique<ViewWorkload>(tpchGeoJoin, "mat_view");
+         using EH = ExecutableHelper<ViewWorkload, LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
+         EH helper(crm, std::unique_ptr(std::move(view_workload)), tpch);
          helper.run();
          break;
       }
       case 3: {
-         auto merged_workload =
-             std::make_unique<MergedWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
-         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(merged_workload)), tpch);
+         auto merged_workload = std::make_unique<MergedWorkload>(tpchGeoJoin, "merged_idx");
+         using EH = ExecutableHelper<MergedWorkload, LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
+         EH helper(crm, std::unique_ptr(std::move(merged_workload)), tpch);
          helper.run();
          break;
       }
       case 4: {
-         auto geo_join_workload =
-             std::make_unique<HashWorkload<LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>>(tpchGeoJoin);
-         EH helper(crm, std::unique_ptr<PerStructureWorkload>(std::move(geo_join_workload)), tpch);
+         auto geo_join_workload = std::make_unique<HashWorkload>(tpchGeoJoin, "hash_idx");
+         using EH = ExecutableHelper<HashWorkload, LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
+         EH helper(crm, std::unique_ptr(std::move(geo_join_workload)), tpch);
          helper.run();
          break;
       }

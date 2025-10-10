@@ -15,22 +15,43 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_view(sort_key_t select_sk)
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_view(sort_key_t select_sk, bool distinct)
 {
    long cust_sum = 0;
-   mixed_view.scan(
-       mixed_view_t::Key{select_sk},
-       [&](const mixed_view_t::Key& mk, const mixed_view_t& mv) {
-          auto curr_sk = SKBuilder<sort_key_t>::create(mk, mv);
-          if (cust_sum == 0) {
-             update_sk(select_sk, curr_sk);
-          } else if (curr_sk.match(select_sk) != 0) {
-             return false;
-          }
-          cust_sum += std::get<4>(mv.payloads).customer_count;
-          return true;
-       },
-       []() {});
+   if (!distinct) {
+      mixed_view.scan(
+          mixed_view_t::Key{select_sk},
+          [&](const mixed_view_t::Key& mk, const mixed_view_t& mv) {
+             auto curr_sk = SKBuilder<sort_key_t>::create(mk, mv);
+             if (cust_sum == 0) {
+                update_sk(select_sk, curr_sk);
+             } else if (curr_sk.match(select_sk) != 0) {
+                return false;
+             }
+             cust_sum += std::get<4>(mv.payloads).customer_count;
+             return true;
+          },
+          []() {});
+   } else {
+      std::vector<Varchar<10>> seen_mktsegments;
+      join_view.scan(
+          view_t::Key{select_sk},
+          [&](const view_t::Key& vk, const view_t& v) {
+             auto curr_sk = SKBuilder<sort_key_t>::create(vk, v);
+             if (cust_sum == 0) {
+                update_sk(select_sk, curr_sk);
+             } else if (curr_sk.match(select_sk) != 0) {
+                return false;
+             }
+             if (std::find(seen_mktsegments.begin(), seen_mktsegments.end(), std::get<4>(v.payloads).c_mktsegment) == seen_mktsegments.end()) {
+                seen_mktsegments.push_back(std::get<4>(v.payloads).c_mktsegment);
+                cust_sum++;
+             }
+             return true;
+          },
+          []() {});
+   }
+
    return cust_sum;
 }
 
@@ -38,11 +59,14 @@ template <template <typename...> class MergedAdapterType, template <typename...>
 struct MergedScannerCounter {
    std::unique_ptr<MergedScannerType<sort_key_t, view_t, nation2_t, states_t, county_t, city_t, customer2_t>> scanner;
    long long produced = 0;
+   const bool distinct;
    using K = std::variant<nation2_t::Key, states_t::Key, county_t::Key, city_t::Key, customer_count_t::Key>;
    using V = std::variant<nation2_t, states_t, county_t, city_t, customer_count_t>;
 
-   MergedScannerCounter(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, sort_key_t sk = sort_key_t::max())
-       : scanner(merged.template getScanner<sort_key_t, view_t>())
+   MergedScannerCounter(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged,
+                        bool distinct,
+                        sort_key_t sk = sort_key_t::max())
+       : scanner(merged.template getScanner<sort_key_t, view_t>()), distinct(distinct)
    {
       if (sk != sort_key_t::max()) {
          scanner->template seek<city_t>(city_t::Key{sk});
@@ -52,6 +76,7 @@ struct MergedScannerCounter {
    // all methods required by premerged join
 
    std::optional<std::pair<K, V>> buffered_output = std::nullopt;
+   std::vector<Varchar<10>> seen_mktsegments;
 
    std::optional<std::pair<K, V>> next(sort_key_t last_sk = sort_key_t::max(), int customer_count = 0)
    {
@@ -59,6 +84,9 @@ struct MergedScannerCounter {
          auto ret = buffered_output;
          buffered_output = std::nullopt;
          return ret;
+      }
+      if (customer_count == 0) {
+         seen_mktsegments.clear();
       }
       auto kv = scanner->next();
       // get type from variant
@@ -74,14 +102,23 @@ struct MergedScannerCounter {
                                assert(last_sk == sort_key_t::max() || SKBuilder<sort_key_t>::get<customer_count_t>(curr_sk) == last_sk);
                             }},
                  k);
-      if (!output_k.has_value()) {
-         return next(SKBuilder<sort_key_t>::get<customer_count_t>(curr_sk), ++customer_count);
-      }
       std::optional<V> output_v = std::nullopt;
       std::visit(overloaded{[&](const nation2_t& n) { output_v = V{n}; }, [&](const states_t& s) { output_v = V{s}; },
                             [&](const county_t& c) { output_v = V{c}; }, [&](const city_t& ci) { output_v = V{ci}; },
-                            [&](const customer2_t&) { assert(false); }},
+                            [&](const customer2_t& cu) {
+                               if (!distinct) {
+                                  customer_count++;
+                               } else {
+                                  if (std::find(seen_mktsegments.begin(), seen_mktsegments.end(), cu.c_mktsegment) == seen_mktsegments.end()) {
+                                     seen_mktsegments.push_back(cu.c_mktsegment);
+                                     customer_count++;
+                                  }
+                               }
+                            }},
                  v);
+      if (!output_k.has_value()) {
+         return next(SKBuilder<sort_key_t>::get<customer_count_t>(curr_sk), customer_count);
+      }
       produced++;
       if (customer_count > 0) {
          buffered_output = std::make_pair(output_k.value(), output_v.value());
@@ -143,16 +180,17 @@ struct MergedCounter {
 
    sort_key_t seek_key;
    const sort_key_t seek_max = sort_key_t::max();
-   MergedCounter(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, sort_key_t sk = sort_key_t::max())
-       : scanner_counter(merged), joiner(scanner_counter), seek_key(sk)
+   MergedCounter(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged, bool distinct, sort_key_t sk = sort_key_t::max())
+       : scanner_counter(merged, distinct), joiner(scanner_counter), seek_key(sk)
    {
       next();  // first seek
    }
 
    MergedCounter(MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>& merged,
                  AdapterType<mixed_view_t>& mixed_view,
+                 bool distinct,
                  sort_key_t sk = sort_key_t::max())
-       : scanner_counter(merged),
+       : scanner_counter(merged, distinct),
          joiner(scanner_counter,
                 [this](const mixed_view_t::Key& k, const mixed_view_t& v) {
                    if (mixed_view_ptr) {
@@ -187,9 +225,9 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_merged(sort_key_t select_sk)
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_merged(sort_key_t select_sk, bool distinct)
 {
-   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> counter(merged, select_sk);
+   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> counter(merged, distinct, select_sk);
 
    long cust_sum = 0;
    while (true) {
@@ -200,6 +238,36 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
       cust_sum += std::get<4>(v.payloads).customer_count;
    }
    return cust_sum;
+}
+
+template <template <typename> class ScannerType>
+std::optional<std::pair<customer_count_t::Key, customer_count_t>> next_cust_count(std::unique_ptr<ScannerType<customer2_t>>& customer, bool distinct)
+{
+   int customer_count = 0;
+   std::vector<Varchar<10>> seen_mktsegments;
+   std::optional<customer_count_t::Key> curr_key = std::nullopt;
+   while (true) {
+      auto kv = customer->next();
+      if (!kv.has_value()) {
+         return std::nullopt;
+      }
+      auto [k, v] = *kv;
+      if (curr_key == std::nullopt) {
+         curr_key = customer_count_t::Key{k};
+      } else if (curr_key->nationkey != k.nationkey || curr_key->statekey != k.statekey || curr_key->countykey != k.countykey ||
+                 curr_key->citykey != k.citykey) {
+         customer->after_seek = true;  // rescan this customer
+         return std::make_pair(*curr_key, customer_count_t{customer_count});
+      }
+      if (!distinct) {
+         customer_count++;
+      } else {
+         if (std::find(seen_mktsegments.begin(), seen_mktsegments.end(), v.c_mktsegment) == seen_mktsegments.end()) {
+            seen_mktsegments.push_back(v.c_mktsegment);
+            customer_count++;
+         }
+      }
+   }
 }
 
 template <template <typename> class AdapterType, template <typename> class ScannerType>
@@ -220,6 +288,7 @@ struct BaseCounter {
                AdapterType<county_t>& c,
                AdapterType<city_t>& ci,
                AdapterType<customer2_t>& cu,
+               bool distinct,
                sort_key_t sk = sort_key_t::max())
        : nation(n.getScanner()), states(s.getScanner()), county(c.getScanner()), city(ci.getScanner()), customer(cu.getScanner())
    {
@@ -229,26 +298,7 @@ struct BaseCounter {
       joiner_ns.emplace([this]() { return nation->next(); }, [this]() { return states->next(); });
       joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county->next(); });
       joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city->next(); });
-      final_joiner.emplace([this]() { return joiner_nscci->next(); },
-                           [this]() -> std::optional<std::pair<customer_count_t::Key, customer_count_t>> {
-                              int customer_count = 0;
-                              std::optional<customer_count_t::Key> curr_key = std::nullopt;
-                              while (true) {
-                                 auto kv = customer->next();
-                                 if (!kv.has_value()) {
-                                    return std::nullopt;
-                                 }
-                                 auto [k, v] = *kv;
-                                 if (curr_key == std::nullopt) {
-                                    curr_key = customer_count_t::Key{k};
-                                 } else if (curr_key->nationkey != k.nationkey || curr_key->statekey != k.statekey ||
-                                            curr_key->countykey != k.countykey || curr_key->citykey != k.citykey) {
-                                    customer->after_seek = true;  // rescan this customer
-                                    return std::make_pair(*curr_key, customer_count_t{customer_count});
-                                 }
-                                 customer_count++;
-                              }
-                           });
+      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this, distinct]() { return next_cust_count(customer, distinct); });
       auto first_ret = final_joiner->next();
       if (first_ret.has_value()) {
          update_sk(sk, first_ret->first.jk);
@@ -279,9 +329,9 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_base(sort_key_t select_sk)
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_base(sort_key_t select_sk, bool distinct)
 {
-   BaseCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, select_sk);
+   BaseCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, distinct, select_sk);
    long cust_sum = 0;
    while (true) {
       auto kv = counter.next();
@@ -311,6 +361,7 @@ struct HashCounter {
                AdapterType<county_t>& c,
                AdapterType<city_t>& ci,
                AdapterType<customer2_t>& cu,
+               bool distinct,
                sort_key_t sk = sort_key_t::max())
        : nation(n.getScanner()), states(s.getScanner()), county(c.getScanner()), city(ci.getScanner()), customer(cu.getScanner())
    {
@@ -320,27 +371,7 @@ struct HashCounter {
       joiner_ns.emplace([this]() { return nation->next(); }, [this]() { return states->next(); }, sk);
       joiner_nsc.emplace([this]() { return joiner_ns->next(); }, [this]() { return county->next(); }, sk);
       joiner_nscci.emplace([this]() { return joiner_nsc->next(); }, [this]() { return city->next(); }, sk);
-      final_joiner.emplace([this]() { return joiner_nscci->next(); },
-                           [this]() -> std::optional<std::pair<customer_count_t::Key, customer_count_t>> {
-                              int customer_count = 0;
-                              std::optional<customer_count_t::Key> curr_key = std::nullopt;
-                              while (true) {
-                                 auto kv = customer->next();
-                                 if (!kv.has_value()) {
-                                    return std::nullopt;
-                                 }
-                                 auto [k, v] = *kv;
-                                 if (curr_key == std::nullopt) {
-                                    curr_key = customer_count_t::Key{k};
-                                 } else if (curr_key->nationkey != k.nationkey || curr_key->statekey != k.statekey ||
-                                            curr_key->countykey != k.countykey || curr_key->citykey != k.citykey) {
-                                    customer->after_seek = true;  // rescan this customer
-                                    return std::make_pair(*curr_key, customer_count_t{customer_count});
-                                 }
-                                 customer_count++;
-                              }
-                           },
-                           sk);
+      final_joiner.emplace([this]() { return joiner_nscci->next(); }, [this, distinct]() { return next_cust_count(customer, distinct); }, sk);
    }
 
    void run() { final_joiner->run(); }
@@ -363,7 +394,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_hash(sort_key_t select_sk)
+long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_hash(sort_key_t select_sk, bool distinct)
 {
    city.scan(
        city_t::Key{select_sk},
@@ -373,7 +404,7 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
           return false;  // scan once
        },
        []() {});
-   HashCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, select_sk);
+   HashCounter<AdapterType, ScannerType> counter(nation, states, county, city, customer2, distinct, select_sk);
    long cust_sum = 0;
    while (true) {
       auto kv = counter.next();

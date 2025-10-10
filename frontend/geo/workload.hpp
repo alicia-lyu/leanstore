@@ -12,8 +12,15 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
+struct GeoJoinWrapper; // forward declaration
+
+template <template <typename> class AdapterType,
+          template <typename...> class MergedAdapterType,
+          template <typename> class ScannerType,
+          template <typename...> class MergedScannerType>
 class GeoJoin
 {
+   friend struct GeoJoinWrapper<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>;
    using TPCH = TPCHWorkload<AdapterType>;
    TPCH& workload;
    using MergedTree = MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>;
@@ -109,103 +116,13 @@ class GeoJoin
       int n;
       if (lottery == 0) {
          n_i %= nation_keys.size();
-         n = nation_keys.at(n_i); 
-         n_i++; // can increment to nation_keys.size()
+         n = nation_keys.at(n_i);
+         n_i++;  // can increment to nation_keys.size()
       } else {
          n = 1;  // hot nation
       }
       // std::cout << "get_n(): returning nationkey = " << n << ", n_i = " << n_i << std::endl;
       return std::make_pair(n, n_i == nation_keys.size());
-   }
-
-   void join_n_hash()
-   {
-      long produced = range_query_hash(get_n().first, 0, 0, 0);
-      stats.new_n_join(produced);
-   }
-   void join_n_view()
-   {
-      long produced = range_query_by_view(get_n().first, 0, 0, 0);
-      stats.new_n_join(produced);
-   }
-   void join_n_merged()
-   {
-      long produced = range_query_by_merged(get_n().first, 0, 0, 0);
-      stats.new_n_join(produced);
-   }
-
-   void join_n_base()
-   {
-      long produced = range_query_by_base(get_n().first, 0, 0, 0);
-      stats.new_n_join(produced);
-   }
-
-   void join_ns_hash()
-   {
-      long produced = range_query_hash(params.get_nationkey(), params.get_statekey(), 0, 0);
-      stats.new_ns_join(produced);
-   }
-
-   void join_nsc_hash()
-   {
-      long produced = range_query_hash(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
-      stats.new_nsc_join(produced);
-   }
-
-   void join_nscci_hash()
-   {
-      long produced = range_query_hash(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey());
-      stats.new_nscci_join(produced);
-   }
-
-   // Find all joined rows for the same nationkey, statekey
-   void join_ns_view()
-   {
-      long produced = range_query_by_view(params.get_nationkey(), params.get_statekey(), 0, 0);
-      stats.new_ns_join(produced);
-   }
-   void join_ns_merged()
-   {
-      long produced = range_query_by_merged(params.get_nationkey(), params.get_statekey(), 0, 0);
-      stats.new_ns_join(produced);
-   }
-   void join_ns_base()
-   {
-      long produced = range_query_by_base(params.get_nationkey(), params.get_statekey(), 0, 0);
-      stats.new_ns_join(produced);
-   }
-
-   // Find all joined rows for the same nationkey, statekey, countykey
-   void join_nsc_view()
-   {
-      long produced = range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
-      stats.new_nsc_join(produced);
-   }
-   void join_nsc_merged()
-   {
-      long produced = range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
-      stats.new_nsc_join(produced);
-   }
-   void join_nsc_base()
-   {
-      long produced = range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0);
-      stats.new_nsc_join(produced);
-   }
-
-   // Find all joined rows for the same nationkey, statekey, countykey, citykey
-   void join_nscci_view()
-   {
-      stats.new_nscci_join(range_query_by_view(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey()));
-   }
-
-   void join_nscci_merged()
-   {
-      stats.new_nscci_join(range_query_by_merged(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey()));
-   }
-
-   void join_nscci_base()
-   {
-      stats.new_nscci_join(range_query_by_base(params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey()));
    }
 
    // -------------------------------------------------------------
@@ -285,111 +202,10 @@ class GeoJoin
 
    // -------------------------------------------------------------
    // ---------------------- JOIN + GROUP-BY ----------------------
-
-   long range_mixed_query_by_view(sort_key_t select_sk);
-   long range_mixed_query_by_merged(sort_key_t select_sk);
-   long range_mixed_query_by_base(sort_key_t select_sk);
-   long range_mixed_query_hash(sort_key_t select_sk);
-
-   void mixed_n_hash()
-   {
-      long cust_sum = range_mixed_query_hash(sort_key_t{get_n().first, 0, 0, 0, 0});
-      stats.new_n_mixed(cust_sum);
-   }
-
-   void mixed_n_view()
-   {
-      long cust_sum = range_mixed_query_by_view(sort_key_t{get_n().first, 0, 0, 0, 0});
-      stats.new_n_mixed(cust_sum);
-   }
-
-   void mixed_n_merged()
-   {
-      long cust_sum = range_mixed_query_by_merged(sort_key_t{get_n().first, 0, 0, 0, 0});
-      stats.new_n_mixed(cust_sum);
-   }
-
-   void mixed_n_base()
-   {
-      long cust_sum = range_mixed_query_by_base(sort_key_t{get_n().first, 0, 0, 0, 0});
-      stats.new_n_mixed(cust_sum);
-   }
-
-   void mixed_ns_hash()
-   {
-      long cust_sum = range_mixed_query_hash(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
-      stats.new_ns_mixed(cust_sum);
-   }
-
-   void mixed_nsc_hash()
-   {
-      long cust_sum = range_mixed_query_hash(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
-      stats.new_nsc_mixed(cust_sum);
-   }
-
-   void mixed_nscci_hash()
-   {
-      long cust_sum =
-          range_mixed_query_hash(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
-      stats.new_nscci_mixed(cust_sum);
-   }
-
-   void mixed_ns_base()
-   {
-      long cust_sum = range_mixed_query_by_base(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
-      stats.new_ns_mixed(cust_sum);
-   }
-
-   void mixed_nsc_base()
-   {
-      long cust_sum = range_mixed_query_by_base(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
-      stats.new_nsc_mixed(cust_sum);
-   }
-
-   void mixed_nscci_base()
-   {
-      long cust_sum =
-          range_mixed_query_by_base(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
-      stats.new_nscci_mixed(cust_sum);
-   }
-
-   void mixed_ns_view()
-   {
-      long cust_sum = range_mixed_query_by_view(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
-      stats.new_ns_mixed(cust_sum);
-   }
-
-   void mixed_nsc_view()
-   {
-      long cust_sum = range_mixed_query_by_view(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
-      stats.new_nsc_mixed(cust_sum);
-   }
-
-   void mixed_nscci_view()
-   {
-      long cust_sum =
-          range_mixed_query_by_view(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
-      stats.new_nscci_mixed(cust_sum);
-   }
-
-   void mixed_ns_merged()
-   {
-      long cust_sum = range_mixed_query_by_merged(sort_key_t{params.get_nationkey(), params.get_statekey(), 0, 0, 0});
-      stats.new_ns_mixed(cust_sum);
-   }
-
-   void mixed_nsc_merged()
-   {
-      long cust_sum = range_mixed_query_by_merged(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), 0, 0});
-      stats.new_nsc_mixed(cust_sum);
-   }
-
-   void mixed_nscci_merged()
-   {
-      long cust_sum =
-          range_mixed_query_by_merged(sort_key_t{params.get_nationkey(), params.get_statekey(), params.get_countykey(), params.get_citykey(), 0});
-      stats.new_nscci_mixed(cust_sum);
-   }
+   long range_mixed_query_by_view(sort_key_t select_sk, bool distinct);
+   long range_mixed_query_by_merged(sort_key_t select_sk, bool distinct);
+   long range_mixed_query_by_base(sort_key_t select_sk, bool distinct);
+   long range_mixed_query_hash(sort_key_t select_sk, bool distinct);
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
