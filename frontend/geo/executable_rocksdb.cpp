@@ -25,7 +25,10 @@ DEFINE_int32(bgw_pct, 10, "Percentage of writes in background transactions (0-10
 using namespace geo_join;
 
 using GJ = GeoJoin<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
-using EH = ExecutableHelper<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
+using BaseWorkload = PerStructureWorkload<BaseGeoJoin<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>;
+using ViewWorkload = PerStructureWorkload<ViewGeoJoin<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>;
+using MergedWorkload = PerStructureWorkload<MergedGeoJoin<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>;
+using HashWorkload = PerStructureWorkload<HashGeoJoin<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>;
 
 thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 
@@ -73,22 +76,25 @@ int main(int argc, char** argv)
    switch (FLAGS_storage_structure) {
       case 1: {
          auto base_workload =
-             std::make_unique<BaseWorkload<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>(tpchGeoJoin);
-         EH helper(rocks_db, std::unique_ptr<PerStructureWorkload>(std::move(base_workload)), tpch);
+             std::make_unique<BaseWorkload>(tpchGeoJoin, "base_idx");
+         using EH = ExecutableHelper<BaseWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
+         EH helper(rocks_db, std::unique_ptr(std::move(base_workload)), tpch);
          helper.run();
          break;
       }
       case 2: {
          auto view_workload =
-             std::make_unique<ViewWorkload<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>(tpchGeoJoin);
-         EH helper(rocks_db, std::unique_ptr<PerStructureWorkload>(std::move(view_workload)), tpch);
+             std::make_unique<ViewWorkload>(tpchGeoJoin, "mat_view");
+         using EH = ExecutableHelper<ViewWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
+         EH helper(rocks_db, std::unique_ptr(std::move(view_workload)), tpch);
          helper.run();
          break;
       }
       case 3: {
          auto merged_workload =
-             std::make_unique<MergedWorkload<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>>(tpchGeoJoin);
-         EH helper(rocks_db, std::unique_ptr<PerStructureWorkload>(std::move(merged_workload)), tpch);
+             std::make_unique<MergedWorkload>(tpchGeoJoin, "merged_idx");
+         using EH = ExecutableHelper<MergedWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
+         EH helper(rocks_db, std::unique_ptr(std::move(merged_workload)), tpch);
          helper.run();
          break;
       }

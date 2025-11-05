@@ -94,10 +94,7 @@ struct HashJoin {
       wait_us = d / 1000.0 - build_us;
    }
 
-   ~HashJoin()
-   {
-      HashLogger::log1(state.get_produced(), build_us, wait_us, hash_table_bytes());
-   }
+   ~HashJoin() { HashLogger::log1(state.get_produced(), build_us, wait_us, hash_table_bytes()); }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
 
@@ -138,6 +135,7 @@ struct HashJoin {
       if (seek_jk != JK::max() && curr_jk.match(seek_jk) != 0) {
          return false;
       }
+      JK last_jk = state.jk_to_join;
       state.refresh(curr_jk);
       state.template emplace<R2, 1>(rk, rv);
       auto keys_to_match = curr_jk.matching_keys();
@@ -149,9 +147,9 @@ struct HashJoin {
             state.template emplace<R1, 0>(lk, lv);
          }
       }
-      if (!state.has_next()) {
-         std::cerr << "WARNING: HashJoin::probe_next() no match found for right key " << rk << " with JK " << curr_jk
-                   << ", violating integrity constraint" << std::endl;
+
+      if (state.get_produced() != 0 && !state.has_next()) {
+         std::cerr << "WARNING: HashJoin::probe_next() no match found for JK " << last_jk << ", violating integrity constraint" << std::endl;
          std::cerr << "Left hashtable size: " << left_hashtable.size() << std::endl;
          std::cerr << "Seek JK: " << seek_jk << std::endl;
       }
