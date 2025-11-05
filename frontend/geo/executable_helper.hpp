@@ -123,13 +123,16 @@ struct ExecutableHelper {
       schedule_bg_txs();
 
       tput_tx(std::bind(&PerStructureWorkloadFull::join_n, workload.get()), "join-n");
-
       tput_tx(std::bind(&PerStructureWorkloadFull::join_ns, workload.get()), "join-ns");
       tput_tx(std::bind(&PerStructureWorkloadFull::join_nsc, workload.get()), "join-nsc");
 
       tput_tx(std::bind(&PerStructureWorkloadFull::mixed_n, workload.get()), "mixed-n");
       tput_tx(std::bind(&PerStructureWorkloadFull::mixed_ns, workload.get()), "mixed-ns");
       tput_tx(std::bind(&PerStructureWorkloadFull::mixed_nsc, workload.get()), "mixed-nsc");
+
+      tput_tx(std::bind(&PerStructureWorkloadFull::distinct_n, workload.get()), "distinct-n");
+      tput_tx(std::bind(&PerStructureWorkloadFull::distinct_ns, workload.get()), "distinct-ns");
+      tput_tx(std::bind(&PerStructureWorkloadFull::distinct_nsc, workload.get()), "distinct-nsc");
 
       keep_running_bg_tx = false;
       // wait for background thread to finish
