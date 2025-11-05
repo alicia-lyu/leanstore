@@ -17,7 +17,7 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 dram                	:= 0.1
 scale 			    	:= 15
 tentative_skip_bytes	:= 0 # do no tentative skip bytes
-bgw_pct 		  		:= 10 # background write percentage	
+bgw_pct 		  		:= 0 # background write percentage	
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
