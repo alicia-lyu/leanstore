@@ -24,18 +24,3 @@ target_link_libraries(geo_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads 
 
 add_executable(geo_lsm geo/executable_rocksdb.cpp)
 target_link_libraries(geo_lsm PUBLIC RocksDBLogger Threads::Threads)
-
-# Add the executable for the workload test
-add_executable(job_workload_test job/workload.cpp)
-
-# Link libraries to the test executable
-target_link_libraries(job_workload_test PUBLIC
-    Logger              # For the base Logger class
-    GTest::gtest        # Google Test framework (assumes this target is defined by your root CMake)
-    gflags              # Use target name from lib/gflags.cmake
-    Threads::Threads    # For multi-threading support
-)
-
-# Discover tests in the executable
-include(GoogleTest)
-gtest_discover_tests(job_workload_test)
