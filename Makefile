@@ -17,7 +17,7 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 dram                	:= 0.1
 scale 			    	:= 15
 tentative_skip_bytes	:= 0 # do no tentative skip bytes
-bgw_pct 		  		:= 10 # background write percentage	
+bgw_pct 		  		:= 0 # background write percentage	
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
@@ -45,12 +45,12 @@ temp_btree:
 # 	-$(MAKE) geo_btree_3 scale=15 tentative_skip_bytes=20480
 
 temp_lsm:
-# 	-$(MAKE) geo_lsm scale=40
-	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=4096
-	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=8192
-	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=12288
-	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=16384
-	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=20480
+	-$(MAKE) geo_lsm scale=40
+# 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=4096
+# 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=8192
+# 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=12288
+# 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=16384
+# 	-$(MAKE) geo_lsm_3 scale=40 tentative_skip_bytes=20480
 
 temp:
 	-$(MAKE) geo_btree_2 dram=0.1

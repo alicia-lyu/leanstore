@@ -119,9 +119,9 @@ int main(int argc, char** argv)
          break;
       }
       case 4: {
-         auto geo_join_workload = std::make_unique<HashWorkload>(tpchGeoJoin, "hash_idx");
+         auto hash_workload = std::make_unique<HashWorkload>(tpchGeoJoin, "hash");
          using EH = ExecutableHelper<HashWorkload, LeanStoreAdapter, LeanStoreMergedAdapter, LeanStoreScanner, LeanStoreMergedScanner>;
-         EH helper(crm, std::unique_ptr(std::move(geo_join_workload)), tpch);
+         EH helper(crm, std::unique_ptr(std::move(hash_workload)), tpch);
          helper.run();
          break;
       }
