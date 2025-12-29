@@ -252,6 +252,34 @@
       ],
       "cwd": "${workspaceFolder}",
       "stopOnEntry": false
+    },
+    {
+      "name": "geo_lsm_4",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-debug/frontend/geo_lsm",
+      "args": [
+        "--vi=false",
+        "--mv=false",
+        "--isolation_level=ser",
+        "--optimistic_scan=false",
+        "--pp_threads=1",
+        "--csv_truncate=false",
+        "--worker_threads=2",
+        "--csv_path=build-debug/geo_lsm/15-in-0.1",
+        "--log_progress=true",
+        "--tentative_skip_bytes=0",
+        "--bgw_pct=0",
+        "--recover_file=/mnt/ssd/geo_lsm/build-debug/15.json",
+        "--persist_file=./leanstore.json",
+        "--trunc=false",
+        "--ssd_path=/mnt/ssd/geo_lsm/15",
+        "--tpch_scale_factor=15",
+        "--dram_gib=0.1",
+        "--storage_structure=4"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
     }
   ]
 }

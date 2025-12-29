@@ -152,7 +152,8 @@ struct MaintenanceState {
 
    MaintenanceState(int& inserted_last_id_ref) : inserted_last_id_ref(inserted_last_id_ref), erased_last_id(inserted_last_id_ref), city_count(0)
    {
-      std::filesystem::path dat_dir = std::filesystem::path(FLAGS_recover_file).parent_path() / std::filesystem::path(FLAGS_recover_file).stem();
+      std::string base_path = FLAGS_recover ? FLAGS_recover_file : FLAGS_persist_file;
+      std::filesystem::path dat_dir = std::filesystem::path(base_path).parent_path() / std::filesystem::path(base_path).stem();
       std::filesystem::create_directories(dat_dir);
       std::filesystem::path filename = dat_dir / "customer2.dat";
       delta_table.open(filename, std::ios::out | std::ios::app);

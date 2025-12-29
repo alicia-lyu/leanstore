@@ -98,6 +98,14 @@ int main(int argc, char** argv)
          helper.run();
          break;
       }
+      case 4: {
+         auto hash_workload =
+             std::make_unique<HashWorkload>(tpchGeoJoin, "hash");
+         using EH = ExecutableHelper<HashWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
+         EH helper(rocks_db, std::unique_ptr(std::move(hash_workload)), tpch);
+         helper.run();
+         break;
+      }
       default: {
          std::cerr << "Invalid storage structure option: " << FLAGS_storage_structure << std::endl;
          return -1;

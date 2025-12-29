@@ -310,7 +310,7 @@ DIFF_DIRS = {
             
 STRUCTURE_OPTIONS = {
     "geo_btree": [1, 2, 3, 4],
-    "geo_lsm": [1, 2, 3]
+    "geo_lsm": [1, 2, 3, 4]
 }
 
 def main() -> None:

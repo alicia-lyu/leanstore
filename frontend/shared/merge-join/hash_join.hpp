@@ -136,7 +136,6 @@ struct HashJoin {
          return false;
       }
       JK last_jk = state.jk_to_join;
-      state.refresh(curr_jk);
       state.template emplace<R2, 1>(rk, rv);
       auto keys_to_match = curr_jk.matching_keys();
       for (const auto& lsk : keys_to_match) {
@@ -147,6 +146,7 @@ struct HashJoin {
             state.template emplace<R1, 0>(lk, lv);
          }
       }
+      state.refresh(JK::max()); // reset cached records at every step, because the right side come in no order, so can't assume the left cached records can still match with future right records
 
       if (state.get_produced() != 0 && !state.has_next()) {
          std::cerr << "WARNING: HashJoin::probe_next() no match found for JK " << last_jk << ", violating integrity constraint" << std::endl;
