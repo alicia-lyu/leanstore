@@ -261,6 +261,12 @@ struct ns_t : public joined_t<21, sort_key_t, false, nation2_t, states_t> {
    ns_t() = default;
    ns_t(const nation2_t& n, const states_t& s) : joined_t{std::make_tuple(n, s)} {}
    struct Key : public joined_t::Key {
+      Key(const sort_key_t& jk)
+          : joined_t::Key{jk, std::make_tuple(
+                          nation2_t::Key{jk.nationkey},
+                          states_t::Key{jk.nationkey, jk.statekey})}
+      {
+      }
       Key() : joined_t::Key() {}
       Key(const nation2_t::Key& nk, const states_t::Key& sk) : joined_t::Key{sort_key_t{nk.nationkey, sk.statekey, 0, 0, 0}, std::make_tuple(nk, sk)}
       {
@@ -305,6 +311,13 @@ struct nsc_t : public joined_t<20, sort_key_t, false, ns_t, county_t> {
    }
    struct Key : public joined_t::Key {
       Key() = default;
+
+      Key(const sort_key_t& jk)
+          : joined_t::Key{jk, std::make_tuple(
+                          ns_t::Key{jk},
+                          county_t::Key{jk})}
+      {
+      }
 
       Key(const ns_t::Key& nsk, const county_t::Key& ck)
           : joined_t::Key{sort_key_t{nsk.jk.nationkey, nsk.jk.statekey, ck.countykey, 0, 0}, std::make_tuple(nsk, ck)}
@@ -377,6 +390,12 @@ struct nscci_t : public joined_t<22, sort_key_t, false, nsc_t, city_t> {
    }
    struct Key : public joined_t::Key {
       Key() = default;
+      Key(const sort_key_t& jk)
+          : joined_t::Key{jk, std::make_tuple(
+                          nsc_t::Key{jk},
+                          city_t::Key{jk})}
+      {
+      }
 
       Key(const nsc_t::Key& nck, const city_t::Key& cik)
           : joined_t::Key{sort_key_t{nck.jk.nationkey, nck.jk.statekey, nck.jk.countykey, cik.citykey, 0}, std::make_tuple(nck, cik)}
@@ -416,6 +435,11 @@ struct customer_count_t {
       Key(const sort_key_t& sk) : nationkey(sk.nationkey), statekey(sk.statekey), countykey(sk.countykey), citykey(sk.citykey) {}
       sort_key_t get_jk() const { return sort_key_t{nationkey, statekey, countykey, citykey, 0}; }
       Key get_pk() const { return *this; }
+
+      bool operator==(const Key& other) const
+      {
+         return nationkey == other.nationkey && statekey == other.statekey && countykey == other.countykey && citykey == other.citykey;
+      }
    };
 
    Integer customer_count;

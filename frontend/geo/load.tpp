@@ -1,6 +1,4 @@
 #pragma once
-#include "join_search_count.tpp"
-#include "mixed_query.tpp"
 #include "views.hpp"
 #include "workload.hpp"
 
@@ -44,12 +42,57 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    load_state = LoadState(workload.last_customer_id, [this](int n, int s, int c, int ci, int cu) { load_1customer(n, s, c, ci, cu); });
    seq_load();
    load_state.advance_customers_to_hot_cities();
-   // load join view
-   MergedJoiner<AdapterType, MergedAdapterType, MergedScannerType> merged_joiner(merged, join_view);
-   merged_joiner.run();
-   // load mixed view
-   MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> merged_counter(merged, mixed_view, false);
-   merged_counter.run();
+   // load geo view and join view
+   auto nation_scanner_ptr = nation.getScanner();
+   auto states_scanner_ptr = states.getScanner();
+   auto county_scanner_ptr = county.getScanner();
+   auto city_scanner_ptr = city.getScanner();
+   auto customer_scanner_ptr = customer2.getScanner();
+   BinaryMergeJoin<sort_key_t, ns_t, nation2_t, states_t> joiner_ns([nation_scanner = nation_scanner_ptr.get()]() { return nation_scanner->next(); },
+                                                                    [states_scanner = states_scanner_ptr.get()]() { return states_scanner->next(); });
+   BinaryMergeJoin<sort_key_t, nsc_t, ns_t, county_t> joiner_nsc([&joiner_ns]() { return joiner_ns.next(); },
+                                                                 [county_scanner = county_scanner_ptr.get()]() { return county_scanner->next(); });
+   BinaryMergeJoin<sort_key_t, nscci_t, nsc_t, city_t> joiner_nscci(
+      [&joiner_nsc]() { return joiner_nsc.next(); },                    
+      [city_scanner = city_scanner_ptr.get()]() { return city_scanner->next(); },                                                             
+      [this](const nscci_t::Key& k, const nscci_t& v) { geo_view.insert(k, v); });
+   BinaryMergeJoin<sort_key_t, view_t, nscci_t, customer2_t> final_joiner(
+      [&joiner_nscci]() { return joiner_nscci.next(); },
+      [customer_scanner = customer_scanner_ptr.get()]() { return customer_scanner->next(); },
+      [this](const view_t::Key& k, const view_t& v) { join_view.insert(k, v); });
+   final_joiner.run();
+
+   // load cust_count_view
+   customer_scanner_ptr->reset();
+   customer_count_t::Key current_cuck{sort_key_t()};
+   Integer current_count = 0;
+   long long scanned_customers = 0;
+   while (true) {
+      auto kv = customer_scanner_ptr->next();
+      if (!kv.has_value())
+         break;
+      scanned_customers++;
+      auto [k, v] = *kv;
+      sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
+      customer_count_t::Key cuck{sk};
+      if (current_cuck != cuck) {
+         // new key
+         if (current_count > 0) {
+            customer_count_t cuc_v{current_count};
+            cust_count_view.insert(current_cuck, cuc_v);
+         }
+         current_count = 0;
+      }
+      current_count++;
+      current_cuck = cuck;
+   }
+   // insert the last key
+   if (current_count > 0) {
+      customer_count_t cuc_v{current_count};
+      cust_count_view.insert(current_cuck, cuc_v);
+   }
+   std::cout << "Scanned " << scanned_customers << " customers to build customer_count_view." << std::endl;
+
    log_sizes();
    write_table_to_stream<AdapterType<nation2_t>, nation2_t>(nation);
    write_table_to_stream<AdapterType<states_t>, states_t>(states);
@@ -114,7 +157,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    county.insert(ck, cv);
    merged.insert(ck, cv);
    for (int ci = 1; ci <= city_cnt; ci++) {
-      load_1city(n, s, c, ci); 
+      load_1city(n, s, c, ci);
    }
 }
 
@@ -166,14 +209,16 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
 
    double join_view_size = join_view.size();
    // double city_count_per_county_size = city_count_per_county.size();
-   double mixed_view_size = mixed_view.size();
-   double view_size = join_view_size + mixed_view_size;
+   double geo_view_size = geo_view.size();
+   double cust_count_view_size = cust_count_view.size();
+   double view_size = join_view_size + geo_view_size + cust_count_view_size;
 
    double merged_size = merged.size();
 
-   std::map<std::string, double> sizes = {
-       {"nation", nation_size},   {"states", states_size},       {"county", county_size},         {"city", city_size}, {"customer2", customer2_size},
-       {"indexes", indexes_size}, {"join_view", join_view_size}, {"mixed_view", mixed_view_size}, {"view", view_size}, {"merged", merged_size}};
+   std::map<std::string, double> sizes = {{"nation", nation_size},       {"states", states_size},       {"county", county_size},
+                                          {"city", city_size},           {"customer2", customer2_size}, {"indexes", indexes_size},
+                                          {"join_view", join_view_size}, {"geo_view", geo_view_size},   {"cust_count_view", cust_count_view_size},
+                                          {"view", view_size},           {"merged", merged_size}};
    logger.log_sizes(sizes);
 };
 }  // namespace geo_join

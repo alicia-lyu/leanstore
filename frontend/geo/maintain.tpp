@@ -161,8 +161,9 @@ bool GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::er
       ss << "Error erasing customer in view, ret_jv: " << ret_jv << ", ret_c: " << ret_c << ", sk: " << sk;
       throw std::runtime_error(ss.str());
    }
-   mixed_view_t::Key mixed_vk{sk};
-   mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; });
+   // mixed_view_t::Key mixed_vk{sk};
+   // mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; });
+   cust_count_view.update1(customer_count_t::Key{sk}, [](customer_count_t& v) { v.customer_count--; });
    maintenance_state.adjust_ptrs();
    return true;
 }
@@ -232,12 +233,13 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ma
    view_t v{nv, sv, cv, civ, cuv};
    join_view.insert(vk, v);
 
-   mixed_view_t::Key mixed_vk{sk};
-   bool customer_exists = mixed_view.tryLookup(mixed_vk, [&](const mixed_view_t&) {});
+   customer_count_t::Key cuck{sk};
+   bool customer_exists = cust_count_view.tryLookup(cuck, [&](const customer_count_t&) {});
    if (customer_exists) {
-      mixed_view.update1(mixed_vk, [&](mixed_view_t& mv) { std::get<4>(mv.payloads).customer_count++; });
+      // mixed_view.update1(mixed_vk, [&](mixed_view_t& mv) { std::get<4>(mv.payloads).customer_count++; });
+      cust_count_view.update1(cuck, [](customer_count_t& v) { v.customer_count++; });
    } else {
-      mixed_view.insert(mixed_vk, mixed_view_t{nv, sv, cv, civ, customer_count_t{1}});
+      cust_count_view.insert(cuck, customer_count_t{1});
    }
 }
 }  // namespace geo_join
