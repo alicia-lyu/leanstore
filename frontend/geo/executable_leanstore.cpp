@@ -53,7 +53,8 @@ int main(int argc, char** argv)
    LeanStoreAdapter<city_t> city;
    LeanStoreAdapter<customer2_t> customer2;
    // Views
-   LeanStoreAdapter<mixed_view_t> mixed_view;
+   LeanStoreAdapter<nscci_t> geo_view;
+   LeanStoreAdapter<customer_count_t> cust_count_view;
    LeanStoreAdapter<view_t> view;
 
    LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t, customer2_t> mergedGeoJoin;
@@ -75,14 +76,16 @@ int main(int argc, char** argv)
       city = LeanStoreAdapter<city_t>(db, "city");
       customer2 = LeanStoreAdapter<customer2_t>(db, "customer2");
       mergedGeoJoin = LeanStoreMergedAdapter<nation2_t, states_t, county_t, city_t, customer2_t>(db, "mergedGeoJoin");
-      mixed_view = LeanStoreAdapter<mixed_view_t>(db, "mixed_view");
+      // mixed_view = LeanStoreAdapter<mixed_view_t>(db, "mixed_view");
+      geo_view = LeanStoreAdapter<nscci_t>(db, "geo_view");
+      cust_count_view = LeanStoreAdapter<customer_count_t>(db, "cust_count_view");
       view = LeanStoreAdapter<view_t>(db, "view");
    });
    db.registerConfigEntry("tpch_scale_factor", FLAGS_tpch_scale_factor);
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
    TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, mixed_view, view, nation2, states, county, city, customer2);
+   GJ tpchGeoJoin(tpch, mergedGeoJoin, geo_view, cust_count_view, view, nation2, states, county, city, customer2);
 
    if (!FLAGS_recover) {
       std::cout << "Loading TPC-H" << std::endl;

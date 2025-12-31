@@ -12,7 +12,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
           template <typename> class ScannerType,
           template <typename...> class MergedScannerType>
-struct GeoJoinWrapper; // forward declaration
+struct GeoJoinWrapper;  // forward declaration
 
 template <template <typename> class AdapterType,
           template <typename...> class MergedAdapterType,
@@ -27,7 +27,9 @@ class GeoJoin
 
    MergedTree& merged;
 
-   AdapterType<mixed_view_t>& mixed_view;
+   AdapterType<nscci_t>& geo_view;
+   AdapterType<customer_count_t>& cust_count_view;
+
    AdapterType<view_t>& join_view;
 
    AdapterType<nation2_t>& nation;
@@ -47,7 +49,8 @@ class GeoJoin
   public:
    GeoJoin(TPCH& workload,
            MergedTree& m,
-           AdapterType<mixed_view_t>& mixed_view,
+           AdapterType<nscci_t>& geo_view,
+           AdapterType<customer_count_t>& cust_count_view,
            AdapterType<view_t>& v,
            AdapterType<nation2_t>& n,
            AdapterType<states_t>& s,
@@ -56,7 +59,8 @@ class GeoJoin
            AdapterType<customer2_t>& customer2)
        : workload(workload),
          merged(m),
-         mixed_view(mixed_view),
+         geo_view(geo_view),
+         cust_count_view(cust_count_view),
          join_view(v),
          nation(n),
          states(s),
@@ -159,8 +163,8 @@ class GeoJoin
             ss << "Error erasing customer in view, ret_jv: " << ret_jv << ", ret_c: " << ret_c << ", sk: " << sk;
             throw std::runtime_error(ss.str());
          }
-         mixed_view_t::Key mixed_vk{sk};
-         mixed_view.update1(mixed_vk, [](mixed_view_t& v) { std::get<4>(v.payloads).customer_count--; });
+         customer_count_t::Key cuc_k{sk};
+         cust_count_view.update1(cuc_k, [](customer_count_t& v) { v.customer_count--; });
       });
    }
 
@@ -179,10 +183,12 @@ class GeoJoin
 
    double get_view_size()
    {
-      static auto mixed_view_size = mixed_view.size();  // local static: initialized once
+      // static auto mixed_view_size = mixed_view.size();  // local static: initialized once
+      static auto geo_view_size = geo_view.size();
+      static auto cust_count_view_size = cust_count_view.size();
       static auto indexes_size = get_indexes_size();
       static auto join_view_size = join_view.size();
-      static auto view_size = mixed_view_size + indexes_size + join_view_size;
+      static auto view_size = geo_view_size + cust_count_view_size + indexes_size + join_view_size;
       return view_size;
    }
 

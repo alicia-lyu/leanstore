@@ -19,19 +19,38 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
 {
    long cust_sum = 0;
    if (!distinct) {
-      mixed_view.scan(
-          mixed_view_t::Key{select_sk},
-          [&](const mixed_view_t::Key& mk, const mixed_view_t& mv) {
-             auto curr_sk = SKBuilder<sort_key_t>::create(mk, mv);
-             if (cust_sum == 0) {
-                update_sk(select_sk, curr_sk);
-             } else if (curr_sk.match(select_sk) != 0) {
-                return false;
+      // join geo_view and customer_count_view on jk
+      auto geo_view_scanner_ptr = geo_view.getScanner();
+      geo_view_scanner_ptr->seek(nscci_t::Key(select_sk));
+      if (geo_view_scanner_ptr->current().has_value()) {
+         auto [k, v] = *(geo_view_scanner_ptr->current());
+         sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
+         update_sk(select_sk, sk);
+      } else {
+         return 0;
+      }
+      auto cust_count_view_scanner_ptr = cust_count_view.getScanner();
+      cust_count_view_scanner_ptr->seek(customer_count_t::Key(select_sk));
+
+      BinaryMergeJoin<sort_key_t, mixed_view_t, nscci_t, customer_count_t> joiner_geo_cust(
+          [geo_view_scanner = geo_view_scanner_ptr.get()]() { return geo_view_scanner->next(); },
+          [&cust_sum, cust_count_view_scanner = cust_count_view_scanner_ptr.get()]() {
+             auto kv = cust_count_view_scanner->next();
+             if (kv.has_value()) {
+                cust_sum += kv->second.customer_count;
              }
-             cust_sum += std::get<4>(mv.payloads).customer_count;
-             return true;
-          },
-          []() {});
+             return kv;
+          });
+      while (true) {
+         auto kv = joiner_geo_cust.next();
+         if (!kv.has_value()) {
+            break;
+         }
+         sort_key_t curr_sk = SKBuilder<sort_key_t>::create(kv->first, kv->second);
+         if (curr_sk.match(select_sk) != 0) {
+            break;
+         }
+      }
    } else {
       std::vector<Varchar<10>> seen_mktsegments;
       join_view.scan(
