@@ -11,8 +11,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Source & build ────────────────────────────────────────────────────────────
+# Copy only build-relevant source. Changing scripts (run_experiments.sh, etc.)
+# will not invalidate this layer or the expensive cmake/make layer below.
 WORKDIR /leanstore
-COPY . .
+COPY CMakeLists.txt .
+COPY libs/ libs/
+COPY shared-headers/ shared-headers/
+COPY backend/ backend/
+COPY frontend/ frontend/
 
 # CMake downloads gflags, tabluate, rapidjson, rocksdb from GitHub on first run.
 # Requires network access during docker build.
@@ -22,15 +28,16 @@ RUN mkdir -p build \
     && cd frontend \
     && make geo_btree geo_lsm -j"$(nproc)"
 
+# ── Runtime scripts (copy after build so edits don't bust the build cache) ────
+COPY run_experiments.sh .
+RUN chmod +x run_experiments.sh
+
 # ── Data & results volumes ────────────────────────────────────────────────────
 # /data    — database image files and recover (.json) files
 #            bind-mount a host directory: docker run -v /path/on/host:/data ...
 # /results — TPut.csv output files
 #            bind-mount a host directory: docker run -v /path/on/host:/results ...
 RUN mkdir -p /data /results
-
-COPY run_experiments.sh /leanstore/run_experiments.sh
-RUN chmod +x /leanstore/run_experiments.sh
 
 # Default: run all experiments. Override with: docker run -it <image> bash
 ENTRYPOINT ["/leanstore/run_experiments.sh"]
