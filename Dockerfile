@@ -32,11 +32,9 @@ RUN mkdir -p build \
 COPY run_experiments.sh .
 RUN chmod +x run_experiments.sh
 
-# ── Data & results volumes ────────────────────────────────────────────────────
-# /data    — database image files and recover (.json) files
-#            bind-mount a host directory: docker run -v /path/on/host:/data ...
-# /results — TPut.csv output files
-#            bind-mount a host directory: docker run -v /path/on/host:/results ...
+# ── Data & results directories (all inside the container) ─────────────────────
+# /data    — database image files and recover (.json) files (created at runtime)
+# /results — TPut.csv output files (written by run_experiments.sh)
 RUN mkdir -p /data /results
 
 # Default: run all experiments. Override with: docker run -it <image> bash
