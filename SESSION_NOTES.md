@@ -35,14 +35,14 @@ machine paths.
 
 ```bash
 # Build (needs network for git clone of vendored deps)
-docker build -t leanstore-geo .
+docker build -t geodb .
 
 # Run (everything self-contained inside the container)
-docker run --name leanstore-run leanstore-geo
+docker run --name geodb-run geodb
 
 # Check results inside the container after it finishes
-docker exec leanstore-run cat /results/geo_btree_TPut.csv
-docker exec leanstore-run cat /results/geo_lsm_TPut.csv
+docker exec geodb-run cat /results/geo_btree_TPut.csv
+docker exec geodb-run cat /results/geo_lsm_TPut.csv
 ```
 
 ### Parameters used (matching generate_targets.py / Makefile defaults)
