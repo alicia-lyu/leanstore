@@ -58,7 +58,7 @@ run_engine() {
     for structure in 1 2 3 4; do
         echo ""
         echo "=== [$(date '+%H:%M:%S')] $engine structure=$structure (dram=${dram}GiB) ==="
-        echo "    Each run takes ~2-5 minutes. Running structure $structure of 4."
+        echo "    Each run takes 5--10 minutes. Running structure $structure of 4."
         $exe $SHARED \
             --recover_file="$recover_file" \
             --persist_file=./leanstore.json \
