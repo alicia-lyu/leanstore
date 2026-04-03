@@ -4,6 +4,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <random>
 #include <set>
 #include <vector>
 
@@ -183,7 +184,7 @@ struct TPCHWorkload {
          std::cout << "Generating and shuffling order keys..." << std::endl;
       std::vector<Integer> order_keys(order_end - order_start + 1);
       std::iota(order_keys.begin(), order_keys.end(), order_start);
-      std::random_shuffle(order_keys.begin(), order_keys.end());
+      std::shuffle(order_keys.begin(), order_keys.end(), std::mt19937{std::random_device{}()});
 
       // Load partsupp and lineitem
       const Integer partsupp_size = (PARTSUPP_SCALE / PART_SCALE) * (part_end - part_start + 1);

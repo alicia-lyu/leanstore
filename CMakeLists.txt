@@ -3,8 +3,10 @@
 # ---------------------------------------------------------------------------
 
 # Compiler must be set before project() so CMake uses them during detection
-set(CMAKE_C_COMPILER "/usr/bin/clang")
-set(CMAKE_CXX_COMPILER "/usr/bin/clang++")
+if (NOT APPLE)
+   set(CMAKE_C_COMPILER "/usr/bin/clang")
+   set(CMAKE_CXX_COMPILER "/usr/bin/clang++")
+endif()
 
 project(leanstoredb)
 cmake_minimum_required(VERSION 3.7)
@@ -27,7 +29,7 @@ endif()
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG -O0 -g")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g3") # because we had weird behavior on aws ARM
 
-if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "AppleClang")
     message("Clang build")
     set(SANITIZER_FLAGS "-fno-omit-frame-pointer")
 else()
@@ -42,6 +44,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if (APPLE)
     list(APPEND CMAKE_PREFIX_PATH /usr/local/opt/bison)
     list(APPEND CMAKE_PREFIX_PATH /usr/local/opt/flex)
+    list(APPEND CMAKE_PREFIX_PATH /opt/homebrew)
 endif (APPLE)
 
 if (CYGWIN)
@@ -57,21 +60,35 @@ find_package(Threads REQUIRED)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 
-include("${CMAKE_SOURCE_DIR}/libs/gflags.cmake")
-include("${CMAKE_SOURCE_DIR}/libs/tabluate.cmake")
-include("${CMAKE_SOURCE_DIR}/libs/rapidjson.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/boost.cmake")
-include("${CMAKE_SOURCE_DIR}/libs/rocksdb.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/googletest.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/benchmark.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/yaml-cpp.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/fastpfor.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/spdlog.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/tbb.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/psql.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/gdouble.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/turbo.cmake")
-#include("${CMAKE_SOURCE_DIR}/libs/lz4.cmake")
+if (APPLE)
+    # On macOS, use system-installed libraries (Homebrew)
+    find_package(gflags REQUIRED)
+    # RocksDB: use pkg-config or find manually
+    find_library(ROCKSDB_LIB rocksdb REQUIRED)
+    find_path(ROCKSDB_INCLUDE_DIR rocksdb/db.h REQUIRED)
+    add_library(rocksdb INTERFACE IMPORTED)
+    set_property(TARGET rocksdb APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${ROCKSDB_INCLUDE_DIR})
+    set_property(TARGET rocksdb APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${ROCKSDB_LIB})
+    # tabulate (header-only, fetch from git)
+    include("${CMAKE_SOURCE_DIR}/libs/tabluate.cmake")
+    include("${CMAKE_SOURCE_DIR}/libs/rapidjson.cmake")
+else()
+    include("${CMAKE_SOURCE_DIR}/libs/gflags.cmake")
+    include("${CMAKE_SOURCE_DIR}/libs/tabluate.cmake")
+    include("${CMAKE_SOURCE_DIR}/libs/rapidjson.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/boost.cmake")
+    include("${CMAKE_SOURCE_DIR}/libs/rocksdb.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/googletest.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/benchmark.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/yaml-cpp.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/fastpfor.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/spdlog.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/tbb.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/psql.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/gdouble.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/turbo.cmake")
+    #include("${CMAKE_SOURCE_DIR}/libs/lz4.cmake")
+endif()
 
 # ---------------------------------------------------------------------------
 # Includes
@@ -83,7 +100,9 @@ include("${CMAKE_SOURCE_DIR}/shared-headers/local.cmake")
 # Sources
 # ---------------------------------------------------------------------------
 
-add_subdirectory("backend")
+if (NOT APPLE)
+    add_subdirectory("backend")
+endif()
 
 # ---------------------------------------------------------------------------
 # Executable

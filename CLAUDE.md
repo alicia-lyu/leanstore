@@ -28,14 +28,23 @@ The fork also includes an experimental workload ("geo") that benchmarks differen
 
 ## Build Commands
 
-### Prerequisites (Ubuntu 22.04)
+### Prerequisites (Ubuntu 22.04 — full build)
 ```
 sudo apt-get install cmake clang libtbb2-dev libaio-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev librocksdb-dev libwiredtiger-dev liburing-dev
 ```
 
+### Prerequisites (macOS ARM — RocksDB-only build)
+```
+brew install cmake rocksdb gflags snappy lz4 zstd
+```
+
 ### Build (RelWithDebInfo)
 ```
+# Linux: builds both geo_btree and geo_lsm
 mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && cd frontend && make geo_btree geo_lsm -j$(nproc)
+
+# macOS: builds geo_lsm only (RocksDB backend)
+mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && cd frontend && make geo_lsm -j$(sysctl -n hw.ncpu)
 ```
 
 ### Build (Debug)

@@ -5,8 +5,13 @@
 #include <gflags/gflags.h>
 #include "Units.hpp"
 #include "leanstore/Config.hpp"
+#ifdef ROCKSDB_ONLY
+#include "../profiling_stubs/CPUTable.hpp"
+#include "../profiling_stubs/ConfigsTable.hpp"
+#else
 #include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/profiling/tables/ConfigsTable.hpp"
+#endif
 #include "tabulate/table.hpp"
 
 DECLARE_int32(bgw_pct);
