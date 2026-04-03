@@ -26,3 +26,4 @@ stderr.txt
 *.mk
 perf*
 leanstore.json
+.claude
