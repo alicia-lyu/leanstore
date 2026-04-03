@@ -15,6 +15,24 @@ The integration follows a **Plan Export + C++ Runtime Interpreter** approach:
 
 The goal is to replace manually-coded C++ template queries with optimizer-generated plans, scaling to full TPC-H and JOB (Join Order Benchmark) workloads.
 
+### TPC-H Q12 Implementation (In Progress)
+
+The first Calcite-planned query being manually coded as a proof-of-concept, translating optimizer-generated plans from `calcite-integration-info/test-plans/q12/` into C++.
+
+**Two merged indexes:**
+- **MI[0]** (Pipeline 0): ORDERS + LINEITEM interleaved by orderkey. Trivial — direct insertion.
+- **Root pipeline MI** (Pipeline 1): Indexed view storing join→filter→project results keyed by `(l_shipmode, o_orderkey, l_linenumber)`.
+
+**Key infrastructure change:** Adopting Calcite's tagged row format (`[domainTag][keyVal]...[indexTag][sourceId][payload]`) in merged adapters/scanners, replacing the current fold-length heuristic for record type discrimination.
+
+**Files:** `frontend/tpch/q12/` — views, workload, query, maintenance, executables.
+
+**Storage structure variants (--storage_structure 1-4):**
+1. Traditional indexes + hash join
+2. Fully materialized view
+3. MI[0] only (merged index, query-time join)
+4. MI[0] + root pipeline MI (full Calcite plan)
+
 ### Key Execution Components
 
 - **Merged Index Adapter** (`LeanStoreMergedAdapter<Records...>`): variadic template storing heterogeneous records in one B-tree with lexicographic key folding
