@@ -4,7 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a fork of [LeanStore](https://db.in.tum.de/~leis/papers/leanstore.pdf), a high-performance OLTP storage engine optimized for many-core CPUs and NVMe SSDs. The fork adds an experimental workload ("geo") that benchmarks different indexing strategies (traditional indexes, materialized views, merged indexes) for multi-table joins over a geographic hierarchy (Nation → States → County → City → Customer) using both B-tree (LeanStore native) and LSM-tree (RocksDB) storage backends.
+This is a fork of [LeanStore](https://db.in.tum.de/~leis/papers/leanstore.pdf), a high-performance OLTP storage engine optimized for many-core CPUs and NVMe SSDs. It serves as the **execution engine** in a [Calcite ↔ LeanStore integration](https://github.com/alicia-lyu/calcite/blob/main/CALCITE_LEANSTORE_INTEGRATION.md), where Apache Calcite acts as the query optimizer (cost-based join ordering, merged-index substitution) and LeanStore executes the resulting plans against B-tree/LSM merged indexes.
+
+### Integration Architecture
+
+The integration follows a **Plan Export + C++ Runtime Interpreter** approach:
+1. **Calcite** (Java, [separate repo](https://github.com/alicia-lyu/calcite)) parses SQL, optimizes with merged-index substitution rules, and exports the plan as JSON
+2. **C++ Plan Interpreter** (in this repo, to be built) parses the JSON plan, builds an operator tree, and dispatches to pre-instantiated LeanStore templates
+3. **LeanStore Storage** provides merged B-tree/LSM indexes with pre-sorted, interleaved multi-table data
+
+The goal is to replace manually-coded C++ template queries with optimizer-generated plans, scaling to full TPC-H and JOB (Join Order Benchmark) workloads.
+
+### Key Execution Components
+
+- **Merged Index Adapter** (`LeanStoreMergedAdapter<Records...>`): variadic template storing heterogeneous records in one B-tree with lexicographic key folding
+- **Merged Scanner** (`LeanStoreMergedScanner`): iterator returning `std::variant<Record1, Record2, ...>` with seek/next navigation
+- **PremergedJoin** (`premerged_join.hpp`): single-pass multi-table join assembly over one merged scanner, with adaptive seek strategy and join state machine
+- **TPC-H Support** (`tpch_tables.hpp`, `tpch_workload.hpp`): all 8 TPC-H tables defined as C++ record types with proper key structures
+
+### Geo Benchmark
+
+The fork also includes an experimental workload ("geo") that benchmarks different indexing strategies (traditional indexes, materialized views, merged indexes) for multi-table joins over a geographic hierarchy (Nation → States → County → City → Customer) using both B-tree (LeanStore native) and LSM-tree (RocksDB) storage backends.
 
 ## Build Commands
 
