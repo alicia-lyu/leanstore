@@ -8,6 +8,7 @@ Auto-generates a Makefile fragment with build, csv-dir, image, recovery and LLDB
 from pathlib import Path
 import json
 from typing import List
+import platform
 
 vscode_launch_obj = {
     "version": "0.2.0",
@@ -16,7 +17,8 @@ vscode_launch_obj = {
 
 build_dirs = ["build", "build-debug"]
 exec_names = ["geo_btree", "geo_lsm"]
-data_disk = Path("/mnt/ssd/")
+data_disk = Path("$(data_disk)")
+IS_MACOS = platform.system() == "Darwin"
 shared_flags: dict[str, str] = {
     "vi": "false",
     "mv": "false",
@@ -182,8 +184,15 @@ class Experiment:
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
         print(f"\tmkdir -p {self.recover_file.parent}")
-        prefix = "lldb -b -o run -o bt -- " if "debug" in str(self.build_dir) else 'script -q -c "'
-        suffix = '' if "debug" in str(self.build_dir) else f'" {self.runtime_dir}/load.log'
+        if "debug" in str(self.build_dir):
+            prefix = "lldb -b -o run -o bt -- "
+            suffix = ''
+        elif IS_MACOS:
+            prefix = f'script -q {self.runtime_dir}/load.log '
+            suffix = ''
+        else:
+            prefix = 'script -q -c "'
+            suffix = f'" {self.runtime_dir}/load.log'
         rem_flags = self.remaining_flags(
                 recover_file="./leanstore.json", # do not recover
                 persist_file=self.recover_file, # do persist
@@ -239,15 +248,26 @@ class Experiment:
             print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {self.recover_file} {image_dep}")
             print(f"\tmkdir -p {self.runtime_dir}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
-            print(
-                f'\tscript -q -c "{self.exec_path}',
-                kv_to_str(self.class_flags),
-                kv_to_str(rem_flags),
-                f"--storage_structure={structure}",
-                f'2>{self.runtime_dir}/structure{structure}_stderr.txt\"',
-                f'{self.runtime_dir}/structure{structure}.log',
-                sep=" "
-            )
+            if IS_MACOS:
+                print(
+                    f'\tscript -q {self.runtime_dir}/structure{structure}.log',
+                    f'{self.exec_path}',
+                    kv_to_str(self.class_flags),
+                    kv_to_str(rem_flags),
+                    f"--storage_structure={structure}",
+                    f'2>{self.runtime_dir}/structure{structure}_stderr.txt',
+                    sep=" "
+                )
+            else:
+                print(
+                    f'\tscript -q -c "{self.exec_path}',
+                    kv_to_str(self.class_flags),
+                    kv_to_str(rem_flags),
+                    f"--storage_structure={structure}",
+                    f'2>{self.runtime_dir}/structure{structure}_stderr.txt\"',
+                    f'{self.runtime_dir}/structure{structure}.log',
+                    sep=" "
+                )
             print()
         
     
