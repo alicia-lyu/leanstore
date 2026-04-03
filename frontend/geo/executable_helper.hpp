@@ -7,7 +7,10 @@
 #include <thread>
 #include "../shared/RocksDB.hpp"
 #include "../shared/logger/logger.hpp"
+#ifndef ROCKSDB_ONLY
 #include "leanstore/concurrency-recovery/CRMG.hpp"
+#endif
+#include "leanstore/utils/JumpMU.hpp"
 #include "tpch_workload.hpp"
 
 DECLARE_int32(storage_structure);
@@ -38,6 +41,7 @@ struct DBTraits {
    virtual ~DBTraits() = default;
 };
 
+#ifndef ROCKSDB_ONLY
 struct LeanStoreTraits : public DBTraits {
    leanstore::cr::CRManager& crm;
    explicit LeanStoreTraits(leanstore::cr::CRManager& crm) : crm(crm) { std::cout << "Running experiment with " << name() << std::endl; }
@@ -60,6 +64,7 @@ struct LeanStoreTraits : public DBTraits {
 
    std::string name() { return "LeanStore"; }
 };
+#endif
 
 struct RocksDBTraits : public DBTraits {
    RocksDB& rocks_db;
@@ -95,10 +100,12 @@ struct ExecutableHelper {
    std::atomic<u64> bg_tx_count = 0;
    std::atomic<u64> running_threads_counter = 0;
 
+#ifndef ROCKSDB_ONLY
    ExecutableHelper(leanstore::cr::CRManager& crm, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
        : db_traits(std::make_unique<LeanStoreTraits>(crm)), workload(std::move(workload)), tpch(tpch)
    {
    }
+#endif
 
    ExecutableHelper(RocksDB& rocks_db, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
        : db_traits(std::make_unique<RocksDBTraits>(rocks_db)), workload(std::move(workload)), tpch(tpch)

@@ -25,6 +25,7 @@
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <thread>
 
 template <typename T>
 inline rocksdb::Slice RSlice(T* ptr, u64 len)
