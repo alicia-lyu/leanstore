@@ -99,7 +99,7 @@ else()
     target_link_libraries(LeanStoreLogger PUBLIC Logger)
 
     # rocksdb_typeinfo also provides third-party libs for rocksdb
-    add_library(rocksdb_typeinfo STATIC shared/rocksdb.cpp)
+    add_library(rocksdb_typeinfo STATIC shared/rocksdb_typeinfo.cpp)
     target_link_libraries(rocksdb_typeinfo PUBLIC rocksdb dl z libbz2.a lz4 snappy zstd uring)
 
     add_library(RocksDB STATIC shared/RocksDB.cpp)
