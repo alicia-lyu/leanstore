@@ -90,18 +90,18 @@ Propagates base table deltas to the root pipeline MI. MI[0] maintenance is trivi
 - `PremergedJoin`: single-pass join over merged scanner with adaptive seek strategy and join state machine
 - `BinaryMergeJoin`: two-way merge join from independent sources
 - `HashJoin`: hash-based join
-- `JoinState`: caching + Cartesian product + output buffering
+- `JoinState`: caching + Cartesian product + output buffering. This class adds quite some overhead to hash join, which I previously implemented without JoinState. Investigation pending.
 
 ### View Templates (`frontend/shared/view_templates.hpp`)
 
-- `joined_t<TID, JK, fold_pks, Ts...>`: joined record type with composite key
-- `merged_t<TID, T, JK, extra_id>`: single record in merged index
-- `SKBuilder<JK>`: uniform key extraction across all types
+- `joined_t<TID, JK, fold_pks, Ts...>`: joined record type with composite key -> to be modified so that the input records are flattened with proper projection, instead of being stored in one joined record as a tuple of several input records.
+- `merged_t<TID, T, JK, extra_id>`: single record in merged index -> to be modified to tagged row format
+- `SKBuilder<JK>`: uniform key extraction across all types -> Naming convention: JK vs SK to be made consistent (use SK instead of JK, our work is focused on sorts)
 
 ### Executable Framework (`frontend/geo/executable_helper.hpp`)
 
 - `ExecutableHelper` + `DBTraits` (LeanStoreTraits / RocksDBTraits)
-- `schedule_bg_txs()`: background insert/erase/lookup thread
+- `schedule_bg_txs()`: background insert/erase/lookup thread -> bugs in Leanstore when doing background inserts, likely because some records shift to different pages. It should work in RocksDB.
 - `tput_tx()`: benchmark query throughput measurement
 - `jumpmuTry/jumpmuCatch` for transaction exception handling
 
@@ -125,25 +125,32 @@ New directory, sibling to `frontend/geo/`. Organized under `tpch/` for future TP
 - **MI[0]**: `MergedAdapter<orders_t, lineitem_t>` — raw data, trivially populated during load. Maintenance mirrors base table writes.
 - **Root pipeline MI**: Single-record-type adapter storing `q12_result_t` keyed by `{l_shipmode, o_orderkey, l_linenumber}`. Stores **unfiltered** join+project results (including date columns for query-time filtering). Populated by index creation plan (pipeline 0 processing over MI[0]). Shipmode-first key enables sorted aggregate without re-sorting.
 
+In the future, a merged index can either store multiple types of records (from base tables or from views), or one type of records. Each is the source(s) of a pipeline as clear in the before plans.
+
 ### 3. Data Loading: Full 8-Table TPC-H
 
 Reuse `TPCHWorkload::load()`. Enhance date generation to produce realistic dates (days since epoch, 1992-1998 range) and order priorities from TPC-H domain (`1-URGENT`, `2-HIGH`, `3-MEDIUM`, `4-NOT SPECIFIED`, `5-LOW`).
 
 ### 4. Storage Structure Variants (--storage_structure 1-4)
 
+Pending question: the before plans generated in calcite are optimized for interesting orderings (for merged index-based plans, or for trad index + merged joins). Should option 1 and 3 use a different plan.
+
 1. **Traditional indexes + hash join**: Separate ORDERS and LINEITEM adapters. Query: scan+filter LINEITEM, hash-join ORDERS, project, aggregate.
-2. **Fully materialized view** of the final query result.
-3. **MI[0] only (merged index)**: PremergedJoin over `MergedAdapter<orders_t, lineitem_t>`, filter+project+aggregate at query time. No root pipeline MI.
-4. **MI[0] + root pipeline MI (full Calcite plan)**: MI[0] as maintenance source, root pipeline MI for fast query reads.
+2. **Traditional indexes + merge join**: Separate ORDERS and LINEITEM adapters. Query: scan+filter LINEITEM, merge-join ORDERS, project, aggregate.
+3. **Fully materialized view** of the final query result.
+4. **MI[0] only (merged index)**: PremergedJoin over `MergedAdapter<orders_t, lineitem_t>`, filter+project+aggregate at query time. No root pipeline MI.
+5. **MI[0] + root pipeline MI (full Calcite plan)**: MI[0] as maintenance source, root pipeline MI for fast query reads.
+
+Option 4 and 5 may become a full spectrum in more complex queries.
 
 ### 5. Update Stream: TPC-H RF1/RF2
 
 - **RF1** (insert): New order + 1-7 lineitems. Insert into base tables + MI[0] (trivial mirror). Propagate to root pipeline MI via Branch 1 maintenance.
-- **RF2** (delete): Delete from root pipeline MI (scan 'MAIL' and 'SHIP' prefixes for orderkey). Then delete from MI[0] and base tables.
+- **RF2** (delete): Pending question: is it more realistic to delete by orderkey or by shipmode? What does [TPCH](../tpch-kit/doc/tpc-h_v2.17.3.pdf) do?
 
 ### 6. Root Pipeline MI Maintenance On Delete
 
-Keyed by `(shipmode, orderkey, linenumber)`. Delete by orderkey requires only 2 prefix scans (MAIL + SHIP). MI[0] deletion is trivial — delete by key directly.
+<!-- Keyed by `(shipmode, orderkey, linenumber)`. Delete by orderkey requires only 2 prefix scans (MAIL + SHIP). MI[0] deletion is trivial — delete by key directly. -->
 
 ---
 
@@ -167,10 +174,12 @@ Reference: `TaggedRowSchema.java` in the Calcite repo (`org.apache.calcite.mater
 
 ### Q12 Example (K=1, shared key = orderkey)
 
-- ORDERS (src=0): `[0x01][fold(orderkey)][0x00][0x00]`
-- LINEITEM (src=1): `[0x01][fold(orderkey)][0x00][0x01][fold(linenumber)]`
+- ORDERS (src=0): `[0x00][fold(orderkey)][0x02][0x00][[...order payload]]`
+- LINEITEM (src=1): `[0x00][fold(orderkey)][0x01][fold(linenumber)][0x01][[...lineitem payload]]`
 
 Correct interleaving: ORDERS before LINEITEM for same orderkey. Unique keys: lineitems distinguished by linenumber suffix. Record type ID: read sourceId byte at fixed offset.
+
+USER: this doesn't look correct. What does K=1 mean? Key field count doesn't make sense in a merged index, all are byte formatted. I also changed the byte format above.`[0x00]` is the domain tag for orderkey (which also gives us info about the field length), `[0x00]` the domain tag for linenumber, `[0x02]` the domain tag for index identifier. After the domain tag for the index identifier comes the index identifier per se (`[0x00]` for ORDERS, `[0x01]` for LINEITEM)
 
 ### Scope of Change
 
