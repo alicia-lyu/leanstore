@@ -22,16 +22,18 @@ Pipeline 0 (leaf):
   Index creation for root MI:
     Scan MI[0] → PremergedJoin → Project → root pipeline MI
 
+  Maintenance (for root MI): The maintenance of leaf MI is trivial.
+    (ORDERS_snapshot × LINEITEM_delta) ∪ (ORDERS_delta × LINEITEM_snapshot)
+    → Project → insert/delete on root MI
+
 Pipeline 1 (root):
   Root pipeline MI = single-type index of projected join results
 
   Query:
     Scan root MI → Filter (hoisted) → SortedAggregate
-
-  Maintenance (on base table delta):
-    (ORDERS_snapshot × LINEITEM_delta) ∪ (ORDERS_delta × LINEITEM_snapshot)
-    → Project → insert/delete on root MI
 ```
+
+This is not a typo: It is the child pipeline that defines the index creation plan and the maintenance plan of the parent merged index!
 
 **Predicate hoisting**: After Calcite's `hoistFiltersAboveBoundaries()` pass, all Q12 filter predicates (shipmode, date comparisons) live in the root query plan only. The root pipeline MI stores **unfiltered** join+project results with date columns preserved. This makes the MI reusable across queries with different date ranges or shipmode selections.
 
@@ -47,15 +49,15 @@ Pipeline 1 (root):
 | No filter in query path | Q12 filter (5 conditions) at query time | New: filter after join/scan |
 | `view_t` = full 5-way join record | `q12_result_t` = projected 6-field record | New: projection with computed fields |
 | `GeoJoin` workload class | `Q12Workload` class | Same pattern, fewer adapters |
-| 4 storage structures | 5 storage structures (added merge join) | Extra baseline variant |
+| 4 storage structures | 5 storage structures (merged index structure has 2 variants 4 & 5) | Extra merged index variant: cascading MIs |
 
 ## Storage Structure Options
 
 | # | Strategy | Load | Query | Maintain |
 |---|----------|------|-------|----------|
 | 1 | Trad indexes + hash join | Base tables only | Full scan + hash join + filter + aggregate | Base tables only |
-| 2 | Trad indexes + merge join | Base tables only | Merge join + filter + aggregate | Base tables only |
-| 3 | Materialized view | Base tables + pre-aggregated view (2 rows) | Direct lookup | Recompute affected view rows |
+| 2 | Trad indexes + merge join | Base tables only + secondary indexes as needed | Merge join + filter + aggregate | Base tables only + loaded secondary indexes |
+| 3 | Materialized view | Base tables + final unfiltered view | Direct lookup | Recompute affected view rows |
 | 4 | MI[0] only | Base tables + MI[0] | PremergedJoin + filter + aggregate | MI[0] mirrors base writes |
 | 5 | MI[0] + root MI | Base tables + MI[0] + root MI | Scan root MI + filter + aggregate | MI[0] + delta propagation to root MI |
 
@@ -93,7 +95,18 @@ Concatenated ORDERS ∥ LINEITEM schema matches `tpch_tables.hpp` field order:
 
 ---
 
-## New Record Type: `q12_result_t`
+## New Record Types
+
+Because of the way this codebase is organized (strong typed language), the output of every operation in all plans (queries / index creation / maintenance) must have a row type defined. These include:
+
+- `q12_result_t` (shown below)
+- any secondary index required (different key, largely the same payload)
+- any row type in a merged index. This can just utilize (`merged_t`)[../../shared/view_templates.hpp].
+- any join result: This can simply utilize (`joined_t`)[../../shared/view_templates.hpp].
+
+This overhead might be too significant once we move forward to queries other than q12. We might want to have these definitions automated by MACROs or some other techniques.
+
+### `q12_result_t`
 
 Root pipeline MI entry. One record per (order, lineitem) join result — **unfiltered** (predicate hoisting).
 
