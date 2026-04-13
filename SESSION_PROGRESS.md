@@ -131,7 +131,7 @@ In the future, a merged index can either store multiple types of records (from b
 
 Reuse `TPCHWorkload::load()`. Enhance date generation to produce realistic dates (days since epoch, 1992-1998 range) and order priorities from TPC-H domain (`1-URGENT`, `2-HIGH`, `3-MEDIUM`, `4-NOT SPECIFIED`, `5-LOW`).
 
-### 4. Storage Structure Variants (--storage_structure 1-4)
+### 4. Storage Structure Variants (--storage_structure 1-5)
 
 Pending question: the before plans generated in calcite are optimized for interesting orderings (for merged index-based plans, or for trad index + merged joins). Should option 1 and 3 use a different plan.
 
@@ -259,9 +259,20 @@ frontend/tpch/q12/
 
 ## Next Steps
 
+### Short-term (Q12 implementation)
+
 - [ ] CONCRETE PLAN: Read all 16 context files, produce detailed execution steps with pseudo-code
-- [ ] Tagged row format: Decide migration strategy (a/b/c) and implement
-- [ ] Enhance data generation: realistic dates and order priorities in tpch_tables.hpp
+- [ ] Tagged row format for merged adapters/scanners: decide migration strategy (a/b/c), modify `merged_t` and `toType()` (§Tagged Row Format)
+- [ ] Enhance data generation: realistic dates and order priorities in `tpch_tables.hpp`
 - [ ] Implement `frontend/tpch/q12/` files (views, workload, query, maintenance, executables)
 - [ ] CMake integration: add q12_lsm and q12_btree targets
+- [ ] Decide storage structure variants: should options 1-2 (trad indexes) use non-MI-optimized plans? (§4)
+- [ ] Decide RF2 delete strategy: delete by orderkey or shipmode? Check TPC-H spec (§5, §6)
 - [ ] Verification: build, smoke test, cross-validate query results across storage structures
+
+### Mid-term (infrastructure improvements)
+
+- [ ] Flatten `joined_t` projection: store flattened fields instead of tuple of input records (§View Templates)
+- [ ] Naming convention: rename JK → SK consistently (sort key, not join key) (§View Templates)
+- [ ] Investigate `JoinState` overhead in hash join: previously implemented without it (§Join Infrastructure)
+- [ ] LeanStore background insert bugs: records shifting pages causes issues; RocksDB unaffected (§Executable Framework)
