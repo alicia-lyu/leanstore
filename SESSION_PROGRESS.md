@@ -259,18 +259,21 @@ frontend/tpch/q12/
 
 ## Next Steps
 
-### Short-term (Q12 implementation)
+### Short-term (next session)
 
 - [ ] CONCRETE PLAN: Read all 16 context files, produce detailed execution steps with pseudo-code
+- [ ] Decide storage structure variants: should options 1-2 (trad indexes) use non-MI-optimized plans? (§4)
+- [ ] Decide RF2 delete strategy: delete by orderkey or shipmode? Check TPC-H spec (§5, §6)
+
+### Mid-term (Q12 implementation)
+
 - [ ] Tagged row format for merged adapters/scanners: decide migration strategy (a/b/c), modify `merged_t` and `toType()` (§Tagged Row Format)
 - [ ] Enhance data generation: realistic dates and order priorities in `tpch_tables.hpp`
 - [ ] Implement `frontend/tpch/q12/` files (views, workload, query, maintenance, executables)
 - [ ] CMake integration: add q12_lsm and q12_btree targets
-- [ ] Decide storage structure variants: should options 1-2 (trad indexes) use non-MI-optimized plans? (§4)
-- [ ] Decide RF2 delete strategy: delete by orderkey or shipmode? Check TPC-H spec (§5, §6)
 - [ ] Verification: build, smoke test, cross-validate query results across storage structures
 
-### Mid-term (infrastructure improvements)
+### Long-term / side projects
 
 - [ ] Flatten `joined_t` projection: store flattened fields instead of tuple of input records (§View Templates)
 - [ ] Naming convention: rename JK → SK consistently (sort key, not join key) (§View Templates)
