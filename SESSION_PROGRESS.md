@@ -259,23 +259,40 @@ frontend/tpch/q12/
 
 ## Next Steps
 
+### Immediate term (bug fix & small decisions)
+
+None for now.
+
 ### Short-term (next session)
 
-- [ ] CONCRETE PLAN: Read all 16 context files, produce detailed execution steps with pseudo-code
-- [ ] Decide storage structure variants: should options 1-2 (trad indexes) use non-MI-optimized plans? (§4)
+- [ ] Create `Q12.md` for a grand plan for Q12 specifically, which is detailed in the table below.
 - [ ] Decide RF2 delete strategy: delete by orderkey or shipmode? Check TPC-H spec (§5, §6)
 
-### Mid-term (Q12 implementation)
+### Mid-term
 
-- [ ] Tagged row format for merged adapters/scanners: decide migration strategy (a/b/c), modify `merged_t` and `toType()` (§Tagged Row Format)
-- [ ] Enhance data generation: realistic dates and order priorities in `tpch_tables.hpp`
-- [ ] Implement `frontend/tpch/q12/` files (views, workload, query, maintenance, executables)
+Q12 implementation:
+
+| Stage | Option 1+2 | Option 3 | Option 4+5 |
+|-------|------------|----------|------------|
+|Loading|required traditional indexes|final materialized view|index creation plans for merged indexes|
+|Queries|Full queries|Retrieve from the final view|root pipeline plan which only involves the root merged index|
+|Maintenance|required traditional indexes|final materialized view|maintenance plans for merged indexes|
+
 - [ ] CMake integration: add q12_lsm and q12_btree targets
 - [ ] Verification: build, smoke test, cross-validate query results across storage structures
 
-### Long-term / side projects
+Not specific to Q12:
 
+- [ ] Tagged row format for merged adapters/scanners: decide migration strategy (a/b/c), modify `merged_t` and `toType()` (§Tagged Row Format)
+
+### Side projects
+
+- [ ] Decide storage structure variants: should options 1-2 (trad indexes) use non-MI-optimized plans? (§4)
 - [ ] Flatten `joined_t` projection: store flattened fields instead of tuple of input records (§View Templates)
 - [ ] Naming convention: rename JK → SK consistently (sort key, not join key) (§View Templates)
 - [ ] Investigate `JoinState` overhead in hash join: previously implemented without it (§Join Infrastructure)
 - [ ] LeanStore background insert bugs: records shifting pages causes issues; RocksDB unaffected (§Executable Framework)
+
+### Long-term (no implementation planned but important to keep in mind)
+
+None for now.
