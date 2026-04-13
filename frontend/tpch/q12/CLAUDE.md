@@ -108,7 +108,7 @@ This overhead might be too significant once we move forward to queries other tha
 
 ### `q12_result_t`
 
-Root pipeline MI entry. One record per (order, lineitem) join result — **unfiltered** (predicate hoisting).
+Root pipeline MI entry — the output schema of the `ProjectIterator` in the index creation plan. One record per (order, lineitem) join result, **unfiltered** (predicate hoisting).
 
 ```cpp
 struct q12_result_t {
@@ -133,291 +133,325 @@ struct q12_result_t {
 
 ---
 
-## Q12 Filter (query-time, hoisted from index creation)
+## Operator Framework
+
+Every query plan — index creation, query, and maintenance — is expressed as a tree of composable pull-based operators. This mirrors the Cascade/Volcano iterator model and maps directly onto Calcite's relational algebra nodes, making plan interpretation mechanical once the framework exists.
+
+### Base Interface
 
 ```cpp
-bool q12_filter(const q12_result_t& r) {
-    // All conditions on root pipeline MI's projected schema ($0-$5)
-    auto shipmode = std::string_view(r.key.l_shipmode.data, r.key.l_shipmode.length);
-    return (shipmode == "MAIL" || shipmode == "SHIP")
-        && r.l_shipdate < r.l_commitdate        // $3 < $4
-        && r.l_commitdate < r.l_receiptdate      // $4 < $5
-        && r.l_receiptdate >= DATE_1994_01_01     // $5 >= date
-        && r.l_receiptdate < DATE_1995_01_01;     // $5 < date
-}
+template <typename Output>
+class Iterator {
+public:
+    virtual ~Iterator() = default;
+    virtual void open() = 0;               // initialize / reset state
+    virtual std::optional<Output> next() = 0;  // pull next row; nullopt when done
+    virtual void close() = 0;             // release resources
+};
 ```
 
-For options 1-2 (traditional indexes), the filter applies directly on `lineitem_t` fields:
+Each concrete operator takes its child(ren) as constructor arguments, forming a tree. The root is driven by a consumer (e.g., `InsertIterator` as a sink, or a bare `while (auto row = root->next())` loop for aggregation).
+
+### Concrete Operators
+
+**`ScanIterator<Adapter, Row>`** — wraps a single-type adapter's full scan.
 
 ```cpp
-bool q12_filter_lineitem(const lineitem_t& l) {
-    auto shipmode = std::string_view(l.l_shipmode.data, l.l_shipmode.length);
-    return (shipmode == "MAIL" || shipmode == "SHIP")
-        && l.l_shipdate < l.l_commitdate
-        && l.l_commitdate < l.l_receiptdate
-        && l.l_receiptdate >= DATE_1994_01_01
-        && l.l_receiptdate < DATE_1995_01_01;
-}
+// next() returns the next row from adapter, nullopt at end of scan
+ScanIterator<RocksDBAdapter<orders_t>, orders_t>(orders_adapter)
 ```
 
-## Q12 Projection
+**`MergedScanIterator<MergedAdapter, Records...>`** — wraps a merged scanner over a merged index.
 
 ```cpp
-q12_result_t q12_project(const orders_t::Key& ok, const orders_t& o,
-                          const lineitem_t::Key& lk, const lineitem_t& l) {
-    q12_result_t result;
-    result.key.l_shipmode = l.l_shipmode;
-    result.key.o_orderkey = ok.o_orderkey;
-    result.key.l_linenumber = lk.l_linenumber;
-    auto prio = std::string_view(o.o_orderpriority.data, o.o_orderpriority.length);
-    result.high_line_count = (prio == "1-URGENT") ? 1 : 0;
-    result.low_line_count = (prio != "1-URGENT") ? 1 : 0;
-    result.l_shipdate = l.l_shipdate;
-    result.l_commitdate = l.l_commitdate;
-    result.l_receiptdate = l.l_receiptdate;
-    return result;
-}
+// next() returns std::variant<Records...> discriminated by tagged key
+MergedScanIterator<RocksDBMergedAdapter<orders_t, lineitem_t>, orders_t, lineitem_t>(mi0_adapter)
 ```
+
+An optional seek key narrows the scan to a key prefix (used in maintenance delta joins).
+
+**`FilterIterator<Row>`** — skips rows that do not satisfy a predicate.
+
+```cpp
+// Constructor: child iterator + predicate
+FilterIterator<q12_result_t>(child, std::function<bool(const q12_result_t&)>)
+// next() pulls from child, loops until predicate passes or child exhausted
+```
+
+**`ProjectIterator<Input, Output>`** — transforms each row from Input to Output.
+
+```cpp
+// Constructor: child iterator + transform function
+ProjectIterator<joined_ol_t, q12_result_t>(child, std::function<q12_result_t(const joined_ol_t&)>)
+// next() pulls one row, applies transform, returns result
+```
+
+**`SortedAggregateIterator<Input, Output>`** — groups consecutive rows sharing the same key, emitting one aggregated Output per group. Requires input sorted by group key (enforced by key design).
+
+```cpp
+// Constructor: child, key extractor, accumulator (fold function + finalize)
+SortedAggregateIterator<q12_result_t, q12_agg_row_t>(child, shipmode_key, count_accum)
+// next() consumes a run of same-key rows, returns one aggregated group
+```
+
+**`PremergedJoinIterator<JK, Output, Records...>`** — wraps existing `PremergedJoin` logic as an iterator. Scans the merged index and assembles complete join results (one record of each type per join key group).
+
+```cpp
+// Constructor: merged scan child
+PremergedJoinIterator<Integer, joined_ol_t, orders_t, lineitem_t>(merged_scan_child)
+// next() returns the next fully-assembled join result, nullopt when scan exhausted
+```
+
+**`HashJoinIterator<Left, Right, Output>`** — classic build-probe hash join. Build phase consumes the entire left child on `open()`; `next()` probes with each right-child row.
+
+```cpp
+HashJoinIterator<lineitem_t, orders_t, joined_ol_t>(left_child, right_child, join_key_fn, combine_fn)
+```
+
+**`BinaryMergeJoinIterator<Left, Right, Output>`** — merge-join two sort-ordered child iterators on a shared key.
+
+```cpp
+BinaryMergeJoinIterator<lineitem_t, orders_t, joined_ol_t>(left_child, right_child, key_fn, combine_fn)
+```
+
+**`InsertIterator<Row>`** — sink operator. Pulls from child, inserts each row into an adapter, and returns the inserted row (enabling counting or chaining).
+
+```cpp
+// Constructor: child + target adapter
+InsertIterator<q12_result_t>(child, root_mi_adapter)
+// Drive by exhausting: while (sink->next()) {}
+```
+
+The key property: every plan is just a different tree composition of these operators, parameterized by the specific predicate/projection/accumulator functions described below.
+
+---
+
+## Q12-Specific Operator Configurations
+
+These named functions plug into the generic operators. They live in `q12_operators.hpp`.
+
+### `q12_predicate`
+
+Plugs into `FilterIterator<q12_result_t>`. Encodes the five Q12 conditions hoisted above the root MI boundary:
+
+```cpp
+// Maps to Calcite filter: $23 IN ('MAIL','SHIP') AND $19<$20 AND $20<$21
+//   AND $21 >= DATE '1994-01-01' AND $21 < DATE '1995-01-01'
+// Applied to q12_result_t fields (stored in root pipeline MI)
+auto q12_predicate = [](const q12_result_t& r) -> bool {
+    auto sm = std::string_view(r.key.l_shipmode.data, r.key.l_shipmode.length);
+    return (sm == "MAIL" || sm == "SHIP")
+        && r.l_shipdate < r.l_commitdate
+        && r.l_commitdate < r.l_receiptdate
+        && r.l_receiptdate >= DATE_1994_01_01
+        && r.l_receiptdate < DATE_1995_01_01;
+};
+```
+
+For options 1-2 (traditional indexes), the equivalent predicate operates on raw `lineitem_t` fields before joining:
+
+```cpp
+auto q12_predicate_lineitem = [](const lineitem_t& l) -> bool { /* same conditions */ };
+```
+
+### `q12_projection`
+
+Plugs into `ProjectIterator<joined_ol_t, q12_result_t>`. Implements Calcite's projection `$23, $0, $10, CASE($5='1-URGENT',1,0), CASE($5<>'1-URGENT',1,0), $19, $20, $21`:
+
+```cpp
+// joined_ol_t carries (orders_t::Key, orders_t, lineitem_t::Key, lineitem_t)
+auto q12_projection = [](const joined_ol_t& j) -> q12_result_t {
+    auto prio = std::string_view(j.order.o_orderpriority.data, ...);
+    return q12_result_t {
+        .key = { j.lineitem_key.l_shipmode,      // $23
+                 j.order_key.o_orderkey,          // $0
+                 j.lineitem_key.l_linenumber },   // $10
+        .high_line_count = (prio == "1-URGENT") ? 1 : 0,  // CASE($5=...)
+        .low_line_count  = (prio != "1-URGENT") ? 1 : 0,  // CASE($5<>...)
+        .l_shipdate      = j.lineitem.l_shipdate,          // $19
+        .l_commitdate    = j.lineitem.l_commitdate,        // $20
+        .l_receiptdate   = j.lineitem.l_receiptdate        // $21
+    };
+};
+```
+
+### `q12_accumulator`
+
+Plugs into `SortedAggregateIterator<q12_result_t, q12_agg_row_t>`. Groups by shipmode (the first key component), sums `high_line_count` and `low_line_count`:
+
+```cpp
+// q12_agg_row_t: { Varchar<10> l_shipmode, Integer high_line_count, Integer low_line_count }
+auto shipmode_key = [](const q12_result_t& r) { return r.key.l_shipmode; };
+
+auto count_accum = Accumulator<q12_result_t, q12_agg_row_t> {
+    .init     = [](const q12_result_t& r) { return q12_agg_row_t{r.key.l_shipmode, 0, 0}; },
+    .fold     = [](q12_agg_row_t& acc, const q12_result_t& r) {
+                    acc.high_line_count += r.high_line_count;
+                    acc.low_line_count  += r.low_line_count;
+                },
+    .finalize = [](q12_agg_row_t& acc) { /* no-op */ }
+};
+```
+
+---
+
+## Q12 Plans as Operator Trees
+
+The three Calcite plans from `calcite-integration-info/test-plans/q12/` each become a tree of the operators above. The same operators compose differently; only the plugged-in functions differ.
+
+### Index Creation Plan (populates root pipeline MI from MI[0])
+
+```
+InsertIterator<q12_result_t>(root_mi_adapter,
+  ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+    PremergedJoinIterator<Integer, joined_ol_t, orders_t, lineitem_t>(
+      MergedScanIterator<orders_t, lineitem_t>(mi0_adapter))))
+```
+
+Drive by exhausting the sink: `while (index_creation_plan->next()) {}`.
+
+### Query Plan (option 5 — root MI scan)
+
+```
+SortedAggregateIterator<q12_result_t, q12_agg_row_t>(shipmode_key, count_accum,
+  FilterIterator<q12_result_t>(q12_predicate,
+    ScanIterator<q12_result_t>(root_mi_adapter)))
+```
+
+### Maintenance Plan — RF1 Insert, Branch 1 (LINEITEM delta × ORDERS snapshot)
+
+For each new lineitem, probe MI[0] with an orderkey prefix to retrieve its order, then propagate to the root MI:
+
+```
+InsertIterator<q12_result_t>(root_mi_adapter,
+  ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+    PremergedJoinIterator<Integer, joined_ol_t, orders_t, lineitem_t>(
+      MergedScanIterator<orders_t, lineitem_t>(mi0_adapter, orderkey_prefix))))
+```
+
+The `MergedScanIterator` with an `orderkey_prefix` seek restricts the scan to one order group. This effectively performs the snapshot × delta join: the scan returns the existing orders_t snapshot record plus the newly inserted lineitem_t delta. Branch 2 (ORDERS delta × LINEITEM snapshot) is a symmetric tree; for RF1 it fires when the order is inserted, but at that point no lineitems yet exist for this orderkey, so it produces nothing — which is correct.
 
 ---
 
 ## Stages × Options
 
+The key insight is that every (Load, Query, Maintain) × option combination is just a different operator tree composition. Loading always writes to adapters; the operator tree describes the data transformation.
+
 ### Stage 1: Loading
 
-#### Options 1+2 (Traditional Indexes)
+| Option | What gets populated | How |
+|--------|--------------------|----|
+| 1, 2 | Base tables only | `TPCHWorkload::load()` — standard per-table insert |
+| 3 | Base tables + `q12_view_t` adapter | Standard load, then drive the Option 3 index creation tree (see below) |
+| 4 | Base tables + MI[0] | Dual-write: each `orders_t`/`lineitem_t` insert also goes to `merged_ol_adapter` |
+| 5 | Base tables + MI[0] + root MI | Option 4 load, then drive the Index Creation Plan tree above |
 
-Load ORDERS and LINEITEM into **separate** `RocksDBAdapter<orders_t>` and `RocksDBAdapter<lineitem_t>`.
+orders_t key = `{o_orderkey}` (4 bytes folded), lineitem_t key = `{l_orderkey, l_linenumber}` (8 bytes folded). Natural interleaving: for each orderkey, the order record sorts before its lineitems (shorter key prefix). `toType()` discriminates by fold-length (4 vs 8).
 
-```
-TPCHWorkload::load()  // loads all 8 tables into individual adapters
-```
-
-No merged indexes or views needed. Reuse `TPCHWorkload` as-is with default insert functions.
-
-#### Option 3 (Fully Materialized View)
-
-Load base tables, then compute the full Q12 result and store in `RocksDBAdapter<q12_view_t>` where `q12_view_t` stores pre-aggregated results:
-
-```cpp
-struct q12_view_t {
-    static constexpr int id = 31;
-    struct Key {
-        Varchar<10> l_shipmode;   // only 2 values: MAIL, SHIP (after filtering)
-        ADD_KEY_TRAITS(l_shipmode)
-    };
-    Integer high_line_count;      // SUM of highs
-    Integer low_line_count;       // SUM of lows
-    ADD_RECORD_TRAITS(high_line_count, low_line_count)
-};
-```
-
-After loading base tables:
-1. Scan LINEITEM, filter by Q12 conditions
-2. For each qualifying lineitem, lookup its order from ORDERS adapter
-3. Project HIGH/LOW counts
-4. Aggregate by shipmode, insert 2 rows into view
-
-#### Option 4 (MI[0] Only)
-
-Load ORDERS and LINEITEM into `RocksDBMergedAdapter<orders_t, lineitem_t>`.
+**Option 3 index creation tree** (builds pre-aggregated `q12_view_t`):
 
 ```
-TPCHWorkload::loadOrders([&](const orders_t::Key& ok, const orders_t& o) {
-    orders_adapter.insert(ok, o);         // base table
-    merged_adapter.insert(ok, o);         // MI[0]
-});
-TPCHWorkload::loadLineitem([&](const lineitem_t::Key& lk, const lineitem_t& l) {
-    lineitem_adapter.insert(lk, l);       // base table
-    merged_adapter.insert(lk, l);         // MI[0]
-});
+InsertIterator<q12_view_t>(q12_view_adapter,
+  SortedAggregateIterator<q12_result_t, q12_view_t>(shipmode_key, count_accum,
+    FilterIterator<q12_result_t>(q12_predicate,
+      ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+        HashJoinIterator<lineitem_t, orders_t, joined_ol_t>(orderkey,
+          ScanIterator<lineitem_t>(lineitem_adapter),
+          ScanIterator<orders_t>(orders_adapter))))))
 ```
-
-orders_t key = `{o_orderkey}` (4 bytes folded), lineitem_t key = `{l_orderkey, l_linenumber}` (8 bytes folded). Natural interleaving: for each orderkey, order record sorts before its lineitems (shorter key prefix). `toType()` distinguishes by fold-length (4 vs 8).
-
-#### Option 5 (MI[0] + Root Pipeline MI)
-
-Same as Option 4 for MI[0], plus run the **index creation plan** over MI[0]:
-
-```
-// After MI[0] is populated:
-// Scan MI[0] with PremergedJoin → project → insert into root pipeline MI
-PremergedJoin<MergedScanner, Integer, q12_result_t, orders_t, lineitem_t> join(merged_scanner);
-while (auto result = join.next()) {
-    auto [key, record] = *result;
-    q12_result_t projected = q12_project(/* extract order and lineitem from join */);
-    root_mi_adapter.insert(projected.key, projected);
-}
-```
-
-The root pipeline MI is a **regular (non-merged) adapter**: `RocksDBAdapter<q12_result_t>`. It stores one record type, keyed by `{l_shipmode, o_orderkey, l_linenumber}`.
-
----
 
 ### Stage 2: Queries
 
-#### Option 1 (Traditional + Hash Join)
+**Option 1 (Hash Join):**
 
 ```
-1. Scan lineitem_adapter (full scan)
-2. For each lineitem, apply q12_filter_lineitem()
-3. Hash qualifying lineitems by l_orderkey into hash table
-4. Scan orders_adapter
-5. Probe hash table for each order
-6. For matches: q12_project(), accumulate aggregates by shipmode
+SortedAggregateIterator<joined_ol_t, q12_agg_row_t>(shipmode_key, count_accum,
+  ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+    HashJoinIterator<lineitem_t, orders_t, joined_ol_t>(orderkey,
+      FilterIterator<lineitem_t>(q12_predicate_lineitem,
+        ScanIterator<lineitem_t>(lineitem_adapter)),
+      ScanIterator<orders_t>(orders_adapter))))
 ```
 
-Pattern: similar to `HashJoiner` in geo's `join_search_count.tpp`, but simpler (2 tables, not 5).
+Note: `SortedAggregateIterator` here requires a sort step after the hash join because hash join output is unordered. In practice this means either materializing into a sorted buffer or using a hash aggregate. For the design document we annotate this as requiring an intermediate sort.
 
-#### Option 2 (Traditional + Merge Join)
-
-```
-1. Scan lineitem_adapter sorted by l_orderkey (natural key order)
-2. Scan orders_adapter sorted by o_orderkey (natural key order)
-3. BinaryMergeJoin on orderkey
-4. For each joined pair: apply q12_filter_lineitem(), q12_project()
-5. Accumulate aggregates by shipmode
-```
-
-Pattern: similar to `BaseJoiner` in geo's `join_search_count.tpp`, but with only one `BinaryMergeJoin` stage instead of cascading 4.
-
-#### Option 3 (Materialized View)
+**Option 2 (Merge Join):**
 
 ```
-1. Scan q12_view_adapter (only 2 records: MAIL and SHIP)
-2. Return results directly
+SortedAggregateIterator<q12_result_t, q12_agg_row_t>(shipmode_key, count_accum,
+  ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+    FilterIterator<joined_ol_t>(q12_predicate_joined,
+      BinaryMergeJoinIterator<lineitem_t, orders_t, joined_ol_t>(orderkey,
+        ScanIterator<lineitem_t>(lineitem_adapter),
+        ScanIterator<orders_t>(orders_adapter)))))
 ```
 
-Trivial — the view stores pre-aggregated results. This is the fastest query but most expensive to maintain.
+Both scans produce rows in natural orderkey order. Merge join output sorted by orderkey, not by shipmode — so `SortedAggregateIterator` again requires an intermediate sort on shipmode.
 
-#### Option 4 (MI[0] PremergedJoin)
-
-```
-1. Create MergedScanner over MI[0]
-2. PremergedJoin<Scanner, Integer, q12_result_t, orders_t, lineitem_t>
-3. For each joined (order, lineitem) pair:
-   a. q12_project() → q12_result_t
-   b. q12_filter() on result (query-time filter)
-   c. If passes: accumulate aggregates by shipmode
-```
-
-Pattern: similar to `MergedJoiner` in geo, but with filter applied after join (matching Calcite's hoisted filter architecture).
-
-#### Option 5 (Root Pipeline MI Scan)
+**Option 3 (Materialized View):**
 
 ```
-1. Scan root_mi_adapter (RocksDBAdapter<q12_result_t>)
-2. For each record: apply q12_filter() (query-time filter)
-3. Accumulate aggregates by shipmode (sorted aggregate — records naturally sorted by shipmode)
+ScanIterator<q12_view_t>(q12_view_adapter)
 ```
 
-This is the **Calcite query plan**: `MergedIndexScan → Filter → SortedAggregate`. No join at query time. The sorted aggregate can be done in a single pass since records are keyed by shipmode.
+Trivial — the pre-aggregated view holds at most 2 rows (MAIL and SHIP). No join, no filter, no aggregation at query time.
 
----
+**Option 4 (MI[0] PremergedJoin):**
+
+```
+SortedAggregateIterator<q12_result_t, q12_agg_row_t>(shipmode_key, count_accum,
+  FilterIterator<q12_result_t>(q12_predicate,
+    ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+      PremergedJoinIterator<Integer, joined_ol_t, orders_t, lineitem_t>(
+        MergedScanIterator<orders_t, lineitem_t>(mi0_adapter)))))
+```
+
+Output of `ProjectIterator` is not yet sorted by shipmode, so an intermediate sort is needed before `SortedAggregateIterator`. Alternatively: use a hash aggregate.
+
+**Option 5 (Root MI Scan — the Calcite query plan):**
+
+```
+SortedAggregateIterator<q12_result_t, q12_agg_row_t>(shipmode_key, count_accum,
+  FilterIterator<q12_result_t>(q12_predicate,
+    ScanIterator<q12_result_t>(root_mi_adapter)))
+```
+
+This is the cleanest plan: root MI records are keyed by shipmode, so the scan is already sorted and `SortedAggregateIterator` needs no intermediate sort. No join at query time.
 
 ### Stage 3: Maintenance (RF1 Insert / RF2 Delete)
 
-#### Options 1+2 (Traditional Indexes)
+**Options 1+2 — RF1:** Insert `new_order` into `orders_adapter`, insert each `new_lineitem` into `lineitem_adapter`. No further work.
 
-**RF1** (insert new order + lineitems):
-```
-orders_adapter.insert(new_order_key, new_order);
-for each new_lineitem:
-    lineitem_adapter.insert(new_lineitem_key, new_lineitem);
-```
+**Options 1+2 — RF2:** Scan `lineitem_adapter` by orderkey prefix; erase each found lineitem. Erase order from `orders_adapter`. No view/MI maintenance.
 
-**RF2** (delete order + lineitems):
+**Option 3 — RF1:**
+
 ```
-// Scan lineitem by orderkey prefix, collect linenumbers
-lineitem_adapter.scan(lineitem_t::Key{orderkey, 0}, [&](auto& lk, auto& l) {
-    lineitem_adapter.erase(lk);
-});
-orders_adapter.erase(orders_t::Key{orderkey});
+// For each new lineitem: drive this tree (produces at most 1 row to update view)
+InsertOrUpdateIterator<q12_view_t>(q12_view_adapter, merge_fn,
+  ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+    FilterIterator<joined_ol_t>(q12_predicate_joined,
+      SingleRowJoinIterator<lineitem_t, orders_t>(new_lineitem, orders_adapter))))
 ```
 
-No view/MI maintenance needed.
+**Option 3 — RF2:** Symmetric reverse: for each deleted lineitem that passes the predicate, decrement view counts. Delete base records.
 
-#### Option 3 (Materialized View)
+**Option 4 — RF1:** Dual-write inserts to `orders_adapter` + `merged_ol_adapter` (order), and to `lineitem_adapter` + `merged_ol_adapter` (each lineitem). No further maintenance — query-time join handles everything.
 
-**RF1**:
+**Option 4 — RF2:** Delete from both base tables and MI[0].
+
+**Option 5 — RF1 (Calcite maintenance plan, Branch 1 per lineitem):**
+
 ```
-// Insert into base tables
-orders_adapter.insert(new_order_key, new_order);
-for each new_lineitem:
-    lineitem_adapter.insert(new_lineitem_key, new_lineitem);
-    // Immediately check if this lineitem qualifies for the view
-    if (q12_filter_lineitem(new_lineitem)) {
-        auto projected = q12_project(new_order_key, new_order, lk, new_lineitem);
-        // Update aggregated view: lookup shipmode, increment counts
-        q12_view_adapter.update1(
-            q12_view_t::Key{projected.key.l_shipmode},
-            [&](q12_view_t& v) {
-                v.high_line_count += projected.high_line_count;
-                v.low_line_count += projected.low_line_count;
-            });
-    }
+InsertIterator<q12_result_t>(root_mi_adapter,
+  ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
+    PremergedJoinIterator<Integer, joined_ol_t, orders_t, lineitem_t>(
+      MergedScanIterator<orders_t, lineitem_t>(mi0_adapter, orderkey_prefix))))
 ```
 
-**RF2**: Reverse — lookup order and its lineitems, for each qualifying lineitem decrement view counts, then delete base records.
+Branch 2 (ORDERS delta × LINEITEM snapshot) fires at order insertion time — at that point MI[0] has no lineitems for this orderkey yet, so it produces nothing. Correct for RF1 ordering.
 
-#### Option 4 (MI[0] Only)
-
-**RF1**:
-```
-// Insert into base tables + MI[0]
-orders_adapter.insert(ok, order);
-merged_adapter.insert(ok, order);          // MI[0]
-for each lineitem:
-    lineitem_adapter.insert(lk, lineitem);
-    merged_adapter.insert(lk, lineitem);   // MI[0]
-```
-
-**RF2**: Delete from both base tables and MI[0].
-
-No further maintenance — query-time join handles everything.
-
-#### Option 5 (MI[0] + Root Pipeline MI)
-
-**RF1** — Calcite maintenance plan (two branches):
-```
-// 1. Insert into base tables + MI[0]
-orders_adapter.insert(ok, order);
-merged_adapter.insert(ok, order);
-
-for each lineitem:
-    lineitem_adapter.insert(lk, lineitem);
-    merged_adapter.insert(lk, lineitem);
-
-    // Branch 1: LINEITEM delta × ORDERS snapshot
-    // Lookup the order for this lineitem's orderkey in MI[0]
-    auto order_opt = merged_adapter.lookup1(orders_t::Key{lk.l_orderkey});
-    if (order_opt) {
-        auto projected = q12_project(orders_key, *order_opt, lk, lineitem);
-        root_mi_adapter.insert(projected.key, projected);
-    }
-```
-
-Note: Branch 2 (ORDERS delta × LINEITEM snapshot) fires when the order is inserted. At that point, no lineitems exist yet for this order in MI[0], so Branch 2 produces nothing. This is correct for RF1 where order is inserted before its lineitems.
-
-**RF2**:
-```
-// Delete from root pipeline MI first
-// Scan MI[0] for lineitems of this orderkey
-merged_adapter.scan(lineitem_t::Key{orderkey, 0}, [&](auto& lk, auto& l) {
-    if (std::holds_alternative<lineitem_t>(l)) {
-        auto& li = std::get<lineitem_t>(l);
-        auto& lik = std::get<lineitem_t::Key>(lk);
-        // Lookup the order
-        auto order_opt = merged_adapter.lookup1(orders_t::Key{orderkey});
-        if (order_opt) {
-            auto projected = q12_project(orders_t::Key{orderkey}, *order_opt, lik, li);
-            root_mi_adapter.erase(projected.key);
-        }
-    }
-});
-// Then delete from MI[0] and base tables
-// (reverse order: lineitems first, then order)
-```
+**Option 5 — RF2:** Scan MI[0] with orderkey prefix to enumerate existing lineitems; for each, reconstruct the `q12_result_t` key and erase from root MI. Then delete from MI[0] and base tables (lineitems first, then order).
 
 ---
 
@@ -470,13 +504,28 @@ l_shipmode = SHIPMODES[urand(0, 6)];
 
 ## File Structure
 
+Operator framework (reusable across all future queries):
+
+```
+frontend/shared/operators/
+    iterator.hpp          -- Iterator<Output> base class template
+    scan.hpp              -- ScanIterator, MergedScanIterator
+    filter.hpp            -- FilterIterator
+    project.hpp           -- ProjectIterator
+    aggregate.hpp         -- SortedAggregateIterator
+    join.hpp              -- HashJoinIterator, BinaryMergeJoinIterator, PremergedJoinIterator
+    insert.hpp            -- InsertIterator (sink)
+```
+
+Q12-specific:
+
 ```
 frontend/tpch/q12/
-    Q12.md                     -- This plan document
-    q12_views.hpp              -- q12_result_t, q12_view_t, q12_filter, q12_project
-    q12_workload.hpp           -- Q12Workload class template
-    q12_query.tpp              -- Query implementations per storage structure
-    q12_maintain.tpp           -- RF1/RF2 maintenance per storage structure
+    CLAUDE.md                  -- This plan document
+    q12_types.hpp              -- q12_result_t, q12_view_t, q12_agg_row_t
+    q12_operators.hpp          -- q12_predicate, q12_projection, q12_accumulator
+    q12_plans.hpp              -- Factory functions composing operator trees per plan
+    q12_workload.hpp           -- Q12Workload class (load, run dispatch)
     executable_rocksdb.cpp     -- RocksDB entry point
     executable_leanstore.cpp   -- LeanStore entry point (Linux only)
 ```
@@ -503,6 +552,8 @@ Follow exact pattern from `geo_lsm` / `geo_btree` targets.
 
 ## Executable Structure
 
+The executable instantiates adapters and selects the operator tree for the active storage structure. Each `case` branch calls a factory function from `q12_plans.hpp` that returns a composed operator tree.
+
 ```cpp
 // executable_rocksdb.cpp (sketch)
 int main(int argc, char** argv) {
@@ -510,38 +561,33 @@ int main(int argc, char** argv) {
 
     RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
 
-    // Base table adapters
-    RocksDBAdapter<orders_t> orders(rocks_db);
-    RocksDBAdapter<lineitem_t> lineitem(rocks_db);
+    RocksDBAdapter<orders_t>   orders_adapter(rocks_db);
+    RocksDBAdapter<lineitem_t> lineitem_adapter(rocks_db);
     // ... other TPC-H tables for TPCHWorkload
 
-    // MI[0] — merged orders + lineitem
-    RocksDBMergedAdapter<orders_t, lineitem_t> merged_ol(rocks_db);
-
-    // Root pipeline MI — q12 result
-    RocksDBAdapter<q12_result_t> root_mi(rocks_db);
-
-    // Fully materialized view (pre-aggregated)
-    RocksDBAdapter<q12_view_t> q12_view(rocks_db);
+    RocksDBMergedAdapter<orders_t, lineitem_t> mi0_adapter(rocks_db);
+    RocksDBAdapter<q12_result_t>               root_mi_adapter(rocks_db);
+    RocksDBAdapter<q12_view_t>                 q12_view_adapter(rocks_db);
 
     rocks_db.open();
 
-    TPCHWorkload<RocksDBAdapter> tpch(orders, lineitem, ...);
-    Q12Workload<RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>
-        q12(tpch, merged_ol, root_mi, q12_view, orders, lineitem);
+    TPCHWorkload<RocksDBAdapter> tpch(orders_adapter, lineitem_adapter, ...);
+    Q12Workload q12(tpch, mi0_adapter, root_mi_adapter, q12_view_adapter,
+                    orders_adapter, lineitem_adapter);
 
     if (!FLAGS_recover) {
-        q12.load();  // dispatches to appropriate loading based on storage_structure
+        q12.load();   // dispatches based on FLAGS_storage_structure
     } else {
         tpch.recover_last_ids();
     }
 
+    // Each case builds and drives the appropriate operator tree from q12_plans.hpp
     switch (FLAGS_storage_structure) {
-        case 1: /* hash join */ break;
-        case 2: /* merge join */ break;
-        case 3: /* materialized view */ break;
-        case 4: /* MI[0] only */ break;
-        case 5: /* MI[0] + root MI */ break;
+        case 1: q12.run_hash_join();   break;
+        case 2: q12.run_merge_join();  break;
+        case 3: q12.run_mat_view();    break;
+        case 4: q12.run_mi0_join();    break;
+        case 5: q12.run_root_mi();     break;
     }
 }
 ```
@@ -561,3 +607,5 @@ The current plan uses fold-length discrimination (4 vs 8 bytes) for MI[0], which
 2. **Plans for options 1-2**: Calcite's "before" plans are optimized for interesting orderings (merge-join friendly). Should traditional-index options use unoptimized plans? This is a side project — not blocking implementation.
 
 3. **Spectrum between options 4 and 5**: In more complex queries, there may be intermediate pipelines between the leaf MI and the root MI. Q12 has only 2 pipelines, so the spectrum collapses to just "MI[0] only" vs "MI[0] + root MI."
+
+4. **Operator framework scope**: Should `frontend/shared/operators/` be built from the start (reusable from Q12 onward), or should operator classes start in `frontend/tpch/q12/` and be promoted to shared once a second query is implemented? Starting in shared costs little and avoids a refactor.
