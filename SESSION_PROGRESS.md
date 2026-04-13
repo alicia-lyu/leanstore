@@ -13,34 +13,46 @@ Implement TPC-H Q12 as the first Calcite-planned query, translating optimizer-ge
 ### What the plans prescribe
 
 **2 merged indexes:**
+
 - **MI[0]** (Pipeline 0): Contains ORDERS (sourceIndex=0) and LINEITEM (sourceIndex=1) interleaved by orderkey. Created trivially — just insert both record types. No index creation plan needed.
-- **Root pipeline MI** (Pipeline 1): An indexed view storing the join→filter→project result from Pipeline 0. Keyed by L_SHIPMODE for sorted aggregate. The "index creation plan" describes how to populate this MI by scanning MI[0].
+- **Root pipeline MI** (Pipeline 1): An indexed view storing the **unfiltered** join→project result from Pipeline 0. After predicate hoisting, filters live only in the root query plan — the MI stores all joined rows with date columns preserved for query-time filtering. Keyed by L_SHIPMODE. The "index creation plan" describes how to populate this MI by scanning MI[0].
 
 **1 index creation plan** (`pipeline-0-index-creation-plan.dot`):
-Scan MI[0] → MergeJoin(ORDERS, LINEITEM) on O_ORDERKEY=L_ORDERKEY → Filter → Project → populate root pipeline MI.
+Scan MI[0] → MergeJoin(ORDERS, LINEITEM) on O_ORDERKEY=L_ORDERKEY → Project → populate root pipeline MI.
 
-Filter conditions:
-- `L_SHIPMODE IN ('MAIL', 'SHIP')`
-- `L_COMMITDATE < L_RECEIPTDATE`
-- `L_SHIPDATE < L_COMMITDATE`
-- `L_RECEIPTDATE >= '1994-01-01'`
-- `L_RECEIPTDATE < '1995-01-01'`
+After predicate hoisting, **no filter** is applied during index creation. The MI stores all joined rows.
 
-Projection:
-- `L_SHIPMODE` (from lineitem)
-- `HIGH_LINE_COUNT = CASE(O_ORDERPRIORITY IN ('1-URGENT', '2-HIGH'), 1, 0)`
-- `LOW_LINE_COUNT = CASE(O_ORDERPRIORITY NOT IN ('1-URGENT', '2-HIGH'), 1, 0)`
+Projection (widened to preserve columns needed for query-time filtering):
+
+- `$0` = `L_SHIPMODE` (from lineitem)
+- `$1` = `HIGH_LINE_COUNT = CASE(O_ORDERPRIORITY = '1-URGENT', 1, 0)`
+- `$2` = `LOW_LINE_COUNT = CASE(O_ORDERPRIORITY <> '1-URGENT', 1, 0)`
+- `$3` = `L_SHIPDATE` (preserved for query-time filter)
+- `$4` = `L_COMMITDATE` (preserved for query-time filter)
+- `$5` = `L_RECEIPTDATE` (preserved for query-time filter)
 
 **1 query plan** (`root-pipeline-query-plan.dot`):
-Scan root pipeline MI → SortedAggregate(GROUP BY L_SHIPMODE, SUM(HIGH_LINE_COUNT), SUM(LOW_LINE_COUNT)).
+Scan root pipeline MI → **Filter** → SortedAggregate(GROUP BY L_SHIPMODE, SUM(HIGH_LINE_COUNT), SUM(LOW_LINE_COUNT)).
+
+Filter conditions (applied at query time, hoisted from index creation):
+
+- `L_SHIPMODE IN ('MAIL', 'SHIP')` — `$0`
+- `L_SHIPDATE < L_COMMITDATE` — `$3 < $4`
+- `L_COMMITDATE < L_RECEIPTDATE` — `$4 < $5`
+- `L_RECEIPTDATE >= '1994-01-01'` — `$5 >= date`
+- `L_RECEIPTDATE < '1995-01-01'` — `$5 < date`
 
 **1 maintenance plan** (`physical-maintenance.dot`):
-Propagates base table deltas to the root pipeline MI. MI[0] maintenance is trivial (mirror base table inserts/deletes). Two-branch delta processing:
-- Branch 1: MergedIndexScan(ORDERS snapshot) × MergedIndexDeltaScan(LINEITEM delta) → join → filter → project → insert/delete on root pipeline MI
-- Branch 2: MergedIndexDeltaScan(ORDERS delta) × MergedIndexScan(LINEITEM snapshot) → join → filter → project → insert/delete on root pipeline MI
+Propagates base table deltas to the root pipeline MI. MI[0] maintenance is trivial (mirror base table inserts/deletes). Per predicate hoisting, the maintenance plan should be **filter-free** — inserting unfiltered join+project results into the root pipeline MI. Two-branch delta processing:
+
+- Branch 1: MergedIndexScan(ORDERS snapshot) × MergedIndexDeltaScan(LINEITEM delta) → join → project → insert/delete on root pipeline MI
+- Branch 2: MergedIndexDeltaScan(ORDERS delta) × MergedIndexScan(LINEITEM snapshot) → join → project → insert/delete on root pipeline MI
 - UNION both branches
 
+*Note: The current `physical-maintenance.dot` still shows Filter+Project in the maintenance plan. This may not yet reflect the hoisting change — the design intent is filter-free maintenance.*
+
 ### Calcite column index mapping (concatenated ORDERS ∥ LINEITEM schema)
+
 - `$0`: O_ORDERKEY
 - `$5`: O_ORDERPRIORITY
 - `$9`: L_ORDERKEY (= $0, join condition)
@@ -56,38 +68,45 @@ Propagates base table deltas to the root pipeline MI. MI[0] maintenance is trivi
 ## Existing Infrastructure (reusable)
 
 ### Record Types (`frontend/geo/tpch_tables.hpp`)
+
 - `orders_t` (id=4): Key=`{o_orderkey}`, has `o_orderpriority` (Varchar<15>)
 - `lineitem_t` (id=5): Key=`{l_orderkey, l_linenumber}`, has `l_shipmode` (Varchar<10>), `l_shipdate`, `l_commitdate`, `l_receiptdate` (all Integer/Timestamp)
 - 6 other TPC-H tables fully defined
 
 ### Data Loading (`frontend/geo/tpch_workload.hpp`)
+
 - `TPCHWorkload<AdapterType>` loads all 8 tables with scale-factor-based counts
 - ORDERS_SCALE=1500/SF, LINEITEM_SCALE=6000/SF
 - Supports custom insert functions for flexible data routing
 
 ### Merged Adapters (`frontend/shared/adapter-scanner/`)
+
 - `RocksDBMergedAdapter<Records...>` / `LeanStoreMergedAdapter<Records...>`: variadic template storing heterogeneous records in one index
 - Key interleaving: records sorted by shared key prefix, distinguished by fold-length + value-length (current) → to be replaced by tagged row format
 - `RocksDBMergedScanner` / `LeanStoreMergedScanner`: return `std::variant<Records::Key..., Records...>` pairs
 
 ### Join Infrastructure (`frontend/shared/merge-join/`)
+
 - `PremergedJoin`: single-pass join over merged scanner with adaptive seek strategy and join state machine
 - `BinaryMergeJoin`: two-way merge join from independent sources
 - `HashJoin`: hash-based join
 - `JoinState`: caching + Cartesian product + output buffering
 
 ### View Templates (`frontend/shared/view_templates.hpp`)
+
 - `joined_t<TID, JK, fold_pks, Ts...>`: joined record type with composite key
 - `merged_t<TID, T, JK, extra_id>`: single record in merged index
 - `SKBuilder<JK>`: uniform key extraction across all types
 
 ### Executable Framework (`frontend/geo/executable_helper.hpp`)
+
 - `ExecutableHelper` + `DBTraits` (LeanStoreTraits / RocksDBTraits)
 - `schedule_bg_txs()`: background insert/erase/lookup thread
 - `tput_tx()`: benchmark query throughput measurement
 - `jumpmuTry/jumpmuCatch` for transaction exception handling
 
 ### Geo Benchmark Pattern (`frontend/geo/`)
+
 - `GeoJoin` workload class: holds base tables, merged adapter, view adapters
 - `join_search_count.tpp`: BaseJoiner/MergedJoiner/HashJoiner query patterns
 - `views.hpp`: sort_key_t, SKBuilder specializations, intermediate join types
@@ -98,26 +117,32 @@ Propagates base table deltas to the root pipeline MI. MI[0] maintenance is trivi
 ## Key Design Decisions
 
 ### 1. Directory Structure: `frontend/tpch/q12/`
+
 New directory, sibling to `frontend/geo/`. Organized under `tpch/` for future TPC-H queries. Reuses shared infrastructure heavily.
 
 ### 2. Two Merged Indexes (Calcite terminology — not "view")
+
 - **MI[0]**: `MergedAdapter<orders_t, lineitem_t>` — raw data, trivially populated during load. Maintenance mirrors base table writes.
-- **Root pipeline MI**: Single-record-type adapter storing `q12_result_t` keyed by `{l_shipmode, o_orderkey, l_linenumber}`. Populated by index creation plan (pipeline 0 processing over MI[0]). Shipmode-first key enables sorted aggregate without re-sorting.
+- **Root pipeline MI**: Single-record-type adapter storing `q12_result_t` keyed by `{l_shipmode, o_orderkey, l_linenumber}`. Stores **unfiltered** join+project results (including date columns for query-time filtering). Populated by index creation plan (pipeline 0 processing over MI[0]). Shipmode-first key enables sorted aggregate without re-sorting.
 
 ### 3. Data Loading: Full 8-Table TPC-H
+
 Reuse `TPCHWorkload::load()`. Enhance date generation to produce realistic dates (days since epoch, 1992-1998 range) and order priorities from TPC-H domain (`1-URGENT`, `2-HIGH`, `3-MEDIUM`, `4-NOT SPECIFIED`, `5-LOW`).
 
 ### 4. Storage Structure Variants (--storage_structure 1-4)
+
 1. **Traditional indexes + hash join**: Separate ORDERS and LINEITEM adapters. Query: scan+filter LINEITEM, hash-join ORDERS, project, aggregate.
 2. **Fully materialized view** of the final query result.
 3. **MI[0] only (merged index)**: PremergedJoin over `MergedAdapter<orders_t, lineitem_t>`, filter+project+aggregate at query time. No root pipeline MI.
 4. **MI[0] + root pipeline MI (full Calcite plan)**: MI[0] as maintenance source, root pipeline MI for fast query reads.
 
 ### 5. Update Stream: TPC-H RF1/RF2
+
 - **RF1** (insert): New order + 1-7 lineitems. Insert into base tables + MI[0] (trivial mirror). Propagate to root pipeline MI via Branch 1 maintenance.
 - **RF2** (delete): Delete from root pipeline MI (scan 'MAIL' and 'SHIP' prefixes for orderkey). Then delete from MI[0] and base tables.
 
 ### 6. Root Pipeline MI Maintenance On Delete
+
 Keyed by `(shipmode, orderkey, linenumber)`. Delete by orderkey requires only 2 prefix scans (MAIL + SHIP). MI[0] deletion is trivial — delete by key directly.
 
 ---
@@ -125,12 +150,14 @@ Keyed by `(shipmode, orderkey, linenumber)`. Delete by orderkey requires only 2 
 ## Critical Infrastructure Change: Tagged Row Format
 
 ### Problem
+
 Current merged adapter/scanner uses **fold-length + value-length** to distinguish record types (`toType()`). This works when all record types have distinct key lengths but **will not generalize** to future queries where sources may share key lengths.
 
 ### Solution: Calcite's `TaggedRowSchema` format
+
 Reference: `TaggedRowSchema.java` in the Calcite repo (`org.apache.calcite.materialize`).
 
-```
+```text
 [domainTag_k0][keyVal_k0][domainTag_k1][keyVal_k1]...[indexTag(0x00)][sourceId]...[payload]
 ```
 
@@ -139,18 +166,22 @@ Reference: `TaggedRowSchema.java` in the Calcite repo (`org.apache.calcite.mater
 - **Payload**: remaining non-key columns, variable per source.
 
 ### Q12 Example (K=1, shared key = orderkey)
+
 - ORDERS (src=0): `[0x01][fold(orderkey)][0x00][0x00]`
 - LINEITEM (src=1): `[0x01][fold(orderkey)][0x00][0x01][fold(linenumber)]`
 
 Correct interleaving: ORDERS before LINEITEM for same orderkey. Unique keys: lineitems distinguished by linenumber suffix. Record type ID: read sourceId byte at fixed offset.
 
 ### Scope of Change
+
 Modify `foldKey()`/`unfoldKey()` in merged adapter context, replace `toType()` with sourceId-based dispatch in merged scanners:
+
 - `RocksDBMergedAdapter.hpp` / `LeanStoreMergedAdapter.hpp`
 - `RocksDBMergedScanner.hpp` / `LeanStoreMergedScanner.hpp`
 - `variant_utils.hpp` (toType function)
 
 ### Migration Strategy Options
+
 - **(a)** Make tagged format the new default and update geo benchmark simultaneously
 - **(b)** Parameterize format choice per merged index (template parameter or runtime flag)
 - **(c)** Implement tagged format only for Q12's merged adapters as new classes
@@ -159,7 +190,7 @@ Modify `foldKey()`/`unfoldKey()` in merged adapter context, replace `toType()` w
 
 ## New File Structure
 
-```
+```text
 frontend/tpch/q12/
     q12_views.hpp              -- q12_result_t record (root pipeline MI entry), Q12 filter & projection functions
     q12_workload.hpp           -- Q12Workload class (load, query, maintain methods)
