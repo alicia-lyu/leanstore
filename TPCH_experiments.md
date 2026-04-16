@@ -8,13 +8,14 @@ This document tracks experiments for the **current VLDB revision** — complemen
 
 The pattern follows geo exactly:
 
-- **Storage structure 1**: Traditional indexes (separate per-table B-trees) + join at query time
+- **Storage structure 1**: Traditional indexes (separate per-table B-trees) + merge join at query time
 - **Storage structure 2**: Materialized view storing the pipeline's output
 - **Storage structure 3**: Single merged index interleaving the pipeline's source tables + join via PremergedJoin at query time
+- **Storage structure 4**: Clustered indexes + hash join at query time
 
 ## Overall Goal
 
-Replace the handcrafted geo-benchmark queries with standard TPC-H queries to demonstrate the generality of merged indexes. This directly addresses VLDB reviewer critiques (Reviewers 1, 2, 3) demanding recognized benchmarks. For each query, we compare traditional indexes, materialized views, and a single merged index — showing where MI helps, where it matches materialized views, and where it loses.
+Complement the handcrafted geo-benchmark queries with standard TPC-H queries to demonstrate the generality of merged indexes. This directly addresses VLDB reviewer critiques (Reviewers 1, 2, 3) demanding recognized benchmarks. For each query, we compare traditional indexes, materialized views, and a single merged index — showing where MI helps, where it matches materialized views, and where it loses.
 
 The secondary goal is honest evaluation. Reviewer 2 (D2) specifically wants to see cases where merged indexes are NOT clearly beneficial, so our query selection must include at least one such case.
 
@@ -24,12 +25,9 @@ For each TPC-H query, Calcite must identify **which one pipeline** is the best c
 
 ### What a Single-Pipeline MI Plan Looks Like
 
-For each query, Calcite picks the one sub-join (pipeline) where interleaving source tables in a merged index is most beneficial. The plan must specify:
+For each query, Calcite picks the one sub-join (pipeline) where interleaving source tables in a merged index is most beneficial. The existing Calcite project already optimizes for interesting ordering, but did not optimize for the case where only 1 merged index is allowed. For this case, we want to bundle as much query operations as possible, likely as many source indexes sharing the sort orders as possible, and this objective is different from the current Calcite setup where it more likely prefers that all sources end up in some merged indexes, even if that means several binary-source merged index.
 
-1. **Which tables** go into the merged index (the pipeline's source tables)
-2. **What join key** orders the interleaving (the shared prefix key)
-3. **The query plan** that uses this MI — a PremergedJoin scan over the MI, followed by any remaining joins with tables outside the MI, then filters and aggregation
-4. **The maintenance plan** — how to propagate inserts/deletes to the MI when base tables change
+Currently, in `leanstore`, the only operator directly reads from merged indexes is `PremergedJoin`, but this may no longer be the case with `int-ord-plans`. If `test-plans/q3ol` creates a merged index only for the leaf pipeline, the first operator consuming a merged index is `SortedAggregate`. We must strategize addition to the shared infra, since the majority is still hand-coded and we may not afford to code a generic query processor until we move on to `../query_proc_w_merged_index/`, and this is only scheduled for our next paper.
 
 ### Concrete Example: Geo Benchmark (Reference)
 
@@ -64,13 +62,13 @@ calcite-integration-info/int-ord-plans/
 
 ### Per-Query Status
 
-| Query   | `int-ord-plans/` | Status                                                     |
-| ------- | ----------------- | ---------------------------------------------------------- |
-| **Q12** | ❌ Not yet        | Need: which pipeline, which tables in the single MI        |
+| Query   | `int-ord-plans/` | Status                                                             |
+| ------- | ---------------- | ------------------------------------------------------------------ |
+| **Q12** | ❌ Not yet        | Need: which pipeline, which tables in the single MI                |
 | **Q3**  | ❌ Not yet        | Need: likely ORDERS+LINEITEM by orderkey, but Calcite must confirm |
-| **Q5**  | ❌ Not yet        | Need: pipeline selection for 6-table star join             |
-| **Q9**  | ❌ Not yet        | Need: pipeline selection for 6-table chain                 |
-| **Q7**  | ❌ Not yet        | May show MI is not helpful (honest evaluation)             |
+| **Q5**  | ❌ Not yet        | Need: pipeline selection for 6-table star join                     |
+| **Q9**  | ❌ Not yet        | Need: pipeline selection for 6-table chain                         |
+| **Q7**  | ❌ Not yet        | May show MI is not helpful (honest evaluation)                     |
 
 ### What LeanStore Can Do Without `int-ord-plans/`
 
@@ -89,19 +87,19 @@ Even before Calcite delivers plans, we can implement:
 
 ### Tier 1: Must Implement
 
-| Query    | Tables Involved                                    | Why Selected                                              |
-| -------- | -------------------------------------------------- | --------------------------------------------------------- |
-| **Q12**  | ORDERS, LINEITEM (2)                               | Simplest case; 1 join, 1 filter, 1 aggregate              |
-| **Q3**   | CUSTOMER, ORDERS, LINEITEM (3)                     | Reviewer 3 W3 mentions Q3; ORDER BY + LIMIT               |
-| **Q9**   | PART, SUPPLIER, LINEITEM, PARTSUPP, ORDERS, NATION (6) | Most complex TPC-H join; tests MI on a sub-join of 6 tables |
+| Query   | Tables Involved                                        | Why Selected                                                |
+| ------- | ------------------------------------------------------ | ----------------------------------------------------------- |
+| **Q12** | ORDERS, LINEITEM (2)                                   | Simplest case; 1 join, 1 filter, 1 aggregate                |
+| **Q3**  | CUSTOMER, ORDERS, LINEITEM (3)                         | Reviewer 3 W3 mentions Q3; ORDER BY + LIMIT                 |
+| **Q9**  | PART, SUPPLIER, LINEITEM, PARTSUPP, ORDERS, NATION (6) | Most complex TPC-H join; tests MI on a sub-join of 6 tables |
 
 ### Tier 2: Should Implement (one or two)
 
-| Query    | Tables Involved                                          | Why Consider                                                                  |
-| -------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| **Q5**   | CUSTOMER, ORDERS, LINEITEM, SUPPLIER, NATION, REGION (6) | Reviewer 3 W3 mentions Q5; star-join topology                                |
-| **Q10**  | CUSTOMER, ORDERS, LINEITEM, NATION (4)                   | Medium complexity; customer-centric aggregation                               |
-| **Q7**   | SUPPLIER, LINEITEM, ORDERS, CUSTOMER, NATION x2 (5+)    | Self-join on NATION; potential "MI not helpful" case for Reviewer 2 D2        |
+| Query   | Tables Involved                                          | Why Consider                                                           |
+| ------- | -------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Q5**  | CUSTOMER, ORDERS, LINEITEM, SUPPLIER, NATION, REGION (6) | Reviewer 3 W3 mentions Q5; star-join topology                          |
+| **Q10** | CUSTOMER, ORDERS, LINEITEM, NATION (4)                   | Medium complexity; customer-centric aggregation                        |
+| **Q7**  | SUPPLIER, LINEITEM, ORDERS, CUSTOMER, NATION x2 (5+)     | Self-join on NATION; potential "MI not helpful" case for Reviewer 2 D2 |
 
 ### Selection Rationale
 
@@ -127,11 +125,11 @@ These are preliminary — the actual MI composition depends on Calcite's `int-or
 
 **Storage structures**:
 
-| # | Strategy                    | Description                                               |
-| - | --------------------------- | --------------------------------------------------------- |
-| 1 | Traditional indexes         | Separate ORDERS + LINEITEM indexes; hash or merge join    |
-| 2 | Materialized view           | Pre-joined + pre-filtered result stored in one index      |
-| 3 | Single merged index         | MI(ORDERS, LINEITEM) by orderkey; PremergedJoin at query time |
+| # | Strategy            | Description                                                   |
+| - | ------------------- | ------------------------------------------------------------- |
+| 1 | Traditional indexes | Separate ORDERS + LINEITEM indexes; hash or merge join        |
+| 2 | Materialized view   | Pre-joined + pre-filtered result stored in one index          |
+| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; PremergedJoin at query time |
 
 ### Q3: CUSTOMER x ORDERS x LINEITEM
 
@@ -141,11 +139,11 @@ These are preliminary — the actual MI composition depends on Calcite's `int-or
 - CUSTOMER joined at query time (small table, indexed lookup by custkey)
 - Final: ORDER BY revenue DESC, o_orderdate + LIMIT 10
 
-| # | Strategy                    | Description                                               |
-| - | --------------------------- | --------------------------------------------------------- |
-| 1 | Traditional indexes         | Hash join LINEITEM x ORDERS, then hash join with CUSTOMER |
-| 2 | Materialized view           | Pre-joined 3-way result stored and pre-sorted             |
-| 3 | Single merged index         | MI(ORDERS, LINEITEM) by orderkey; join CUSTOMER at query time |
+| # | Strategy            | Description                                                   |
+| - | ------------------- | ------------------------------------------------------------- |
+| 1 | Traditional indexes | Hash join LINEITEM x ORDERS, then hash join with CUSTOMER     |
+| 2 | Materialized view   | Pre-joined 3-way result stored and pre-sorted                 |
+| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; join CUSTOMER at query time |
 
 ### Q9: 6-Table Profit Query
 
@@ -155,11 +153,11 @@ These are preliminary — the actual MI composition depends on Calcite's `int-or
 - Remaining joins (PART, SUPPLIER, PARTSUPP, NATION) done at query time via hash joins
 - Final: GROUP BY nation, year; SUM profit
 
-| # | Strategy                    | Description                                               |
-| - | --------------------------- | --------------------------------------------------------- |
-| 1 | Traditional indexes         | 5 hash joins over separate indexes                        |
-| 2 | Materialized view           | Full 6-way join materialized                              |
-| 3 | Single merged index         | MI(ORDERS, LINEITEM) by orderkey; 4 remaining hash joins  |
+| # | Strategy            | Description                                              |
+| - | ------------------- | -------------------------------------------------------- |
+| 1 | Traditional indexes | 5 hash joins over separate indexes                       |
+| 2 | Materialized view   | Full 6-way join materialized                             |
+| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; 4 remaining hash joins |
 
 ### Q5 or Q7 (Tier 2 — TBD)
 
@@ -222,28 +220,28 @@ make q12_btree_lldb_3
 
 ### Reviewer 1: More TPC-H
 
-| Concern                              | Experiment                                                      |
-| ------------------------------------ | --------------------------------------------------------------- |
-| "Evaluate on standard benchmarks"    | Q12, Q3, Q9 with all 3 storage structure variants               |
-| "Show generality beyond geo queries" | Complexity gradient: 2-table, 3-table, 6-table                  |
+| Concern                              | Experiment                                        |
+| ------------------------------------ | ------------------------------------------------- |
+| "Evaluate on standard benchmarks"    | Q12, Q3, Q9 with all 3 storage structure variants |
+| "Show generality beyond geo queries" | Complexity gradient: 2-table, 3-table, 6-table    |
 
 ### Reviewer 2: Honest Trade-offs
 
-| Concern                   | Experiment                                                             |
-| ------------------------- | ---------------------------------------------------------------------- |
-| D2: "Show where MI loses" | Q7 (non-hierarchical join graph) or large-table MI with high skew     |
-| "Maintenance overhead"    | Insert/delete latency: MI vs. materialized view vs. traditional        |
-| "Space overhead"          | Storage size comparison across all 3 structures                        |
+| Concern                   | Experiment                                                        |
+| ------------------------- | ----------------------------------------------------------------- |
+| D2: "Show where MI loses" | Q7 (non-hierarchical join graph) or large-table MI with high skew |
+| "Maintenance overhead"    | Insert/delete latency: MI vs. materialized view vs. traditional   |
+| "Space overhead"          | Storage size comparison across all 3 structures                   |
 
 ### Reviewer 3: Specific Experiments
 
-| Concern                                  | Experiment                                                                                                             |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| W2/D5: Larger scan ranges                | Vary Q12 date filter: 1-month, 1-year, 3-year windows                                                                 |
-| W3/D6: Single-table scan overhead in MI  | Measure LINEITEM-only scan in standalone index vs. MI with ORDERS interleaved                                          |
-| W3/D6: Join order comparison             | For Q3/Q5: compare plans with vs. without MI (requires int-ord-plans)                                                  |
-| D3-D4: MI vs. materialized views         | Every query has both MI (structure 3) and view (structure 2); compare latency, maintenance, space                      |
-| "B-tree vs LSM deeper analysis"          | Run all queries on both `_btree` and `_lsm` executables                                                               |
+| Concern                                 | Experiment                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| W2/D5: Larger scan ranges               | Vary Q12 date filter: 1-month, 1-year, 3-year windows                                             |
+| W3/D6: Single-table scan overhead in MI | Measure LINEITEM-only scan in standalone index vs. MI with ORDERS interleaved                     |
+| W3/D6: Join order comparison            | For Q3/Q5: compare plans with vs. without MI (requires int-ord-plans)                             |
+| D3-D4: MI vs. materialized views        | Every query has both MI (structure 3) and view (structure 2); compare latency, maintenance, space |
+| "B-tree vs LSM deeper analysis"         | Run all queries on both `_btree` and `_lsm` executables                                           |
 
 ### Ad-Hoc Experiments (Reviewer 3)
 
