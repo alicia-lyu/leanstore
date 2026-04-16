@@ -372,8 +372,8 @@ make q12_lsm_reload
 | W2/D5: Larger scan ranges                | Vary selectivity   | Run Q12 with different date ranges (1-month, 1-year, 3-year windows)                                                   |
 | W3/D6: Single-table scan overhead in MI  | Overhead test      | Measure LINEITEM-only scan speed in standalone index vs. interleaved MI                                                |
 | W3/D6: Join order comparison             | Join orders        | For Q3/Q5: (a) best order without MI, (b) best order with MI on maximal sub-join, (c) order maximizing MI prefix match |
-| D3-D4: MI vs. materialized views         | View comparison    | Every query has both MI and materialized view variants; compare query latency, maintenance cost, space                  |
-| "B-tree vs LSM deeper analysis"          | Backend comparison | Run all queries on both `_btree` and `_lsm` executables                                                               |
+| D3-D4: MI vs. materialized views         | View comparison    | Every query has both MI and materialized view variants; compare query latency, maintenance cost, space                 |
+| "B-tree vs LSM deeper analysis"          | Backend comparison | Run all queries on both `_btree` and `_lsm` executables                                                                |
 
 ### Ad-Hoc Experiments (Reviewer 3)
 
