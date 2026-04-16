@@ -62,13 +62,13 @@ calcite-integration-info/int-ord-plans/
 
 ### Per-Query Status
 
-| Query   | `int-ord-plans/` | Status                                                             |
-| ------- | ---------------- | ------------------------------------------------------------------ |
-| **Q12** | ❌ Not yet        | Need: which pipeline, which tables in the single MI                |
-| **Q3**  | ❌ Not yet        | Need: likely ORDERS+LINEITEM by orderkey, but Calcite must confirm |
-| **Q5**  | ❌ Not yet        | Need: pipeline selection for 6-table star join                     |
-| **Q9**  | ❌ Not yet        | Need: pipeline selection for 6-table chain                         |
-| **Q7**  | ❌ Not yet        | May show MI is not helpful (honest evaluation)                     |
+| Query   | int-ord-plans | Status                                                                |
+| ------- | ------------- | --------------------------------------------------------------------- |
+| **Q12** | Not yet       | Need: which pipeline, which tables in the single MI                   |
+| **Q3**  | Not yet       | Need: likely ORDERS+LINEITEM by orderkey, but Calcite must confirm    |
+| **Q5**  | Not yet       | Need: pipeline selection for 6-table star join                        |
+| **Q9**  | Not yet       | Need: pipeline selection for 6-table chain                            |
+| **Q7**  | Not yet       | May show MI is not helpful (honest evaluation)                        |
 
 ### What LeanStore Can Do Without `int-ord-plans/`
 
