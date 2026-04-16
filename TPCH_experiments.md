@@ -209,11 +209,11 @@ This is the **critical missing deliverable** from Calcite. These plans explore a
 
 **What must be in `int-ord-plans/`**: For each TPC-H query, Calcite must generate **three plan variants**:
 
-| Plan Variant | Description | Purpose |
-|--------------|-------------|---------|
-| **(a) best-no-mi** | Best join order without any merged indexes | Traditional baseline; used by storage_structure=1 |
-| **(b) best-with-mi** | Best join order that uses MI on the maximal beneficial sub-join | The "sweet spot" plan; used by storage_structure=3 (partial MI) |
-| **(c) max-mi-prefix** | Join order that maximizes MI prefix match, even if overall cost is higher | Tests whether aggressive MI use helps or hurts; used by storage_structure=4 (full MI) |
+| Plan Variant           | Description                                                            | Purpose                                                                              |
+| ---------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **(a) best-no-mi**     | Best join order without any merged indexes                             | Traditional baseline; used by storage_structure=1                                    |
+| **(b) best-with-mi**   | Best join order that uses MI on the maximal beneficial sub-join         | The "sweet spot" plan; used by storage_structure=3 (partial MI)                      |
+| **(c) max-mi-prefix**  | Join order that maximizes MI prefix match, even if overall cost higher | Tests whether aggressive MI use helps or hurts; used by storage_structure=4 (full MI) |
 
 For each variant, Calcite must export the same set of plan files as in `test-plans/`:
 
@@ -224,7 +224,7 @@ For each variant, Calcite must export the same set of plan files as in `test-pla
 
 **Directory structure expected**:
 
-```
+```text
 calcite-integration-info/int-ord-plans/
   q12/
     best-no-mi/
@@ -249,14 +249,14 @@ calcite-integration-info/int-ord-plans/
 
 ### Per-Query Deliverable Status
 
-| Query | `test-plans/` | `int-ord-plans/` | LeanStore Can Implement |
-|-------|---------------|-------------------|------------------------|
-| **Q12** | ✅ `q12/` | ❌ Not yet | Traditional (1), merge join (2), materialized view (3), MI variants (4,5) from test-plans |
-| **Q3** | ✅ `q3ol/` | ❌ Not yet | Traditional (1) now; MI variants blocked on int-ord-plans |
-| **Q9** | ✅ `q9/` | ❌ Not yet | Traditional (1) now; MI variants blocked on int-ord-plans |
-| **Q5** | ❌ | ❌ | Traditional (1) only; all MI variants blocked |
-| **Q7** | ❌ | ❌ | Traditional (1) only; all MI variants blocked |
-| **Q10** | ❌ | ❌ | Traditional (1) only; all MI variants blocked |
+| Query    | `test-plans/` | `int-ord-plans/` | LeanStore Can Implement                                                                    |
+| -------- | ------------- | ----------------- | ------------------------------------------------------------------------------------------ |
+| **Q12**  | ✅ `q12/`    | ❌ Not yet        | Traditional (1), merge join (2), materialized view (3), MI variants (4,5) from test-plans  |
+| **Q3**   | ✅ `q3ol/`   | ❌ Not yet        | Traditional (1) now; MI variants blocked on int-ord-plans                                  |
+| **Q9**   | ✅ `q9/`     | ❌ Not yet        | Traditional (1) now; MI variants blocked on int-ord-plans                                  |
+| **Q5**   | ❌            | ❌                | Traditional (1) only; all MI variants blocked                                              |
+| **Q7**   | ❌            | ❌                | Traditional (1) only; all MI variants blocked                                              |
+| **Q10**  | ❌            | ❌                | Traditional (1) only; all MI variants blocked                                              |
 
 **Unblocked work** (can proceed without any Calcite deliverables):
 
@@ -352,28 +352,28 @@ make q12_lsm_reload
 
 ### Reviewer 1: More TPC-H
 
-| Concern | Experiment |
-|---------|-----------|
-| "Evaluate on standard benchmarks" | Q12, Q3, Q9 with all storage structure variants |
-| "Show generality beyond geo queries" | Complexity gradient: 2-table, 3-table, 6-table |
+| Concern                              | Experiment                                                    |
+| ------------------------------------ | ------------------------------------------------------------- |
+| "Evaluate on standard benchmarks"    | Q12, Q3, Q9 with all storage structure variants               |
+| "Show generality beyond geo queries" | Complexity gradient: 2-table, 3-table, 6-table                |
 
 ### Reviewer 2: Honest Trade-offs
 
-| Concern | Experiment |
-|---------|-----------|
+| Concern                   | Experiment                                                             |
+| ------------------------- | ---------------------------------------------------------------------- |
 | D2: "Show where MI loses" | Q7 (non-hierarchical join graph) or Q9 with space overhead measurement |
-| "Maintenance overhead" | RF1/RF2 latency across all queries, especially Q9 with 5-level cascade |
-| "Space overhead" | Storage size comparison: traditional vs. MI vs. materialized view |
+| "Maintenance overhead"    | RF1/RF2 latency across all queries, especially Q9 with 5-level cascade |
+| "Space overhead"          | Storage size comparison: traditional vs. MI vs. materialized view      |
 
 ### Reviewer 3: Specific Experiments
 
-| Concern | Code | Experiment |
-|---------|------|-----------|
-| W2/D5: Larger scan ranges | Vary selectivity | Run Q12 with different date ranges (1-month, 1-year, 3-year windows) |
-| W3/D6: Single-table scan overhead in MI | Overhead test | Measure LINEITEM-only scan speed in standalone index vs. interleaved MI |
-| W3/D6: Join order comparison | Join orders | For Q3/Q5: (a) best order without MI, (b) best order with MI on maximal sub-join, (c) order maximizing MI prefix match |
-| D3-D4: MI vs. materialized views | View comparison | Every query has both MI and materialized view variants; compare query latency, maintenance cost, space |
-| "B-tree vs LSM deeper analysis" | Backend comparison | Run all queries on both `_btree` and `_lsm` executables |
+| Concern                                  | Code               | Experiment                                                                                                             |
+| ---------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| W2/D5: Larger scan ranges                | Vary selectivity   | Run Q12 with different date ranges (1-month, 1-year, 3-year windows)                                                   |
+| W3/D6: Single-table scan overhead in MI  | Overhead test      | Measure LINEITEM-only scan speed in standalone index vs. interleaved MI                                                |
+| W3/D6: Join order comparison             | Join orders        | For Q3/Q5: (a) best order without MI, (b) best order with MI on maximal sub-join, (c) order maximizing MI prefix match |
+| D3-D4: MI vs. materialized views         | View comparison    | Every query has both MI and materialized view variants; compare query latency, maintenance cost, space                  |
+| "B-tree vs LSM deeper analysis"          | Backend comparison | Run all queries on both `_btree` and `_lsm` executables                                                               |
 
 ### Ad-Hoc Experiments (Reviewer 3)
 
