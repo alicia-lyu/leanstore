@@ -3,7 +3,7 @@ digraph {
   n0 [label="EnumerableSortedAggregate(group=[{0}], HIGH_LINE_COUNT=[SUM($1)], LOW_LINE_COUNT=[SUM($2)])"];
   n1 [label="EnumerableFilter(condition=[AND(OR(=(CAST($0):VARCHAR, 'MAIL'), =(CAST($0):VARCHAR, 'SHIP')), <($4, $5), <($3, $4), >=(CAST($5):DATE, 1994-01-01), <(CAST($5):DATE, +(1994-01-01, 12:INTERVAL YEAR)))])"];
   n2 [label="EnumerableSort(sort0=[$0], dir0=[ASC])"];
-  n3 [label="EnumerableProject(L_SHIPMODE=[$23], $f1=[CASE(=(CAST($5):VARCHAR, '1-URGENT'), 1, 0)], $f2=[CASE(<>(CAST($5):VARCHAR, '1-URGENT'), 1, 0)], $f3=[$19], $f4=[$20], $f5=[$21])"];
+  n3 [label="EnumerableProject(L_SHIPMODE=[$23], $f1=[CASE(OR(=(CAST($5):VARCHAR, '1-URGENT'), =(CAST($5):VARCHAR, '2-HIGH')), 1, 0)], $f2=[CASE(AND(<>(CAST($5):VARCHAR, '1-URGENT'), <>(CAST($5):VARCHAR, '2-HIGH')), 1, 0)], $f3=[$19], $f4=[$20], $f5=[$21])"];
   n4 [label="EnumerableMergeJoin(condition=[=($0, $9)], joinType=[inner])"];
   n5 [label="EnumerableSort(sort0=[$0], dir0=[ASC])"];
   n6 [label="EnumerableTableScan(table=[[TPCH, ORDERS]])"];
