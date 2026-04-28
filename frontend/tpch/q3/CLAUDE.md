@@ -1,0 +1,129 @@
+# Q3: Shipping Priority Query
+
+## TPC-H Definition (Section 2.4.3)
+
+The Shipping Priority Query retrieves the 10 unshipped orders with the highest revenue, for orders placed by customers in a given market segment before a given date. Revenue is `SUM(l_extendedprice * (1 - l_discount))`.
+
+## SQL
+
+```sql
+SELECT l_orderkey,
+       SUM(l_extendedprice * (1 - l_discount)) AS revenue,
+       o_orderdate,
+       o_shippriority
+FROM customer, orders, lineitem
+WHERE c_mktsegment = '[SEGMENT]'
+  AND c_custkey = o_custkey
+  AND l_orderkey = o_orderkey
+  AND o_orderdate < DATE '[DATE]'
+  AND l_shipdate > DATE '[DATE]'
+GROUP BY l_orderkey, o_orderdate, o_shippriority
+ORDER BY revenue DESC, o_orderdate
+LIMIT 10;
+```
+
+## Substitution Parameters
+
+| Parameter | Domain | Description |
+|-----------|--------|-------------|
+| SEGMENT | AUTOMOBILE, BUILDING, FURNITURE, HOUSEHOLD, MACHINERY | Market segment filter on CUSTOMER |
+| DATE | Day in [1995-03-01, 1995-03-31] | Cutoff for both o_orderdate and l_shipdate |
+
+**Validation values**: SEGMENT = BUILDING, DATE = 1995-03-15.
+
+**Approved query variants**: None in Appendix B.
+
+**Selectivity notes**: Each segment covers ~20% of customers. The DATE parameter controls two filters simultaneously: `o_orderdate < DATE` (orders placed before) and `l_shipdate > DATE` (items not yet shipped). For the validation date (1995-03-15), roughly half of orders and lineitems pass their respective filter.
+
+## Tables and Join Graph
+
+```
+CUSTOMER --[c_custkey = o_custkey]--> ORDERS --[o_orderkey = l_orderkey]--> LINEITEM
+```
+
+3 tables, 2 joins. The ORDERS-LINEITEM join is the heavy one (LINEITEM is the largest TPC-H table).
+
+## Merged Index
+
+**MI(ORDERS, LINEITEM)** interleaved by `orderkey`.
+
+- ORDERS key: `(o_orderkey)` — 1 record per order
+- LINEITEM key: `(l_orderkey, l_linenumber)` — N records per order
+- Natural prefix hierarchy: LINEITEM extends the ORDERS key
+
+The MI covers the ORDERS-LINEITEM join. CUSTOMER is joined at query time via merge join on `o_custkey = c_custkey`.
+
+## Column Index Mappings
+
+### Standalone Table Scans (for structure 1 filters)
+
+**LINEITEM** (16 cols): l_orderkey=$0, l_linenumber=$1, l_partkey=$2, l_suppkey=$3, l_quantity=$4, l_extendedprice=$5, l_discount=$6, l_tax=$7, l_returnflag=$8, l_linestatus=$9, l_shipdate=$10, l_commitdate=$11, l_receiptdate=$12, l_shipinstruct=$13, l_shipmode=$14, l_comment=$15
+
+**ORDERS** (9 cols): o_orderkey=$0, o_custkey=$1, o_orderstatus=$2, o_totalprice=$3, o_orderdate=$4, o_orderpriority=$5, o_clerk=$6, o_shippriority=$7, o_comment=$8
+
+**CUSTOMER** (8 cols): c_custkey=$0, c_name=$1, c_address=$2, c_nationkey=$3, c_phone=$4, c_acctbal=$5, c_mktsegment=$6, c_comment=$7
+
+### Concatenated ORDERS||LINEITEM (for structure 3 PremergedJoin output, 25 cols)
+
+ORDERS $0-$8, then LINEITEM $9-$24. Key columns:
+
+- o_orderkey=$0, o_custkey=$1, o_orderdate=$4, o_shippriority=$7
+- l_extendedprice=$14, l_discount=$15, l_shipdate=$19
+
+### Concatenated CUSTOMER||ORDERS||LINEITEM (for structure 2_4 post-hash-join, 33 cols)
+
+CUSTOMER $0-$7, ORDERS $8-$16, LINEITEM $17-$32. Key columns:
+
+- c_mktsegment=$6, o_orderkey=$8, o_orderdate=$12, o_shippriority=$15
+- l_orderkey=$17, l_extendedprice=$22, l_discount=$23, l_shipdate=$27
+
+## Plan Descriptions
+
+### Structure 1: Traditional Indexes + Merge Join
+
+Filters pushed down to immediately after table scans (matching the paper's plan shape):
+
+```
+LINEITEM scan -> Filter(l_shipdate > DATE) -> Project(l_orderkey, revenue)
+  -> Sort(l_orderkey) -> SortedAggregate(group by l_orderkey, SUM revenue)
+  -> MergeJoin(l_orderkey = o_orderkey) with:
+ORDERS scan -> Filter(o_orderdate < DATE) -> Sort(o_orderkey)
+  -> Sort(o_custkey) -> MergeJoin(o_custkey = c_custkey) with:
+CUSTOMER scan -> Filter(c_mktsegment = SEGMENT) -> Sort(c_custkey)
+  -> Project(l_orderkey, revenue, o_orderdate, o_shippriority)
+  -> Sort(revenue DESC, o_orderdate ASC) -> Limit 10
+```
+
+The LINEITEM aggregate before the ORDERS join is valid because `o_orderdate` and `o_shippriority` are functionally dependent on `l_orderkey` (each order has one orderdate and one shippriority). Aggregating first reduces the number of rows entering the merge join.
+
+### Structure 2 & 4: Hash Join (Default Calcite Plan)
+
+All three tables hash-joined, then filtered, projected, aggregated:
+
+```
+CUSTOMER HashJoin ORDERS on c_custkey=o_custkey
+  -> HashJoin LINEITEM on o_orderkey=l_orderkey
+  -> Filter(c_mktsegment=SEGMENT AND o_orderdate < DATE AND l_shipdate > DATE)
+  -> Project(l_orderkey, revenue, o_orderdate, o_shippriority)
+  -> Aggregate(group by l_orderkey, o_orderdate, o_shippriority; SUM revenue)
+  -> Sort(revenue DESC, o_orderdate ASC) -> Limit 10
+```
+
+Structure 2 materializes the full output; structure 4 executes at query time with clustered indexes.
+
+### Structure 3: Merged Index + PremergedJoin
+
+PremergedJoin replaces ORDERS+LINEITEM scans and their merge join. Filters applied after PremergedJoin using concatenated ORDERS||LINEITEM indices:
+
+```
+PremergedJoin(MI_ORDERS_LINEITEM)
+  -> Filter(o_orderdate < DATE [$4] AND l_shipdate > DATE [$19])
+  -> Project(l_orderkey=$0, revenue=*($14,-(1,$15)), o_custkey=$1, o_orderdate=$4, o_shippriority=$7)
+  -> SortedAggregate(group by l_orderkey, o_custkey, o_orderdate, o_shippriority; SUM revenue)
+  -> Sort(o_custkey) -> MergeJoin(o_custkey = c_custkey) with:
+CUSTOMER scan -> Filter(c_mktsegment = SEGMENT) -> Sort(c_custkey)
+  -> Project(l_orderkey, revenue, o_orderdate, o_shippriority)
+  -> Sort(revenue DESC, o_orderdate ASC) -> Limit 10
+```
+
+The aggregate preserves o_custkey, o_orderdate, o_shippriority as group-by columns (functionally dependent on l_orderkey) so they survive for the CUSTOMER join and final projection.

@@ -1,6 +1,45 @@
-# Q12: First Calcite-Planned Query
+# Q12: Shipping Modes and Order Priority Query
 
-## Motivation
+## TPC-H Definition (Section 2.4.12)
+
+```sql
+SELECT l_shipmode,
+       SUM(CASE WHEN o_orderpriority = '1-URGENT' OR o_orderpriority = '2-HIGH'
+                THEN 1 ELSE 0 END) AS high_line_count,
+       SUM(CASE WHEN o_orderpriority <> '1-URGENT' AND o_orderpriority <> '2-HIGH'
+                THEN 1 ELSE 0 END) AS low_line_count
+FROM orders, lineitem
+WHERE o_orderkey = l_orderkey
+  AND l_shipmode IN ('[SHIPMODE1]', '[SHIPMODE2]')
+  AND l_commitdate < l_receiptdate
+  AND l_shipdate < l_commitdate
+  AND l_receiptdate >= DATE '[DATE]'
+  AND l_receiptdate < DATE '[DATE]' + INTERVAL '1' YEAR
+GROUP BY l_shipmode
+ORDER BY l_shipmode;
+```
+
+### Substitution Parameters
+
+| Parameter | Domain | Description |
+|-----------|--------|-------------|
+| SHIPMODE1 | REG AIR, AIR, RAIL, SHIP, TRUCK, MAIL, FOB | First ship mode filter |
+| SHIPMODE2 | Same list, must differ from SHIPMODE1 | Second ship mode filter |
+| DATE | January 1 of a year in [1993, 1997] | Start of 1-year receipt date window |
+
+**Validation values**: SHIPMODE1 = MAIL, SHIPMODE2 = SHIP, DATE = 1994-01-01.
+
+**Approved query variants**: Variant A (Appendix B, approved 1998-02-11) replaces CASE with DECODE syntax. Same semantics.
+
+**Selectivity notes**: Two ship modes cover ~2/7 (~28.6%) of lineitems. The 1-year date window covers ~1/7 of the data. Combined with the `l_shipdate < l_commitdate < l_receiptdate` ordering constraint, expect ~4% of lineitems to pass all filters. For selectivity sweeps (Reviewer 3 W2/D5), vary DATE across years and/or widen the receipt date window.
+
+---
+
+## Motivation (Next Paper Scope)
+
+> **Note**: The rest of this document describes the multi-MI pipeline cascade approach for Q12, which is **next paper scope**. For the current paper, Q12 uses a single MI(ORDERS, LINEITEM) as described in `TPCH_experiments.md` and the `plans/` directory.
+
+## Original Motivation
 
 Q12 is the **proof-of-concept** for the Calcite↔LeanStore integration: manually translating Calcite's optimizer-generated plans into C++ before building a general plan interpreter. It validates that:
 
@@ -120,8 +159,8 @@ struct q12_result_t {
         ADD_KEY_TRAITS(l_shipmode, o_orderkey, l_linenumber)
     };
     // Projection fields
-    Integer high_line_count;      // $1 — CASE(o_orderpriority = '1-URGENT', 1, 0)
-    Integer low_line_count;       // $2 — CASE(o_orderpriority <> '1-URGENT', 1, 0)
+    Integer high_line_count;      // $1 — CASE(o_orderpriority IN ('1-URGENT','2-HIGH'), 1, 0)
+    Integer low_line_count;       // $2 — CASE(o_orderpriority NOT IN ('1-URGENT','2-HIGH'), 1, 0)
     Timestamp l_shipdate;         // $3 — preserved for query-time filter
     Timestamp l_commitdate;       // $4 — preserved for query-time filter
     Timestamp l_receiptdate;      // $5 — preserved for query-time filter
@@ -256,7 +295,7 @@ auto q12_predicate_lineitem = [](const lineitem_t& l) -> bool { /* same conditio
 
 ### `q12_projection`
 
-Plugs into `ProjectIterator<joined_ol_t, q12_result_t>`. Implements Calcite's projection `$23, $0, $10, CASE($5='1-URGENT',1,0), CASE($5<>'1-URGENT',1,0), $19, $20, $21`:
+Plugs into `ProjectIterator<joined_ol_t, q12_result_t>`. Implements Calcite's projection `$23, $0, $10, CASE($5 IN ('1-URGENT','2-HIGH'),1,0), CASE($5 NOT IN ('1-URGENT','2-HIGH'),1,0), $19, $20, $21`:
 
 ```cpp
 // joined_ol_t carries (orders_t::Key, orders_t, lineitem_t::Key, lineitem_t)
@@ -266,8 +305,8 @@ auto q12_projection = [](const joined_ol_t& j) -> q12_result_t {
         .key = { j.lineitem_key.l_shipmode,      // $23
                  j.order_key.o_orderkey,          // $0
                  j.lineitem_key.l_linenumber },   // $10
-        .high_line_count = (prio == "1-URGENT") ? 1 : 0,  // CASE($5=...)
-        .low_line_count  = (prio != "1-URGENT") ? 1 : 0,  // CASE($5<>...)
+        .high_line_count = (prio == "1-URGENT" || prio == "2-HIGH") ? 1 : 0,
+        .low_line_count  = (prio != "1-URGENT" && prio != "2-HIGH") ? 1 : 0,
         .l_shipdate      = j.lineitem.l_shipdate,          // $19
         .l_commitdate    = j.lineitem.l_commitdate,        // $20
         .l_receiptdate   = j.lineitem.l_receiptdate        // $21
