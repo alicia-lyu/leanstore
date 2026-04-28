@@ -19,17 +19,52 @@ Complement the handcrafted geo-benchmark queries with standard TPC-H queries to 
 
 The secondary goal is honest evaluation. Reviewer 2 (D2) specifically wants to see cases where merged indexes are NOT clearly beneficial, so our query selection must include at least one such case.
 
-## What Calcite Must Provide: `int-ord-plans/`
+## Query Plan Sources
 
-For each TPC-H query, Calcite must identify **which one pipeline** is the best candidate for a single merged index. This is delivered via `calcite-integration-info/int-ord-plans/` (does not exist yet).
+Each storage structure has a corresponding query plan in DOT (Graphviz) format, stored in `frontend/tpch/<query>/plans/`. These plans guide the C++ implementation — they specify the operator tree, join order, and access patterns for each structure.
 
-### What a Single-Pipeline MI Plan Looks Like
+### Plan ↔ Storage Structure Mapping
 
-For each query, Calcite picks the one sub-join (pipeline) where interleaving source tables in a merged index is most beneficial. The existing Calcite project already optimizes for interesting ordering, but did not optimize for the case where only 1 merged index is allowed. For this case, we want to bundle as much query operations as possible, likely as many source indexes sharing the sort orders as possible, and this objective is different from the current Calcite setup where it more likely prefers that all sources end up in some merged indexes, even if that means several binary-source merged index.
+| Structure                   | Plan Source                                       | File                       |
+| --------------------------- | ------------------------------------------------- | -------------------------- |
+| 1 (traditional + merge join) | Interesting-ordering optimized plan from Calcite  | `structure_1.dot`          |
+| 2 (materialized view)       | Default Calcite plan (hash joins, no int. order.) | `structure_2_4_default.dot` |
+| 3 (single merged index)     | Adapted from structure 1 with MI substitution     | `structure_3_draft.dot`    |
+| 4 (clustered + hash join)   | Same default plan as structure 2                  | `structure_2_4_default.dot` |
 
-Currently, in `leanstore`, the only operator directly reads from merged indexes is `PremergedJoin`, but this may no longer be the case with `int-ord-plans`. If `test-plans/q3ol` creates a merged index only for the leaf pipeline, the first operator consuming a merged index is `SortedAggregate`. We must strategize addition to the shared infra, since the majority is still hand-coded and we may not afford to code a generic query processor until we move on to `../query_proc_w_merged_index/`, and this is only scheduled for our next paper.
+### Plan Sources in Detail
 
-### Concrete Example: Geo Benchmark (Reference)
+**Structure 1** plans come from `calcite-integration-info/test-plans/<query>/before-pipeline.dot`. Despite the name "before-pipeline," these ARE interesting-ordering optimized — they use `EnumerableMergeJoin` with explicit `EnumerableSort` nodes to maintain sort order through the join chain. The Calcite optimizer produces these when configured with merge-join rules and interesting-ordering heuristics. Available for Q12, Q3, Q9.
+
+**Structure 2 & 4** plans are default Calcite plans using `EnumerableHashJoin` — no sort operators before joins, no interesting-ordering optimization. These represent what a standard SQL optimizer would produce. Structure 2 materializes the plan's output as a view; structure 4 executes it at query time with hash joins over clustered indexes.
+
+**Structure 3** plans adapt the structure 1 plan by replacing the innermost sort+merge-join pipeline (ORDERS ⋈ LINEITEM on orderkey) with an `EnumerablePremergedJoin` over a merged index. All other operators remain unchanged. These are drafts pending user review — the user will finalize which pipeline to target and confirm the MI composition.
+
+### Per-Query Plan Status
+
+| Query   | Structure 1 | Structure 2 & 4 | Structure 3        |
+| ------- | ----------- | ---------------- | ------------------ |
+| **Q12** | Done        | Done             | Draft, needs review |
+| **Q3**  | Done        | Done             | Draft, needs review |
+| **Q9**  | Done        | Done             | Draft, needs review |
+| **Q5**  | Not yet     | Not yet          | Not yet            |
+| **Q7**  | Not yet     | Not yet          | Not yet            |
+
+### Directory Layout
+
+```text
+frontend/tpch/
+  q12/plans/
+    structure_1.dot            -- interesting-ordering (merge join)
+    structure_2_4_default.dot  -- default (hash join)
+    structure_3_draft.dot      -- MI-adapted (pending review)
+  q3/plans/
+    ...
+  q9/plans/
+    ...
+```
+
+### Geo Benchmark Reference
 
 The geo benchmark's single MI interleaves 5 tables ordered by a geographic key hierarchy:
 
@@ -42,46 +77,7 @@ Key hierarchy: (nationkey, statekey, countykey, citykey, custkey)
 - PremergedJoin scans the MI once, assembling join results in a single pass
 - The materialized view (structure 2) stores the full 5-way join output in a separate index
 
-For TPC-H, each query's MI will follow the same pattern — just with different tables and key hierarchies.
-
-### Expected Directory Structure
-
-```text
-calcite-integration-info/int-ord-plans/
-  q12/
-    plan.dot           -- The single-MI query plan
-    maintenance.dot    -- Maintenance plan for the MI
-    README.md          -- Which pipeline was selected, why, what tables/keys
-  q3/
-    ...
-  q5/
-    ...
-  q9/
-    ...
-```
-
-### Per-Query Status
-
-| Query   | int-ord-plans | Status                                                                |
-| ------- | ------------- | --------------------------------------------------------------------- |
-| **Q12** | Not yet       | Need: which pipeline, which tables in the single MI                   |
-| **Q3**  | Not yet       | Need: likely ORDERS+LINEITEM by orderkey, but Calcite must confirm    |
-| **Q5**  | Not yet       | Need: pipeline selection for 6-table star join                        |
-| **Q9**  | Not yet       | Need: pipeline selection for 6-table chain                            |
-| **Q7**  | Not yet       | May show MI is not helpful (honest evaluation)                        |
-
-### What LeanStore Can Do Without `int-ord-plans/`
-
-Even before Calcite delivers plans, we can implement:
-
-- **Traditional index baselines** (storage_structure=1,4) for all queries — these don't need a Calcite plan since they use standard merge/hash joins over separate per-table indexes
-- **Operator framework** in `frontend/shared/` — reusable join, scan, filter, aggregate operators
-- **Ad-hoc experiments** — selectivity sweeps, single-table scan overhead (reuse existing geo MI infrastructure)
-
-### What Is Blocked
-
-- **MI variants** (storage_structure=3) for all queries — cannot pick tables/keys without Calcite's pipeline selection
-- **Materialized view variants** (storage_structure=2) — the view must store the output of the same pipeline Calcite selects for MI, so it depends on the same plan
+For TPC-H, each query's MI follows the same pattern — just with different tables and key hierarchies. The likely MI for Q12, Q3, Q9 is `MergedIndex(ORDERS, LINEITEM)` by `orderkey`.
 
 ## Query Selection and Priority
 
@@ -164,7 +160,7 @@ These are preliminary — the actual MI composition depends on Calcite's `int-or
 
 ### Q5 or Q7 (Tier 2 — TBD)
 
-Blocked on Calcite plan generation and query selection decision.
+Requires generating plans (structure 1 from Calcite interesting-ordering, structures 2/4 from default Calcite, structure 3 adapted).
 
 ## Storage Structure Convention
 
@@ -259,15 +255,14 @@ These do not require full query implementations:
 
 ## Implementation Order
 
-1. **Traditional baselines** for Q12, Q3, Q9 — storage_structure=1,4, no Calcite dependency
-2. **Q12 MI + view** — storage_structure=2,3 (pending int-ord-plans, or use obvious ORDERS+LINEITEM MI)
+1. **Q12 all structures** — plans ready for all 4 structures; implement C++ execution code
+2. **Q3 all structures** — plans ready; implement following Q12 patterns
 3. **Ad-hoc experiments** — selectivity sweep, single-table scan overhead, using Q12 MI
-4. **Q3 MI + view** — storage_structure=2,3 (pending int-ord-plans)
-5. **Q9 MI + view** — storage_structure=2,3 (pending int-ord-plans)
-6. **Tier 2 query** (Q7 or Q5) — for honest evaluation
+4. **Q9 all structures** — plans ready; most complex (6 tables, 4 remaining joins in structure 3)
+5. **Tier 2 query** (Q7 or Q5) — for honest evaluation; requires generating new plans
 
 ## Relationship to Next Paper
 
-The existing files in `calcite-integration-info/test-plans/` and `frontend/tpch/q12/CLAUDE.md` describe a **multi-MI pipeline cascade** approach where each query can have multiple merged indexes (e.g., Q12 has 2 MIs, Q9 has 5 MIs). That is **next paper scope**.
+The existing files in `calcite-integration-info/test-plans/` (other than `before-pipeline.dot`) and `frontend/tpch/q12/CLAUDE.md` describe a **multi-MI pipeline cascade** approach where each query can have multiple merged indexes (e.g., Q12 has 2 MIs, Q9 has 5 MIs). That is **next paper scope**.
 
-For the current paper, we use only the single-MI approach (like geo/) and need `int-ord-plans/` from Calcite to tell us which one pipeline to target per query.
+For the current paper, we use only the single-MI approach (like geo/). Plans for each storage structure live in `frontend/tpch/<query>/plans/`.
