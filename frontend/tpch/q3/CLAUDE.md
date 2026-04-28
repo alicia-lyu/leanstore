@@ -201,3 +201,30 @@ void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
 - **Pro**: Column access is field-based (`o.o_orderdate`) rather than positional (`$4`)
 - **Con**: The CUSTOMER merge join must be hand-coded (sort + two-pointer) rather than delegating to `BinaryMergeJoin` — or use `BinaryMergeJoin` with a second `joined_t` for the CUSTOMER join result
 - **Con**: Harder to reuse across queries — each query gets its own bespoke function
+
+---
+
+## Implementation Status (skeleton)
+
+As of 2026-04-28, `frontend/tpch/q3/` contains compile-ready skeletons.
+Method bodies are TODO comments citing the relevant section of this file.
+
+Stubbed methods (`load.tpp` + `query.tpp`):
+
+- `Q3Workload<Backend>::Q3Workload(...)` — wire gflags into `params`.
+- `Q3Workload<Backend>::load()` — dispatch on `FLAGS_storage_structure`.
+- `Q3Workload<Backend>::get_size() const` — dispatch on `FLAGS_storage_structure`.
+- `Q3Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1;
+  §Execution Style: Monolithic vs Cascade.
+- `Q3Workload<Backend>::query_by_view(out)` — see §Plan Descriptions, Structure 2 & 4.
+- `Q3Workload<Backend>::query_by_merged(out)` — see §Plan Descriptions, Structure 3;
+  §Execution Style: Monolithic vs Cascade (monolithic post-join sketch).
+- `Q3Workload<Backend>::query_by_hash(out)` — see §Plan Descriptions, Structure 2 & 4
+  (hash join variant).
+- `BaseQ3<Backend>::query / get_size` and the View/Merged/Hash siblings —
+  forwarders to the right `Q3Workload` method.
+- `q3_predicate_orders`, `q3_predicate_lineitem`, `q3_predicate_joined` —
+  see §Plan Descriptions for filter conditions.
+
+Cross-cutting TODOs (`OrdersLineitemPipeline`, build wiring): see
+`frontend/tpch/CLAUDE.md`.
