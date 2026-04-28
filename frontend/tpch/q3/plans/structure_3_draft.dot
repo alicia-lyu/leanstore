@@ -1,0 +1,22 @@
+digraph {
+  rankdir=BT;
+  n0 [label="EnumerableLimit(fetch=[10])"];
+  n1 [label="EnumerableSort(sort0=[$1], sort1=[$2], dir0=[DESC], dir1=[ASC])"];
+  n2 [label="EnumerableProject(L_ORDERKEY=[$0], L_REVENUE=[$1], O_ORDERDATE=[$6], O_SHIPPRIORITY=[$9])"];
+  n3 [label="EnumerableMergeJoin(condition=[=($3, $11)], joinType=[inner])"];
+  n4 [label="EnumerableSort(sort0=[$3], dir0=[ASC])"];
+  n5 [label="EnumerableSortedAggregate(group=[{0}], L_REVENUE=[SUM($1)])"];
+  n6 [label="EnumerableProject(L_ORDERKEY=[$0], $f1=[*($5, -(1, $6))])"];
+  n7 [label="EnumerablePremergedJoin(mi=[[TPCH, MI_ORDERS_LINEITEM]], condition=[=($0, $9)], joinType=[inner])"];
+  n7 -> n6 [label="0"];
+  n6 -> n5 [label="0"];
+  n5 -> n4 [label="0"];
+  n4 -> n3 [label="0"];
+  n8 [label="EnumerableSort(sort0=[$0], dir0=[ASC])"];
+  n9 [label="EnumerableTableScan(table=[[TPCH, CUSTOMER]])"];
+  n9 -> n8 [label="0"];
+  n8 -> n3 [label="1"];
+  n3 -> n2 [label="0"];
+  n2 -> n1 [label="0"];
+  n1 -> n0 [label="0"];
+}
