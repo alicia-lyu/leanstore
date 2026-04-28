@@ -54,6 +54,8 @@ Each storage structure has a corresponding query plan in DOT (Graphviz) format, 
 
 ```text
 frontend/tpch/
+  tpch_tables.hpp              -- TPC-H record types + spec-accurate generators
+  tpch_workload.hpp            -- TPCHWorkload<AdapterType> loader
   q12/plans/
     structure_1.dot            -- interesting-ordering (merge join)
     structure_2_4_default.dot  -- default (hash join)
@@ -63,6 +65,30 @@ frontend/tpch/
   q9/plans/
     ...
 ```
+
+### Shared TPC-H Infrastructure
+
+`frontend/tpch/tpch_tables.hpp` and `frontend/tpch/tpch_workload.hpp` are the canonical homes of the TPC-H record types and workload loader used by every Tier 1 query. The old `frontend/geo/tpch_tables.hpp` and `frontend/geo/tpch_workload.hpp` are now thin `#include` wrappers preserved so the geo benchmark continues to build; loggers (`frontend/shared/logger/*`) and `generate_targets.py` reference the new canonical paths.
+
+**This is a substantive rewrite of data generation, not a directory move.** Running geo and TPC-H experiments at the same scale factor will now produce different distributions because the new code follows TPC-H spec §4.2.3 domains, while the old geo loader used free-form random strings and a derived lineitems-per-order ratio. Struct field layouts, types, key structs, table `id` values (0–7), and `print()` are unchanged, so consumer code keeps compiling.
+
+`tpch_tables.hpp` improvements over the old geo version (with rationale tying back to the Tier 1 queries):
+
+- **Spec §4.2.3 domain arrays**: `TPCH_COLORS[92]`, `TPCH_TYPES_S{1,2,3}`, `TPCH_CONTAINERS_S{1,2}`, `TPCH_SEGMENTS[5]`, `TPCH_PRIORITIES[5]`, `TPCH_MODES[7]`, `TPCH_INSTRUCTIONS[4]`. Required so Q12's `l_shipmode IN ('MAIL','SHIP')`, Q9's `p_name LIKE '%green%'`, and Q3's `c_mktsegment = 'BUILDING'` actually match a meaningful fraction of the rows. With the old random strings these filters returned ~0 rows.
+- **`p_name` built from 5 distinct color words** — direct Q9 dependency.
+- **`lineitem_t::generateRandomRecord(partkey_fn, suppkey_fn, o_orderdate)`** — ship/commit/receipt dates and `l_returnflag`/`l_linestatus` are derived from the order's date so Q12's date-window filter and Q9's `extract(year from o_orderdate)` aggregation produce realistic selectivities.
+- **`part_t::generateRandomRecord(Integer partkey)`** takes the partkey so `p_retailprice` follows the spec formula; a backward-compat overload is kept for the geo benchmark.
+- **TPC-H date constants** — `TPCH_STARTDATE` = 1992-01-01, `TPCH_CURRENTDATE` = 1995-06-17, `TPCH_ENDDATE` = 1998-12-31, `TPCH_ORDERS_ENDDATE` = 1998-08-02 (as days since epoch), replacing the old `urand(1, 10000)` date generator.
+- **Hardcoded `NATIONS[25]` / `REGIONS[5]`** with `fromData()` factories — Q9 groups by nation name, so we need exactly the 25 spec-defined names rather than random strings.
+
+`tpch_workload.hpp` improvements over the old geo loader:
+
+- **Sparse `o_orderkey`** (first 8 of every 32 keys populated) via `orderkey_from_index()` — spec §4.2.3, prevents key-density artifacts in MI scans.
+- **`urand(1, 7)` lineitems per order** replacing the `LINEITEM_SCALE / ORDERS_SCALE` derived ratio — produces the realistic 1:N MI pattern PremergedJoin is designed for.
+- **`o_custkey % 3 != 0` constraint** — leaves 1/3 of customers without orders, needed for honest Q3 selectivity.
+- **`order_dates` (`unordered_map<Integer, Timestamp>`)** propagates each order's date to its lineitems' date generation.
+- **Exactly 4 PARTSUPP rows per part** (was random) — keeps Q9's `partsupp` join cardinality on-spec.
+- **0-indexed `getNationID` / `getRegionID`**; `loadNation()` / `loadRegion()` rewritten to populate from the hardcoded arrays.
 
 ### Geo Benchmark Reference
 
