@@ -28,3 +28,4 @@ perf*
 leanstore.json
 .claude
 /TRASH
+*.pdf
