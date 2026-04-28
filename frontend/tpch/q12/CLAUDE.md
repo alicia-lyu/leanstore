@@ -710,3 +710,28 @@ For the current paper (single MI per query, no maintenance), use monolithic styl
 3. **Spectrum between options 4 and 5**: In more complex queries, there may be intermediate pipelines between the leaf MI and the root MI. Q12 has only 2 pipelines, so the spectrum collapses to just "MI[0] only" vs "MI[0] + root MI."
 
 4. **Operator framework scope**: Should `frontend/shared/operators/` be built from the start (reusable from Q12 onward), or should operator classes start in `frontend/tpch/q12/` and be promoted to shared once a second query is implemented? Starting in shared costs little and avoids a refactor.
+
+---
+
+## Implementation Status (skeleton)
+
+As of 2026-04-28, `frontend/tpch/q12/` contains compile-ready skeletons.
+Method bodies are TODO comments citing the relevant section of this file.
+
+Stubbed methods (`load.tpp` + `query.tpp`):
+
+- `Q12Workload<Backend>::Q12Workload(...)` — wire gflags into `params`.
+- `Q12Workload<Backend>::load()` — dispatch on `FLAGS_storage_structure`.
+- `Q12Workload<Backend>::get_size() const` — dispatch on `FLAGS_storage_structure`.
+- `Q12Workload<Backend>::query_by_base(out)` — see §Stages × Options, Option 2.
+- `Q12Workload<Backend>::query_by_view(out)` — see §Stages × Options, Option 3.
+- `Q12Workload<Backend>::query_by_merged(out)` — see §Stages × Options, Option 4
+  / §Execution Style: monolithic post-join.
+- `Q12Workload<Backend>::query_by_hash(out)` — see §Stages × Options, Option 1.
+- `BaseQ12<Backend>::query / get_size` and the View/Merged/Hash siblings —
+  forwarders to the right `Q12Workload` method.
+- `q12_predicate_lineitem`, `q12_predicate_joined` — see §Q12-Specific
+  Operator Configurations, `q12_predicate`.
+
+Cross-cutting TODOs (`OrdersLineitemPipeline`, build wiring): see
+`frontend/tpch/CLAUDE.md`.
