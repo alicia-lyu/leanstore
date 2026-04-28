@@ -210,3 +210,32 @@ void q9_query_structure3(MergedAdapter& mi, ...) {
 ## Status
 
 All three DOT plan files are semantically equivalent and verified. No changes needed to Q9 DOT files.
+
+---
+
+## Implementation Status (skeleton)
+
+As of 2026-04-28, `frontend/tpch/q9/` contains compile-ready skeletons.
+Method bodies are TODO comments citing the relevant section of this file.
+
+Stubbed methods (`load.tpp` + `query.tpp`):
+
+- `Q9Workload<Backend>::Q9Workload(...)` — wire gflags into `params`.
+- `Q9Workload<Backend>::load()` — dispatch on `FLAGS_storage_structure`.
+- `Q9Workload<Backend>::get_size() const` — dispatch on `FLAGS_storage_structure`.
+- `Q9Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1
+  (5 merge joins); §Execution Style.
+- `Q9Workload<Backend>::query_by_view(out)` — see §Plan Descriptions, Structure 2 & 4;
+  OL pipeline view scan + 4 remaining joins.
+- `Q9Workload<Backend>::query_by_merged(out)` — see §Plan Descriptions, Structure 3;
+  §Execution Style: hash-lookup sketch for NATION + SUPPLIER, merge join for PART +
+  PARTSUPP inside PremergedJoin callback.
+- `Q9Workload<Backend>::query_by_hash(out)` — see §Plan Descriptions, Structure 2 & 4
+  (hash join variant — all 5 joins hash-joined).
+- `BaseQ9<Backend>::query / get_size` and the View/Merged/Hash siblings —
+  forwarders to the right `Q9Workload` method.
+- `q9_predicate_joined` — placeholder (always true); LIKE filter on `p_name`
+  applied post-PART-join inside `query_by_*` bodies.
+
+Cross-cutting TODOs (`OrdersLineitemPipeline`, build wiring): see
+`frontend/tpch/CLAUDE.md`.
