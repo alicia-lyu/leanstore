@@ -19,6 +19,9 @@ The master document for the experiment plan, plan-source mapping, query selectio
 
 ## Completed
 
+- **Q12/Q3/Q9 skeletons** committed (`d9cb0d95`, `83fb6583`, `e78a48e2`). Each query has the full 7-file shape under `frontend/tpch/q{N}/`: `views.hpp`, `workload.hpp`, `per_structure_workload.hpp`, `load.tpp`, `query.tpp`, `executable_rocksdb.cpp`, `executable_leanstore.cpp`. All method bodies are `// TODO(skeleton)` stubs citing the relevant CLAUDE.md section. `frontend/tpch/CLAUDE.md` added as the top-level skeleton guide (`355e3a96`).
+- **Shared substrate** (`aefffeab`): `backend.hpp` (RocksDB/LeanStore traits structs collapsing 4 template params to 1), `ol_pipeline.hpp` + `ol_pipeline.tpp` (`OrdersLineitemPipeline<Backend>` with stub join drivers and load helpers shared by all three queries). `views_ol.hpp` tracked (`355e3a96`).
+- **Architectural departures from geo** locked in: single `Backend` traits param (no 4-param explosion), no virtual dispatch in per-structure wrappers, monolithic post-join (filter/project/aggregate fused in the join callback).
 - **Plans (DOT, Graphviz)** for Q12, Q3, Q9 across all four structures live in `frontend/tpch/<q>/plans/`:
   - `structure_1.dot` — interesting-ordering optimized (Calcite `EnumerableMergeJoin` with explicit sorts)
   - `structure_2_4_default.dot` — default Calcite plan (hash joins)
@@ -40,33 +43,23 @@ The master document for the experiment plan, plan-source mapping, query selectio
 
 ## Next Steps
 
-### Implement Q12 first
+### [Short-term] Fill in all TODO stubs — one query end-to-end first
 
-Q12 is the simplest Tier 1 query (2 tables, 1 join, 1 filter, 1 aggregate). New files under `frontend/tpch/q12/`:
+All seven-file skeletons for Q12, Q3, Q9 are committed; every method body is a `// TODO(skeleton)` stub. Implement in this order:
 
-| File | Purpose |
-| ---- | ------- |
-| `q12_views.hpp` | `q12_result_t` record (intermediate pipeline view entry); Q12 filter, projection, and aggregate functions |
-| `q12_workload.hpp` | `Q12Workload<AdapterType>` (load, query, maintain) |
-| `q12_join_query.tpp` | Per-structure query implementations (`by_base`, `by_view`, `by_merged`, `by_hash`) |
-| `q12_maintain.tpp` | RF1/RF2 + view maintenance |
-| `executable_rocksdb.cpp` | RocksDB entry point (macOS + Linux) |
-| `executable_leanstore.cpp` | LeanStore entry point (Linux only) |
+- `ol_pipeline.tpp` — `OrdersLineitemPipeline` method bodies: `scan_merged` (`PremergedJoin` driver), `merge_join_base` (`BinaryMergeJoin` driver), `hash_join_base` (`HashJoin` driver), `populate_pipeline_view`, `populate_merged_ol`, `get_merged_size`. Reference `frontend/shared/merge-join/` and `q12/CLAUDE.md §Stages x Options`.
+- `q12/views.hpp` — `Params::defaults()`.
+- `q12/query.tpp` — predicates, projection, aggregator bodies; `query_by_*` bodies calling `ol.scan_merged` / `ol.merge_join_base` / `ol.hash_join_base` with monolithic post-join lambdas (filter + project + aggregate fused inline).
+- `q12/load.tpp` — constructor, `load()`, `get_size()`.
+- Build smoke test: scale=1, cross-validate results across all four structures.
+- Repeat for Q3 (adds CUSTOMER merge join + top-10 sort) and Q9 (adds NATION/SUPPLIER hashmaps + PART/PARTSUPP merge joins inside callback).
 
-Pattern after `frontend/geo/` (in particular `workload.hpp`, `join_search_count.tpp`, `executable_rocksdb.cpp`).
+### [Short-term] Build-system integration — `frontend/CMakeLists.txt` + `generate_targets.py`
 
-Build-system integration:
+- Add CMake targets `q12_lsm`, `q12_btree`, `q3_lsm`, `q3_btree`, `q9_lsm`, `q9_btree` mirroring `geo_lsm` / `geo_btree`.
+- Add entries to `generate_targets.py` (`exec_names`, `STRUCTURE_OPTIONS`, `DIFF_DIRS`), regenerate `targets.mk`.
 
-- Add `q12_lsm` and `q12_btree` to `exec_names` in `generate_targets.py`, populate `STRUCTURE_OPTIONS` and `DIFF_DIRS`, regenerate `targets.mk`.
-- Add CMake targets in `frontend/CMakeLists.txt` mirroring `geo_lsm` / `geo_btree`.
-
-Verification: build, smoke test at scale=1, cross-validate query results across all four storage structures.
-
-### Then Q3 and Q9
-
-Same pattern. Q9 is 6-way; structure 3 keeps `MergedIndex(ORDERS, LINEITEM)` and joins the remaining four tables (`PART`, `SUPPLIER`, `PARTSUPP`, `NATION`) at query time.
-
-### Ad-hoc experiments (after Q12)
+### [Medium-term] Ad-hoc experiments (after all three queries compile and validate)
 
 - Scan-selectivity sweep on Q12 (1-month / 1-year / 3-year date windows) — addresses Reviewer 3 W2/D5.
 - Single-table `LINEITEM`-only scan: standalone index vs. MI with ORDERS interleaved — addresses Reviewer 3 W3/D6.
