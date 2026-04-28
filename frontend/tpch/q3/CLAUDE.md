@@ -147,3 +147,61 @@ CUSTOMER scan -> Filter(c_mktsegment = SEGMENT) -> Sort(c_custkey)
 ```
 
 The aggregate preserves o_custkey, o_orderdate, o_shippriority as group-by columns (functionally dependent on l_orderkey) so they survive for the CUSTOMER join and final projection.
+
+## Execution Style: Monolithic vs Cascade
+
+### Record Types Strictly Required
+
+Regardless of execution style, these record types must exist (adapter/scanner requires Key + traits):
+
+- **Base tables**: `orders_t`, `lineitem_t`, `customerh_t` — already defined in `tpch_tables.hpp`
+- **MI records**: Same `orders_t` and `lineitem_t` stored in `MI_ORDERS_LINEITEM` (structure 3)
+- **Materialized view output** (structure 2): A `q3_view_t` storing the final aggregated result per orderkey
+
+No other record types are structurally required.
+
+### What Monolithic Execution Looks Like
+
+Instead of building an iterator tree (ScanIterator → FilterIterator → ProjectIterator → ...) with typed intermediate records at each stage, write a single function per storage structure:
+
+```
+// Structure 3 sketch (PremergedJoin + CUSTOMER merge join)
+void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
+    // Phase 1: Scan MI, filter, project, aggregate into a local map
+    std::map<Integer, std::tuple<Numeric, Integer, Integer, Integer>> agg;
+    //  key=l_orderkey, value=(revenue, o_custkey, o_orderdate, o_shippriority)
+    premerged_join(mi, [&](orders_t& o, lineitem_t& l) {
+        if (o.o_orderdate >= DATE) return;
+        if (l.l_shipdate <= DATE) return;
+        Numeric rev = l.l_extendedprice * (1 - l.l_discount);
+        auto& [sum, custkey, odate, shippr] = agg[o.key.o_orderkey];
+        sum += rev; custkey = o.o_custkey; odate = o.o_orderdate; shippr = o.o_shippriority;
+    });
+
+    // Phase 2: Sort by custkey, merge join with filtered CUSTOMER
+    // ... sort agg entries by custkey, scan customerh_t filtered by mktsegment
+    // Phase 3: Sort by (revenue DESC, o_orderdate ASC), take top 10
+}
+```
+
+Key observations:
+
+- **No intermediate record types**: `revenue`, `o_custkey`, `o_orderdate`, `o_shippriority` are held as fields in a local map/struct, not as a named record class
+- **PremergedJoin callback**: The existing `premerged_join` utility already supports a callback style — each assembled (orders_t, lineitem_t) pair is passed to a lambda
+- **CUSTOMER join**: After aggregation reduces the row count, the merge join with CUSTOMER can use a sorted vector of aggregated results rather than a typed iterator
+
+### Feasibility Assessment
+
+**Works well for Q3** because:
+
+1. The PremergedJoin output feeds directly into filter + project + aggregate — no need to materialize intermediate join tuples
+2. The CUSTOMER join happens after aggregation (at most ~1.5M groups at SF=1, far fewer after date filter), so sorting a vector is cheap
+3. Only 3 tables, 2 joins — the function stays readable
+
+**Trade-offs**:
+
+- **Pro**: No `joined_ol_t`, no `q3_projected_t`, no `q3_agg_t` record definitions needed
+- **Pro**: Column index mapping is implicit in field access (`o.o_orderdate`) rather than positional (`$4`)
+- **Con**: Harder to reuse across queries — each query gets its own bespoke function
+- **Con**: The CUSTOMER merge join must be hand-coded (sort + two-pointer) rather than delegating to `BinaryMergeJoin`
+- **Con**: Cannot compose operators for maintenance plans (structure 2 view updates) — but Q3's current paper scope has no maintenance

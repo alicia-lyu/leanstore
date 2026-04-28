@@ -156,6 +156,53 @@ PremergedJoin(MI_ORDERS_LINEITEM) [replaces ORDERS scan + LINEITEM scan + MergeJ
 
 The PremergedJoin output has the same 25-column layout as the ORDERS||LINEITEM MergeJoin output, so all downstream join conditions and column indices remain valid.
 
+## Execution Style: Monolithic vs Cascade
+
+### Record Types Strictly Required
+
+- **Base tables**: `orders_t`, `lineitem_t`, `part_t`, `partsupp_t`, `supplier_t`, `nation_t` — all in `tpch_tables.hpp`
+- **MI records**: Same `orders_t` and `lineitem_t` in `MI_ORDERS_LINEITEM` (structure 3)
+- **Materialized view output** (structure 2): A `q9_view_t` storing the final aggregated result per (nation, o_year)
+
+### What Monolithic Execution Looks Like
+
+Q9 has 6 tables and 5 joins. A monolithic function avoids defining intermediate record types (`joined_ol_t`, `joined_olp_t`, `joined_olps_t`, `joined_olpsn_t`) by holding fields locally:
+
+```
+// Structure 3 sketch (PremergedJoin + 4 merge joins)
+void q9_query_structure3(MergedAdapter& mi, Adapter<part_t>& part,
+                         Adapter<partsupp_t>& ps, Adapter<supplier_t>& supp,
+                         Adapter<nation_t>& nat) {
+    // Phase 1: PremergedJoin → collect (orderkey, l_partkey, l_suppkey,
+    //          l_quantity, l_extendedprice, l_discount, o_orderdate) into vector
+    // Phase 2: Sort by l_partkey, merge join with PART (filter LIKE p_name)
+    //          → keep p_name for filter, but don't need a joined record type
+    // Phase 3: Sort by (l_partkey, l_suppkey), merge join with PARTSUPP → pick up ps_supplycost
+    // Phase 4: Sort by l_suppkey, merge join with SUPPLIER → pick up s_nationkey
+    // Phase 5: Sort by s_nationkey, merge join with NATION → pick up n_name
+    // Phase 6: Compute profit, aggregate by (n_name, EXTRACT(YEAR, o_orderdate))
+}
+```
+
+Each phase appends fields to a growing tuple held in a `std::vector<LocalRow>` where `LocalRow` is a plain struct local to this function (or even just a `std::tuple`). No adapter traits needed since it never enters an index.
+
+### Feasibility Assessment
+
+**Feasible but verbose for Q9** because:
+
+1. 5 joins mean 5 sort-and-merge phases — the function body is long but straightforward
+2. Each merge join adds 1-2 fields to the running tuple; no need to define a new record class for each
+3. The PremergedJoin replaces the heaviest join (ORDERS×LINEITEM), so the remaining 4 joins operate on progressively smaller data
+4. NATION is only 25 rows — could be loaded into a `std::unordered_map` instead of merge-joined
+
+**Trade-offs**:
+
+- **Pro**: Avoids 4 intermediate record type definitions (each would need Key + traits if used in cascade iterators)
+- **Pro**: The LIKE filter on p_name can be applied immediately in phase 2, reducing data for subsequent joins
+- **Con**: The function is ~100-150 lines — still manageable but approaches the limit of single-function readability
+- **Con**: Each sort-and-merge phase materializes the full intermediate result in memory; cascade iterators would pipeline without materialization (but Q9 has no selectivity filter to reduce early, so materialization cost is similar)
+- **Compromise**: Small dimension tables (NATION=25 rows, SUPPLIER=10K at SF=1) can use hash lookups instead of merge joins, shortening the function significantly
+
 ## Status
 
 All three DOT plan files are semantically equivalent and verified. No changes needed to Q9 DOT files.

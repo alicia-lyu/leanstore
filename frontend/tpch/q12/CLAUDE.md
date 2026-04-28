@@ -639,6 +639,73 @@ The current plan uses fold-length discrimination (4 vs 8 bytes) for MI[0], which
 
 ---
 
+## Execution Style: Monolithic vs Cascade
+
+The operator framework above (§Operator Framework, §Q12 Plans as Operator Trees) follows cascade/iterator style. An alternative **monolithic** style avoids intermediate record types by using single functions with local variables.
+
+### Record Types Strictly Required (Either Style)
+
+- **Base tables**: `orders_t`, `lineitem_t` — in `tpch_tables.hpp`
+- **MI records**: Same `orders_t`, `lineitem_t` in `MI_ORDERS_LINEITEM` (structure 3/4)
+- **Root MI / view output** (structure 2/5): `q12_result_t` or `q12_view_t` — must be typed because they are stored in adapters
+
+### What Cascade Style Requires Additionally
+
+- `joined_ol_t` (or `joined_t<orders_t, lineitem_t>`) — output of hash/merge/premerged join iterators
+- `q12_agg_row_t` — output of SortedAggregateIterator
+- Every iterator template is parameterized on these types
+
+### What Monolithic Execution Looks Like
+
+```
+// Structure 4 sketch (MI PremergedJoin, no cascade)
+void q12_query_structure4(MergedAdapter& mi) {
+    Integer high_mail = 0, low_mail = 0, high_ship = 0, low_ship = 0;
+
+    premerged_join(mi, [&](orders_t& o, lineitem_t& l) {
+        if (l.l_shipdate >= l.l_commitdate) return;
+        if (l.l_commitdate >= l.l_receiptdate) return;
+        if (l.l_receiptdate < DATE_1994 || l.l_receiptdate >= DATE_1995) return;
+        auto sm = to_sv(l.l_shipmode);
+        if (sm != "MAIL" && sm != "SHIP") return;
+        auto prio = to_sv(o.o_orderpriority);
+        bool is_high = (prio == "1-URGENT" || prio == "2-HIGH");
+        if (sm == "MAIL") { (is_high ? high_mail : low_mail)++; }
+        else              { (is_high ? high_ship : low_ship)++; }
+    });
+    // Output: MAIL high_mail low_mail, SHIP high_ship low_ship
+}
+```
+
+Key observations:
+
+- **No intermediate record types at all**: Filter, project, and aggregate are fused into the callback lambda
+- **No `joined_ol_t`**: The `premerged_join` callback receives references to the original `orders_t` and `lineitem_t` — field access is direct (`o.o_orderpriority`, `l.l_shipmode`)
+- **Aggregation is trivial**: Q12 groups by shipmode (2 values for validation params), so 4 counters suffice — no sorted aggregate needed
+
+### Feasibility Assessment
+
+**Q12 is the ideal case for monolithic execution** because:
+
+1. Only 2 tables, 1 join — the callback body is ~15 lines
+2. Aggregation by shipmode has tiny cardinality (2-7 groups) — local counters, no sort
+3. All 5 filter predicates can be checked inline with zero overhead
+4. The existing `premerged_join` utility already provides exactly the callback interface needed
+
+**Trade-offs vs cascade (§Operator Framework)**:
+
+- **Pro**: Eliminates `joined_ol_t` and `q12_agg_row_t` definitions entirely
+- **Pro**: ~30 lines of code vs ~100+ lines of operator tree composition
+- **Pro**: No virtual dispatch overhead from iterator `next()` calls
+- **Con**: Structure 5 (root MI scan) still needs `q12_result_t` as a stored record type — monolithic style doesn't help there
+- **Con**: Maintenance plans (§Stage 3) are harder to express monolithically when they involve delta joins — but for the current paper scope (no maintenance experiments), this is not a blocker
+
+### Recommendation
+
+For the current paper (single MI per query, no maintenance), use monolithic style for all query-time execution. Reserve cascade/iterator style for future work where operator composition and reuse across plans becomes necessary.
+
+---
+
 ## Open Questions (from SESSION_PROGRESS.md)
 
 1. **RF2 delete strategy**: TPC-H RF2 deletes orders by orderkey. But how does this interact with the root pipeline MI keyed by `(shipmode, orderkey, linenumber)`? Need to scan/probe by orderkey within the MI. See SESSION_PROGRESS §5, §6.
