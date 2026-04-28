@@ -53,21 +53,35 @@ void OrdersLineitemPipeline<Backend>::hash_join_base(OnJoin&& on_join)
 }
 
 template <typename Backend>
-template <typename OnJoin>
-void OrdersLineitemPipeline<Backend>::populate_pipeline_view(OnJoin&& sink)
+template <typename ViewAdapter>
+void OrdersLineitemPipeline<Backend>::populate_view(ViewAdapter& view)
 {
-   // TODO(skeleton): Drive merge_join_base(sink) so that the per-query
-   // caller can insert each joined_ol_t into the pipeline view adapter.
+   // TODO(skeleton): Drive merge_join_base with a lambda that inserts each
+   // joined_ol_t into `view`. The view row type and key are defined by the
+   // per-query workload; ViewAdapter::insert(Key, Row) is the expected API.
    // See: frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 3 load.
+   // See: frontend/tpch/CLAUDE.md §Pipeline Convention.
+   (void)view;
 }
 
 template <typename Backend>
-void OrdersLineitemPipeline<Backend>::populate_merged_ol()
+void OrdersLineitemPipeline<Backend>::populate_merged()
 {
    // TODO(skeleton): Scan orders adapter, insert each orders_t into
    // merged_ol; scan lineitem adapter, insert each lineitem_t into
    // merged_ol. This is the dual-write replay that builds MI[0].
    // See: frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 4 load.
+}
+
+template <typename Backend>
+template <typename ViewAdapter>
+double OrdersLineitemPipeline<Backend>::get_view_size(ViewAdapter& view) const
+{
+   // TODO(skeleton): Return view.size(). See:
+   //   - frontend/shared/adapter-scanner/RocksDBAdapter.hpp ::size()
+   //   - frontend/shared/adapter-scanner/LeanStoreAdapter.hpp ::size()
+   (void)view;
+   return 0;
 }
 
 template <typename Backend>

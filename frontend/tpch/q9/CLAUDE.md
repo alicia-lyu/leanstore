@@ -218,11 +218,19 @@ All three DOT plan files are semantically equivalent and verified. No changes ne
 As of 2026-04-28, `frontend/tpch/q9/` contains compile-ready skeletons.
 Method bodies are TODO comments citing the relevant section of this file.
 
+Loading lives in `OrdersLineitemPipeline` per the Pipeline Convention
+(`frontend/tpch/CLAUDE.md §Pipeline Convention`). `load()` and `get_size()`
+are one-line dispatchers. NATION, SUPPLIER, PART, PARTSUPP are base-only
+and are not part of any pipeline secondary structure.
+
 Stubbed methods (`load.tpp` + `query.tpp`):
 
 - `Q9Workload<Backend>::Q9Workload(...)` — wire gflags into `params`.
-- `Q9Workload<Backend>::load()` — dispatch on `FLAGS_storage_structure`.
-- `Q9Workload<Backend>::get_size() const` — dispatch on `FLAGS_storage_structure`.
+- `Q9Workload<Backend>::load()` — dispatches to `ol.populate_view` /
+  `ol.populate_merged`; base-table size case is a TODO pending
+  `TPCHWorkload::get_size()`.
+- `Q9Workload<Backend>::get_size() const` — dispatches to
+  `ol.get_view_size` / `ol.get_merged_size`.
 - `Q9Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1
   (5 merge joins); §Execution Style.
 - `Q9Workload<Backend>::query_by_view(out)` — see §Plan Descriptions, Structure 2 & 4;
@@ -237,5 +245,5 @@ Stubbed methods (`load.tpp` + `query.tpp`):
 - `q9_predicate_joined` — placeholder (always true); LIKE filter on `p_name`
   applied post-PART-join inside `query_by_*` bodies.
 
-Cross-cutting TODOs (`OrdersLineitemPipeline`, build wiring): see
-`frontend/tpch/CLAUDE.md`.
+Cross-cutting TODOs (`OrdersLineitemPipeline` method bodies, build wiring):
+see `frontend/tpch/CLAUDE.md`.

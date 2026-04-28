@@ -34,24 +34,29 @@ Q3Workload<Backend>::Q3Workload(
 template <typename Backend>
 void Q3Workload<Backend>::load()
 {
-   // TODO(skeleton): Call tpch.load() for base tables (all structures), then
-   // dispatch on FLAGS_storage_structure to build secondary structures:
-   //   2 -> ol.populate_pipeline_view([&](const joined_ol_t& j) { pipeline_view.insert(...) })
-   //   3 -> ol.populate_merged_ol()
-   //   1, 4 -> base tables only (no secondary structure)
-   // See: frontend/tpch/q12/CLAUDE.md §Stages x Options, Stage 1: Loading
-   //      (Q3 follows the same load pattern as Q12).
+   // Base tables are loaded by the caller via tpch.load() before this method.
+   // Secondary structures are owned by the pipeline; dispatch here is a
+   // one-liner per the Pipeline Convention (frontend/tpch/CLAUDE.md).
+   switch (FLAGS_storage_structure) {
+      case 1: case 4: break;                         // base tables only
+      case 2: ol.populate_view(pipeline_view); break;
+      case 3: ol.populate_merged(); break;
+      default: throw std::runtime_error("invalid --storage_structure");
+   }
 }
 
 template <typename Backend>
 double Q3Workload<Backend>::get_size() const
 {
-   // TODO(skeleton): Dispatch on FLAGS_storage_structure:
-   //   1, 4 -> 0.0 (base tables only, no secondary structure)
-   //   2    -> pipeline_view.size()
-   //   3    -> ol.get_merged_size()
-   // See: frontend/tpch/q3/CLAUDE.md §Merged Index.
-   return 0;
+   switch (FLAGS_storage_structure) {
+      case 1: case 4:
+         // TODO(skeleton): return tpch.get_size() or sum relevant base
+         // table adapters once TPCHWorkload exposes a size() method.
+         return 0.0;
+      case 2: return ol.get_view_size(pipeline_view);
+      case 3: return ol.get_merged_size();
+      default: throw std::runtime_error("invalid --storage_structure");
+   }
 }
 
 }  // namespace tpch::q3

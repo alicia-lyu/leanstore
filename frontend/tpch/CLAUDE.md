@@ -17,7 +17,8 @@ Shared files (used by all three queries):
 - `backend.hpp` — `RocksDBBackend` and `LeanStoreBackend` traits structs.
 - `ol_pipeline.hpp` / `ol_pipeline.tpp` — `OrdersLineitemPipeline<Backend>`:
   shared join drivers (`scan_merged`, `merge_join_base`, `hash_join_base`)
-  and load helpers (`populate_pipeline_view`, `populate_merged_ol`).
+  and Pipeline Convention load/size methods (`populate_view`, `populate_merged`,
+  `get_view_size`, `get_merged_size`). See §Pipeline Convention below.
 
 Per-query subdirectories:
 
@@ -52,6 +53,58 @@ Three deliberate departures from the geo benchmark:
    and supplies its own filter/project/aggregate lambda — the **monolithic
    post-join** execution style endorsed in `q12/CLAUDE.md §Execution Style`.
 
+## Pipeline Convention
+
+A **Pipeline class** owns the secondary structures for one group of tables
+and exposes four load/size methods plus query-time join drivers.
+
+### Why pipelines exist
+
+Multiple queries may share the same merged index or intermediate view. Rather
+than duplicating load logic in each `Q{N}Workload`, secondary-structure loading
+lives in the pipeline class. Per-query `load()` and `get_size()` are one-line
+dispatchers that delegate to the pipeline.
+
+### The four load/size methods (concept-level, not virtual)
+
+```cpp
+template <typename ViewAdapter>
+void populate_view(ViewAdapter& view);
+
+void populate_merged();
+
+template <typename ViewAdapter>
+double get_view_size(ViewAdapter& view) const;
+
+double get_merged_size() const;
+```
+
+`populate_view` is templated on `ViewAdapter` because the **view row type
+belongs to the per-query workload** — each query picks its own projection of
+the join output. For Tier 1, all three queries alias the view row to
+`joined_ol_t`, so `populate_view` inserts `joined_ol_t` rows regardless of
+which query calls it. A future pipeline with a richer or narrower view row
+type can constrain `ViewAdapter` with a `requires` clause.
+
+### Ready-for-change rationale
+
+Adding a second pipeline (e.g., `OrdersCustomerPipeline`, `LineitemPartsuppPipeline`)
+requires only:
+
+1. A new `orders_customer_pipeline.hpp` / `.tpp` file following this convention.
+2. Adding the pipeline as a member of whichever `Q{N}Workload` classes need it.
+3. Extending those workloads' `load()` / `get_size()` switch cases if the new
+   pipeline introduces additional storage-structure variants.
+
+No change to any shared header, no change to unaffected queries, no virtual
+base class to update.
+
+### Current state
+
+The only pipeline today is `OrdersLineitemPipeline<Backend>` (`ol_pipeline.hpp`).
+Q12, Q3, and Q9 each hold exactly one instance named `ol` and dispatch all
+secondary-structure loading through it.
+
 ## Per-query File Convention
 
 Each `q{N}/` directory contains:
@@ -85,9 +138,10 @@ Implementing a query end-to-end requires filling in:
 
 - `OrdersLineitemPipeline` method bodies: `PremergedJoin` driver
   (`scan_merged`), `BinaryMergeJoin` driver (`merge_join_base`), `HashJoin`
-  driver (`hash_join_base`), `populate_pipeline_view`, `populate_merged_ol`,
-  and `get_merged_size`. See `frontend/shared/merge-join/` for the join
-  templates and `q12/CLAUDE.md §Stages x Options` for the load patterns.
+  driver (`hash_join_base`), `populate_view`, `populate_merged`,
+  `get_view_size`, and `get_merged_size`. See `frontend/shared/merge-join/`
+  for the join templates and `q12/CLAUDE.md §Stages x Options` for the load
+  patterns. Per-query `load()` / `get_size()` already dispatch to these.
 - Per-query `Params::defaults()` implementations (one per query).
 - Per-query predicate / projection / aggregator bodies inside `query.tpp`.
 - Per-query `query_by_*` bodies that call `ol.scan_merged(lambda)`,

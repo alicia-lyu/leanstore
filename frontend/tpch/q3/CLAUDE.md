@@ -209,11 +209,18 @@ void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
 As of 2026-04-28, `frontend/tpch/q3/` contains compile-ready skeletons.
 Method bodies are TODO comments citing the relevant section of this file.
 
+Loading lives in `OrdersLineitemPipeline` per the Pipeline Convention
+(`frontend/tpch/CLAUDE.md §Pipeline Convention`). `load()` and `get_size()`
+are one-line dispatchers.
+
 Stubbed methods (`load.tpp` + `query.tpp`):
 
 - `Q3Workload<Backend>::Q3Workload(...)` — wire gflags into `params`.
-- `Q3Workload<Backend>::load()` — dispatch on `FLAGS_storage_structure`.
-- `Q3Workload<Backend>::get_size() const` — dispatch on `FLAGS_storage_structure`.
+- `Q3Workload<Backend>::load()` — dispatches to `ol.populate_view` /
+  `ol.populate_merged`; base-table size case is a TODO pending
+  `TPCHWorkload::get_size()`.
+- `Q3Workload<Backend>::get_size() const` — dispatches to
+  `ol.get_view_size` / `ol.get_merged_size`.
 - `Q3Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1;
   §Execution Style: Monolithic vs Cascade.
 - `Q3Workload<Backend>::query_by_view(out)` — see §Plan Descriptions, Structure 2 & 4.
@@ -226,5 +233,5 @@ Stubbed methods (`load.tpp` + `query.tpp`):
 - `q3_predicate_orders`, `q3_predicate_lineitem`, `q3_predicate_joined` —
   see §Plan Descriptions for filter conditions.
 
-Cross-cutting TODOs (`OrdersLineitemPipeline`, build wiring): see
-`frontend/tpch/CLAUDE.md`.
+Cross-cutting TODOs (`OrdersLineitemPipeline` method bodies, build wiring):
+see `frontend/tpch/CLAUDE.md`.

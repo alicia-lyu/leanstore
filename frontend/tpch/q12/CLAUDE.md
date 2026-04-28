@@ -718,11 +718,18 @@ For the current paper (single MI per query, no maintenance), use monolithic styl
 As of 2026-04-28, `frontend/tpch/q12/` contains compile-ready skeletons.
 Method bodies are TODO comments citing the relevant section of this file.
 
+Loading lives in `OrdersLineitemPipeline` per the Pipeline Convention
+(`frontend/tpch/CLAUDE.md §Pipeline Convention`). `load()` and `get_size()`
+are one-line dispatchers.
+
 Stubbed methods (`load.tpp` + `query.tpp`):
 
 - `Q12Workload<Backend>::Q12Workload(...)` — wire gflags into `params`.
-- `Q12Workload<Backend>::load()` — dispatch on `FLAGS_storage_structure`.
-- `Q12Workload<Backend>::get_size() const` — dispatch on `FLAGS_storage_structure`.
+- `Q12Workload<Backend>::load()` — dispatches to `ol.populate_view` /
+  `ol.populate_merged`; base-table size case is a TODO pending
+  `TPCHWorkload::get_size()`.
+- `Q12Workload<Backend>::get_size() const` — dispatches to
+  `ol.get_view_size` / `ol.get_merged_size`.
 - `Q12Workload<Backend>::query_by_base(out)` — see §Stages × Options, Option 2.
 - `Q12Workload<Backend>::query_by_view(out)` — see §Stages × Options, Option 3.
 - `Q12Workload<Backend>::query_by_merged(out)` — see §Stages × Options, Option 4
@@ -733,5 +740,5 @@ Stubbed methods (`load.tpp` + `query.tpp`):
 - `q12_predicate_lineitem`, `q12_predicate_joined` — see §Q12-Specific
   Operator Configurations, `q12_predicate`.
 
-Cross-cutting TODOs (`OrdersLineitemPipeline`, build wiring): see
-`frontend/tpch/CLAUDE.md`.
+Cross-cutting TODOs (`OrdersLineitemPipeline` method bodies, build wiring):
+see `frontend/tpch/CLAUDE.md`.
