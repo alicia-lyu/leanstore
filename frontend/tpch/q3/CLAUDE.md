@@ -45,13 +45,33 @@ CUSTOMER --[c_custkey = o_custkey]--> ORDERS --[o_orderkey = l_orderkey]--> LINE
 
 ## Merged Index
 
-**MI(ORDERS, LINEITEM)** interleaved by `orderkey`.
+### Structure 3: MI(ORDERS, LINEITEM) by orderkey
 
 - ORDERS key: `(o_orderkey)` — 1 record per order
 - LINEITEM key: `(l_orderkey, l_linenumber)` — N records per order
 - Natural prefix hierarchy: LINEITEM extends the ORDERS key
 
 The MI covers the ORDERS-LINEITEM join. CUSTOMER is joined at query time via merge join on `o_custkey = c_custkey`.
+
+### Alternative: MI(CUSTOMER, ORDERS, LINEITEM) by custkey
+
+An alternative merged index interleaves all three tables by `custkey`:
+
+- CUSTOMER key: `(c_custkey)` — 1 record per customer
+- ORDERS key: `(o_custkey, o_orderkey)` — extend ORDERS with custkey (functionally dependent on orderkey)
+- LINEITEM key: `(l_custkey, l_orderkey, l_linenumber)` — extend LINEITEM with custkey (same FD)
+
+Since `o_custkey` is functionally determined by `o_orderkey`, each ORDERS and LINEITEM record can be augmented with the custkey at load time. This creates a 3-level prefix hierarchy:
+
+```
+custkey -> CUSTOMER record
+custkey, orderkey -> ORDERS record
+custkey, orderkey, linenumber -> LINEITEM record
+```
+
+A single PremergedJoin scan over this MI produces the full 3-way join result without a separate CUSTOMER merge join. The trade-off is a larger MI (3 tables vs. 2) and wider keys (custkey prepended to every ORDERS and LINEITEM record).
+
+This variant is documented for consideration but has no DOT plan files. If implemented, it would replace both the PremergedJoin and the CUSTOMER merge join in structure 3's plan.
 
 ## Column Index Mappings
 
