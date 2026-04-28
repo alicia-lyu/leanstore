@@ -321,7 +321,7 @@ class Experiment:
         print(f"\t$(MAKE) {self.recover_file}")
         print()
 
-LOADING_META_FILE = "./frontend/geo/tpch_workload.hpp"
+LOADING_META_FILE = "./frontend/tpch/tpch_workload.hpp"
 
 DIFF_DIRS = {
  "geo_lsm": "geo",

@@ -3,7 +3,7 @@
 #include <iostream>
 #include <vector>
 #include "../merge-join/premerged_join.hpp"
-#include "../../geo/tpch_workload.hpp"
+#include "../../tpch/tpch_workload.hpp"
 
 void SumStats::log(std::ostream& csv_sum, bool csv_sum_exists)
 {
