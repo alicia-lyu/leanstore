@@ -150,58 +150,54 @@ The aggregate preserves o_custkey, o_orderdate, o_shippriority as group-by colum
 
 ## Execution Style: Monolithic vs Cascade
 
-### Record Types Strictly Required
+### Record Types Required
 
-Regardless of execution style, these record types must exist (adapter/scanner requires Key + traits):
+The merge-join infrastructure (`frontend/shared/merge-join/`) requires typed join results. `JoinState`, `BinaryMergeJoin`, `HashJoin`, and `PremergedJoin` are all templated on a `JR` (join result) type that must provide `JR::Key(Rs::Key...)` and `JR(Rs...)` constructors. The generic `joined_t<TID, JK, fold_pks, Ts...>` template from `frontend/shared/view_templates.hpp` satisfies these requirements without per-query type definitions.
 
-- **Base tables**: `orders_t`, `lineitem_t`, `customerh_t` — already defined in `tpch_tables.hpp`
-- **MI records**: Same `orders_t` and `lineitem_t` stored in `MI_ORDERS_LINEITEM` (structure 3)
-- **Materialized view output** (structure 2): A `q3_view_t` storing the final aggregated result per orderkey
+**Required types for Q3:**
 
-No other record types are structurally required.
+- **Base tables**: `orders_t`, `lineitem_t`, `customerh_t` — in `tpch_tables.hpp`
+- **Join result**: `joined_t<TID, Integer, false, orders_t, lineitem_t>` — used by PremergedJoin (structure 3) and BinaryMergeJoin/HashJoin (structures 1, 4)
+- **MI records**: Same `orders_t`, `lineitem_t` in `MI_ORDERS_LINEITEM` (structure 3)
+- **Intermediate pipeline view** (structure 2): Stores the ORDERS ⋈ LINEITEM join output (same pipeline the MI interleaves) — can reuse `joined_t` or define a `q3_pipeline_view_t` with a key suited to the downstream access pattern
 
-### What Monolithic Execution Looks Like
+### What "Monolithic" Means in Practice
 
-Instead of building an iterator tree (ScanIterator → FilterIterator → ProjectIterator → ...) with typed intermediate records at each stage, write a single function per storage structure:
+The join result type (`joined_t`) is unavoidable. But everything *after* the join — filter, project, aggregate, CUSTOMER merge join, ORDER BY, LIMIT — can be fused into a single function using local variables rather than additional typed iterators:
 
 ```
 // Structure 3 sketch (PremergedJoin + CUSTOMER merge join)
 void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
-    // Phase 1: Scan MI, filter, project, aggregate into a local map
+    // Phase 1: PremergedJoin produces joined_t<orders_t, lineitem_t>
+    // Immediately filter, project, aggregate into a local map
     std::map<Integer, std::tuple<Numeric, Integer, Integer, Integer>> agg;
     //  key=l_orderkey, value=(revenue, o_custkey, o_orderdate, o_shippriority)
-    premerged_join(mi, [&](orders_t& o, lineitem_t& l) {
+    premerged_join(mi, [&](const joined_t& row) {
+        auto& o = std::get<orders_t>(row.payloads);
+        auto& l = std::get<lineitem_t>(row.payloads);
         if (o.o_orderdate >= DATE) return;
         if (l.l_shipdate <= DATE) return;
         Numeric rev = l.l_extendedprice * (1 - l.l_discount);
-        auto& [sum, custkey, odate, shippr] = agg[o.key.o_orderkey];
+        auto& [sum, custkey, odate, shippr] = agg[row.key.jk];
         sum += rev; custkey = o.o_custkey; odate = o.o_orderdate; shippr = o.o_shippriority;
     });
 
     // Phase 2: Sort by custkey, merge join with filtered CUSTOMER
-    // ... sort agg entries by custkey, scan customerh_t filtered by mktsegment
     // Phase 3: Sort by (revenue DESC, o_orderdate ASC), take top 10
 }
 ```
-
-Key observations:
-
-- **No intermediate record types**: `revenue`, `o_custkey`, `o_orderdate`, `o_shippriority` are held as fields in a local map/struct, not as a named record class
-- **PremergedJoin callback**: The existing `premerged_join` utility already supports a callback style — each assembled (orders_t, lineitem_t) pair is passed to a lambda
-- **CUSTOMER join**: After aggregation reduces the row count, the merge join with CUSTOMER can use a sorted vector of aggregated results rather than a typed iterator
 
 ### Feasibility Assessment
 
 **Works well for Q3** because:
 
-1. The PremergedJoin output feeds directly into filter + project + aggregate — no need to materialize intermediate join tuples
-2. The CUSTOMER join happens after aggregation (at most ~1.5M groups at SF=1, far fewer after date filter), so sorting a vector is cheap
+1. The PremergedJoin callback fuses filter + project + aggregate — no separate operator stages needed
+2. The CUSTOMER join happens after aggregation (far fewer rows), so sorting a vector is cheap
 3. Only 3 tables, 2 joins — the function stays readable
 
 **Trade-offs**:
 
-- **Pro**: No `joined_ol_t`, no `q3_projected_t`, no `q3_agg_t` record definitions needed
-- **Pro**: Column index mapping is implicit in field access (`o.o_orderdate`) rather than positional (`$4`)
+- **Pro**: No per-query intermediate types beyond the generic `joined_t` instantiation
+- **Pro**: Column access is field-based (`o.o_orderdate`) rather than positional (`$4`)
+- **Con**: The CUSTOMER merge join must be hand-coded (sort + two-pointer) rather than delegating to `BinaryMergeJoin` — or use `BinaryMergeJoin` with a second `joined_t` for the CUSTOMER join result
 - **Con**: Harder to reuse across queries — each query gets its own bespoke function
-- **Con**: The CUSTOMER merge join must be hand-coded (sort + two-pointer) rather than delegating to `BinaryMergeJoin`
-- **Con**: Cannot compose operators for maintenance plans (structure 2 view updates) — but Q3's current paper scope has no maintenance

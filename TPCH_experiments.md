@@ -9,7 +9,7 @@ This document tracks experiments for the **current VLDB revision** — complemen
 The pattern follows geo exactly:
 
 - **Storage structure 1**: Traditional indexes (separate per-table B-trees) + merge join at query time
-- **Storage structure 2**: Materialized view storing the pipeline's output
+- **Storage structure 2**: Materialized view storing the pipeline's join output (intermediate view — the same pipeline whose sources the MI interleaves)
 - **Storage structure 3**: Single merged index interleaving the pipeline's source tables + join via PremergedJoin at query time
 - **Storage structure 4**: Clustered indexes + hash join at query time
 
@@ -79,6 +79,22 @@ Key hierarchy: (nationkey, statekey, countykey, citykey, custkey)
 
 For TPC-H, each query's MI follows the same pattern — just with different tables and key hierarchies. The likely MI for Q12, Q3, Q9 is `MergedIndex(ORDERS, LINEITEM)` by `orderkey`.
 
+## Materialized View: Intermediate Pipeline View, Not Final Query Result
+
+Per the paper's spectrum of pre-computation (§\ref{subsec:spec-precomp}), the most comparable alternative to a merged index is the **intermediate pipeline view** — the materialized output of the same pipeline whose sources the MI interleaves. For all Tier 1 queries, this pipeline is ORDERS ⋈ LINEITEM, so structure 2 stores their join output (all columns, unfiltered, unaggregated).
+
+This is deliberate: the MI and the intermediate view represent the **same point in the query plan** but differ in pre-computation strategy. The MI stores the sources co-located and pre-sorted; the view stores the fully computed join output. At query time, the MI must assemble join results (PremergedJoin scan); the view skips that work but pays more at update time (1-to-N maintenance).
+
+**Why not the final query result view?** A final view (e.g., Q12 aggregated by shipmode with filters applied) would trivially beat any query-time strategy — there's nothing left to compute. But its update cost is high and its reusability is zero (different filter parameters require a different view). Comparing MI against a final view requires a **hybrid workload** of interleaved queries and updates, which is not native to TPC-H. We may design such a workload separately, but it is not the primary comparison.
+
+**What structure 2 stores per query:**
+
+| Query | Pipeline | View Contents |
+|-------|----------|---------------|
+| Q12   | ORDERS ⋈ LINEITEM | All ORDERS + LINEITEM columns per joined row, keyed for the query's downstream access pattern |
+| Q3    | ORDERS ⋈ LINEITEM | Same join output; CUSTOMER join + filter + aggregate + ORDER BY at query time |
+| Q9    | ORDERS ⋈ LINEITEM | Same join output; PART, PARTSUPP, SUPPLIER, NATION joins + filter + aggregate at query time |
+
 ## Query Selection and Priority
 
 ### Tier 1: Must Implement
@@ -124,9 +140,9 @@ These are preliminary — the actual MI composition depends on Calcite's `int-or
 | # | Strategy            | Description                                                   |
 | - | ------------------- | ------------------------------------------------------------- |
 | 1 | Traditional + merge | Separate ORDERS + LINEITEM indexes; merge join on orderkey    |
-| 2 | Materialized view   | Pre-joined + pre-filtered result stored in one index          |
-| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; PremergedJoin at query time |
-| 4 | Clustered + hash    | Clustered indexes; hash join at query time                    |
+| 2 | Materialized view   | ORDERS ⋈ LINEITEM join output stored (intermediate pipeline view) |
+| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; PremergedJoin at query time     |
+| 4 | Clustered + hash    | Clustered indexes; hash join at query time                        |
 
 ### Q3: CUSTOMER x ORDERS x LINEITEM
 
@@ -136,12 +152,12 @@ These are preliminary — the actual MI composition depends on Calcite's `int-or
 - CUSTOMER joined at query time (small table, indexed lookup by custkey)
 - Final: ORDER BY revenue DESC, o_orderdate + LIMIT 10
 
-| # | Strategy            | Description                                                   |
-| - | ------------------- | ------------------------------------------------------------- |
-| 1 | Traditional + merge | Merge join chain on orderkey; then merge join with CUSTOMER   |
-| 2 | Materialized view   | Pre-joined 3-way result stored and pre-sorted                 |
-| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; join CUSTOMER at query time |
-| 4 | Clustered + hash    | Clustered indexes; hash join chain at query time              |
+| # | Strategy            | Description                                                             |
+| - | ------------------- | ----------------------------------------------------------------------- |
+| 1 | Traditional + merge | Merge join chain on orderkey; then merge join with CUSTOMER             |
+| 2 | Materialized view   | ORDERS ⋈ LINEITEM join output stored; CUSTOMER join + rest at query time |
+| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; join CUSTOMER at query time           |
+| 4 | Clustered + hash    | Clustered indexes; hash join chain at query time                        |
 
 ### Q9: 6-Table Profit Query
 
@@ -151,12 +167,12 @@ These are preliminary — the actual MI composition depends on Calcite's `int-or
 - Remaining joins (PART, SUPPLIER, PARTSUPP, NATION) done at query time via hash joins
 - Final: GROUP BY nation, year; SUM profit
 
-| # | Strategy            | Description                                                   |
-| - | ------------------- | ------------------------------------------------------------- |
-| 1 | Traditional + merge | Merge join chain over separate indexes sorted on join keys    |
-| 2 | Materialized view   | Full 6-way join materialized                                  |
-| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; 4 remaining merge/hash joins |
-| 4 | Clustered + hash    | Clustered indexes; 5 hash joins at query time                 |
+| # | Strategy            | Description                                                                       |
+| - | ------------------- | --------------------------------------------------------------------------------- |
+| 1 | Traditional + merge | Merge join chain over separate indexes sorted on join keys                        |
+| 2 | Materialized view   | ORDERS ⋈ LINEITEM join output stored; 4 remaining joins + rest at query time       |
+| 3 | Single merged index | MI(ORDERS, LINEITEM) by orderkey; 4 remaining merge/hash joins at query time      |
+| 4 | Clustered + hash    | Clustered indexes; 5 hash joins at query time                                     |
 
 ### Q5 or Q7 (Tier 2 — TBD)
 
