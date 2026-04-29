@@ -30,8 +30,8 @@ inline bool q9_predicate_joined(const joined_ol_t& /* j */, const Params& /* p *
 //
 // All four methods share a common 4-step post-join pattern:
 //   1. Produce joined_ol_t rows (OL join via the chosen driver).
-//   2. For each OL row: look up PART (apply LIKE filter), PARTSUPP, SUPPLIER,
-//      NATION using hashmaps for NATION+SUPPLIER and merge join for PART+PARTSUPP.
+//   2. For each OL row: probe PART (apply LIKE filter), PARTSUPP, SUPPLIER,
+//      NATION hash tables (all 4 built once before scan). See OPERATORS.md §3 op 7.
 //   3. Compute profit = l_extendedprice*(1-l_discount) - ps_supplycost*l_quantity.
 //   4. Accumulate into a (n_name, o_year) -> sum_profit map; emit sorted output.
 // See: frontend/tpch/q9/CLAUDE.md §Execution Style: Monolithic vs Cascade.
@@ -39,14 +39,12 @@ inline bool q9_predicate_joined(const joined_ol_t& /* j */, const Params& /* p *
 template <typename Backend>
 long Q9Workload<Backend>::query_by_base(std::vector<q9_agg_row_t>& out)
 {
-   // TODO(skeleton): Drive ol.merge_join_base(lambda) for the OL pair.
-   // Inside the lambda, perform 4 additional joins:
-   //   - Sort OL output by l_partkey -> MergeJoin with PART scan (apply LIKE filter)
-   //   - Sort by (l_partkey, l_suppkey) -> MergeJoin with PARTSUPP scan
-   //   - Load SUPPLIER into hashmap, look up by l_suppkey
-   //   - Load NATION into hashmap, look up by s_nationkey
+   // TODO(skeleton): Build PART (filtered by LIKE), PARTSUPP, SUPPLIER, NATION
+   // hash tables once before scan. Drive ol.merge_join_base(lambda) for the OL
+   // pair. Inside the callback, probe each hash table per-row:
+   //   PART (apply LIKE filter) -> PARTSUPP -> SUPPLIER -> NATION
    // Compute profit per lineitem, aggregate by (n_name, EXTRACT(YEAR, o_orderdate)).
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 1 (5 merge joins).
+   // See: OPERATORS.md §3 op 4 (S1), §3 op 7 (downstream HashJoin), §5 Q9.
    out.clear();
    return 0;
 }
@@ -54,11 +52,10 @@ long Q9Workload<Backend>::query_by_base(std::vector<q9_agg_row_t>& out)
 template <typename Backend>
 long Q9Workload<Backend>::query_by_view(std::vector<q9_agg_row_t>& out)
 {
-   // TODO(skeleton): Scan pipeline_view adapter for joined_ol_t rows.
-   // Apply the same 4-join post-processing as query_by_base:
-   //   PART (with LIKE filter), PARTSUPP (merge join), SUPPLIER+NATION (hashmaps).
+   // TODO(skeleton): Build PART (filtered by LIKE), PARTSUPP, SUPPLIER, NATION
+   // hash tables once. Scan pipeline_view adapter, probe each hash table per-row.
    // Compute profit, aggregate by (n_name, o_year).
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 2 & 4.
+   // See: OPERATORS.md §3 op 4 (S2), §3 op 7 (downstream HashJoin), §5 Q9.
    out.clear();
    return 0;
 }
@@ -66,17 +63,12 @@ long Q9Workload<Backend>::query_by_view(std::vector<q9_agg_row_t>& out)
 template <typename Backend>
 long Q9Workload<Backend>::query_by_merged(std::vector<q9_agg_row_t>& out)
 {
-   // TODO(skeleton): Drive ol.scan_merged(lambda) for the OL pair via PremergedJoin.
-   // Build in-memory hashmaps for NATION (25 rows) and SUPPLIER (~10K at SF=1)
-   // before the scan — these are too small to warrant merge-join infrastructure.
-   // Inside the callback, for each joined_ol_t:
-   //   - Merge-join with PART by l_partkey (apply LIKE filter on p_name)
-   //   - Merge-join with PARTSUPP by (l_partkey, l_suppkey)
-   //   - Hash-lookup SUPPLIER by l_suppkey -> then NATION by s_nationkey
-   //   - Compute profit, accumulate into (n_name, o_year) map
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 3;
-   //      §Execution Style: Monolithic vs Cascade (hash-lookup sketch for
-   //      NATION and SUPPLIER, merge join for PART and PARTSUPP).
+   // TODO(skeleton): Build PART (filtered by LIKE), PARTSUPP, SUPPLIER, NATION
+   // hash tables once before scan. Drive ol.scan_merged(lambda) for the OL pair
+   // via PremergedJoin. Inside the callback, probe each hash table per-row:
+   //   PART (apply LIKE filter) -> PARTSUPP -> SUPPLIER -> NATION
+   // Compute profit, accumulate into (n_name, o_year) map.
+   // See: OPERATORS.md §3 op 4 (S3), §3 op 7 (downstream HashJoin), §5 Q9.
    out.clear();
    return 0;
 }
@@ -84,13 +76,11 @@ long Q9Workload<Backend>::query_by_merged(std::vector<q9_agg_row_t>& out)
 template <typename Backend>
 long Q9Workload<Backend>::query_by_hash(std::vector<q9_agg_row_t>& out)
 {
-   // TODO(skeleton): Drive ol.hash_join_base(lambda) for the OL pair.
-   // Apply the same 4-join post-processing as query_by_base but using hash joins
-   // for PART and PARTSUPP as well (all 5 joins are hash joins).
-   // Build PART, PARTSUPP, SUPPLIER, NATION hashmaps before the OL scan.
+   // TODO(skeleton): Build PART (filtered by LIKE), PARTSUPP, SUPPLIER, NATION
+   // hash tables once. Drive ol.hash_join_base(lambda) for the OL pair.
+   // Inside the callback, probe each hash table per-row (all 5 joins are HashJoin).
    // Compute profit, aggregate by (n_name, o_year).
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 2 & 4
-   //      (hash join variant — all 5 joins hash-joined).
+   // See: OPERATORS.md §3 op 4 (S4 baseline), §3 op 7 (downstream HashJoin).
    out.clear();
    return 0;
 }
@@ -102,7 +92,7 @@ template <typename Backend>
 long BaseQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_base(out).
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 1.
+   // See: OPERATORS.md §3 op 4 (S1).
    out.clear();
    return 0;
 }
@@ -118,7 +108,7 @@ template <typename Backend>
 long ViewQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_view(out).
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 2 & 4.
+   // See: OPERATORS.md §3 op 4 (S2).
    out.clear();
    return 0;
 }
@@ -134,7 +124,7 @@ template <typename Backend>
 long MergedQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_merged(out).
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 3.
+   // See: OPERATORS.md §3 op 4 (S3).
    out.clear();
    return 0;
 }
@@ -150,8 +140,7 @@ template <typename Backend>
 long HashQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_hash(out).
-   // See: frontend/tpch/q9/CLAUDE.md §Plan Descriptions, Structure 2 & 4
-   //      (hash join variant).
+   // See: OPERATORS.md §3 op 4 (S4 baseline).
    out.clear();
    return 0;
 }

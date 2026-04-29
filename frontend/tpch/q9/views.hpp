@@ -26,12 +26,12 @@ struct Params {
 };
 
 // ---------------------------------------------------------------------------
-// Structure 2 pipeline view row: ORDERS x LINEITEM join output, unfiltered.
-// The remaining 4 joins (PART, PARTSUPP, SUPPLIER, NATION) are performed at
-// query time against base-table adapters, keeping the view schema minimal.
-// Aliases joined_ol_t — no narrower projection needed at the OL pipeline level.
-
-using q9_pipeline_view_t = ::tpch::joined_ol_t;
+// Structure 2 pipeline view row — PLACEHOLDER.
+// OPERATORS.md §4: Q9's view stores post-projection joined rows augmented
+// with columns from PART/PARTSUPP probes during population. This alias
+// MUST be replaced with a proper q9_pipeline_view_t record type during
+// implementation. See OPERATORS.md §4 for the schema.
+using q9_pipeline_view_t = ::tpch::joined_ol_t;  // TODO: replace with augmented type
 
 // ---------------------------------------------------------------------------
 // Final aggregate output row: one per (n_name, o_year).

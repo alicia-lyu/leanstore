@@ -92,6 +92,11 @@ The plan joins tables in this order, producing a 48-column concatenated tuple:
 
 ## Plan Descriptions
 
+> **Implementation note**: While the logical plans below show MergeJoin for all
+> 5 joins, the implementation uses **HashJoin** for all 4 outside-pipeline joins
+> (PART, PARTSUPP, SUPPLIER, NATION). Only the innermost ORDERS×LINEITEM join
+> varies by storage structure. See `OPERATORS.md §7` for justification.
+
 ### Structure 1: Traditional Indexes + Merge Join
 
 5 merge-joins with explicit sorts. Filter (LIKE on p_name) applied after projection:
@@ -175,20 +180,21 @@ Additional `joined_t` instantiations are needed for each subsequent merge join i
 
 After the ORDERS ⋈ LINEITEM join (which must produce a typed `joined_t`), the remaining 4 joins and final aggregate can be written as a single function. Two viable approaches:
 
-1. **Use `BinaryMergeJoin` for remaining joins** — requires `joined_t` instantiations for each stage, but these are generic and compose naturally
-2. **Hash-lookup small dimension tables** — NATION (25 rows) and SUPPLIER (10K at SF=1) can be loaded into `std::unordered_map`, avoiding merge join infrastructure entirely for those stages
+1. **HashJoin for all 4 remaining joins** — build PART (filtered by LIKE), PARTSUPP, SUPPLIER, NATION hash tables once before the OL scan; probe each per-row inside the callback. See OPERATORS.md §3 op 7.
+2. **Hash-aggregate outside the pipeline** — group by `(n_name, o_year)` is unrelated to pipeline sort key, so a hash-aggregate is legitimate here (past the comparison axis). See OPERATORS.md §3 op 6.
 
 ```
 // Structure 3 sketch (PremergedJoin + hash lookups for small tables)
 void q9_query_structure3(MergedAdapter& mi, ...) {
-    auto nation_map = load_to_map<nation_t>(nat);   // 25 rows
-    auto supplier_map = load_to_map<supplier_t>(supp); // 10K rows
+    // Build all 4 dimension hash tables once before scan
+    auto part_ht = build_hash_table<part_t>(part, like_filter);  // filtered by LIKE
+    auto partsupp_ht = build_hash_table<partsupp_t>(partsupp);
+    auto supplier_ht = build_hash_table<supplier_t>(supp);       // ~10K rows
+    auto nation_ht = build_hash_table<nation_t>(nat);            // 25 rows
 
     // PremergedJoin produces joined_t<orders_t, lineitem_t>
-    // Sort by l_partkey, merge join with PART (apply LIKE filter)
-    // Sort by (l_partkey, l_suppkey), merge join with PARTSUPP
-    // Look up supplier and nation from hash maps
-    // Compute profit, aggregate by (n_name, EXTRACT(YEAR, o_orderdate))
+    // Inside callback: probe PART -> PARTSUPP -> SUPPLIER -> NATION
+    // Compute profit, hash-aggregate by (n_name, EXTRACT(YEAR, o_orderdate))
 }
 ```
 
@@ -197,15 +203,15 @@ void q9_query_structure3(MergedAdapter& mi, ...) {
 **Feasible but verbose for Q9** because:
 
 1. 5 joins mean multiple sort-and-merge phases — long but straightforward
-2. The PremergedJoin replaces the heaviest join; remaining joins operate on progressively smaller data
-3. Hash lookups for NATION and SUPPLIER eliminate 2 of the 4 remaining merge joins
+2. The PremergedJoin replaces the heaviest join; remaining 4 joins use HashJoin (build once, probe per-row)
+3. All dimension tables fit in memory — hash table build is a one-time cost
 
 **Trade-offs**:
 
 - **Pro**: No per-query intermediate types — only generic `joined_t` instantiations
 - **Pro**: The LIKE filter on p_name can be applied immediately after PART join, reducing data for subsequent joins
 - **Con**: The function is ~100-150 lines — approaches the limit of single-function readability
-- **Con**: Each sort-and-merge phase materializes the full intermediate result in memory; cascade iterators would pipeline without materialization (but Q9 has no early selectivity filter, so materialization cost is similar)
+- **Con**: All 4 dimension hash tables must fit in memory simultaneously (feasible: PART ~200K, PARTSUPP ~800K, SUPPLIER ~10K, NATION 25 at SF=1)
 
 ## Status
 

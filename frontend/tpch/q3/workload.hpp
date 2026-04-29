@@ -10,7 +10,7 @@
 //   4 = traditional indexes + hash join   -> query_by_hash
 //
 // Q3 adds a CUSTOMER adapter to Q12's shape. CUSTOMER is joined at query time
-// via merge join on o_custkey = c_custkey after the ORDERS x LINEITEM aggregate
+// via HashJoin on o_custkey = c_custkey after the ORDERS x LINEITEM aggregate
 // (monolithic post-join style per q3/CLAUDE.md §Execution Style).
 
 #include <vector>

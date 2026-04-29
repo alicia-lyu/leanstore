@@ -99,6 +99,11 @@ CUSTOMER $0-$7, ORDERS $8-$16, LINEITEM $17-$32. Key columns:
 
 ## Plan Descriptions
 
+> **Implementation note**: While the logical plans below show MergeJoin for the
+> CUSTOMER join, the implementation uses **HashJoin** for all outside-pipeline
+> joins. See `OPERATORS.md §7` for justification. The plans are preserved as-is
+> to match Calcite's output; the physical deviation is documented there.
+
 ### Structure 1: Traditional Indexes + Merge Join
 
 Filters pushed down to immediately after table scans (matching the paper's plan shape):
@@ -182,7 +187,7 @@ void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
         sum += rev; custkey = o.o_custkey; odate = o.o_orderdate; shippr = o.o_shippriority;
     });
 
-    // Phase 2: Sort by custkey, merge join with filtered CUSTOMER
+    // Phase 2: HashJoin with filtered CUSTOMER (build hash table, probe with aggregated rows)
     // Phase 3: Sort by (revenue DESC, o_orderdate ASC), take top 10
 }
 ```
@@ -192,14 +197,14 @@ void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
 **Works well for Q3** because:
 
 1. The PremergedJoin callback fuses filter + project + aggregate — no separate operator stages needed
-2. The CUSTOMER join happens after aggregation (far fewer rows), so sorting a vector is cheap
+2. The CUSTOMER HashJoin happens after aggregation (far fewer rows), so the hash table is small
 3. Only 3 tables, 2 joins — the function stays readable
 
 **Trade-offs**:
 
 - **Pro**: No per-query intermediate types beyond the generic `joined_t` instantiation
 - **Pro**: Column access is field-based (`o.o_orderdate`) rather than positional (`$4`)
-- **Con**: The CUSTOMER merge join must be hand-coded (sort + two-pointer) rather than delegating to `BinaryMergeJoin` — or use `BinaryMergeJoin` with a second `joined_t` for the CUSTOMER join result
+- **Con**: The CUSTOMER HashJoin uses shared `HashJoin` from `frontend/shared/merge-join/hash_join.hpp`
 - **Con**: Harder to reuse across queries — each query gets its own bespoke function
 
 ---

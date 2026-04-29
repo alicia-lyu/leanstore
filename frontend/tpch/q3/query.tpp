@@ -48,11 +48,10 @@ template <typename Backend>
 long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
 {
    // TODO(skeleton): Drive ol.merge_join_base(lambda) with q3_predicate_orders
-   // and q3_predicate_lineitem applied inline. After the OL aggregate, sort by
-   // o_custkey and merge-join with the CUSTOMER scan filtered by c_mktsegment.
-   // Sort result by (revenue DESC, o_orderdate ASC) and return top 10.
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 1;
-   //      §Execution Style: Monolithic vs Cascade.
+   // and q3_predicate_lineitem applied inline. After the OL aggregate, HashJoin
+   // with CUSTOMER filtered by c_mktsegment (build CUSTOMER hash table, probe
+   // with pipeline output). Sort by (revenue DESC, o_orderdate ASC), top 10.
+   // See: OPERATORS.md §3 op 4 (S1), §3 op 7 (downstream HashJoin), §7.
    out.clear();
    return 0;
 }
@@ -60,11 +59,11 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
 template <typename Backend>
 long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
 {
-   // TODO(skeleton): Scan pipeline_view adapter; for each joined_ol_t row,
-   // apply q3_predicate_joined, aggregate revenue per (l_orderkey, o_custkey,
-   // o_orderdate, o_shippriority). Sort by o_custkey, merge-join with CUSTOMER
-   // filtered by c_mktsegment. Sort by (revenue DESC, o_orderdate ASC), top 10.
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 2 & 4.
+   // TODO(skeleton): Scan pipeline_view adapter; for each row, apply predicate,
+   // aggregate revenue per (l_orderkey, o_custkey, o_orderdate, o_shippriority).
+   // HashJoin with CUSTOMER filtered by c_mktsegment (build hash table, probe
+   // with aggregated rows). Sort by (revenue DESC, o_orderdate ASC), top 10.
+   // See: OPERATORS.md §3 op 4 (S2), §3 op 7 (downstream HashJoin), §7.
    out.clear();
    return 0;
 }
@@ -73,11 +72,10 @@ template <typename Backend>
 long Q3Workload<Backend>::query_by_merged(std::vector<q3_agg_row_t>& out)
 {
    // TODO(skeleton): Drive ol.scan_merged(lambda) with q3_predicate_joined.
-   // Aggregate revenue per (l_orderkey, o_custkey, o_orderdate, o_shippriority)
-   // into a local map. Sort by o_custkey, merge-join with CUSTOMER filtered by
-   // c_mktsegment. Sort by (revenue DESC, o_orderdate ASC), take top 10.
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 3;
-   //      §Execution Style: Monolithic vs Cascade (monolithic post-join sketch).
+   // Aggregate revenue per (l_orderkey, o_custkey, o_orderdate, o_shippriority).
+   // HashJoin with CUSTOMER filtered by c_mktsegment (build hash table, probe
+   // with aggregated rows). Sort by (revenue DESC, o_orderdate ASC), top 10.
+   // See: OPERATORS.md §3 op 4 (S3), §3 op 7 (downstream HashJoin), §7.
    out.clear();
    return 0;
 }
@@ -88,8 +86,7 @@ long Q3Workload<Backend>::query_by_hash(std::vector<q3_agg_row_t>& out)
    // TODO(skeleton): Drive ol.hash_join_base(lambda) applying q3_predicate_joined.
    // Build CUSTOMER filtered by c_mktsegment into a hash map (keyed by c_custkey),
    // probe during or after OL join. Aggregate, sort top 10.
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 2 & 4
-   //      (hash join variant); §Execution Style: Monolithic vs Cascade.
+   // See: OPERATORS.md §3 op 4 (S4 baseline), §3 op 7 (downstream HashJoin).
    out.clear();
    return 0;
 }
@@ -101,7 +98,7 @@ template <typename Backend>
 long BaseQ3<Backend>::query(std::vector<q3_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_base(out).
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 1.
+   // See: OPERATORS.md §3 op 4 (S1).
    out.clear();
    return 0;
 }
@@ -117,7 +114,7 @@ template <typename Backend>
 long ViewQ3<Backend>::query(std::vector<q3_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_view(out).
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 2 & 4.
+   // See: OPERATORS.md §3 op 4 (S2).
    out.clear();
    return 0;
 }
@@ -133,7 +130,7 @@ template <typename Backend>
 long MergedQ3<Backend>::query(std::vector<q3_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_merged(out).
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 3.
+   // See: OPERATORS.md §3 op 4 (S3).
    out.clear();
    return 0;
 }
@@ -149,8 +146,7 @@ template <typename Backend>
 long HashQ3<Backend>::query(std::vector<q3_agg_row_t>& out)
 {
    // TODO(skeleton): Forward to w.query_by_hash(out).
-   // See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 2 & 4
-   //      (hash join variant).
+   // See: OPERATORS.md §3 op 4 (S4 baseline).
    out.clear();
    return 0;
 }

@@ -26,8 +26,7 @@ void OrdersLineitemPipeline<Backend>::scan_merged(OnJoin&& on_join)
    // joined_ol_t, orders_t, lineitem_t> over merged_ol.getScanner(), then
    // call joiner.run(on_join). See:
    //   - frontend/shared/merge-join/premerged_join.hpp (PremergedJoin::run)
-   //   - frontend/tpch/q12/CLAUDE.md §Execution Style: monolithic post-join
-   //   - frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 4 query
+   //   - OPERATORS.md §3 op 4 (S3), §5 Q12 worked example
 }
 
 template <typename Backend>
@@ -38,7 +37,7 @@ void OrdersLineitemPipeline<Backend>::merge_join_base(OnJoin&& on_join)
    // Scanner<lineitem_t>, ol_sort_key_t, joined_ol_t> over base table
    // scanners, then call joiner.run(on_join). See:
    //   - frontend/shared/merge-join/binary_merge_join.hpp (BinaryMergeJoin)
-   //   - frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 2 query
+   //   - OPERATORS.md §3 op 4 (S1)
 }
 
 template <typename Backend>
@@ -49,18 +48,18 @@ void OrdersLineitemPipeline<Backend>::hash_join_base(OnJoin&& on_join)
    // the orders adapter, then scan lineitem and probe the map, calling
    // on_join for each match. See:
    //   - frontend/shared/merge-join/hash_join.hpp (HashJoin)
-   //   - frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 1 query
+   //   - OPERATORS.md §3 op 4 (S4)
 }
 
 template <typename Backend>
 template <typename ViewAdapter>
 void OrdersLineitemPipeline<Backend>::populate_view(ViewAdapter& view)
 {
-   // TODO(skeleton): Drive merge_join_base with a lambda that inserts each
-   // joined_ol_t into `view`. The view row type and key are defined by the
-   // per-query workload; ViewAdapter::insert(Key, Row) is the expected API.
-   // See: frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 3 load.
-   // See: frontend/tpch/CLAUDE.md §Pipeline Convention.
+   // TODO(skeleton): Drive merge_join_base with a per-query lambda that
+   // inserts pipeline output rows into `view`. The view row type differs
+   // per query (OPERATORS.md §4): Q12 inserts raw joined_ol_t, Q3 inserts
+   // post-SortedAggregate rows, Q9 inserts augmented projection rows.
+   // ViewAdapter::insert(Key, Row) is the expected API.
    (void)view;
 }
 
@@ -69,8 +68,8 @@ void OrdersLineitemPipeline<Backend>::populate_merged()
 {
    // TODO(skeleton): Scan orders adapter, insert each orders_t into
    // merged_ol; scan lineitem adapter, insert each lineitem_t into
-   // merged_ol. This is the dual-write replay that builds MI[0].
-   // See: frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 4 load.
+   // merged_ol. This is the query-agnostic dual-write replay that builds
+   // MI[0]. See: OPERATORS.md §4.
 }
 
 template <typename Backend>

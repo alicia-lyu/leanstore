@@ -15,7 +15,7 @@
 // The `OnJoin` callback receives a `const joined_ol_t&` representing one
 // fully-assembled (order, lineitem) pair. Per-query logic sits entirely
 // inside that callback — this is the "monolithic post-join" execution style
-// endorsed in frontend/tpch/q12/CLAUDE.md §Execution Style.
+// endorsed in OPERATORS.md §3. See OPERATORS.md §5 for worked examples.
 
 #include "backend.hpp"
 #include "views_ol.hpp"
@@ -44,17 +44,17 @@ class OrdersLineitemPipeline
    // ------------------------------------------------------------------
 
    // Structure 3 driver: runs PremergedJoin over merged_ol.
-   // See: frontend/shared/merge-join/premerged_join.hpp, PremergedJoin.
+   // See: OPERATORS.md §3 op 4 (S3); frontend/shared/merge-join/premerged_join.hpp.
    template <typename OnJoin>
    void scan_merged(OnJoin&& on_join);
 
    // Structure 1 driver: binary merge join over base tables sorted by orderkey.
-   // See: frontend/shared/merge-join/binary_merge_join.hpp, BinaryMergeJoin.
+   // See: OPERATORS.md §3 op 4 (S1); frontend/shared/merge-join/binary_merge_join.hpp.
    template <typename OnJoin>
    void merge_join_base(OnJoin&& on_join);
 
    // Structure 4 driver: hash join — build orders in-memory, probe with lineitem scan.
-   // See: frontend/shared/merge-join/hash_join.hpp, HashJoin.
+   // See: OPERATORS.md §3 op 4 (S4); frontend/shared/merge-join/hash_join.hpp.
    template <typename OnJoin>
    void hash_join_base(OnJoin&& on_join);
 
@@ -63,17 +63,16 @@ class OrdersLineitemPipeline
    // See: frontend/tpch/CLAUDE.md §Pipeline Convention
    // ------------------------------------------------------------------
 
-   // Drives a join over base tables and inserts each joined_ol_t into `view`.
-   // ViewAdapter must support view.insert(joined_ol_t::Key, joined_ol_t).
-   // The view row type belongs to the per-query workload; this method is
-   // templated so each query can pass its own adapter type.
-   // See: frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 3 load.
+   // Drives a join over base tables and inserts pipeline output rows into `view`.
+   // The view row type belongs to the per-query workload (each query defines
+   // its own projection of the join output — see OPERATORS.md §4).
+   // ViewAdapter must support view.insert(ViewRow::Key, ViewRow).
    template <typename ViewAdapter>
    void populate_view(ViewAdapter& view);
 
    // Dual-write replay: scans base tables and inserts each orders_t /
    // lineitem_t record into merged_ol as well.
-   // See: frontend/tpch/q12/CLAUDE.md §Stages x Options, Option 4 load.
+   // See: OPERATORS.md §4 (query-agnostic dual-write).
    void populate_merged();
 
    // Returns the estimated size of the pipeline view adapter in MiB.

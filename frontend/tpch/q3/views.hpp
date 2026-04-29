@@ -28,11 +28,12 @@ struct Params {
 };
 
 // ---------------------------------------------------------------------------
-// Structure 2 pipeline view row: ORDERS x LINEITEM join output, unfiltered.
-// Predicate is hoisted to query time so the view is reusable across param sets.
-// Aliases joined_ol_t — no narrower projection needed for Q3 at pipeline level.
-
-using q3_pipeline_view_t = ::tpch::joined_ol_t;
+// Structure 2 pipeline view row — PLACEHOLDER.
+// OPERATORS.md §4: Q3's view stores post-SortedAggregate rows (one per
+// orderkey with summed revenue + FD-attached o_orderdate, o_shippriority,
+// o_custkey). This alias MUST be replaced with a proper q3_pipeline_view_t
+// record type during implementation. See OPERATORS.md §4 for the schema.
+using q3_pipeline_view_t = ::tpch::joined_ol_t;  // TODO: replace with aggregated type
 
 // ---------------------------------------------------------------------------
 // Final aggregate output row: one per (l_orderkey, o_orderdate, o_shippriority).
