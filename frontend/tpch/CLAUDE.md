@@ -23,6 +23,14 @@ Shared files (used by all three queries):
   shared join drivers (`scan_merged`, `merge_join_base`, `hash_join_base`)
   and Pipeline Convention load/size methods (`populate_view`, `populate_merged`,
   `get_view_size`, `get_merged_size`). See §Pipeline Convention below.
+- `tpch_flags.hpp` — shared gflags definitions for the per-query executables.
+  Each executable `#define TPCH_DEFINE_FLAGS` before including; one TU per
+  binary defines, the rest declare. `tentative_skip_bytes` is per-executable
+  (default differs by backend).
+- `tpch_executable.hpp` — `tpch::dispatch_storage_structure<Base, View,
+  Merged, Hash, Backend>(workload, result)` template helper. Replaces the
+  4-case `switch (FLAGS_storage_structure)` block that used to be duplicated
+  across all six per-query executables.
 
 Per-query subdirectories:
 
