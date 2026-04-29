@@ -187,7 +187,7 @@ These lambdas are inlined in the monolithic post-join callback. See OPERATORS.md
 
 ### `q12_predicate`
 
-Plugs into `FilterIterator<q12_result_t>`. Encodes the five Q12 conditions hoisted above the root MI boundary:
+Inlined in callback. Encodes the five Q12 filter conditions:
 
 ```cpp
 // Maps to Calcite filter: $23 IN ('MAIL','SHIP') AND $19<$20 AND $20<$21
@@ -211,7 +211,7 @@ auto q12_predicate_lineitem = [](const lineitem_t& l) -> bool { /* same conditio
 
 ### `q12_projection`
 
-Plugs into `ProjectIterator<joined_ol_t, q12_result_t>`. Implements Calcite's projection `$23, $0, $10, CASE($5 IN ('1-URGENT','2-HIGH'),1,0), CASE($5 NOT IN ('1-URGENT','2-HIGH'),1,0), $19, $20, $21`:
+Inlined in callback. Implements the projection (only needed for structure 5, next-paper scope):
 
 ```cpp
 // joined_ol_t carries (orders_t::Key, orders_t, lineitem_t::Key, lineitem_t)
@@ -232,7 +232,7 @@ auto q12_projection = [](const joined_ol_t& j) -> q12_result_t {
 
 ### `q12_accumulator`
 
-Plugs into `SortedAggregateIterator<q12_result_t, q12_agg_row_t>`. Groups by shipmode (the first key component), sums `high_line_count` and `low_line_count`:
+Inlined in callback. Groups by shipmode, sums `high_line_count` and `low_line_count`:
 
 ```cpp
 // q12_agg_row_t: { Varchar<10> l_shipmode, Integer high_line_count, Integer low_line_count }
@@ -258,28 +258,18 @@ auto count_accum = Accumulator<q12_result_t, q12_agg_row_t> {
 
 ## Stages × Options
 
-The key insight is that every (Load, Query, Maintain) × option combination is just a different operator tree composition. Loading always writes to adapters; the operator tree describes the data transformation.
+Loading is dispatched by `Q12Workload::load()` in `load.tpp`. See
+`OPERATORS.md §4` for why `populate_view` differs per query.
 
 ### Stage 1: Loading
 
-| Option | What gets populated | How |
-|--------|--------------------|----|
-| 1, 2 | Base tables only | `TPCHWorkload::load()` — standard per-table insert |
-| 3 | Base tables + `q12_view_t` adapter | Standard load, then drive the Option 3 index creation tree (see below) |
-| 4 | Base tables + MI[0] | Dual-write: each `orders_t`/`lineitem_t` insert also goes to `merged_ol_adapter` |
+| Structure | What gets populated | How |
+|-----------|--------------------|----|
+| 1, 4 | Base tables only | `TPCHWorkload::load()` — standard per-table insert |
+| 2 | Base tables + pipeline view | `ol.populate_view(pipeline_view)` — merge-join base tables, insert `joined_ol_t` rows |
+| 3 | Base tables + MI[0] | `ol.populate_merged()` — dual-write replay of orders and lineitem |
+
 orders_t key = `{o_orderkey}` (4 bytes folded), lineitem_t key = `{l_orderkey, l_linenumber}` (8 bytes folded). Natural interleaving: for each orderkey, the order record sorts before its lineitems (shorter key prefix). `toType()` discriminates by fold-length (4 vs 8).
-
-**Option 3 index creation tree** (builds pre-aggregated `q12_view_t`):
-
-```
-InsertIterator<q12_view_t>(q12_view_adapter,
-  SortedAggregateIterator<q12_result_t, q12_view_t>(shipmode_key, count_accum,
-    FilterIterator<q12_result_t>(q12_predicate,
-      ProjectIterator<joined_ol_t, q12_result_t>(q12_projection,
-        HashJoinIterator<lineitem_t, orders_t, joined_ol_t>(orderkey,
-          ScanIterator<lineitem_t>(lineitem_adapter),
-          ScanIterator<orders_t>(orders_adapter))))))
-```
 
 ### Stage 2: Queries
 
@@ -378,45 +368,9 @@ Follow exact pattern from `geo_lsm` / `geo_btree` targets.
 
 ## Executable Structure
 
-The executable instantiates adapters and selects the operator tree for the active storage structure. Each `case` branch calls a factory function from `q12_plans.hpp` that returns a composed operator tree.
-
-```cpp
-// executable_rocksdb.cpp (sketch)
-int main(int argc, char** argv) {
-    gflags::ParseCommandLineFlags(&argc, &argv, true);
-
-    RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
-
-    RocksDBAdapter<orders_t>   orders_adapter(rocks_db);
-    RocksDBAdapter<lineitem_t> lineitem_adapter(rocks_db);
-    // ... other TPC-H tables for TPCHWorkload
-
-    RocksDBMergedAdapter<orders_t, lineitem_t> mi0_adapter(rocks_db);
-    RocksDBAdapter<q12_result_t>               root_mi_adapter(rocks_db);
-    RocksDBAdapter<q12_view_t>                 q12_view_adapter(rocks_db);
-
-    rocks_db.open();
-
-    TPCHWorkload<RocksDBAdapter> tpch(orders_adapter, lineitem_adapter, ...);
-    Q12Workload q12(tpch, mi0_adapter, root_mi_adapter, q12_view_adapter,
-                    orders_adapter, lineitem_adapter);
-
-    if (!FLAGS_recover) {
-        q12.load();   // dispatches based on FLAGS_storage_structure
-    } else {
-        tpch.recover_last_ids();
-    }
-
-    // Each case builds and drives the appropriate operator tree from q12_plans.hpp
-    switch (FLAGS_storage_structure) {
-        case 1: q12.run_hash_join();   break;
-        case 2: q12.run_merge_join();  break;
-        case 3: q12.run_mat_view();    break;
-        case 4: q12.run_mi0_join();    break;
-        case 5: q12.run_root_mi();     break;
-    }
-}
-```
+The executable instantiates adapters and dispatches on `FLAGS_storage_structure`.
+See `executable_rocksdb.cpp` / `executable_leanstore.cpp` for the actual code
+(structures 1–4 only; structure 5 is next-paper scope).
 
 ---
 

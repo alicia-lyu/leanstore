@@ -168,10 +168,10 @@ The merge-join infrastructure (`frontend/shared/merge-join/`) requires typed joi
 
 ### What "Monolithic" Means in Practice
 
-The join result type (`joined_t`) is unavoidable. But everything *after* the join — filter, project, aggregate, CUSTOMER merge join, ORDER BY, LIMIT — can be fused into a single function using local variables rather than additional typed iterators:
+The join result type (`joined_t`) is unavoidable. But everything *after* the join — filter, project, aggregate, CUSTOMER HashJoin, ORDER BY, LIMIT — can be fused into a single function using local variables rather than additional typed iterators:
 
 ```
-// Structure 3 sketch (PremergedJoin + CUSTOMER merge join)
+// Structure 3 sketch (PremergedJoin + CUSTOMER HashJoin)
 void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
     // Phase 1: PremergedJoin produces joined_t<orders_t, lineitem_t>
     // Immediately filter, project, aggregate into a local map
