@@ -663,62 +663,67 @@ struct SKBuilder<sort_key_t> {
    }
 
    template <typename Record>
-   static sort_key_t inline get(const sort_key_t& k)
+   static sort_key_t inline project(const sort_key_t& k)
    {
       return k;
+   }
+
+   template <typename R>
+   static typename R::Key to_key(const sort_key_t& sk) {
+      return typename R::Key{sk};
    }
 };
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<nation2_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<nation2_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, 0, 0, 0, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<states_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<states_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, 0, 0, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<ns_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<ns_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, 0, 0, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<county_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<county_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, 0, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<nsc_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<nsc_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, 0, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<city_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<city_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<nscci_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<nscci_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<mixed_view_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<mixed_view_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, 0};
 }
 
 template <>
-inline sort_key_t SKBuilder<sort_key_t>::get<customer_count_t>(const sort_key_t& jk)
+inline sort_key_t SKBuilder<sort_key_t>::project<customer_count_t>(const sort_key_t& jk)
 {
    return sort_key_t{jk.nationkey, jk.statekey, jk.countykey, jk.citykey, 0};
 }

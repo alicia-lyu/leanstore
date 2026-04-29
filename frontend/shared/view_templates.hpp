@@ -5,6 +5,7 @@
 #include <limits>
 #include <ostream>
 #include <tuple>
+#include <variant>
 #include <vector>
 #include "table_traits.hpp"
 
@@ -198,3 +199,21 @@ struct MatchKeyEqual {
       return k1.match(k2) == 0;
    }
 };
+
+// Extract join key from variant key+value pair. Dispatches to the
+// matching SKBuilder::create overload. Used by PremergedJoin instead
+// of requiring get_jk() on every record Key.
+template <typename JK, typename K, typename V>
+JK jk_from_variants(const K& k, const V& v) {
+   return std::visit(
+       [](const auto& ak, const auto& av) -> JK {
+          using AK = std::decay_t<decltype(ak)>;
+          using AV = std::decay_t<decltype(av)>;
+          if constexpr (std::is_same_v<AK, typename AV::Key>) {
+             return SKBuilder<JK>::create(ak, av);
+          } else {
+             __builtin_unreachable();
+          }
+       },
+       k, v);
+}

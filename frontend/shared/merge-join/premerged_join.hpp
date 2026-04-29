@@ -6,6 +6,7 @@
 #include <mutex>
 #include <variant>
 #include "join_state.hpp"
+#include "../view_templates.hpp"
 
 DECLARE_int32(tentative_skip_bytes);
 
@@ -110,7 +111,7 @@ struct PremergedJoin {
       auto& k = kv->first;
       auto& v = kv->second;
       JK jk;
-      std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
+      jk = jk_from_variants<JK>(k, v);
       if (seek_jk != JK::max() && jk.match(seek_jk) != 0) {
          return std::nullopt;  // past the seek_jk
       }
@@ -128,7 +129,7 @@ struct PremergedJoin {
    template <typename R>
    bool seek_next(const JK& to_jk)
    {
-      typename R::Key k{to_jk};
+      auto k = SKBuilder<JK>::template to_key<R>(to_jk);
       merged_scanner.template seek<R>(k);
       stats.seek_cnt++;
       auto t = scan_next();
@@ -190,7 +191,7 @@ struct PremergedJoin {
       if (info_exhausted) {  // no more seeks needed
          return true;
       }
-      JK to_jk_r = SKBuilder<JK>::template get<R>(full_jk);
+      JK to_jk_r = SKBuilder<JK>::template project<R>(full_jk);
       info_exhausted =
           info_exhausted || to_jk_r == full_jk;  // seek_jk has more info only when there is additional non-zero fields, i.e., seek_jk > jk_r
       // if info_exhausted, stop getting the next R
