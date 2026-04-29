@@ -10,12 +10,9 @@
 // are identical — they belong here, not in any one query directory.
 
 #include <limits>
-#include <ostream>
 #include <tuple>
-#include <variant>
 #include <vector>
 
-#include "../shared/variant_tuple_utils.hpp"
 #include "../shared/view_templates.hpp"
 #include "tpch_tables.hpp"
 
@@ -77,11 +74,7 @@ struct ol_sort_key_t {
       return {1, static_cast<int>(other.linenumber), 0};
    }
 
-   friend std::ostream& operator<<(std::ostream& os, const ol_sort_key_t& k)
-   {
-      os << "ol_sk(" << k.orderkey << "," << k.linenumber << ")";
-      return os;
-   }
+   // operator<< is provided by ADD_KEY_TRAITS above.
 };
 
 }  // namespace tpch

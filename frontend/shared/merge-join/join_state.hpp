@@ -168,7 +168,7 @@ class JoinState
           auto& vec = std::get<Is>(records_to_join);
           using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
           using RecordType = std::tuple_element_t<1, VecElem>;
-          if (next_jk.match(SKBuilder<JK>::template get<RecordType>(jk_to_join)) != 0) {
+          if (next_jk.match(SKBuilder<JK>::template project<RecordType>(jk_to_join)) != 0) {
              joined_cnt += join_current();
              vec.clear();
           }
