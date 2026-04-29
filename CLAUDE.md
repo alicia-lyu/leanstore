@@ -93,6 +93,23 @@ python3 generate_targets.py > targets.mk
 ```
 This also regenerates `.vscode/launch.json` with LLDB debug configurations.
 
+### TPC-H unit tests and load tests
+
+```
+# macOS — build and run unit tests
+mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+make -C frontend test_views_ol -j$(sysctl -n hw.ncpu)
+./frontend/test_views_ol            # 12 unit tests for views_ol.hpp
+
+# macOS — build standalone MI[0] load-test
+make -C frontend test_load_merged_lsm -j$(sysctl -n hw.ncpu)
+./frontend/test_load_merged_lsm --ssd_path=<path> --tpch_scale_factor=1
+# Expected: prints "MI[0] size (MiB): <nonzero>"
+
+# Linux — additionally:
+make -C frontend test_load_merged_btree -j$(nproc)
+```
+
 ## Architecture
 
 ### Three-layer structure

@@ -43,16 +43,15 @@ The master document for the experiment plan, plan-source mapping, query selectio
 
 ## Next Steps
 
-### [Short-term] Fill in all TODO stubs — one query end-to-end first
+### [Short-term] Per-query refactor — move operator drivers and view loading out of pipeline
 
-All seven-file skeletons for Q12, Q3, Q9 are committed; every method body is a `// TODO(skeleton)` stub. Implement in this order:
+`OrdersLineitemPipeline` now only owns `populate_merged` + `get_merged_size`. The per-query stubs in `q{N}/load.tpp` reference removed methods (`ol.populate_view`, `ol.get_view_size`). Fix in this order:
 
-- `ol_pipeline.tpp` — `OrdersLineitemPipeline` method bodies: `scan_merged` (`PremergedJoin` driver), `merge_join_base` (`BinaryMergeJoin` driver), `hash_join_base` (`HashJoin` driver), `populate_pipeline_view`, `populate_merged_ol`, `get_merged_size`. Reference `frontend/shared/merge-join/` and `q12/CLAUDE.md §Stages x Options`.
+- `q12/load.tpp` — replace `ol.populate_view` / `ol.get_view_size` stubs with per-query view adapter calls; wire `Q12Workload` ctor and `load()` / `get_size()`.
+- `q12/query.tpp` — implement `scan_merged` (PremergedJoin driver), `merge_join_base` (BinaryMergeJoin driver), `hash_join_base` (HashJoin driver) as per-query methods; add predicates, projection, aggregator bodies with monolithic post-join lambdas.
 - `q12/views.hpp` — `Params::defaults()`.
-- `q12/query.tpp` — predicates, projection, aggregator bodies; `query_by_*` bodies calling `ol.scan_merged` / `ol.merge_join_base` / `ol.hash_join_base` with monolithic post-join lambdas (filter + project + aggregate fused inline).
-- `q12/load.tpp` — constructor, `load()`, `get_size()`.
-- Build smoke test: scale=1, cross-validate results across all four structures.
-- Repeat for Q3 (adds CUSTOMER merge join + top-10 sort) and Q9 (adds NATION/SUPPLIER hashmaps + PART/PARTSUPP merge joins inside callback).
+- Build smoke test: scale=1, cross-validate results across all four structures (use `test_load_merged_lsm` to confirm MI[0] loads correctly first).
+- Repeat for Q3 (adds CUSTOMER hash join + top-10 sort) and Q9 (adds NATION/SUPPLIER hashmaps + PART/PARTSUPP joins inside callback).
 
 ### [Short-term] Build-system integration — `frontend/CMakeLists.txt` + `generate_targets.py`
 

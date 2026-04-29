@@ -20,9 +20,14 @@ Shared files (used by all three queries):
   `test_views_ol` (macOS/RocksDB-only build).
 - `backend.hpp` — `RocksDBBackend` and `LeanStoreBackend` traits structs.
 - `ol_pipeline.hpp` / `ol_pipeline.tpp` — `OrdersLineitemPipeline<Backend>`:
-  shared join drivers (`scan_merged`, `merge_join_base`, `hash_join_base`)
-  and Pipeline Convention load/size methods (`populate_view`, `populate_merged`,
-  `get_view_size`, `get_merged_size`). See §Pipeline Convention below.
+  constructor, `populate_merged` (dual-write replay over base scanners), and
+  `get_merged_size`. Operator drivers and view loading are **not** here — they
+  depend on per-query types and live in `q{N}/query.tpp` and `q{N}/load.tpp`.
+  See §Pipeline Convention below.
+- `test_load_merged_rocksdb.cpp` / `test_load_merged_leanstore.cpp` —
+  standalone load-test binaries that drive `populate_merged()` end-to-end via
+  `TPCHWorkload` with no per-query state. CMake targets: `test_load_merged_lsm`
+  (macOS + Linux), `test_load_merged_btree` (Linux only).
 - `tpch_flags.hpp` — shared gflags definitions for the per-query executables.
   Each executable `#define TPCH_DEFINE_FLAGS` before including; one TU per
   binary defines, the rest declare. `tentative_skip_bytes` is per-executable
@@ -67,8 +72,10 @@ Three deliberate departures from the geo benchmark:
 
 ## Pipeline Convention
 
-A **Pipeline class** owns the secondary structures for one group of tables
-and exposes four load/size methods plus query-time join drivers.
+A **Pipeline class** owns the secondary structures for one group of tables.
+The convention is aspirational: a mature pipeline exposes four load/size
+methods plus query-time join drivers. The current pipeline (`OrdersLineitemPipeline`)
+only implements the truly-shared subset.
 
 ### Why pipelines exist
 
@@ -77,26 +84,28 @@ than duplicating load logic in each `Q{N}Workload`, secondary-structure loading
 lives in the pipeline class. Per-query `load()` and `get_size()` are one-line
 dispatchers that delegate to the pipeline.
 
-### The four load/size methods (concept-level, not virtual)
+### What the pipeline owns (current)
+
+`OrdersLineitemPipeline` exposes only what is genuinely shared across Q12/Q3/Q9:
 
 ```cpp
-template <typename ViewAdapter>
-void populate_view(ViewAdapter& view);
-
-void populate_merged();
-
-template <typename ViewAdapter>
-double get_view_size(ViewAdapter& view) const;
-
+void populate_merged();       // dual-write replay over base scanners
 double get_merged_size() const;
 ```
 
-`populate_view` is templated on `ViewAdapter` because the **view row type
-belongs to the per-query workload** — each query picks its own projection of
-the join output. For Tier 1, all three queries alias the view row to
-`joined_ol_t`, so `populate_view` inserts `joined_ol_t` rows regardless of
-which query calls it. A future pipeline with a richer or narrower view row
-type can constrain `ViewAdapter` with a `requires` clause.
+### What lives in per-query dirs
+
+Operator drivers and view loading depend on per-query types and belong in
+`q{N}/query.tpp` and `q{N}/load.tpp`:
+
+- `scan_merged` — Structure 3 PremergedJoin driver
+- `merge_join_base` — Structure 1 BinaryMergeJoin driver
+- `hash_join_base` — Structure 4 HashJoin driver
+- `populate_view` / `get_view_size` — view row type is per-query
+
+> **TODO debt**: `q{N}/load.tpp` stubs still reference `ol.populate_view` and
+> `ol.get_view_size`, which were removed from the pipeline. These will be fixed
+> in the per-query refactor.
 
 ### Ready-for-change rationale
 
@@ -114,8 +123,8 @@ base class to update.
 ### Current state
 
 The only pipeline today is `OrdersLineitemPipeline<Backend>` (`ol_pipeline.hpp`).
-Q12, Q3, and Q9 each hold exactly one instance named `ol` and dispatch all
-secondary-structure loading through it.
+Q12, Q3, and Q9 each hold exactly one instance named `ol` and dispatch
+merged-index loading through it.
 
 ## Per-query File Convention
 
@@ -154,15 +163,19 @@ Structure 0 (data reload) is handled before the switch in each executable.
   `jk_from_variants` free function and `SKBuilder::to_key<R>`.
   `SKBuilder::get<R>` renamed to `project<R>` across all files.
   Geo backward compatibility verified (`geo_lsm` builds clean).
+- **`ol_pipeline` trimmed to truly-shared scope; load-test executables added**
+  (2026-04-29): `OrdersLineitemPipeline` now only owns `populate_merged` and
+  `get_merged_size`. Operator drivers and view loading removed (moved to
+  per-query dirs in follow-up). `test_load_merged_rocksdb.cpp` and
+  `test_load_merged_leanstore.cpp` added as standalone MI[0] load-test binaries
+  (CMake targets `test_load_merged_lsm` / `test_load_merged_btree`).
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 
-- `OrdersLineitemPipeline` method bodies (`ol_pipeline.tpp`): `PremergedJoin`
-  driver (`scan_merged`), `BinaryMergeJoin` driver (`merge_join_base`),
-  `HashJoin` driver (`hash_join_base`), `populate_view`, `populate_merged`,
-  `get_view_size`, and `get_merged_size`. See `frontend/shared/merge-join/`
-  for the join templates and `OPERATORS.md §4` for the load patterns.
-  Per-query `load()` / `get_size()` already dispatch to these.
+- Per-query query drivers (`scan_merged`, `merge_join_base`, `hash_join_base`)
+  and view loading (`populate_view`, `get_view_size`) live in `q{N}/query.tpp`
+  and `q{N}/load.tpp` (currently TODO debt — these files still reference methods
+  removed from the pipeline; fix as part of the per-query refactor).
 - Per-query `Params::defaults()` implementations (one per query).
 - Per-query predicate / projection / aggregator bodies inside `query.tpp`.
 - Per-query `query_by_*` bodies that call `ol.scan_merged(lambda)`,

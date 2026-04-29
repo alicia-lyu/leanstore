@@ -227,21 +227,24 @@ All three DOT plan files are semantically equivalent and verified. No changes ne
   `SKBuilder<ol_sort_key_t>`. Unit-tested (12 tests in `test_views_ol.cpp`).
 - Shared merge-join infra: `PremergedJoin` decoupled from record types via
   `jk_from_variants` and `SKBuilder::to_key<R>`.
+- `OrdersLineitemPipeline` trimmed (2026-04-29): only `populate_merged` and
+  `get_merged_size` remain. All operator drivers and view loading are per-query
+  and belong in `query.tpp` / `load.tpp`.
 
 **Q9-specific method bodies** remain TODO stubs (`load.tpp` + `query.tpp`).
-Loading lives in `OrdersLineitemPipeline` per the Pipeline Convention
-(`frontend/tpch/CLAUDE.md §Pipeline Convention`). `load()` and `get_size()`
-are one-line dispatchers. NATION, SUPPLIER, PART, PARTSUPP are base-only
+`populate_merged` and `get_merged_size` are ready in the pipeline; per-query
+files own everything else. NATION, SUPPLIER, PART, PARTSUPP are base-only
 and are not part of any pipeline secondary structure.
 
 Stubbed methods:
 
 - `Q9Workload<Backend>::Q9Workload(...)` — wire gflags into `params`.
-- `Q9Workload<Backend>::load()` — dispatches to `ol.populate_view` /
-  `ol.populate_merged`; base-table size case is a TODO pending
-  `TPCHWorkload::get_size()`.
-- `Q9Workload<Backend>::get_size() const` — dispatches to
-  `ol.get_view_size` / `ol.get_merged_size`.
+- `Q9Workload<Backend>::load()` — dispatches to per-query `populate_view` /
+  `ol.populate_merged`. **TODO debt**: `load.tpp` references `ol.populate_view`
+  and `ol.get_view_size`, which were removed from the pipeline; fix in the
+  per-query refactor.
+- `Q9Workload<Backend>::get_size() const` — dispatches to per-query view size /
+  `ol.get_merged_size`.
 - `Q9Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1
   (5 merge joins); §Execution Style.
 - `Q9Workload<Backend>::query_by_view(out)` — see §Plan Descriptions, Structure 2 & 4;
@@ -256,5 +259,5 @@ Stubbed methods:
 - `q9_predicate_joined` — placeholder (always true); LIKE filter on `p_name`
   applied post-PART-join inside `query_by_*` bodies.
 
-Cross-cutting TODOs (`OrdersLineitemPipeline` method bodies, build wiring):
+Cross-cutting per-query refactor (operator drivers, view loading, build wiring):
 see `frontend/tpch/CLAUDE.md`.
