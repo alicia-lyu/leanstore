@@ -51,7 +51,7 @@ Three deliberate departures from the geo benchmark:
    the three join drivers into one class avoids triplicating that substrate
    across Q12/Q3/Q9. Each per-query workload composes `OrdersLineitemPipeline`
    and supplies its own filter/project/aggregate lambda — the **monolithic
-   post-join** execution style endorsed in `q12/CLAUDE.md §Execution Style`.
+   post-join** execution style documented in `OPERATORS.md §3`.
 
 ## Pipeline Convention
 
@@ -140,8 +140,7 @@ Implementing a query end-to-end requires filling in:
   (`scan_merged`), `BinaryMergeJoin` driver (`merge_join_base`), `HashJoin`
   driver (`hash_join_base`), `populate_view`, `populate_merged`,
   `get_view_size`, and `get_merged_size`. See `frontend/shared/merge-join/`
-  for the join templates and `q12/CLAUDE.md §Stages x Options` for the load
-  patterns. Per-query `load()` / `get_size()` already dispatch to these.
+  for the join templates and `OPERATORS.md §4` for the load patterns. Per-query `load()` / `get_size()` already dispatch to these.
 - Per-query `Params::defaults()` implementations (one per query).
 - Per-query predicate / projection / aggregator bodies inside `query.tpp`.
 - Per-query `query_by_*` bodies that call `ol.scan_merged(lambda)`,

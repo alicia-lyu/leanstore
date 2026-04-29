@@ -81,28 +81,28 @@ int main(int argc, char** argv)
    switch (FLAGS_storage_structure) {
       case 1: {
          // TODO(skeleton): Construct BaseQ12<B>{q12} and run query loop.
-         // See: frontend/tpch/q12/CLAUDE.md §Storage Structure Options, structure 1.
+         // See: OPERATORS.md §3 op 4, S 1.
          tpch::q12::BaseQ12<B> wrapper{q12};
          wrapper.query(result);
          break;
       }
       case 2: {
          // TODO(skeleton): Construct ViewQ12<B>{q12} and run query loop.
-         // See: frontend/tpch/q12/CLAUDE.md §Storage Structure Options, structure 2.
+         // See: OPERATORS.md §3 op 4, S 2.
          tpch::q12::ViewQ12<B> wrapper{q12};
          wrapper.query(result);
          break;
       }
       case 3: {
          // TODO(skeleton): Construct MergedQ12<B>{q12} and run query loop.
-         // See: frontend/tpch/q12/CLAUDE.md §Storage Structure Options, structure 3.
+         // See: OPERATORS.md §3 op 4, S 3.
          tpch::q12::MergedQ12<B> wrapper{q12};
          wrapper.query(result);
          break;
       }
       case 4: {
          // TODO(skeleton): Construct HashQ12<B>{q12} and run query loop.
-         // See: frontend/tpch/q12/CLAUDE.md §Storage Structure Options, structure 4.
+         // See: OPERATORS.md §3 op 4, S 4.
          tpch::q12::HashQ12<B> wrapper{q12};
          wrapper.query(result);
          break;

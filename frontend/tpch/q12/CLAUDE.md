@@ -149,7 +149,7 @@ This overhead might be too significant once we move forward to queries other tha
 
 ### `q12_result_t`
 
-Root pipeline MI entry — the output schema of the `ProjectIterator` in the index creation plan. One record per (order, lineitem) join result, **unfiltered** (predicate hoisting).
+Root pipeline MI entry — the projected join output schema (next-paper scope). One record per (order, lineitem) join result, **unfiltered** (predicate hoisting).
 
 ```cpp
 struct q12_result_t {
