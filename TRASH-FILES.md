@@ -4,3 +4,4 @@ frontend/tpch/q12/workload.hpp - moved to TRASH/q12_workload.hpp - replaced by n
 frontend/tpch/q12/per_structure_workload.hpp - moved to TRASH/q12_per_structure_workload.hpp - replaced by new skeleton (virtual dispatch removed, plain structs)
 frontend/tpch/q12/load.tpp - moved to TRASH/q12_load.tpp - replaced by new skeleton (template-param bug)
 build/vendor/tabluate - moved to TRASH/tabluate-stale-build-cache - stale ExternalProject cache pointing to build2 dir
+build/log - moved to TRASH/build-log-stale-file - regular file blocking create_directories(./log)

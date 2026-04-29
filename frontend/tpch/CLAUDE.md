@@ -107,6 +107,24 @@ Operator drivers and view loading depend on per-query types and belong in
 > `ol.get_view_size`, which were removed from the pipeline. These will be fixed
 > in the per-query refactor.
 
+### Secondary indexes for Structure 1
+
+A pipeline is also responsible for populating any **secondary indexes**
+required for its tables under Structure 1 (traditional indexes + binary
+merge join). The merge join requires both inputs to be sorted by the join
+key; if a base table is not already sorted that way, the pipeline owns the
+secondary index that provides the required sort order, and `populate_merged`
+should be paired with an analogous `populate_secondary_*` step.
+
+**Not applicable to `OrdersLineitemPipeline`**: the join key is `orderkey`,
+which is already the leading key of both `orders_t` (`{o_orderkey}`) and
+`lineitem_t` (`{l_orderkey, l_linenumber}`). Base tables are merge-joinable
+as-is, no secondary index needed.
+
+Documented here for future pipelines (e.g., an Orders×Customer pipeline
+joining on `o_custkey` would need a `custkey`-sorted secondary index over
+ORDERS).
+
 ### Ready-for-change rationale
 
 Adding a second pipeline (e.g., `OrdersCustomerPipeline`, `LineitemPartsuppPipeline`)

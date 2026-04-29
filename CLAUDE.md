@@ -103,8 +103,16 @@ make -C frontend test_views_ol -j$(sysctl -n hw.ncpu)
 
 # macOS — build standalone MI[0] load-test
 make -C frontend test_load_merged_lsm -j$(sysctl -n hw.ncpu)
-./frontend/test_load_merged_lsm --ssd_path=<path> --tpch_scale_factor=1
+mkdir -p test_data test_csv
+./frontend/test_load_merged_lsm \
+    --ssd_path=./test_data \
+    --csv_path=./test_csv \
+    --tpch_scale_factor=1
 # Expected: prints "MI[0] size (MiB): <nonzero>"
+# Note: --ssd_path and --csv_path must be DISTINCT directories. RocksDB
+# writes its info log as ./<ssd_path>/log; the Logger calls
+# create_directories(csv_path) which fails if csv_path collides with that
+# file. Don't use --ssd_path=. (collides with the default --csv_path=./log).
 
 # Linux — additionally:
 make -C frontend test_load_merged_btree -j$(nproc)
