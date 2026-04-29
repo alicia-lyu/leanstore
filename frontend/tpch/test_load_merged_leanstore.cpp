@@ -13,6 +13,7 @@
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "backend.hpp"
 #include "ol_pipeline.hpp"
+#include "test_load_merged_stats.hpp"
 #include "tpch_tables.hpp"
 #include "tpch_workload.hpp"
 
@@ -70,7 +71,13 @@ int main(int argc, char** argv)
       leanstore::cr::Worker::my().commitTX();
    });
 
-   std::cout << "MI[0] size (MiB): " << ol.get_merged_size() << std::endl;
+   const Integer expected_orders =
+       TPCHWorkload<B::Adapter>::ORDERS_SCALE * FLAGS_tpch_scale_factor;
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+      tpch::dump_merged_ol_stats<B>(merged_ol, expected_orders, tpch.last_order_id);
+      leanstore::cr::Worker::my().commitTX();
+   });
    return 0;
 }
 

@@ -10,6 +10,7 @@
 #include "../shared/logger/rocksdb_logger.hpp"
 #include "backend.hpp"
 #include "ol_pipeline.hpp"
+#include "test_load_merged_stats.hpp"
 #include "tpch_tables.hpp"
 #include "tpch_workload.hpp"
 
@@ -51,6 +52,8 @@ int main(int argc, char** argv)
    tpch::OrdersLineitemPipeline<B> ol(orders, lineitem, merged_ol);
    ol.populate_merged();
 
-   std::cout << "MI[0] size (MiB): " << ol.get_merged_size() << std::endl;
+   const Integer expected_orders =
+       TPCHWorkload<B::Adapter>::ORDERS_SCALE * FLAGS_tpch_scale_factor;
+   tpch::dump_merged_ol_stats<B>(merged_ol, expected_orders, tpch.last_order_id);
    return 0;
 }

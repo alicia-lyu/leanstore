@@ -159,6 +159,25 @@ Each `q{N}/` directory contains:
 | `executable_leanstore.cpp` | Same as above, guarded by `#ifndef ROCKSDB_ONLY`, uses `LeanStoreBackend`. |
 | `CLAUDE.md` | Per-query SQL, plan descriptions, execution style analysis, column index mappings, and an "Implementation Status (skeleton)" section appended when the skeleton was created. |
 
+## Cross-Structure Result Consistency: XOR Parity
+
+When per-query implementations land, every `query_by_*` driver
+(`query_by_base`, `query_by_view`, `query_by_merged`, `query_by_hash`) MUST
+fold each result row into a running XOR parity over the row's bytes (or
+canonical fields) and emit that parity alongside the result vector. The
+four structures must produce **identical** parity values for the same
+seed/parameters, otherwise one of them has a correctness bug.
+
+XOR is the right choice because: (a) it's order-independent, so structures
+that emit results in different orders (hash vs merge) still match; (b) it's
+cheap to compute inline; (c) any single-row corruption flips the parity.
+
+The standalone `test_load_merged_*` binaries don't need parity (they only
+verify load), but they DO surface distribution stats so a wrong row count
+is obvious at a glance — see `dump_merged_ol_stats` in
+`test_load_merged_stats.hpp` (each line tagged `[OK]` / `[FAIL]`, with
+expected ranges derived from the TPC-H spec).
+
 ## Storage-structure → Wrapper Mapping
 
 | `--storage_structure` | Wrapper struct | Join strategy |
