@@ -2,55 +2,26 @@
 
 // Per-storage-structure dispatch wrappers for Q3.
 //
-// Plain (non-virtual) structs — no PerStructureWorkload<> base, no virtual
-// destructor. The executable's switch(FLAGS_storage_structure) instantiates
-// the chosen struct directly and calls query() / get_size() on it.
-//
-// Design note: virtual dispatch is not load-bearing here because structure
-// selection happens at compile time via a switch. Dropping virtual avoids
-// vtable overhead and simplifies the type hierarchy vs the geo benchmark.
+// Aliases to the shared tpch::BaseStructure / ViewStructure / MergedStructure /
+// HashStructure templates in frontend/tpch/per_structure_workload.hpp.
+// Method bodies (pure forwarders to w.query_by_*) live in that shared header.
 
-#include <vector>
-#include "views.hpp"
+#include "../per_structure_workload.hpp"
 #include "workload.hpp"
 
 namespace tpch::q3
 {
 
-// Structure 1: traditional indexes + merge join.
 template <typename Backend>
-struct BaseQ3 {
-   Q3Workload<Backend>& w;
-   explicit BaseQ3(Q3Workload<Backend>& w) : w(w) {}
-   long query(std::vector<q3_agg_row_t>& out);
-   double get_size() const;
-};
+using BaseQ3   = ::tpch::BaseStructure  <Q3Workload<Backend>, q3_agg_row_t>;
 
-// Structure 2: intermediate pipeline view.
 template <typename Backend>
-struct ViewQ3 {
-   Q3Workload<Backend>& w;
-   explicit ViewQ3(Q3Workload<Backend>& w) : w(w) {}
-   long query(std::vector<q3_agg_row_t>& out);
-   double get_size() const;
-};
+using ViewQ3   = ::tpch::ViewStructure  <Q3Workload<Backend>, q3_agg_row_t>;
 
-// Structure 3: MI[0] only (PremergedJoin at query time).
 template <typename Backend>
-struct MergedQ3 {
-   Q3Workload<Backend>& w;
-   explicit MergedQ3(Q3Workload<Backend>& w) : w(w) {}
-   long query(std::vector<q3_agg_row_t>& out);
-   double get_size() const;
-};
+using MergedQ3 = ::tpch::MergedStructure<Q3Workload<Backend>, q3_agg_row_t>;
 
-// Structure 4: traditional indexes + hash join.
 template <typename Backend>
-struct HashQ3 {
-   Q3Workload<Backend>& w;
-   explicit HashQ3(Q3Workload<Backend>& w) : w(w) {}
-   long query(std::vector<q3_agg_row_t>& out);
-   double get_size() const;
-};
+using HashQ3   = ::tpch::HashStructure  <Q3Workload<Backend>, q3_agg_row_t>;
 
 }  // namespace tpch::q3

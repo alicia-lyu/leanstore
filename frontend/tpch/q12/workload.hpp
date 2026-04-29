@@ -24,11 +24,43 @@
 namespace tpch::q12
 {
 
+// ---------------------------------------------------------------------------
+// Substitution parameters (TPC-H §2.4.12).
+// Defaults: SHIPMODE1=MAIL, SHIPMODE2=SHIP, DATE=1994-01-01.
+
+struct Params {
+   Varchar<10> shipmode1;    // default "MAIL"
+   Varchar<10> shipmode2;    // default "SHIP"
+   Timestamp receiptdate_lo; // default 1994-01-01 (days since epoch)
+   Timestamp receiptdate_hi; // default 1995-01-01 (days since epoch)
+
+   static Params defaults();
+};
+
+// ---------------------------------------------------------------------------
+// Predicate declarations. Bodies live in query.tpp.
+
+// Applied to a raw lineitem before joining (structures 1 and 4).
+// Encodes: l_shipmode IN (p.shipmode1, p.shipmode2)
+//          AND l_shipdate < l_commitdate < l_receiptdate
+//          AND l_receiptdate IN [p.receiptdate_lo, p.receiptdate_hi).
+bool q12_predicate_lineitem(const lineitem_t& l, const Params& p);
+
+// Applied to a fully-assembled joined_ol_t (structures 2 and 3).
+// Same five conditions expressed over joined_ol_t fields.
+bool q12_predicate_joined(const joined_ol_t& j, const Params& p);
+
+// ---------------------------------------------------------------------------
+
 template <typename Backend>
 class Q12Workload
 {
    // The full TPC-H base-table workload (owns part, supplier, etc.).
    TPCHWorkload<Backend::template Adapter>& tpch;
+
+   // Direct references to the two base adapters needed for view loading.
+   typename Backend::template Adapter<orders_t>&   orders;
+   typename Backend::template Adapter<lineitem_t>& lineitem;
 
    // Shared ORDERS x LINEITEM pipeline: wraps the three join drivers.
    OrdersLineitemPipeline<Backend> ol;

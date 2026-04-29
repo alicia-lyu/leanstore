@@ -85,71 +85,8 @@ long Q9Workload<Backend>::query_by_hash(std::vector<q9_agg_row_t>& out)
    return 0;
 }
 
-// ---------------------------------------------------------------------------
-// Per-structure wrapper query() and get_size() methods
-
-template <typename Backend>
-long BaseQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
-{
-   // TODO(skeleton): Forward to w.query_by_base(out).
-   // See: OPERATORS.md §3 op 4 (S1).
-   out.clear();
-   return 0;
-}
-
-template <typename Backend>
-double BaseQ9<Backend>::get_size() const
-{
-   // TODO(skeleton): Forward to w.get_size().
-   return 0;
-}
-
-template <typename Backend>
-long ViewQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
-{
-   // TODO(skeleton): Forward to w.query_by_view(out).
-   // See: OPERATORS.md §3 op 4 (S2).
-   out.clear();
-   return 0;
-}
-
-template <typename Backend>
-double ViewQ9<Backend>::get_size() const
-{
-   // TODO(skeleton): Forward to w.get_size().
-   return 0;
-}
-
-template <typename Backend>
-long MergedQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
-{
-   // TODO(skeleton): Forward to w.query_by_merged(out).
-   // See: OPERATORS.md §3 op 4 (S3).
-   out.clear();
-   return 0;
-}
-
-template <typename Backend>
-double MergedQ9<Backend>::get_size() const
-{
-   // TODO(skeleton): Forward to w.get_size().
-   return 0;
-}
-
-template <typename Backend>
-long HashQ9<Backend>::query(std::vector<q9_agg_row_t>& out)
-{
-   // TODO(skeleton): Forward to w.query_by_hash(out).
-   // See: OPERATORS.md §3 op 4 (S4 baseline).
-   out.clear();
-   return 0;
-}
-
-template <typename Backend>
-double HashQ9<Backend>::get_size() const
-{
-   // TODO(skeleton): Forward to w.get_size().
-   return 0;
-}
+// Per-structure wrapper query() and get_size() methods are defined as inline
+// forwarders in frontend/tpch/per_structure_workload.hpp (shared template).
+// No per-query definitions needed here.
 
 }  // namespace tpch::q9
