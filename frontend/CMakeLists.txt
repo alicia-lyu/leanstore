@@ -95,6 +95,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- test_load_merged_lsm: standalone load-test for OrdersLineitemPipeline ---
+    add_executable(test_load_merged_lsm tpch/test_load_merged_rocksdb.cpp)
+    target_compile_definitions(test_load_merged_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_load_merged_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_load_merged_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
 else()
     # =========================================================================
     # Linux build: full leanstore + RocksDB (original behavior)
@@ -126,5 +141,11 @@ else()
 
     add_executable(geo_lsm geo/executable_rocksdb.cpp)
     target_link_libraries(geo_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_load_merged_btree tpch/test_load_merged_leanstore.cpp)
+    target_link_libraries(test_load_merged_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(test_load_merged_lsm tpch/test_load_merged_rocksdb.cpp)
+    target_link_libraries(test_load_merged_lsm PUBLIC RocksDBLogger Threads::Threads)
 
 endif()
