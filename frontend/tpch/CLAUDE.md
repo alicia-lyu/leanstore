@@ -14,6 +14,10 @@ Shared files (used by all three queries):
   base tables.
 - `views_ol.hpp` — `ol_sort_key_t`, `joined_ol_t` (the ORDERS × LINEITEM
   join result type shared by Q12/Q3/Q9), and the `SKBuilder` specialization.
+  Fully implemented with unit tests.
+- `test_views_ol.cpp` — 12 unit tests for sort key ordering, match semantics,
+  `SKBuilder` round-trips, `joined_ol_t` construction. CMake target:
+  `test_views_ol` (macOS/RocksDB-only build).
 - `backend.hpp` — `RocksDBBackend` and `LeanStoreBackend` traits structs.
 - `ol_pipeline.hpp` / `ol_pipeline.tpp` — `OrdersLineitemPipeline<Backend>`:
   shared join drivers (`scan_merged`, `merge_join_base`, `hash_join_base`)
@@ -131,16 +135,26 @@ Each `q{N}/` directory contains:
 
 Structure 0 (data reload) is handled before the switch in each executable.
 
-## What's Needed Beyond Plans to Fully Implement Q12/Q3/Q9
+## Completed (post-skeleton)
 
-The skeletons compile structurally but all method bodies are TODO stubs.
-Implementing a query end-to-end requires filling in:
+- **`views_ol.hpp` fully implemented** (2026-04-29): `ol_sort_key_t` (match,
+  first_diff, matching_keys), `joined_ol_t` (constructors, accessors),
+  `SKBuilder<ol_sort_key_t>` (create, project, to_key). Unit-tested via
+  `test_views_ol.cpp` (CMake target `test_views_ol`, 12 tests).
+- **Shared merge-join infrastructure refactored** (2026-04-29):
+  `PremergedJoin` decoupled from record-type `get_jk()` / `Key(JK)` via
+  `jk_from_variants` free function and `SKBuilder::to_key<R>`.
+  `SKBuilder::get<R>` renamed to `project<R>` across all files.
+  Geo backward compatibility verified (`geo_lsm` builds clean).
 
-- `OrdersLineitemPipeline` method bodies: `PremergedJoin` driver
-  (`scan_merged`), `BinaryMergeJoin` driver (`merge_join_base`), `HashJoin`
-  driver (`hash_join_base`), `populate_view`, `populate_merged`,
+## What's Needed to Fully Implement Q12/Q3/Q9
+
+- `OrdersLineitemPipeline` method bodies (`ol_pipeline.tpp`): `PremergedJoin`
+  driver (`scan_merged`), `BinaryMergeJoin` driver (`merge_join_base`),
+  `HashJoin` driver (`hash_join_base`), `populate_view`, `populate_merged`,
   `get_view_size`, and `get_merged_size`. See `frontend/shared/merge-join/`
-  for the join templates and `OPERATORS.md §4` for the load patterns. Per-query `load()` / `get_size()` already dispatch to these.
+  for the join templates and `OPERATORS.md §4` for the load patterns.
+  Per-query `load()` / `get_size()` already dispatch to these.
 - Per-query `Params::defaults()` implementations (one per query).
 - Per-query predicate / projection / aggregator bodies inside `query.tpp`.
 - Per-query `query_by_*` bodies that call `ol.scan_merged(lambda)`,

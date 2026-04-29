@@ -451,16 +451,22 @@ For the current paper (single MI per query, no maintenance), use monolithic styl
 
 ---
 
-## Implementation Status (skeleton)
+## Implementation Status
 
-As of 2026-04-28, `frontend/tpch/q12/` contains compile-ready skeletons.
-Method bodies are TODO comments citing the relevant section of this file.
+**Shared infrastructure completed** (2026-04-29):
 
+- `views_ol.hpp`: fully implemented — `ol_sort_key_t` (2-component sort key:
+  orderkey + linenumber), `joined_ol_t`, `SKBuilder<ol_sort_key_t>` (create,
+  project, to_key). Unit-tested (12 tests in `test_views_ol.cpp`).
+- Shared merge-join infra: `PremergedJoin` decoupled from record types via
+  `jk_from_variants` and `SKBuilder::to_key<R>`.
+
+**Q12-specific method bodies** remain TODO stubs (`load.tpp` + `query.tpp`).
 Loading lives in `OrdersLineitemPipeline` per the Pipeline Convention
 (`frontend/tpch/CLAUDE.md §Pipeline Convention`). `load()` and `get_size()`
 are one-line dispatchers.
 
-Stubbed methods (`load.tpp` + `query.tpp`):
+Stubbed methods:
 
 - `Q12Workload<Backend>::Q12Workload(...)` — wire gflags into `params`.
 - `Q12Workload<Backend>::load()` — dispatches to `ol.populate_view` /
