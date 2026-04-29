@@ -13,12 +13,12 @@ and without obscuring the differences we are trying to measure.
 The four storage structures fall into two groups:
 
 - **Merged-index family (S1, S2, S3)** share one logical plan,
-  `q{N}/plans/structure_1.dot`. Inside-pipeline physical execution
+  `q{N}/plans/family_logical.dot`. Inside-pipeline physical execution
   varies — `BinaryMergeJoin` (S1) vs. materialized-view scan (S2) vs.
   `PremergedJoin` (S3) — and that variation is the comparison axis.
   Outside-pipeline operators are held constant across S1/2/3.
 - **No-merged-index baseline (S4)** uses the default Calcite plan in
-  `q{N}/plans/structure_2_4*.dot` (chained `HashJoin`s). It does not
+  `q{N}/plans/baseline_s4.dot` (chained `HashJoin`s). It does not
   share inside-pipeline code with the family; it represents what the
   optimizer picks when nothing is interleaved, and is the baseline the
   family is compared against.
@@ -29,7 +29,7 @@ Two further commitments shape the design:
   the final query result**. Otherwise S2's query time becomes a
   trivial scan and we measure nothing.
 - The outside-pipeline plan uses `HashJoin` even where Calcite's
-  structure_1 plan picks `MergeJoin` for interesting orderings.
+  family logical plan picks `MergeJoin` for interesting orderings.
   Justification in §7.
 
 ## 2. Operator Inventory
@@ -73,7 +73,7 @@ lookup). Order-preserving.
 
 **4. Join.** Two logical-plan families:
 
-*Merged-index family (S1, S2, S3)* — all share `structure_1.dot`. The
+*Merged-index family (S1, S2, S3)* — all share `family_logical.dot`. The
 inside-pipeline physical join differs:
 
 - S1: `ol.merge_join_base(cb)` → orderkey-sorted output. The
@@ -82,9 +82,10 @@ inside-pipeline physical join differs:
   pipeline — see §4). Query time runs the outside-pipeline plan
   against the materialized rows.
 - S3: `ol.scan_merged(cb)` → orderkey-sorted output. The
-  SortedAggregate scanner-wrapper applies cleanly.
+  SortedAggregate scanner-wrapper applies cleanly. PremergedJoin
+  substitution shown in `family_s3_physical.dot`.
 
-*No-merged-index baseline (S4)* — uses `structure_2_4*.dot`: a chain
+*No-merged-index baseline (S4)* — uses `baseline_s4.dot`: a chain
 of `HashJoin` instances over base tables (ORDERS ⋈ LINEITEM for Q12;
 CUSTOMER ⋈ ORDERS ⋈ LINEITEM for Q3; the full 6-table chain for Q9),
 then filter, project, hash-aggregate, sort, limit. S4 does not share
@@ -266,14 +267,14 @@ are past the comparison axis. Full sketch in `q9/CLAUDE.md`.
    Final-output materialization makes S2's query time trivial and
    renders the comparison meaningless.
 4. **S4 is allowed its own logical plan.** S4 is the no-merged-index
-   baseline, not a member of the family. Forcing structure_1's plan
+   baseline, not a member of the family. Forcing the family logical plan
    onto S4 would require either an inside-pipeline hash-aggregate
    (rule 1 violation by analogy) or a forced re-sort (rule 2
    violation).
 
 ## 7. Why HashJoin Outside the Pipeline
 
-Calcite's structure_1 plan picks `MergeJoin` for the CUSTOMER side of
+Calcite's family logical plan picks `MergeJoin` for the CUSTOMER side of
 Q3 because both inputs are sorted on the join key after an explicit
 `Sort` operator the optimizer inserted to enable an interesting
 ordering. We deviate from this and use `HashJoin` for all
@@ -302,7 +303,7 @@ downstream.
 
 - Per-query plan rationale and SQL: `q{N}/CLAUDE.md §Plan Descriptions`,
   `§Execution Style`.
-- Calcite plan files: `q{N}/plans/structure_*.dot`.
+- Calcite plan files: `q{N}/plans/{family_logical,family_s3_physical,baseline_s4}.dot`.
 - Join primitives: `frontend/shared/merge-join/{premerged_join,
   binary_merge_join, hash_join}.hpp`.
 - Scanner-wrapper aggregation pattern: `frontend/geo/mixed_query.tpp`,

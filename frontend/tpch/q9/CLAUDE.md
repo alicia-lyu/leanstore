@@ -88,7 +88,7 @@ The plan joins tables in this order, producing a 48-column concatenated tuple:
 
 - Profit calculation: `l_extendedprice($14) * (1 - l_discount($15)) - ps_supplycost($37) * l_quantity($13)`
 - Project output: NATION=$47, O_YEAR=EXTRACT(YEAR, $4), profit formula, p_name=$26
-- Filter: LIKE($26, '%green%') in structure_2_4, or LIKE($3, '%green%') in structures 1&3 (post-projection, where $3=p_name)
+- Filter: LIKE($26, '%green%') in baseline_s4, or LIKE($3, '%green%') in family logical plan (post-projection, where $3=p_name)
 
 ## Plan Descriptions
 
