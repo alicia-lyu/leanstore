@@ -67,6 +67,19 @@ if (APPLE)
     )
     target_link_libraries(RocksDBLogger PUBLIC Logger RocksDB)
 
+    # --- test_views_ol: unit tests for tpch/views_ol.hpp ---
+    add_executable(test_views_ol tpch/test_views_ol.cpp)
+    target_compile_definitions(test_views_ol PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_views_ol PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_views_ol PUBLIC
+        config_standalone
+        random_standalone
+    )
+
     # --- geo_lsm executable ---
     add_executable(geo_lsm geo/executable_rocksdb.cpp)
     target_compile_definitions(geo_lsm PRIVATE ROCKSDB_ONLY)

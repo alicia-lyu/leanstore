@@ -1,8 +1,8 @@
 // Unit tests for views_ol.hpp: ol_sort_key_t, joined_ol_t, and SKBuilder.
 //
-// Build manually (no CMake target yet):
-//   clang++ -std=c++20 -I. -I.. test_views_ol.cpp -o test_views_ol && ./test_views_ol
-// Run from frontend/tpch/ with the repo root on the include path.
+// CMake target: test_views_ol (macOS/RocksDB-only build).
+// Build: cd build2/frontend && make test_views_ol
+// Run:   ./test_views_ol
 
 #include "views_ol.hpp"
 
@@ -18,7 +18,7 @@ using namespace tpch;
 
 static void test_sort_key_ordering()
 {
-   ol_sort_key_t a{1, 0}, b{1, 1}, c{1, 2}, d{2, 0};
+   [[maybe_unused]] ol_sort_key_t a{1, 0}, b{1, 1}, c{1, 2}, d{2, 0};
    assert(a < b);  // order-level key before its lineitems
    assert(b < c);
    assert(c < d);  // different orderkey
@@ -31,8 +31,8 @@ static void test_sort_key_ordering()
 
 static void test_sort_key_max()
 {
-   auto m = ol_sort_key_t::max();
-   ol_sort_key_t any{999999, 999999};
+   [[maybe_unused]] auto m = ol_sort_key_t::max();
+   [[maybe_unused]] ol_sort_key_t any{999999, 999999};
    assert(any < m || any == m);
    std::cerr << "  PASS: test_sort_key_max\n";
 }
@@ -85,18 +85,18 @@ static void test_matching_keys()
 
 static void test_first_diff()
 {
-   auto [idx1, base1, dist1] = ol_sort_key_t{5, 3}.first_diff(ol_sort_key_t{5, 1});
+   [[maybe_unused]] auto [idx1, base1, dist1] = ol_sort_key_t{5, 3}.first_diff(ol_sort_key_t{5, 1});
    assert(idx1 == 1);
    assert(base1 == 1);
    assert(dist1 == 2);
 
-   auto [idx2, base2, dist2] = ol_sort_key_t{7, 0}.first_diff(ol_sort_key_t{5, 0});
+   [[maybe_unused]] auto [idx2, base2, dist2] = ol_sort_key_t{7, 0}.first_diff(ol_sort_key_t{5, 0});
    assert(idx2 == 0);
    assert(base2 == 5);
    assert(dist2 == 2);
 
    // Identical keys: distance must be zero
-   auto [idx3, base3, dist3] = ol_sort_key_t{5, 3}.first_diff(ol_sort_key_t{5, 3});
+   [[maybe_unused]] auto [idx3, base3, dist3] = ol_sort_key_t{5, 3}.first_diff(ol_sort_key_t{5, 3});
    assert(dist3 == 0);
 
    std::cerr << "  PASS: test_first_diff\n";
@@ -170,13 +170,13 @@ static void test_skbuilder_create()
 
    orders_t::Key ok{Integer(5)};
    orders_t ov{};
-   auto sk1 = SKB::create(ok, ov);
+   [[maybe_unused]] auto sk1 = SKB::create(ok, ov);
    assert(sk1.orderkey == 5);
    assert(sk1.linenumber == 0);  // ORDERS row → order-level granularity
 
    lineitem_t::Key lk{Integer(5), Integer(3)};
    lineitem_t lv{};
-   auto sk2 = SKB::create(lk, lv);
+   [[maybe_unused]] auto sk2 = SKB::create(lk, lv);
    assert(sk2.orderkey == 5);
    assert(sk2.linenumber == 3);
 
@@ -191,11 +191,11 @@ static void test_skbuilder_project()
    using SKB = SKBuilder<tpch::ol_sort_key_t>;
    ol_sort_key_t full{5, 3};
 
-   auto proj_o = SKB::project<orders_t>(full);
+   [[maybe_unused]] auto proj_o = SKB::project<orders_t>(full);
    assert(proj_o.orderkey == 5);
    assert(proj_o.linenumber == 0);
 
-   auto proj_l = SKB::project<lineitem_t>(full);
+   [[maybe_unused]] auto proj_l = SKB::project<lineitem_t>(full);
    assert(proj_l == full);
 
    std::cerr << "  PASS: test_skbuilder_project\n";
@@ -209,14 +209,14 @@ static void test_skbuilder_to_key()
    using SKB = SKBuilder<tpch::ol_sort_key_t>;
    ol_sort_key_t sk{5, 3};
 
-   auto ok = SKB::to_key<orders_t>(sk);
+   [[maybe_unused]] auto ok = SKB::to_key<orders_t>(sk);
    assert(ok.o_orderkey == 5);
 
-   auto lk = SKB::to_key<lineitem_t>(sk);
+   [[maybe_unused]] auto lk = SKB::to_key<lineitem_t>(sk);
    assert(lk.l_orderkey == 5);
    assert(lk.l_linenumber == 3);
 
-   auto jk = SKB::to_key<tpch::joined_ol_t>(sk);
+   [[maybe_unused]] auto jk = SKB::to_key<tpch::joined_ol_t>(sk);
    assert(jk.jk.orderkey == 5);
    assert(jk.jk.linenumber == 3);
 
@@ -234,14 +234,14 @@ static void test_skbuilder_roundtrip()
    orders_t::Key ok{Integer(5)};
    orders_t ov{};
    auto sk = SKB::create(ok, ov);
-   auto ok2 = SKB::to_key<orders_t>(sk);
+   [[maybe_unused]] auto ok2 = SKB::to_key<orders_t>(sk);
    assert(ok2.o_orderkey == ok.o_orderkey);
 
    // LINEITEM round-trip
    lineitem_t::Key lk{Integer(5), Integer(3)};
    lineitem_t lv{};
    auto sk2 = SKB::create(lk, lv);
-   auto lk2 = SKB::to_key<lineitem_t>(sk2);
+   [[maybe_unused]] auto lk2 = SKB::to_key<lineitem_t>(sk2);
    assert(lk2.l_orderkey == lk.l_orderkey);
    assert(lk2.l_linenumber == lk.l_linenumber);
 
