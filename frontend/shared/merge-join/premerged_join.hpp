@@ -73,16 +73,37 @@ struct PremergedJoin {
    using K = std::variant<typename Rs::Key...>;
    using V = std::variant<Rs...>;
 
+   // Optional admission filter: called on every variant record produced by
+   // scan_next before it is emplaced into JoinState. Returning false drops
+   // the record (it never enters records_to_join, never participates in the
+   // cartesian product, never triggers consume_joined). Default admits all.
+   //
+   // This is the structural equivalent of pushing a per-side filter into the
+   // fetch lambda of BinaryMergeJoin / HashJoin (S1 / S4 in the Q12 family).
+   // Without it, S3 pays full join-assembly cost for records that S1/S4
+   // discard before the join — which violates comparison-integrity with the
+   // baselines (see OPERATORS.md §6.1).
+   //
+   // Correctness note: dropping a record on one side leaves the other side's
+   // cached records to clear harmlessly on the next refresh() (zero-cardinality
+   // cartesian product is an early-out in JoinState::join_current).
+   std::function<bool(const K&, const V&)> admit =
+       [](const K&, const V&) { return true; };
+
    PremergedJoin(
        MergedScannerType& merged_scanner,
-       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
-       : merged_scanner(merged_scanner), join_state("PremergedJoin", consume_joined)
+       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {},
+       std::function<bool(const K&, const V&)> admit_filter = [](const K&, const V&) { return true; })
+       : merged_scanner(merged_scanner),
+         join_state("PremergedJoin", consume_joined),
+         admit(std::move(admit_filter))
    {
    }
 
    template <template <typename> class AdapterType>
    PremergedJoin(MergedScannerType& merged_scanner, AdapterType<JR>& joinedAdapter)
-       : merged_scanner(merged_scanner), join_state("PremergedJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
+       : merged_scanner(merged_scanner),
+         join_state("PremergedJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
    }
 
@@ -112,20 +133,29 @@ struct PremergedJoin {
 
    std::optional<std::tuple<K, V, JK>> scan_next(bool to_emplace = true)
    {
-      std::optional<std::pair<K, V>> kv = merged_scanner.next();
-      if (!kv) {
-         return std::nullopt;
+      // Loop so admit-rejected records don't return std::nullopt prematurely.
+      while (true) {
+         std::optional<std::pair<K, V>> kv = merged_scanner.next();
+         if (!kv) {
+            return std::nullopt;
+         }
+         auto& k = kv->first;
+         auto& v = kv->second;
+         JK jk;
+         jk = jk_from_variants<JK>(k, v);
+         if (seek_jk != JK::max() && jk.match(seek_jk) != 0) {
+            return std::nullopt;  // past the seek_jk
+         }
+         // Admission filter: drop record entirely if rejected. The caller's
+         // jk advancement still works because the next admitted record will
+         // carry an equal-or-greater jk (scan order matches JK order).
+         if (!admit(k, v)) {
+            continue;
+         }
+         if (to_emplace)
+            emplace(k, v, jk);
+         return std::make_tuple(k, v, jk);
       }
-      auto& k = kv->first;
-      auto& v = kv->second;
-      JK jk;
-      jk = jk_from_variants<JK>(k, v);
-      if (seek_jk != JK::max() && jk.match(seek_jk) != 0) {
-         return std::nullopt;  // past the seek_jk
-      }
-      if (to_emplace)
-         emplace(k, v, jk);
-      return std::make_tuple(k, v, jk);
    }
 
    std::tuple<int, int, int> distance(const JK& to_jk)

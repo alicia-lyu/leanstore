@@ -211,13 +211,32 @@ long Q12Workload<Backend>::query_by_merged(std::vector<q12_agg_row_t>& out)
    };
 
    auto scanner = ol.merged_scanner();
-   PremergedJoin<decltype(*scanner), ol_sort_key_t, joined_ol_t,
-                 orders_t, lineitem_t>
-       joiner(*scanner,
-              [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
-                 if (!q12_predicate_joined(jr, params)) return;
-                 bump(jr.order(), jr.line());
-              });
+   using PJ = PremergedJoin<decltype(*scanner), ol_sort_key_t, joined_ol_t,
+                            orders_t, lineitem_t>;
+
+   // Predicate pushdown into the scanner: drops non-matching lineitems
+   // *before* they enter records_to_join, so the per-orderkey cartesian
+   // product fires for ~25 lineitems instead of ~6000. This puts S3 on
+   // equal footing with S1/S4, which both filter lineitems in their fetch
+   // lambdas (OPERATORS.md §6.1: same predicate across S1–S4).
+   //
+   // Orders are admitted unconditionally; the filter targets the lineitem
+   // side. An order whose lineitems all get rejected sits in records_to_join
+   // until the next JK transition, where refresh() clears it via a
+   // zero-cardinality cartesian product (early-out in JoinState).
+   auto admit_lineitem = [this](const PJ::K&, const PJ::V& v) -> bool {
+      if (std::holds_alternative<lineitem_t>(v)) {
+         return q12_predicate_lineitem(std::get<lineitem_t>(v), params);
+      }
+      return true;  // admit orders unconditionally
+   };
+
+   PJ joiner(*scanner,
+             [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
+                // Predicate already enforced by admit_lineitem; no post-filter.
+                bump(jr.order(), jr.line());
+             },
+             admit_lineitem);
    joiner.run();
    return emit_and_sort();
 }
