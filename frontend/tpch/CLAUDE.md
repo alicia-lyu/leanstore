@@ -332,16 +332,28 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   `[OK]/[FAIL]` bound (0.3×–5× MI[0] size). At SF=1 the view reports 0.28 MiB
   and the cross-check is `[OK]`. The `get_size` fix benefits all per-Record
   sizing calls across the codebase, not just Q12.
+- **Data-generation load order fixed** (2026-04-30): `TPCHWorkload::load()`
+  now runs `loadCustomer → loadOrders → loadPartsuppLineitem` (previously
+  partsupp+lineitem ran before orders/customer). The earlier order left
+  `order_dates` empty during lineitem generation, so `o_orderdate`
+  defaulted to 0 and lineitem dates were in `[2, 151]` instead of
+  `[orderdate+2, orderdate+151]` — collapsing Q12's receipt-date filter
+  to zero matches. After the fix, `test_query_q12_lsm` reports ~25–30
+  matching lineitems at SF=1 and all shape + parity checks pass.
+  Spec-compliant date math in `lineitem_t::generateRandomRecord` is
+  preserved.
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 
 - **Q12**: `query_by_*` bodies and predicates implemented; cross-structure
-  XOR-parity test (`test_query_q12_lsm` / `_btree`) passes at SF=1. Shape
-  check `high+low > 0` currently fails because the random data generator
-  is too selective for the Q12 predicate at this scale — see
-  `q12/CLAUDE.md §Follow-up: data generator selectivity` (open task).
-  `q12_lsm` / `q12_btree` flag-dispatch executables and CMake targets are
-  still to do.
+  XOR-parity test (`test_query_q12_lsm` / `_btree`) passes at SF=1
+  with all shape and parity checks `[OK]` (~25–30 matching lineitems
+  yielding e.g. `MAIL 2/8`, `SHIP 5/10`). Earlier "zero matches"
+  symptom was a load-order bug (lineitems generated before orders, so
+  `o_orderdate` was 0); fixed by reordering `TPCHWorkload::load()` to
+  put `loadCustomer → loadOrders → loadPartsuppLineitem`.
+  `q12_lsm` / `q12_btree` flag-dispatch executables and CMake targets
+  are still to do.
 - **Q3/Q9**: `load.tpp` ctor/`load()`/`get_size()` bodies (still reference
   removed pipeline methods — fix first). Then `query_by_*` bodies, predicate
   implementations, and `Params::defaults()`.

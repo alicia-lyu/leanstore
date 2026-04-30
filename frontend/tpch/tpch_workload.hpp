@@ -73,11 +73,15 @@ struct TPCHWorkload {
 
    void load()
    {
+      // Order matters: orders must precede lineitems so `order_dates` is populated
+      // before lineitem date generation reads from it (§4.2.3 chains lineitem dates
+      // off the order date). Customers must precede orders because order generation
+      // samples a custkey from `last_customer_id`.
       loadPart();
       loadSupplier();
-      loadPartsuppLineitem();
       loadCustomer();
       loadOrders();
+      loadPartsuppLineitem();
       loadNation();
       loadRegion();
    }

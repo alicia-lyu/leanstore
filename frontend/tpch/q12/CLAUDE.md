@@ -513,9 +513,9 @@ mkdir -p test_data3 test_csv3
     --csv_path=./test_csv3 \
     --tpch_scale_factor=1
 # Expected: per-structure shape checks + 4-way XOR parity = [OK].
-# Note: shape check `high+low > 0` currently [FAIL] at SF=1 because
-# the data generator is too selective for Q12 — see Implementation
-# Status §Follow-up: data generator selectivity.
+# All shape and parity checks [OK] at SF=1 once the load-order bug
+# was fixed (orders now precede lineitems so `o_orderdate` is threaded
+# into lineitem date generation — see tpch_workload.hpp::load).
 # Expected:
 #   - MI[0] distribution stats block (all [OK])
 #   - Pipeline view stats block (rows, orderkey range, size MiB)
@@ -593,10 +593,11 @@ for the rationale on `--ssd_path` vs `--csv_path` separation.
 - Sources: `tests/q12/test_query_q12_rocksdb.cpp`,
   `tests/q12/test_query_q12_leanstore.cpp`,
   `tests/q12/test_query_q12_checks.hpp`.
-- Status at SF=1: parity check is `[OK]` across all four structures
-  (digest `0x9000007000003c`); shape's `high+low > 0` reports `[FAIL]`
-  because the random data generator does not produce enough rows
-  satisfying the Q12 predicate at this scale — see follow-up below.
+- Status at SF=1: all checks `[OK]` across all four structures —
+  shape (row count, expected shipmodes, `high+low > 0`) and parity
+  (identical XOR digest, e.g. `0x9000007000e03e` on a sample run).
+  ~25–30 lineitems satisfy the Q12 predicate at SF=1 after the
+  data-generation load-order fix described below.
 
 ### XOR parity scope (limitation)
 
@@ -614,10 +615,12 @@ field. Two consequences:
    counts. It does *not* verify they joined the same set of orderkeys —
    any bug that preserves the count totals (e.g., off-by-one missing one
    high and one low at the same shipmode) would still pass.
-2. When the data has zero matches (current SF=1 behavior), the digest
-   degenerates to the fixed value `xor((MAIL,0,0), (SHIP,0,0))`, so a
-   passing parity line carries no real information until the data
-   generator is fixed.
+2. If the data ever degenerates to zero matches, the digest collapses
+   to the fixed value `xor((MAIL,0,0), (SHIP,0,0)) = 0x9000007000003c`
+   — a passing parity check carries no information in that case. SF=1
+   currently produces ~25–30 matches so the digest is non-degenerate,
+   but the test would still need a non-zero shape check to catch this
+   regression.
 
 For now this is acceptable: the predicate is identical across S1–S4 by
 construction (`q12_predicate_joined` delegates to the lineitem version),
@@ -625,27 +628,30 @@ so a count-only digest is sufficient to detect divergence in the join /
 filter paths. A finer-grained digest (folding orderkeys before
 aggregation) is a future hardening step.
 
-### Follow-up: data generator selectivity
+### Resolved: data-generation load order (2026-04-30)
 
-`tpch_tables.hpp::lineitem_t::generateRandomRecord` produces dates that
-rarely satisfy `l_shipdate < l_commitdate < l_receiptdate` *and*
-`l_receiptdate ∈ [DATE_1994_01_01, DATE_1995_01_01)` simultaneously,
-combined with the ~28% shipmode-IN selectivity. At the load scale used
-by `test_load_q12_*` (1500 orders), the expected match count is
-fractional, so all four query paths report 0/0. The query bodies and
-parity infrastructure are correct; the data generator needs:
+The original "zero matches" symptom turned out not to be a selectivity
+problem — the date generator is spec-compliant. The bug was in
+`TPCHWorkload::load()`: `loadPartsuppLineitem()` ran before
+`loadOrders()`, so the `order_dates` map was empty when lineitems
+were generated, and `o_orderdate` defaulted to 0. Lineitem dates were
+in `[2, 151]` instead of `[orderdate+2, orderdate+151]`, so no
+receiptdate ever landed in `[DATE_1994_01_01, DATE_1995_01_01)`.
 
-1. Tighten `l_shipdate = o_orderdate + urand(1, 121)` /
-   `l_commitdate = o_orderdate + urand(30, 90)` so the ordering
-   constraint `shipdate < commitdate < receiptdate` holds by
-   construction (currently only ~36% of rows satisfy it).
-2. Either widen the receipt-date window in the test parameters, or
-   bias `o_orderdate` to land in the 1993–1994 range so a meaningful
-   fraction of `l_receiptdate` falls in `[DATE_1994, DATE_1995)`.
-3. Run the query test at a larger scale once selectivity is
-   non-trivial.
+Fix: reordered `load()` to `loadCustomer → loadOrders →
+loadPartsuppLineitem` (customer must precede orders because
+`generate_custkey_for_orders` reads `last_customer_id`; orders must
+precede lineitems for `order_dates`). Phase 0 diagnostic counts before
+and after the reorder confirmed receiptdate range jumped from
+`[2, 151]` to `[8063, 10569]` and the predicate-conjunction match
+count jumped from 0 to ~25–30. Per-shipmode counts are now realistic
+(e.g. `MAIL 2/8`, `SHIP 5/10`).
 
-Owner: open. Out of scope for the query-body skeleton.
+The earlier proposal to "chain dates by construction" was rejected
+because it would diverge from TPC-H §4.2.3 and contaminate Q3/Q9
+selectivity stats too. Generator field-fidelity (placeholder
+`o_totalprice`, `l_extendedprice`) remains a separate concern,
+tracked in `.claude/plans/data-generator-evolution.md`.
 
 `BaseQ12` / `ViewQ12` / `MergedQ12` / `HashQ12` forwarder bodies live in the
 shared `frontend/tpch/per_structure_workload.hpp`; the per-query file is
