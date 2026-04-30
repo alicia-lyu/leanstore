@@ -220,7 +220,7 @@ struct PremergedJoin {
          int bytes_advanced = 0;
          if (last_kv_in_page.has_value()) {
             auto [last_k, last_v] = last_kv_in_page.value();
-            JK last_jk = SKBuilder<JK>::create(last_k, last_v);
+            JK last_jk = jk_from_variants<JK>(last_k, last_v);
             int cmp = last_jk.match(to_jk_r);
             if (cmp < 0) {  // last key is before the seek_jk, required jk not in this page
                bytes_advanced = merged_scanner.go_to_last_in_page();
