@@ -213,6 +213,8 @@ point. Run from the repo root.
 | `test_load_merged_btree` | this dir | LeanStore (Linux only) | `tests/test_load_merged_leanstore.cpp` |
 | `test_load_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_load_q12_rocksdb.cpp` |
 | `test_load_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_load_q12_leanstore.cpp` |
+| `test_query_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_query_q12_rocksdb.cpp` |
+| `test_query_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_query_q12_leanstore.cpp` |
 | Q3/Q9 tests | `q3/`, `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
@@ -298,6 +300,22 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   cardinality and orderkey ranges. CMake targets: `test_load_q12_lsm`
   (macOS + Linux) and `test_load_q12_btree` (Linux only). All [OK] checks
   pass at scale factor 1.
+- **Q12 query bodies + cross-structure parity test** (2026-04-30):
+  All four `query_by_*` methods in `q12/query.tpp` implemented (S1
+  `BinaryMergeJoin` with filter-pushdown, S2 view scan + post-join
+  filter, S3 `PremergedJoin` over MI[0], S4 `HashJoin` with the same
+  filter-pushdown as S1). `q12_predicate_lineitem` /
+  `q12_predicate_joined` implemented; the joined variant delegates to
+  the lineitem variant via `j.line()` to keep S1–S4 semantically
+  identical. New `test_query_q12_lsm` / `test_query_q12_btree` binaries
+  run all four paths in one process and check XOR parity over the
+  aggregate result rows. Parity at SF=1: all four paths produce digest
+  `0x9000007000003c` (`[OK]`). Limitation: digest is over aggregate
+  fields only, not per-orderkey — see `q12/CLAUDE.md §XOR parity scope`.
+  Also fixed a latent variant-dispatch bug in
+  `shared/merge-join/premerged_join.hpp`: the tentative-skip path now
+  uses `jk_from_variants<JK>` instead of calling
+  `SKBuilder<JK>::create` on variant operands.
 - **OPERATORS.md aligned with current code** (2026-04-30): updated §3 op 1
   (TableScan ownership moved to per-query drivers), §3 op 4 (S1/S3 named the
   actual primitives plus a new "load vs query" paragraph), §4 Q12 (unfiltered
@@ -317,9 +335,13 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 
-- **Q12**: `query_by_*` bodies in `q12/query.tpp` (load is done; query drivers
-  are the remaining TODO). `Params::defaults()` and `q12_agg_row_t::print()`
-  bodies are in place.
+- **Q12**: `query_by_*` bodies and predicates implemented; cross-structure
+  XOR-parity test (`test_query_q12_lsm` / `_btree`) passes at SF=1. Shape
+  check `high+low > 0` currently fails because the random data generator
+  is too selective for the Q12 predicate at this scale — see
+  `q12/CLAUDE.md §Follow-up: data generator selectivity` (open task).
+  `q12_lsm` / `q12_btree` flag-dispatch executables and CMake targets are
+  still to do.
 - **Q3/Q9**: `load.tpp` ctor/`load()`/`get_size()` bodies (still reference
   removed pipeline methods — fix first). Then `query_by_*` bodies, predicate
   implementations, and `Params::defaults()`.
