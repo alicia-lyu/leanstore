@@ -13,6 +13,8 @@
 
 #include <stdexcept>
 
+DECLARE_int32(storage_structure);
+
 namespace tpch::q12
 {
 
