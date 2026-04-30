@@ -5,3 +5,6 @@ frontend/tpch/q12/per_structure_workload.hpp - moved to TRASH/q12_per_structure_
 frontend/tpch/q12/load.tpp - moved to TRASH/q12_load.tpp - replaced by new skeleton (template-param bug)
 build/vendor/tabluate - moved to TRASH/tabluate-stale-build-cache - stale ExternalProject cache pointing to build2 dir
 build/log - moved to TRASH/build-log-stale-file - regular file blocking create_directories(./log)
+build/log - moved to TRASH/build-log-stale-file-2 - second stale RocksDB log blocking Logger
+test_data{2,4,5,6,7} - moved to TRASH/ - stale RocksDB test instance dirs from earlier load-test runs
+test_csv{2,4,5,6,7} - moved to TRASH/ - stale CSV log dirs paired with the above

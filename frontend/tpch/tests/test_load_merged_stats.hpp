@@ -17,8 +17,8 @@
 #include <limits>
 #include <variant>
 
-#include "tpch_tables.hpp"
-#include "views_ol.hpp"
+#include "../tpch_tables.hpp"
+#include "../views_ol.hpp"
 
 DECLARE_int32(tpch_scale_factor);
 

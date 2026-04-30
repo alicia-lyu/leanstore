@@ -68,7 +68,7 @@ if (APPLE)
     target_link_libraries(RocksDBLogger PUBLIC Logger RocksDB)
 
     # --- test_views_ol: unit tests for tpch/views_ol.hpp ---
-    add_executable(test_views_ol tpch/test_views_ol.cpp)
+    add_executable(test_views_ol tpch/tests/test_views_ol.cpp)
     target_compile_definitions(test_views_ol PRIVATE ROCKSDB_ONLY)
     target_include_directories(test_views_ol PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -96,7 +96,7 @@ if (APPLE)
     )
 
     # --- test_load_merged_lsm: standalone load-test for OrdersLineitemPipeline ---
-    add_executable(test_load_merged_lsm tpch/test_load_merged_rocksdb.cpp)
+    add_executable(test_load_merged_lsm tpch/tests/test_load_merged_rocksdb.cpp)
     target_compile_definitions(test_load_merged_lsm PRIVATE ROCKSDB_ONLY)
     target_include_directories(test_load_merged_lsm PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -111,7 +111,7 @@ if (APPLE)
     )
 
     # --- test_load_q12_lsm: Q12 MI[0] + pipeline view load-test (RocksDB) ---
-    add_executable(test_load_q12_lsm tpch/q12/test_load_q12_rocksdb.cpp)
+    add_executable(test_load_q12_lsm tpch/tests/q12/test_load_q12_rocksdb.cpp)
     target_compile_definitions(test_load_q12_lsm PRIVATE ROCKSDB_ONLY)
     target_include_directories(test_load_q12_lsm PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -157,16 +157,16 @@ else()
     add_executable(geo_lsm geo/executable_rocksdb.cpp)
     target_link_libraries(geo_lsm PUBLIC RocksDBLogger Threads::Threads)
 
-    add_executable(test_load_merged_btree tpch/test_load_merged_leanstore.cpp)
+    add_executable(test_load_merged_btree tpch/tests/test_load_merged_leanstore.cpp)
     target_link_libraries(test_load_merged_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 
-    add_executable(test_load_merged_lsm tpch/test_load_merged_rocksdb.cpp)
+    add_executable(test_load_merged_lsm tpch/tests/test_load_merged_rocksdb.cpp)
     target_link_libraries(test_load_merged_lsm PUBLIC RocksDBLogger Threads::Threads)
 
-    add_executable(test_load_q12_btree tpch/q12/test_load_q12_leanstore.cpp)
+    add_executable(test_load_q12_btree tpch/tests/q12/test_load_q12_leanstore.cpp)
     target_link_libraries(test_load_q12_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 
-    add_executable(test_load_q12_lsm tpch/q12/test_load_q12_rocksdb.cpp)
+    add_executable(test_load_q12_lsm tpch/tests/q12/test_load_q12_rocksdb.cpp)
     target_link_libraries(test_load_q12_lsm PUBLIC RocksDBLogger Threads::Threads)
 
 endif()

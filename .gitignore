@@ -29,3 +29,5 @@ leanstore.json
 .claude
 /TRASH
 *.pdf
+/test_data*
+/test_csv*

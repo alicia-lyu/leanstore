@@ -5,20 +5,20 @@
 #include <gflags/gflags.h>
 #include <iostream>
 
-#include "../shared/adapter-scanner/LeanStoreAdapter.hpp"
-#include "../shared/adapter-scanner/LeanStoreMergedAdapter.hpp"
-#include "../shared/logger/leanstore_logger.hpp"
+#include "../../shared/adapter-scanner/LeanStoreAdapter.hpp"
+#include "../../shared/adapter-scanner/LeanStoreMergedAdapter.hpp"
+#include "../../shared/logger/leanstore_logger.hpp"
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
-#include "backend.hpp"
-#include "ol_pipeline.hpp"
+#include "../backend.hpp"
+#include "../ol_pipeline.hpp"
 #include "test_load_merged_stats.hpp"
-#include "tpch_tables.hpp"
-#include "tpch_workload.hpp"
+#include "../tpch_tables.hpp"
+#include "../tpch_workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
-#include "tpch_flags.hpp"
+#include "../tpch_flags.hpp"
 
 DEFINE_int32(tentative_skip_bytes, 4096, "Tentative skip bytes for smart skipping");
 

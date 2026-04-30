@@ -13,7 +13,7 @@
 #include <limits>
 
 #include "../test_load_merged_stats.hpp"
-#include "workload.hpp"
+#include "../../q12/workload.hpp"
 
 namespace tpch::q12
 {
