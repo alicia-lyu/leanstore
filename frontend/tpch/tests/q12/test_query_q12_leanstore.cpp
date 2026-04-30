@@ -6,6 +6,8 @@
 // and correctness checks via test_query_q12_checks.hpp.
 
 #include <gflags/gflags.h>
+#include <chrono>
+#include <iomanip>
 #include <iostream>
 
 #include "../../../shared/adapter-scanner/LeanStoreAdapter.hpp"
@@ -87,14 +89,34 @@ int main(int argc, char** argv)
    tpch::q12::Q12Workload<B> q12(tpch, orders, lineitem, pipeline_view, merged_ol);
 
    std::vector<tpch::q12::q12_agg_row_t> r_base, r_view, r_merged, r_hash;
+   long us_base = 0, us_view = 0, us_merged = 0, us_hash = 0;
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
-      q12.query_by_base  (r_base);
-      q12.query_by_view  (r_view);
-      q12.query_by_merged(r_merged);
-      q12.query_by_hash  (r_hash);
+      // Per-query wall-clock timing — see test_query_q12_rocksdb.cpp for
+      // rationale. LeanStore variant times inside the worker job so the
+      // measurements include only the query phase, not transaction setup.
+      auto time_us = [](auto&& fn) {
+         auto t0 = std::chrono::high_resolution_clock::now();
+         fn();
+         auto t1 = std::chrono::high_resolution_clock::now();
+         return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+      };
+      us_base   = time_us([&] { q12.query_by_base  (r_base);   });
+      us_view   = time_us([&] { q12.query_by_view  (r_view);   });
+      us_merged = time_us([&] { q12.query_by_merged(r_merged); });
+      us_hash   = time_us([&] { q12.query_by_hash  (r_hash);   });
       leanstore::cr::Worker::my().commitTX();
    });
+
+   auto print_timing = [](const char* name, long us) {
+      std::cout << "[time] " << std::left << std::setw(16) << name
+                << std::right << std::setw(10) << us << " us  ("
+                << std::fixed << std::setprecision(3) << (us / 1000.0) << " ms)\n";
+   };
+   print_timing("query_by_base",   us_base);
+   print_timing("query_by_view",   us_view);
+   print_timing("query_by_merged", us_merged);
+   print_timing("query_by_hash",   us_hash);
 
    // Print result tables for human inspection.
    tpch::q12::print_rows("query_by_base",   r_base,   std::cout);

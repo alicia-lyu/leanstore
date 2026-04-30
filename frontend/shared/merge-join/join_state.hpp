@@ -66,6 +66,16 @@ class JoinState
 
    bool has_next() const { return !joined_records.empty(); }
 
+   // Pop and consume any joined records that were produced by refresh() but
+   // not yet drained by next(). Safe to call from destructors: ensures the
+   // consumer callback fires for every joined record exactly once even if the
+   // outer loop returned early. After drain() the queue is empty, so the
+   // get_produced() warning will not fire.
+   void drain()
+   {
+      while (has_next()) next();
+   }
+
    template <typename Record, size_t I>
    void emplace(const typename Record::Key& key, const Record& rec)
    {

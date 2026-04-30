@@ -86,7 +86,15 @@ struct PremergedJoin {
    {
    }
 
-   ~PremergedJoin() { PremergedJoinLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced()); }
+   ~PremergedJoin()
+   {
+      // Drain any joined records still queued (e.g. produced by the final
+      // refresh() but not yet popped by run()/next()). Without this, the
+      // queue may legitimately hold records when the outer loop exits on
+      // scanner exhaustion, and get_produced() below would warn.
+      join_state.drain();
+      PremergedJoinLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced());
+   }
 
    void replace_sk(const JK& new_sk) { seek_jk = new_sk; }
 
