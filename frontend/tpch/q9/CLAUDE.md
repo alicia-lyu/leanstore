@@ -236,13 +236,16 @@ All three DOT plan files are semantically equivalent and verified. No changes ne
 files own everything else. NATION, SUPPLIER, PART, PARTSUPP are base-only
 and are not part of any pipeline secondary structure.
 
+`q9/per_structure_workload.hpp` is now **alias-only** (2026-04-30): all
+forwarder bodies live in `frontend/tpch/per_structure_workload.hpp`.
+
 Stubbed methods:
 
 - `Q9Workload<Backend>::Q9Workload(...)` — wire gflags into `params`.
 - `Q9Workload<Backend>::load()` — dispatches to per-query `populate_view` /
   `ol.populate_merged`. **TODO debt**: `load.tpp` references `ol.populate_view`
-  and `ol.get_view_size`, which were removed from the pipeline; fix in the
-  per-query refactor.
+  and `ol.get_view_size`, which were removed from the pipeline; fix before
+  implementing load bodies.
 - `Q9Workload<Backend>::get_size() const` — dispatches to per-query view size /
   `ol.get_merged_size`.
 - `Q9Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1

@@ -225,13 +225,16 @@ void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
 `populate_merged` and `get_merged_size` are ready in the pipeline; per-query
 files own everything else.
 
+`q3/per_structure_workload.hpp` is now **alias-only** (2026-04-30): all
+forwarder bodies live in `frontend/tpch/per_structure_workload.hpp`.
+
 Stubbed methods:
 
 - `Q3Workload<Backend>::Q3Workload(...)` — wire gflags into `params`.
 - `Q3Workload<Backend>::load()` — dispatches to per-query `populate_view` /
   `ol.populate_merged`. **TODO debt**: `load.tpp` references `ol.populate_view`
-  and `ol.get_view_size`, which were removed from the pipeline; fix in the
-  per-query refactor.
+  and `ol.get_view_size`, which were removed from the pipeline; fix before
+  implementing load bodies.
 - `Q3Workload<Backend>::get_size() const` — dispatches to per-query view size /
   `ol.get_merged_size`.
 - `Q3Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1;

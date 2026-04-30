@@ -340,15 +340,38 @@ Shared infrastructure (already exists):
 
 Q12-specific (current layout):
 
-- `frontend/tpch/q12/views.hpp` — Params, q12_pipeline_view_t, q12_agg_row_t, predicates
-- `frontend/tpch/q12/workload.hpp` — Q12Workload template class
-- `frontend/tpch/q12/per_structure_workload.hpp` — BaseQ12/ViewQ12/MergedQ12/HashQ12
-- `frontend/tpch/q12/load.tpp` / `query.tpp` — method bodies (TODO stubs)
+- `frontend/tpch/q12/views.hpp` — row-shape types only: `q12_pipeline_view_t`
+  alias and `q12_agg_row_t` with key and payload. `Params` and predicates have
+  moved to `workload.hpp`.
+- `frontend/tpch/q12/workload.hpp` — `Q12Workload` template class; `Params`
+  struct with `defaults()`, `q12_predicate_lineitem`, `q12_predicate_joined`
+  declarations; private `orders`/`lineitem` reference members.
+- `frontend/tpch/q12/per_structure_workload.hpp` — alias-only:
+  `using BaseQ12 = ::tpch::BaseStructure<Q12Workload<Backend>, q12_agg_row_t>`
+  and siblings. Forwarder bodies live in `frontend/tpch/per_structure_workload.hpp`.
+- `frontend/tpch/q12/load.tpp` — fully implemented: ctor, `load()`, `get_size()`,
+  and free function `populate_q12_view` (two-pointer manual merge, not
+  `BinaryMergeJoin`).
+- `frontend/tpch/q12/query.tpp` — `Params::defaults()` and
+  `q12_agg_row_t::print()` implemented; `query_by_*` bodies are TODO.
 - `frontend/tpch/q12/executable_rocksdb.cpp` / `executable_leanstore.cpp`
+- `frontend/tpch/q12/test_load_view_stats.hpp` — `ViewStats<Backend>`,
+  `dump_view_stats<Backend>`, `compare_mi_and_view` (cross-check with
+  [OK]/[FAIL] tags).
+- `frontend/tpch/q12/test_load_q12_rocksdb.cpp` /
+  `frontend/tpch/q12/test_load_q12_leanstore.cpp` — standalone load-test
+  executables that build MI[0] + pipeline view and cross-check cardinality
+  and orderkey ranges.
 
 ## CMake Targets
 
-Add to `frontend/CMakeLists.txt`:
+Already added to `frontend/CMakeLists.txt`:
+
+- `test_load_q12_lsm` — macOS + Linux (RocksDB). Loads MI[0] and pipeline
+  view, cross-checks. All [OK] at SF=1.
+- `test_load_q12_btree` — Linux only (LeanStore). Same checks.
+
+Still to add:
 
 ```cmake
 # macOS (ROCKSDB_ONLY) section:
@@ -456,36 +479,40 @@ For the current paper (single MI per query, no maintenance), use monolithic styl
 **Shared infrastructure completed** (2026-04-29):
 
 - `views_ol.hpp`: fully implemented — `ol_sort_key_t` (2-component sort key:
-  orderkey + linenumber), `joined_ol_t`, `SKBuilder<ol_sort_key_t>` (create,
-  project, to_key). Unit-tested (12 tests in `test_views_ol.cpp`).
+  orderkey + linenumber), `joined_ol_t` (derived struct with explicit
+  `unfoldKey` override), `SKBuilder<ol_sort_key_t>` (create, project, to_key).
+  Unit-tested (12 tests in `test_views_ol.cpp`).
 - Shared merge-join infra: `PremergedJoin` decoupled from record types via
   `jk_from_variants` and `SKBuilder::to_key<R>`.
 - `OrdersLineitemPipeline` trimmed (2026-04-29): only `populate_merged` and
-  `get_merged_size` remain. All operator drivers and view loading are per-query
-  and belong in `query.tpp` / `load.tpp`.
+  `get_merged_size` remain.
 
-**Q12-specific method bodies** remain TODO stubs (`load.tpp` + `query.tpp`).
-`populate_merged` and `get_merged_size` are ready in the pipeline; per-query
-files own everything else.
+**Q12 load fully implemented** (2026-04-30):
 
-Stubbed methods:
+- `Q12Workload<Backend>::Q12Workload(...)` — wires gflags into `params`. Done.
+- `Q12Workload<Backend>::load()` — dispatches to `populate_q12_view` /
+  `ol.populate_merged`. Done. No TODO debt.
+- `Q12Workload<Backend>::get_size() const` — dispatches to view size /
+  `ol.get_merged_size`. Done.
+- `populate_q12_view` — two-pointer manual merge over base scanners (not
+  `BinaryMergeJoin`); emits one `joined_ol_t` row per lineitem. Done.
+- `Params::defaults()` — validation parameters (MAIL/SHIP, DATE_1994). Done.
+- `q12_agg_row_t::print()` — formatted output. Done.
+- `test_load_q12_lsm` / `test_load_q12_btree` load-test binaries pass all
+  [OK] cross-checks at SF=1.
 
-- `Q12Workload<Backend>::Q12Workload(...)` — wire gflags into `params`.
-- `Q12Workload<Backend>::load()` — dispatches to per-query `populate_view` /
-  `ol.populate_merged`. **TODO debt**: `load.tpp` references `ol.populate_view`
-  and `ol.get_view_size`, which were removed from the pipeline; fix in the
-  per-query refactor.
-- `Q12Workload<Backend>::get_size() const` — dispatches to per-query view size /
-  `ol.get_merged_size`.
+**Q12 query bodies remain TODO** (`query.tpp`):
+
 - `Q12Workload<Backend>::query_by_base(out)` — see §Stages × Options, Option 2.
 - `Q12Workload<Backend>::query_by_view(out)` — see §Stages × Options, Option 3.
 - `Q12Workload<Backend>::query_by_merged(out)` — see §Stages × Options, Option 4
   / §Execution Style: monolithic post-join.
 - `Q12Workload<Backend>::query_by_hash(out)` — see §Stages × Options, Option 1.
-- `BaseQ12<Backend>::query / get_size` and the View/Merged/Hash siblings —
-  forwarders to the right `Q12Workload` method.
 - `q12_predicate_lineitem`, `q12_predicate_joined` — see §Q12-Specific
   Operator Configurations, `q12_predicate`.
 
-Cross-cutting per-query refactor (operator drivers, view loading, build wiring):
-see `frontend/tpch/CLAUDE.md`.
+`BaseQ12` / `ViewQ12` / `MergedQ12` / `HashQ12` forwarder bodies live in the
+shared `frontend/tpch/per_structure_workload.hpp`; the per-query file is
+alias-only.
+
+Cross-cutting status: see `frontend/tpch/CLAUDE.md §What's Needed`.

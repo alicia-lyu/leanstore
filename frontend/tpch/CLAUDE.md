@@ -9,12 +9,17 @@ Shared files (used by all three queries):
 
 - `tpch_tables.hpp` — all 8 TPC-H base table record types (`orders_t`,
   `lineitem_t`, `customerh_t`, `part_t`, `supplier_t`, `partsupp_t`,
-  `nation_t`, `region_t`).
+  `nation_t`, `region_t`). Date constants `DATE_1994_01_01 = 8766` and
+  `DATE_1995_01_01 = 9131` (days since 1970-01-01) are defined here.
 - `tpch_workload.hpp` — `TPCHWorkload<Adapter>`: loads and recovers all 8
-  base tables.
+  base tables. `loadPartsuppLineitem` and `loadLineitem` call
+  `orderkey_from_index()` to produce sparse order keys that match
+  `loadOrders`; using raw indices would orphan ~75% of lineitems.
 - `views_ol.hpp` — `ol_sort_key_t`, `joined_ol_t` (the ORDERS × LINEITEM
   join result type shared by Q12/Q3/Q9), and the `SKBuilder` specialization.
-  Fully implemented with unit tests.
+  `joined_ol_t` is a derived struct (not a `using` alias) with an explicit
+  `unfoldKey` override; the generic `joined_t::unfoldKey(fold_pks=false)`
+  path does not compile for this type. Fully implemented with unit tests.
 - `test_views_ol.cpp` — 12 unit tests for sort key ordering, match semantics,
   `SKBuilder` round-trips, `joined_ol_t` construction. CMake target:
   `test_views_ol` (macOS/RocksDB-only build).
@@ -24,6 +29,11 @@ Shared files (used by all three queries):
   `get_merged_size`. Operator drivers and view loading are **not** here — they
   depend on per-query types and live in `q{N}/query.tpp` and `q{N}/load.tpp`.
   See §Pipeline Convention below.
+- `per_structure_workload.hpp` — shared `BaseStructure` / `ViewStructure` /
+  `MergedStructure` / `HashStructure` templates parametrized by
+  `<typename Workload, typename AggRow>` with inline forwarder bodies. Each
+  per-query `per_structure_workload.hpp` collapses to alias-only (e.g.
+  `using BaseQ12 = ::tpch::BaseStructure<Q12Workload<Backend>, q12_agg_row_t>`).
 - `test_load_merged_rocksdb.cpp` / `test_load_merged_leanstore.cpp` —
   standalone load-test binaries that drive `populate_merged()` end-to-end via
   `TPCHWorkload` with no per-query state. CMake targets: `test_load_merged_lsm`
@@ -103,9 +113,10 @@ Operator drivers and view loading depend on per-query types and belong in
 - `hash_join_base` — Structure 4 HashJoin driver
 - `populate_view` / `get_view_size` — view row type is per-query
 
-> **TODO debt**: `q{N}/load.tpp` stubs still reference `ol.populate_view` and
-> `ol.get_view_size`, which were removed from the pipeline. These will be fixed
-> in the per-query refactor.
+> **TODO debt (Q3/Q9 only)**: `q3/load.tpp` and `q9/load.tpp` still reference
+> `ol.populate_view` and `ol.get_view_size`, which were removed from the
+> pipeline. These will be fixed when Q3/Q9 per-query load bodies land.
+> Q12 load.tpp is fully implemented and no longer has this debt.
 
 ### Secondary indexes for Structure 1
 
@@ -150,11 +161,11 @@ Each `q{N}/` directory contains:
 
 | File | Responsibility |
 |------|---------------|
-| `views.hpp` | `Params` struct with `defaults()`, `q{N}_pipeline_view_t` alias, `q{N}_agg_row_t` with key and payload, predicate declarations. |
-| `workload.hpp` | `Q{N}Workload<Backend>`: adapter members, `OrdersLineitemPipeline<Backend> ol`, `query_by_*` / `load` / `get_size` declarations. Ends with `#include "load.tpp"` and `#include "query.tpp"`. |
-| `per_structure_workload.hpp` | Plain `BaseQ{N} / ViewQ{N} / MergedQ{N} / HashQ{N}` structs, each holding `Q{N}Workload<Backend>& w` and declaring `query` / `get_size`. |
-| `load.tpp` | `Q{N}Workload` ctor, `load()`, `get_size()` template bodies (TODO stubs). |
-| `query.tpp` | `query_by_*` bodies, four wrapper `query` / `get_size` bodies, and predicate inline implementations (TODO stubs). |
+| `views.hpp` | Row-shape types only: `q{N}_pipeline_view_t` alias and `q{N}_agg_row_t` with key and payload. `Params` struct and predicate declarations live in `workload.hpp`. |
+| `workload.hpp` | `Q{N}Workload<Backend>`: adapter members, `OrdersLineitemPipeline<Backend> ol`, private `orders`/`lineitem` reference members, `Params` struct with `defaults()`, predicate declarations, `query_by_*` / `load` / `get_size` declarations. Ends with `#include "load.tpp"` and `#include "query.tpp"`. |
+| `per_structure_workload.hpp` | **Alias-only**: `using BaseQ{N} = ::tpch::BaseStructure<Q{N}Workload<Backend>, q{N}_agg_row_t>` and siblings. All forwarder bodies are in the shared `per_structure_workload.hpp`. |
+| `load.tpp` | `Q{N}Workload` ctor, `load()`, `get_size()` template bodies. Q12 is fully implemented; Q3/Q9 remain TODO stubs. |
+| `query.tpp` | `query_by_*` bodies, `Params::defaults()` body, `q{N}_agg_row_t::print()` body, and predicate inline implementations. Q12 `Params::defaults()` and `print()` are done; `query_by_*` bodies are TODO. |
 | `executable_rocksdb.cpp` | `main()` for RocksDB backend. Declares all needed adapters, constructs workload, dispatches on `FLAGS_storage_structure`. |
 | `executable_leanstore.cpp` | Same as above, guarded by `#ifndef ROCKSDB_ONLY`, uses `LeanStoreBackend`. |
 | `CLAUDE.md` | Per-query SQL, plan descriptions, execution style analysis, column index mappings, and an "Implementation Status (skeleton)" section appended when the skeleton was created. |
@@ -206,26 +217,59 @@ Structure 0 (data reload) is handled before the switch in each executable.
   per-query dirs in follow-up). `test_load_merged_rocksdb.cpp` and
   `test_load_merged_leanstore.cpp` added as standalone MI[0] load-test binaries
   (CMake targets `test_load_merged_lsm` / `test_load_merged_btree`).
+- **Shared `per_structure_workload.hpp` hoisted; per-query files collapse to
+  aliases** (2026-04-30): `BaseStructure` / `ViewStructure` / `MergedStructure`
+  / `HashStructure` templates with inline forwarder bodies moved to
+  `frontend/tpch/per_structure_workload.hpp`. Q12/Q3/Q9 `per_structure_workload.hpp`
+  files are now single-line `using` aliases.
+- **`views.hpp` narrowed to row types; `Params` and predicates moved to
+  `workload.hpp`** (2026-04-30): Q12 `Params` struct, `Params::defaults()`,
+  `q12_predicate_lineitem`, and `q12_predicate_joined` now live in
+  `q12/workload.hpp`. `q12/views.hpp` contains only `q12_pipeline_view_t` and
+  `q12_agg_row_t`.
+- **`joined_ol_t::unfoldKey` override added** (2026-04-30): `joined_ol_t`
+  changed from a `using` alias to a derived struct with an explicit `unfoldKey`
+  that uses the existing `joined_ol_t::Key(const ol_sort_key_t&)` constructor.
+  Unblocks `RocksDBAdapter<joined_ol_t>` instantiation (pipeline view adapter).
+- **Lineitem sparse-key data generation bug fixed** (2026-04-30):
+  `loadPartsuppLineitem` and `loadLineitem` in `tpch_workload.hpp` now call
+  `orderkey_from_index()` at all three call sites. Previously raw indices were
+  used, making ~75% of lineitems orphans.
+- **Q12 `load.tpp` fully implemented; `populate_q12_view` uses manual merge**
+  (2026-04-30): ctor, `load()`, `get_size()`, and free function
+  `populate_q12_view` all have real bodies. View loading uses a two-pointer
+  manual merge (not `BinaryMergeJoin`) because the merge-join's wildcard
+  semantics emitted ~1 row per order group instead of N rows per (order,
+  lineitem) pair.
+- **Q12 view load-test added** (2026-04-30): `test_load_merged_stats.hpp`
+  refactored to return a `MergedOlStats` struct. New
+  `q12/test_load_view_stats.hpp` provides `ViewStats<Backend>`,
+  `dump_view_stats<Backend>`, and `compare_mi_and_view` (cross-check with
+  [OK]/[FAIL] tags). New binaries `test_load_q12_rocksdb.cpp` and
+  `test_load_q12_leanstore.cpp` build MI[0] + pipeline view and cross-check
+  cardinality and orderkey ranges. CMake targets: `test_load_q12_lsm`
+  (macOS + Linux) and `test_load_q12_btree` (Linux only). All [OK] checks
+  pass at scale factor 1.
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 
-- Per-query query drivers (`scan_merged`, `merge_join_base`, `hash_join_base`)
-  and view loading (`populate_view`, `get_view_size`) live in `q{N}/query.tpp`
-  and `q{N}/load.tpp` (currently TODO debt — these files still reference methods
-  removed from the pipeline; fix as part of the per-query refactor).
-- Per-query `Params::defaults()` implementations (one per query).
-- Per-query predicate / projection / aggregator bodies inside `query.tpp`.
-- Per-query `query_by_*` bodies that call `ol.scan_merged(lambda)`,
-  `ol.merge_join_base(lambda)`, or `ol.hash_join_base(lambda)` with
-  monolithic post-join lambdas (filter + project + aggregate fused inline).
-- Q3-specific: CUSTOMER merge join (sort by `o_custkey`, two-pointer scan
-  of filtered CUSTOMER) after the OL aggregate, then top-10 sort.
+- **Q12**: `query_by_*` bodies in `q12/query.tpp` (load is done; query drivers
+  are the remaining TODO). `Params::defaults()` and `q12_agg_row_t::print()`
+  bodies are in place.
+- **Q3/Q9**: `load.tpp` ctor/`load()`/`get_size()` bodies (still reference
+  removed pipeline methods — fix first). Then `query_by_*` bodies, predicate
+  implementations, and `Params::defaults()`.
+- Per-query predicate / projection / aggregator bodies inside `query.tpp` for
+  Q3 and Q9.
+- Q3-specific: CUSTOMER merge join (sort by `o_custkey`, two-pointer scan of
+  filtered CUSTOMER) after the OL aggregate, then top-10 sort.
 - Q9-specific: NATION and SUPPLIER hashmap construction before the OL scan;
   PART and PARTSUPP merge joins inside the per-row callback; LIKE filter on
   `p_name` applied immediately after PART lookup.
 - CMake targets: `q12_lsm`, `q12_btree`, `q3_lsm`, `q3_btree`, `q9_lsm`,
   `q9_btree` — add to `frontend/CMakeLists.txt` following the `geo_lsm` /
-  `geo_btree` pattern.
+  `geo_btree` pattern. (Load-test targets `test_load_q12_lsm` /
+  `test_load_q12_btree` are already added.)
 - `generate_targets.py` Makefile entries for the new targets.
 
 ## Out of Scope (Skeleton)
