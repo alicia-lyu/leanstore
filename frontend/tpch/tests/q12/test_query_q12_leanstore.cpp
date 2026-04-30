@@ -89,6 +89,7 @@ int main(int argc, char** argv)
    tpch::q12::Q12Workload<B> q12(tpch, orders, lineitem, pipeline_view, merged_ol);
 
    std::vector<tpch::q12::q12_agg_row_t> r_base, r_view, r_merged, r_hash;
+   tpch::q12::Q12Stats s_base, s_view, s_merged, s_hash;
    long us_base = 0, us_view = 0, us_merged = 0, us_hash = 0;
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
@@ -101,10 +102,11 @@ int main(int argc, char** argv)
          auto t1 = std::chrono::high_resolution_clock::now();
          return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
       };
-      us_base   = time_us([&] { q12.query_by_base  (r_base);   });
-      us_view   = time_us([&] { q12.query_by_view  (r_view);   });
-      us_merged = time_us([&] { q12.query_by_merged(r_merged); });
-      us_hash   = time_us([&] { q12.query_by_hash  (r_hash);   });
+      q12.stats = &s_base;   us_base   = time_us([&] { q12.query_by_base  (r_base);   });
+      q12.stats = &s_view;   us_view   = time_us([&] { q12.query_by_view  (r_view);   });
+      q12.stats = &s_merged; us_merged = time_us([&] { q12.query_by_merged(r_merged); });
+      q12.stats = &s_hash;   us_hash   = time_us([&] { q12.query_by_hash  (r_hash);   });
+      q12.stats = nullptr;
       leanstore::cr::Worker::my().commitTX();
    });
 
@@ -117,6 +119,21 @@ int main(int argc, char** argv)
    print_timing("query_by_view",   us_view);
    print_timing("query_by_merged", us_merged);
    print_timing("query_by_hash",   us_hash);
+
+   auto print_stats = [](const char* name, const tpch::q12::Q12Stats& s) {
+      std::cout << "[card] " << std::left << std::setw(16) << name
+                << " li_scanned=" << std::setw(6) << s.lineitems_scanned
+                << " li_passed=" << std::setw(4) << s.lineitems_passed
+                << " variants=" << std::setw(6) << s.variants_scanned
+                << " li_admitted=" << std::setw(4) << s.lineitems_admitted
+                << " orders_built=" << std::setw(6) << s.orders_built
+                << " join_cb=" << std::setw(4) << s.join_callbacks
+                << " agg_out=" << s.aggregator_rows_out << "\n";
+   };
+   print_stats("query_by_base",   s_base);
+   print_stats("query_by_view",   s_view);
+   print_stats("query_by_merged", s_merged);
+   print_stats("query_by_hash",   s_hash);
 
    // Print result tables for human inspection.
    tpch::q12::print_rows("query_by_base",   r_base,   std::cout);

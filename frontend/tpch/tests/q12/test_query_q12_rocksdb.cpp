@@ -70,6 +70,9 @@ int main(int argc, char** argv)
 
    std::vector<tpch::q12::q12_agg_row_t> r_base, r_view, r_merged, r_hash;
 
+   // Per-path intermediate cardinality counters (see plan: action item).
+   tpch::q12::Q12Stats s_base, s_view, s_merged, s_hash;
+
    // Per-query wall-clock timing. Useful for sanity-checking relative cost of
    // the four execution paths before the full q12_lsm experiment harness
    // exists; also serves as a smoke test for storage-layer regressions.
@@ -79,10 +82,11 @@ int main(int argc, char** argv)
       auto t1 = std::chrono::high_resolution_clock::now();
       return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
    };
-   long us_base   = time_us([&] { q12.query_by_base  (r_base);   });
-   long us_view   = time_us([&] { q12.query_by_view  (r_view);   });
-   long us_merged = time_us([&] { q12.query_by_merged(r_merged); });
-   long us_hash   = time_us([&] { q12.query_by_hash  (r_hash);   });
+   q12.stats = &s_base;   long us_base   = time_us([&] { q12.query_by_base  (r_base);   });
+   q12.stats = &s_view;   long us_view   = time_us([&] { q12.query_by_view  (r_view);   });
+   q12.stats = &s_merged; long us_merged = time_us([&] { q12.query_by_merged(r_merged); });
+   q12.stats = &s_hash;   long us_hash   = time_us([&] { q12.query_by_hash  (r_hash);   });
+   q12.stats = nullptr;
 
    auto print_timing = [](const char* name, long us) {
       std::cout << "[time] " << std::left << std::setw(16) << name
@@ -93,6 +97,24 @@ int main(int argc, char** argv)
    print_timing("query_by_view",   us_view);
    print_timing("query_by_merged", us_merged);
    print_timing("query_by_hash",   us_hash);
+
+   // Intermediate cardinality stats. Per-path counters distinguish how much
+   // work each path actually did before/after the predicate filter, matching
+   // the four columns described in the plan's "Current picture" table.
+   auto print_stats = [](const char* name, const tpch::q12::Q12Stats& s) {
+      std::cout << "[card] " << std::left << std::setw(16) << name
+                << " li_scanned=" << std::setw(6) << s.lineitems_scanned
+                << " li_passed=" << std::setw(4) << s.lineitems_passed
+                << " variants=" << std::setw(6) << s.variants_scanned
+                << " li_admitted=" << std::setw(4) << s.lineitems_admitted
+                << " orders_built=" << std::setw(6) << s.orders_built
+                << " join_cb=" << std::setw(4) << s.join_callbacks
+                << " agg_out=" << s.aggregator_rows_out << "\n";
+   };
+   print_stats("query_by_base",   s_base);
+   print_stats("query_by_view",   s_view);
+   print_stats("query_by_merged", s_merged);
+   print_stats("query_by_hash",   s_hash);
 
    // Print result tables for human inspection.
    tpch::q12::print_rows("query_by_base",   r_base,   std::cout);

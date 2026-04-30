@@ -115,6 +115,7 @@ long Q12Workload<Backend>::query_by_base(std::vector<q12_agg_row_t>& out)
          return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
               < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
       });
+      if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
       return static_cast<long>(out.size());
    };
 
@@ -124,7 +125,11 @@ long Q12Workload<Backend>::query_by_base(std::vector<q12_agg_row_t>& out)
    auto fetch_orders = [&]() { return os->next(); };
    auto fetch_lineitem = [&]() -> std::optional<std::pair<lineitem_t::Key, lineitem_t>> {
       while (auto kv = ls->next()) {
-         if (q12_predicate_lineitem(kv->second, params)) return kv;
+         if (stats) stats->lineitems_scanned++;
+         if (q12_predicate_lineitem(kv->second, params)) {
+            if (stats) stats->lineitems_passed++;
+            return kv;
+         }
       }
       return std::nullopt;
    };
@@ -132,6 +137,7 @@ long Q12Workload<Backend>::query_by_base(std::vector<q12_agg_row_t>& out)
    BinaryMergeJoin<ol_sort_key_t, joined_ol_t, orders_t, lineitem_t>
        joiner(fetch_orders, fetch_lineitem,
               [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
+                 if (stats) stats->join_callbacks++;
                  bump(jr.order(), jr.line());
               });
    joiner.run();
@@ -167,13 +173,16 @@ long Q12Workload<Backend>::query_by_view(std::vector<q12_agg_row_t>& out)
          return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
               < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
       });
+      if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
       return static_cast<long>(out.size());
    };
 
    auto vs = pipeline_view.getScanner();
    while (auto kv = vs->next()) {
+      if (stats) stats->lineitems_scanned++;
       const joined_ol_t& jr = kv->second;
       if (!q12_predicate_joined(jr, params)) continue;
+      if (stats) { stats->lineitems_passed++; stats->join_callbacks++; }
       bump(jr.order(), jr.line());
    }
    return emit_and_sort();
@@ -207,6 +216,7 @@ long Q12Workload<Backend>::query_by_merged(std::vector<q12_agg_row_t>& out)
          return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
               < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
       });
+      if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
       return static_cast<long>(out.size());
    };
 
@@ -224,15 +234,20 @@ long Q12Workload<Backend>::query_by_merged(std::vector<q12_agg_row_t>& out)
    // side. An order whose lineitems all get rejected sits in records_to_join
    // until the next JK transition, where refresh() clears it via a
    // zero-cardinality cartesian product (early-out in JoinState).
-   auto admit_lineitem = [this](const PJ::K&, const PJ::V& v) -> bool {
+   auto admit_lineitem = [this](const typename PJ::K&, const typename PJ::V& v) -> bool {
+      if (stats) stats->variants_scanned++;
       if (std::holds_alternative<lineitem_t>(v)) {
-         return q12_predicate_lineitem(std::get<lineitem_t>(v), params);
+         if (stats) stats->lineitems_scanned++;
+         bool ok = q12_predicate_lineitem(std::get<lineitem_t>(v), params);
+         if (ok && stats) { stats->lineitems_passed++; stats->lineitems_admitted++; }
+         return ok;
       }
       return true;  // admit orders unconditionally
    };
 
    PJ joiner(*scanner,
              [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
+                if (stats) stats->join_callbacks++;
                 // Predicate already enforced by admit_lineitem; no post-filter.
                 bump(jr.order(), jr.line());
              },
@@ -269,16 +284,25 @@ long Q12Workload<Backend>::query_by_hash(std::vector<q12_agg_row_t>& out)
          return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
               < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
       });
+      if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
       return static_cast<long>(out.size());
    };
 
    auto os = orders.getScanner();
    auto ls = lineitem.getScanner();
 
-   auto fetch_orders = [&]() { return os->next(); };
+   auto fetch_orders = [&]() {
+      auto kv = os->next();
+      if (kv && stats) stats->orders_built++;
+      return kv;
+   };
    auto fetch_lineitem = [&]() -> std::optional<std::pair<lineitem_t::Key, lineitem_t>> {
       while (auto kv = ls->next()) {
-         if (q12_predicate_lineitem(kv->second, params)) return kv;
+         if (stats) stats->lineitems_scanned++;
+         if (q12_predicate_lineitem(kv->second, params)) {
+            if (stats) stats->lineitems_passed++;
+            return kv;
+         }
       }
       return std::nullopt;
    };
@@ -286,6 +310,7 @@ long Q12Workload<Backend>::query_by_hash(std::vector<q12_agg_row_t>& out)
    HashJoin<ol_sort_key_t, joined_ol_t, orders_t, lineitem_t>
        joiner(fetch_orders, fetch_lineitem, ol_sort_key_t::max(),
               [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
+                 if (stats) stats->join_callbacks++;
                  bump(jr.order(), jr.line());
               });
    joiner.run();

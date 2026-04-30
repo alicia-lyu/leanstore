@@ -57,6 +57,24 @@ bool q12_predicate_lineitem(const lineitem_t& l, const Params& p);
 bool q12_predicate_joined(const joined_ol_t& j, const Params& p);
 
 // ---------------------------------------------------------------------------
+// Optional per-query intermediate cardinality counters. When non-null on the
+// Q12Workload, each query_by_* path bumps the relevant fields. Used by the
+// test harness to report and sanity-check pre-join / post-filter cardinalities
+// alongside timings. Default null in production paths.
+
+struct Q12Stats {
+   long lineitems_scanned   = 0;  // total LINEITEM rows seen by fetch lambda (S1/S4) / view scan (S2)
+   long lineitems_passed    = 0;  // rows passing the predicate at the filter site
+   long variants_scanned    = 0;  // S3 only: total variant records from MI[0] scan
+   long lineitems_admitted  = 0;  // S3 only: lineitems admitted by F1 admission filter
+   long orders_built        = 0;  // S4 only: orders inserted into hash build side
+   long join_callbacks      = 0;  // join callback invocations (assembled rows handed to bump)
+   long aggregator_rows_out = 0;  // rows emitted by emit_and_sort
+
+   void reset() { *this = Q12Stats{}; }
+};
+
+// ---------------------------------------------------------------------------
 
 template <typename Backend>
 class Q12Workload
@@ -74,10 +92,14 @@ class Q12Workload
    // Structure 2: intermediate pipeline view (joined_ol_t rows, unfiltered).
    typename Backend::template Adapter<q12_pipeline_view_t>& pipeline_view;
 
+  public:
    // Substitution parameters; populated by ctor from gflags / defaults.
    Params params;
 
-  public:
+   // Optional cardinality counters (test harness sets non-null to enable).
+   Q12Stats* stats = nullptr;
+
+
    Q12Workload(
        TPCHWorkload<Backend::template Adapter>& tpch,
        typename Backend::template Adapter<orders_t>& orders,
