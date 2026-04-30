@@ -56,9 +56,11 @@ runs *outside* the pipeline regime — see §3 op 6 and §5.
 
 ### Inside the pipeline
 
-**1. TableScan.** Owned by the pipeline driver — `Backend::Scanner<T>`,
-`Backend::MergedScanner`, or the per-query view scanner. Per-query
-code never opens a base scanner directly.
+**1. TableScan.** Owned by the per-query driver in `q{N}/query.tpp`,
+which instantiates `Backend::Scanner<T>`, `Backend::MergedScanner`, or
+the per-query view scanner. The shared `OrdersLineitemPipeline` no
+longer exposes scan drivers — it is narrowed to load-time helpers
+(`populate_merged` / `get_merged_size`) only.
 
 **2. Filter (single-table, pushed-down).** A free
 `bool q{N}_predicate_<table>(const T&, const Params&)` declared in
@@ -76,14 +78,19 @@ lookup). Order-preserving.
 *Merged-index family (S1, S2, S3)* — all share `family_logical.dot`. The
 inside-pipeline physical join differs:
 
-- S1: `ol.merge_join_base(cb)` → orderkey-sorted output. The
+- S1: `BinaryMergeJoin<ol_sort_key_t, joined_ol_t, orders_t,
+  lineitem_t>` driven from `q{N}/query.tpp` over `orders.getScanner()`
+  / `lineitem.getScanner()` → orderkey-sorted output. The
   SortedAggregate scanner-wrapper (op 6) applies cleanly.
 - S2: scan `pipeline_view` (built at load time as the output of S1's
   pipeline — see §4). Query time runs the outside-pipeline plan
   against the materialized rows.
-- S3: `ol.scan_merged(cb)` → orderkey-sorted output. The
-  SortedAggregate scanner-wrapper applies cleanly. PremergedJoin
-  substitution shown in `family_s3_physical.dot`.
+- S3: `PremergedJoin<...>` over `merged_ol.getScanner()` from
+  `q{N}/query.tpp` → orderkey-sorted output. Same `JoinState` core as
+  S1's `BinaryMergeJoin` — that's what makes the S1-vs-S3
+  inside-pipeline comparison apples-to-apples. The SortedAggregate
+  scanner-wrapper applies cleanly. PremergedJoin substitution shown in
+  `family_s3_physical.dot`.
 
 *No-merged-index baseline (S4)* — uses `baseline_s4.dot`: a chain
 of `HashJoin` instances over base tables (ORDERS ⋈ LINEITEM for Q12;
@@ -92,6 +99,16 @@ then filter, project, hash-aggregate, sort, limit. S4 does not share
 inside-pipeline code with the family. Reusable code is limited to the
 shared `HashJoin` class itself and the outside-pipeline operators
 (sort, limit, project).
+
+**Load-time vs query-time.** Query-time joins (S1/S3/S4) all go through
+the typed merge-join primitives (`BinaryMergeJoin`, `PremergedJoin`,
+`HashJoin`) so `JoinState` (or `HashJoin`'s build table) is shared
+across structures — the cross-structure performance comparison only
+stays honest if the join cores are identical. View loading (S2's
+`populate_*_view`) is a one-shot offline cost off the comparison axis;
+a manual two-pointer merge over base scanners is an acceptable
+simplification there (see `q12/load.tpp::populate_q12_view`). Do
+**not** copy the manual-merge pattern into query-time code.
 
 **5. Project.** Inline scalar expressions in the callback body —
 `revenue = li.l_extendedprice * (1 - li.l_discount)`,
@@ -168,10 +185,15 @@ and cardinality match S1's pipeline output.
 
 Per query:
 
-- **Q12.** No in-pipeline aggregate. The view stores raw `joined_ol_t`
-  rows (one per `(orderkey, linenumber)`), filtered by
-  `q12_predicate_lineitem`. Population drives `merge_join_base` with
-  an insert lambda.
+- **Q12.** No in-pipeline aggregate. The view stores **unfiltered**
+  `joined_ol_t` rows (one per `(orderkey, linenumber)`); the Q12
+  predicate is hoisted to query time so the view is reusable across
+  param sets (see `q12/CLAUDE.md §Predicate hoisting`). Population uses
+  a manual two-pointer merge over `orders.getScanner()` /
+  `lineitem.getScanner()` for simplicity (see
+  `q12/load.tpp::populate_q12_view`); a `BinaryMergeJoin` driver would
+  also work and is the right choice for query-time S1 (see §3 op 4
+  load-vs-query note).
 - **Q3.** In-pipeline SortedAggregate on `l_orderkey`, implemented as
   the `LineitemRevenueAggregator` scanner-wrapper. The view stores
   one row per orderkey with summed revenue and the FD-attached order
@@ -208,7 +230,15 @@ auto cb = [&](const joined_ol_t& jr) {
    if (is_high_priority(o.o_orderpriority)) ++s->high;
    else                                     ++s->low;
 };
-ol.scan_merged(cb);   // S3; or merge_join_base for S1, hash_join_base for S4
+// S3: PremergedJoin over MI[0]
+PremergedJoin<MergedScanner, ol_sort_key_t, joined_ol_t,
+              orders_t, lineitem_t>
+    joiner(merged_ol.getScanner());
+joiner.run(cb);
+// S1: BinaryMergeJoin<ol_sort_key_t, joined_ol_t, orders_t, lineitem_t>
+//     over orders.getScanner() / lineitem.getScanner() (same cb).
+// S4: HashJoin<Integer, joined_ol_t, orders_t, lineitem_t> over
+//     base scanners (same cb).
 // emit a, b → out; std::sort by l_shipmode
 ```
 
@@ -247,7 +277,8 @@ out.resize(std::min(out.size(), size_t{10}));
 
 Pre-load NATION, SUPPLIER, PART (filtered by LIKE), and PARTSUPP into
 shared `HashJoin` build-phase tables once at query start. Then
-`ol.scan_merged` with a callback that probes each in sequence
+`PremergedJoin` over `merged_ol.getScanner()` (instantiated in
+`q9/query.tpp`) with a callback that probes each in sequence
 (PART → PARTSUPP → SUPPLIER → NATION) and feeds matches into a final
 `(n_name, o_year)` hash-aggregate *outside* the pipeline — legitimate
 because the group-by key is unrelated to the pipeline sort key, so we
@@ -308,6 +339,6 @@ downstream.
   binary_merge_join, hash_join}.hpp`.
 - Scanner-wrapper aggregation pattern: `frontend/geo/mixed_query.tpp`,
   `MergedScannerCounter`.
-- Pipeline contract (`populate_view` / `populate_merged` /
-  `get_view_size` / `get_merged_size`): `frontend/tpch/CLAUDE.md
-  §Pipeline Convention`.
+- Pipeline contract (`populate_merged` / `get_merged_size` only — see
+  `frontend/tpch/CLAUDE.md §Pipeline Convention`). Per-query view
+  loaders (`populate_*_view`) live in `q{N}/load.tpp`.

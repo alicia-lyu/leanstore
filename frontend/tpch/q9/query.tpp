@@ -1,3 +1,11 @@
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 (per-operator strategy)         — what each operator looks like in C++
+//   §3 op 4 (load vs query)            — keep query-time joins on shared JoinState
+//   §3 op 6 (hash-aggregate outside)   — group-by unrelated to pipeline sort key
+//   §3 op 7 (Downstream HashJoin)      — Q9's 4 dim joins use HashJoin
+//   §5 (Q9 sketch)                     — outside-pipeline strategy
+//   §6 (comparison-integrity rules)    — read before changing join strategy
+//
 // Template method bodies for Q9Workload<Backend> query methods,
 // the four per-structure wrapper query() methods, and predicate functions.
 // All bodies are TODO stubs. Each comment cites the CLAUDE.md section

@@ -1,3 +1,9 @@
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 op 4 (load vs query)  — view loading may use a manual two-pointer merge;
+//                              query-time joins must use BinaryMergeJoin /
+//                              PremergedJoin / HashJoin (shared JoinState).
+//   §4 (per-query view rationale, Q9 bullet) — augmented projection rows
+//
 // Template method bodies for Q9Workload<Backend> load / size / ctor.
 // All bodies are TODO stubs. Each comment cites the CLAUDE.md section
 // or infrastructure header the implementer should consult.

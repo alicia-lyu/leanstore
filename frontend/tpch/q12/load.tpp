@@ -1,3 +1,9 @@
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 op 4 (load vs query)  — view loading may use a manual two-pointer merge;
+//                              query-time joins must use BinaryMergeJoin /
+//                              PremergedJoin / HashJoin (shared JoinState).
+//   §4 (per-query view rationale, Q12 bullet) — unfiltered, predicate hoisted
+//
 // Template method bodies for Q12Workload<Backend> load / size / ctor,
 // plus the free function populate_q12_view.
 

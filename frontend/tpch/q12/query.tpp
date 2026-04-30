@@ -1,3 +1,9 @@
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 (per-operator strategy)         — what each operator looks like in C++
+//   §3 op 4 (load vs query)            — keep query-time joins on shared JoinState
+//   §5 (Q12 worked example)            — inline sketches for query_by_*
+//   §6 (comparison-integrity rules)    — read before changing join strategy
+//
 // Template method bodies for Q12Workload<Backend> query methods,
 // Params::defaults(), q12_agg_row_t::print(), and predicate stubs.
 //

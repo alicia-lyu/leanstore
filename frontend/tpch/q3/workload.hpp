@@ -1,5 +1,13 @@
 #pragma once
 
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 (per-operator strategy)         — what each operator looks like in C++
+//   §3 op 4 (load vs query)            — keep query-time joins on shared JoinState
+//   §3 op 6 (SortedAggregate)          — Q3's LineitemRevenueAggregator wrapper
+//   §5 (Q3 worked example)             — inline sketch
+//   §6 (comparison-integrity rules)    — read before changing join strategy
+//   §7 (HashJoin downstream)           — CUSTOMER join uses HashJoin, not MergeJoin
+//
 // Q3Workload<Backend>: holds all adapters needed by Q3 and declares the
 // per-structure query / load / size methods.
 //

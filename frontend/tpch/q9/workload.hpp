@@ -1,5 +1,13 @@
 #pragma once
 
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 (per-operator strategy)         — what each operator looks like in C++
+//   §3 op 4 (load vs query)            — keep query-time joins on shared JoinState
+//   §3 op 7 (Downstream HashJoin)      — Q9's 4 dim joins use HashJoin
+//   §5 (Q9 sketch)                     — outside-pipeline strategy
+//   §6 (comparison-integrity rules)    — read before changing join strategy
+//   §7 (HashJoin downstream)           — all 4 dim joins use HashJoin, not MergeJoin
+//
 // Q9Workload<Backend>: holds all adapters needed by Q9 and declares the
 // per-structure query / load / size methods.
 //

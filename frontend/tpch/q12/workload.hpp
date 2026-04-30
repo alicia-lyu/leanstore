@@ -1,5 +1,11 @@
 #pragma once
 
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 (per-operator strategy)         — what each operator looks like in C++
+//   §3 op 4 (load vs query)            — keep query-time joins on shared JoinState
+//   §5 (Q12 worked example)            — inline sketches
+//   §6 (comparison-integrity rules)    — read before changing join strategy
+//
 // Q12Workload<Backend>: holds all adapters needed by Q12 and declares the
 // per-structure query / load / size methods.
 //

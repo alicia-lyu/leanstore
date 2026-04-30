@@ -250,6 +250,14 @@ Structure 0 (data reload) is handled before the switch in each executable.
   cardinality and orderkey ranges. CMake targets: `test_load_q12_lsm`
   (macOS + Linux) and `test_load_q12_btree` (Linux only). All [OK] checks
   pass at scale factor 1.
+- **OPERATORS.md aligned with current code** (2026-04-30): updated §3 op 1
+  (TableScan ownership moved to per-query drivers), §3 op 4 (S1/S3 named the
+  actual primitives plus a new "load vs query" paragraph), §4 Q12 (unfiltered
+  view + manual two-pointer merge), §5 Q12 example (concrete primitive
+  instantiations), §8 pointers (trimmed pipeline contract). Added
+  cross-reference comments pointing to OPERATORS.md from each per-query
+  `workload.hpp` / `query.tpp` / `load.tpp` so programmers filling in
+  `query_by_*` bodies land on the right operator strategy.
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 

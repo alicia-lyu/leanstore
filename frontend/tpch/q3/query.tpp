@@ -1,3 +1,11 @@
+// Operator-translation reference: see ../OPERATORS.md
+//   §3 (per-operator strategy)         — what each operator looks like in C++
+//   §3 op 4 (load vs query)            — keep query-time joins on shared JoinState
+//   §3 op 6 (SortedAggregate)          — Q3's LineitemRevenueAggregator wrapper
+//   §5 (Q3 worked example)             — inline sketch for query_by_merged
+//   §6 (comparison-integrity rules)    — read before changing join strategy
+//   §7 (HashJoin downstream)           — CUSTOMER join uses HashJoin, not MergeJoin
+//
 // Template method bodies for Q3Workload<Backend> query methods,
 // the four per-structure wrapper query() methods, and predicate functions.
 // All bodies are TODO stubs. Each comment cites the CLAUDE.md section
