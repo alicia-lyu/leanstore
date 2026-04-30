@@ -216,7 +216,9 @@ class Experiment:
             b = Path(b)
             if b.resolve() == self.build_dir.resolve():
                 continue
-            print(f"\tcp -f {self.recover_file} {data_disk / self.exec_fname / b / f'{SCALE_ENV}.json'}")
+            dest = data_disk / self.exec_fname / b / f'{SCALE_ENV}.json'
+            print(f"\tmkdir -p {dest.parent}")
+            print(f"\tcp -f {self.recover_file} {dest}")
         print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path}")
         print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk}")
         print()

@@ -58,24 +58,30 @@ brew install cmake rocksdb gflags snappy lz4 zstd
 
 ### Build (RelWithDebInfo)
 ```
-# Linux: builds both geo_btree and geo_lsm
-mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && cd frontend && make geo_btree geo_lsm -j$(nproc)
+# Linux: builds both B-tree and LSM targets
+mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && cd frontend && make geo_btree geo_lsm q12_btree q12_lsm -j$(nproc)
 
-# macOS: builds geo_lsm only (RocksDB backend)
-mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && cd frontend && make geo_lsm -j$(sysctl -n hw.ncpu)
+# macOS: builds LSM targets only (RocksDB backend)
+mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && cd frontend && make geo_lsm q12_lsm -j$(sysctl -n hw.ncpu)
 ```
 
 ### Build (Debug)
 ```
-mkdir -p build-debug && cd build-debug && cmake -DCMAKE_BUILD_TYPE=Debug .. && cd frontend && make geo_btree geo_lsm -j$(nproc)
+mkdir -p build-debug && cd build-debug && cmake -DCMAKE_BUILD_TYPE=Debug .. && cd frontend && make geo_btree geo_lsm q12_btree q12_lsm -j$(nproc)
 ```
 
 ### Using the Makefile (requires Linux with perf_event_paranoid=0)
 ```
+# Geo benchmark
 make geo_btree scale=15          # Build + run B-tree experiments (structures 1-4)
 make geo_lsm scale=40            # Build + run LSM experiments (structures 1-4)
 make geo_btree_2 dram=0.1        # Run a single storage structure variant
 make geo_btree_lldb_1             # Debug a single structure with LLDB
+
+# TPC-H Q12
+make q12_lsm scale=15            # Build + run LSM experiments (structures 1-4)
+make q12_btree scale=15           # Build + run B-tree experiments (structures 1-4)
+make q12_lsm_3 dram=0.1          # Run a single storage structure variant
 ```
 
 Key Makefile variables: `dram` (GiB, default 0.1), `scale` (TPC-H scale factor), `tentative_skip_bytes`, `bgw_pct`.
@@ -118,11 +124,21 @@ directory: [`frontend/tpch/q12/CLAUDE.md §Tests`](frontend/tpch/q12/CLAUDE.md#t
 
 ### Storage structure variants (--storage_structure flag)
 
-The `storage_structure` flag (1-4) selects the indexing strategy being benchmarked:
-1. Traditional indexes with hash join (`trad_idx_hj`)
+The `storage_structure` flag (1-4) selects the indexing strategy being benchmarked.
+
+**Geo benchmark:**
+
+1. Traditional indexes with hash join
 2. Materialized views
 3. Merged indexes (single merged index)
 4. Two merged indexes
+
+**TPC-H Q12:**
+
+1. Traditional indexes + merge join
+2. Intermediate pipeline view (materialized ORDERS x LINEITEM)
+3. MI[0] only (PremergedJoin over merged ORDERS + LINEITEM)
+4. Traditional indexes + hash join
 
 Structure 0 forces a data reload.
 

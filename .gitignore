@@ -31,3 +31,6 @@ leanstore.json
 *.pdf
 /test_data*
 /test_csv*
+test*.json
+/test*data
+/test*csv
