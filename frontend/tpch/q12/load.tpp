@@ -5,7 +5,7 @@
 
 #include <gflags/gflags.h>
 
-#include "../../shared/merge-join/binary_merge_join.hpp"
+#include <stdexcept>
 
 DECLARE_int32(storage_structure);
 
@@ -15,9 +15,14 @@ namespace tpch::q12
 // ---------------------------------------------------------------------------
 // View loading: materialise the ORDERS x LINEITEM join into a flat adapter.
 //
-// Mirrors ol_pipeline.tpp::populate_merged in structure, but produces
-// joined_ol_t rows rather than dual-writing raw records. BinaryMergeJoin
-// drives two base-table scanners; each joined pair is inserted into `view`.
+// Manual two-pointer merge over the two base scanners. Both tables are sorted
+// by orderkey (orders by {o_orderkey}, lineitem by {l_orderkey, l_linenumber}).
+// Each iteration emits one joined_ol_t row per lineitem (1:N join).
+//
+// We bypass BinaryMergeJoin here because its hierarchical-key wildcard
+// semantics (linenumber==0 matches any linenumber) cause the join-state
+// machine to emit only ~1 row per order group instead of N. A manual loop
+// is simpler and produces the correct cardinality.
 
 template <typename Backend>
 static void populate_q12_view(
@@ -25,24 +30,25 @@ static void populate_q12_view(
     typename Backend::template Adapter<lineitem_t>& lineitem,
     typename Backend::template Adapter<q12_pipeline_view_t>& view)
 {
-   // Wrap scanners in lambdas matching the BinaryMergeJoin fetch signature:
-   //   std::function<std::optional<std::pair<Key, Record>>()>
-   auto orders_scanner   = orders.getScanner();
+   auto orders_scanner = orders.getScanner();
    auto lineitem_scanner = lineitem.getScanner();
 
-   auto fetch_orders   = [&]() { return orders_scanner->next(); };
-   auto fetch_lineitem = [&]() { return lineitem_scanner->next(); };
+   auto cur_order = orders_scanner->next();
 
-   // Consume callback: insert each joined pair keyed by its joined_ol_t key.
-   // joined_ol_t::Key(orders_t::Key, lineitem_t::Key) builds the compound key
-   // from the two constituent keys (views_ol.hpp:122).
-   auto consume = [&](const joined_ol_t::Key& k, const joined_ol_t& row) {
-      view.insert(k, row);
-   };
+   while (auto cur_line = lineitem_scanner->next()) {
+      // Advance orders to the matching orderkey. Since both streams are
+      // sorted by orderkey, we never need to backtrack.
+      while (cur_order && cur_order->first.o_orderkey < cur_line->first.l_orderkey) {
+         cur_order = orders_scanner->next();
+      }
+      if (!cur_order || cur_order->first.o_orderkey != cur_line->first.l_orderkey) {
+         continue;  // orphan lineitem — should not happen in well-formed data
+      }
 
-   BinaryMergeJoin<ol_sort_key_t, joined_ol_t, orders_t, lineitem_t> driver(
-       fetch_orders, fetch_lineitem, consume);
-   driver.run();
+      joined_ol_t row(cur_order->second, cur_line->second);
+      joined_ol_t::Key key(cur_order->first, cur_line->first);
+      view.insert(key, row);
+   }
 }
 
 // ---------------------------------------------------------------------------

@@ -245,7 +245,7 @@ struct TPCHWorkload {
             ps_insert_func(partsupp_t::Key{i, s}, partsupp_t::generateRandomRecord());
             Integer lineitem_cnt_ps = urand(0, lineitem_size / partsupp_size * 2);
             for (Integer l = 0; l < lineitem_cnt_ps; l++) {
-               Integer okey = *current_order_key;
+               Integer okey = orderkey_from_index(*current_order_key);
                // Look up the order date so lineitem dates are generated relative to it.
                Timestamp o_orderdate = 0;
                auto it = order_dates.find(okey);
@@ -280,7 +280,7 @@ struct TPCHWorkload {
       for (; current_order_key < order_keys.end(); current_order_key++) {
          printProgress("orders of lineitems", current_order_key - orders_rem_start, 0,
                        order_keys.end() - orders_rem_start);
-         load_lineitems_1order(l_insert_func, *current_order_key);
+         load_lineitems_1order(l_insert_func, orderkey_from_index(*current_order_key));
       }
    }
 
@@ -309,7 +309,7 @@ struct TPCHWorkload {
                      Integer order_end)
    {
       for (Integer i = order_start; i <= order_end; i++) {
-         load_lineitems_1order(insert_func, i);
+         load_lineitems_1order(insert_func, orderkey_from_index(i));
       }
    }
 
