@@ -152,10 +152,15 @@ struct part_t {
          for (int c = 0; s2[c] != '\0'; c++) p_container.append(s2[c]);
       }
 
-      Numeric p_retailprice = (90000 + ((partkey / 10) % 20001) + 100 * (partkey % 1000)) / 100.0;
-
       return part_t{p_name, p_mfgr, p_brand, p_type,
-                    randutils::urand(1, 50), p_container, p_retailprice, randomastring<23>(0, 23)};
+                    randutils::urand(1, 50), p_container, computeRetailPrice(partkey), randomastring<23>(0, 23)};
+   }
+
+   // TPC-H §4.2.3 retailprice formula. Pure function of partkey so lineitem
+   // generation can compute extendedprice without reading the part record back.
+   static Numeric computeRetailPrice(Integer partkey)
+   {
+      return (90000 + ((partkey / 10) % 20001) + 100 * (partkey % 1000)) / 100.0;
    }
 };
 
@@ -273,10 +278,24 @@ struct orders_t {
 
    static orders_t generateRandomRecord(std::function<int()> generate_custkey)
    {
+      return generateRandomRecord(generate_custkey,
+                                  Timestamp(randutils::urand(TPCH_STARTDATE, TPCH_ORDERS_ENDDATE)),
+                                  Varchar<1>("F"),  // status placeholder; finalize from lineitems
+                                  Numeric(0));      // totalprice placeholder
+   }
+
+   // Per §4.2.3: o_orderstatus and o_totalprice are derived from the order's
+   // lineitems. Loaders should accumulate over generated lineitems and pass
+   // the finalized values via this overload.
+   static orders_t generateRandomRecord(std::function<int()> generate_custkey,
+                                        Timestamp o_orderdate,
+                                        Varchar<1> o_orderstatus,
+                                        Numeric o_totalprice)
+   {
       return orders_t{generate_custkey(),
-                      randomastring<1>(1, 1),    // o_orderstatus: derived field, not query-critical
-                      randomNumeric(0.0000, 100.0000),
-                      Timestamp(randutils::urand(TPCH_STARTDATE, TPCH_ORDERS_ENDDATE)),
+                      o_orderstatus,
+                      o_totalprice,
+                      o_orderdate,
                       randomFromList<15>(TPCH_PRIORITIES, 5),
                       randomastring<15>(15, 15), // o_clerk: format not query-critical
                       0,                         // o_shippriority: always 0 in TPC-H
@@ -322,10 +341,29 @@ struct lineitem_t {
                                           std::function<int()> generate_suppkey,
                                           Timestamp o_orderdate)
    {
-      // Dates must be computed in order: shipdate first, then receiptdate from shipdate.
+      Integer partkey = generate_partkey();
+      // Per TPC-H §4.2.3: l_extendedprice = l_quantity * p_retailprice. Pull
+      // retailprice from the deterministic partkey formula instead of reading
+      // back the part record.
+      return generateRandomRecord(partkey, generate_suppkey(), o_orderdate,
+                                  part_t::computeRetailPrice(partkey));
+   }
+
+   static lineitem_t generateRandomRecord(Integer partkey,
+                                          Integer suppkey,
+                                          Timestamp o_orderdate,
+                                          Numeric p_retailprice)
+   {
+      // Dates per §4.2.3: shipdate, commitdate, receiptdate are independent
+      // offsets from orderdate; receiptdate is shipdate-relative.
       Timestamp l_shipdate    = o_orderdate + randutils::urand(1, 121);
       Timestamp l_commitdate  = o_orderdate + randutils::urand(30, 90);
       Timestamp l_receiptdate = l_shipdate  + randutils::urand(1, 30);
+
+      Numeric l_quantity = Numeric(randutils::urand(1, 50));
+      Numeric l_extendedprice = l_quantity * p_retailprice;
+      Numeric l_discount = randomNumeric(0.00, 0.10);
+      Numeric l_tax      = randomNumeric(0.00, 0.08);
 
       // l_returnflag: "R" or "A" if already received, "N" otherwise
       Varchar<1> l_returnflag(l_receiptdate <= TPCH_CURRENTDATE
@@ -334,12 +372,12 @@ struct lineitem_t {
       // l_linestatus: "O" if not yet shipped, "F" if shipped
       Varchar<1> l_linestatus(l_shipdate > TPCH_CURRENTDATE ? "O" : "F");
 
-      return lineitem_t{generate_partkey(),
-                        generate_suppkey(),
-                        Numeric(randutils::urand(1, 50)),
-                        randomNumeric(0.0000, 100.0000), // proper formula needs P_RETAILPRICE lookup
-                        randomNumeric(0.00, 0.10),
-                        randomNumeric(0.00, 0.08),
+      return lineitem_t{partkey,
+                        suppkey,
+                        l_quantity,
+                        l_extendedprice,
+                        l_discount,
+                        l_tax,
                         l_returnflag,
                         l_linestatus,
                         l_shipdate,

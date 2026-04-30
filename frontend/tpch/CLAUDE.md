@@ -332,6 +332,19 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   `[OK]/[FAIL]` bound (0.3×–5× MI[0] size). At SF=1 the view reports 0.28 MiB
   and the cross-check is `[OK]`. The `get_size` fix benefits all per-Record
   sizing calls across the codebase, not just Q12.
+- **TPC-H §4.2.3 derived fields now computed** (2026-04-30): `part_t::computeRetailPrice(partkey)`
+  factored out as a pure function; `lineitem_t::generateRandomRecord` now
+  computes `l_extendedprice = l_quantity * p_retailprice` instead of
+  `randomNumeric(0,100)`. `TPCHWorkload` accumulates a per-orderkey
+  `OrderAggregate {totalprice, line_count, ostatus_count}` while generating
+  lineitems; `loadOrders` then materializes orders with finalized
+  `o_totalprice = Σ l_extendedprice * (1+l_tax) * (1-l_discount)` and
+  `o_orderstatus` derived from lineitem statuses ('O'/'F'/'P'). `loadOrders`
+  was moved after `loadPartsuppLineitem` and a new `prepopulate_order_dates`
+  step seeds `order_dates` first so lineitems still have access to
+  `o_orderdate`. The placeholder fields flagged in the
+  `data-generator-evolution` plan are gone; only `o_clerk` and various
+  `randomastring` comment fields remain placeholders (none are query-critical).
 - **Data-generation load order fixed** (2026-04-30): `TPCHWorkload::load()`
   now runs `loadCustomer → loadOrders → loadPartsuppLineitem` (previously
   partsupp+lineitem ran before orders/customer). The earlier order left

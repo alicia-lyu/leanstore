@@ -42,9 +42,20 @@ struct TPCHWorkload {
    Integer last_customer_id;
    Integer last_order_id;
 
-   // Populated during loadOrders; used by lineitem loading to pass o_orderdate to
-   // lineitem_t::generateRandomRecord per spec §4.2.3 date constraints.
+   // Pre-populated by `prepopulate_order_dates` before lineitem loading so
+   // lineitem dates can be generated relative to the correct orderdate
+   // (§4.2.3). `loadOrders` then reads this map back when finalizing orders.
    std::unordered_map<Integer, Timestamp> order_dates;
+
+   // Per-orderkey accumulator, populated as lineitems are generated and read
+   // back by `loadOrders` to derive `o_totalprice` and `o_orderstatus`
+   // (§4.2.3 derived fields).
+   struct OrderAggregate {
+      Numeric totalprice = 0;  // Σ l_extendedprice * (1 + l_tax) * (1 - l_discount)
+      Integer line_count = 0;
+      Integer ostatus_count = 0;  // count of l_linestatus == 'O'
+   };
+   std::unordered_map<Integer, OrderAggregate> order_aggregates;
 
    TPCHWorkload(AdapterType<part_t>& p,
                 AdapterType<supplier_t>& s,
@@ -73,17 +84,45 @@ struct TPCHWorkload {
 
    void load()
    {
-      // Order matters: orders must precede lineitems so `order_dates` is populated
-      // before lineitem date generation reads from it (§4.2.3 chains lineitem dates
-      // off the order date). Customers must precede orders because order generation
-      // samples a custkey from `last_customer_id`.
+      // Order matters per TPC-H §4.2.3:
+      //  - `order_dates` must be populated before lineitem generation so each
+      //    lineitem's dates derive from its order's orderdate.
+      //  - Lineitems must be generated before `loadOrders` so that
+      //    `order_aggregates` (totalprice, orderstatus) is finalized when the
+      //    order record is materialized.
+      //  - `last_customer_id` must be set (loadCustomer) before sampling
+      //    custkeys for orders.
       loadPart();
       loadSupplier();
       loadCustomer();
-      loadOrders();
+      prepopulate_order_dates();
       loadPartsuppLineitem();
+      loadOrders();
       loadNation();
       loadRegion();
+   }
+
+   // Pre-fill `order_dates` for every orderkey that `loadOrders` will later
+   // materialize. No order rows are inserted here — only the in-memory map.
+   void prepopulate_order_dates(Integer start = 1,
+                                Integer end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
+   {
+      for (Integer i = start; i <= end; i++) {
+         Integer orderkey = orderkey_from_index(i);
+         order_dates[orderkey] = Timestamp(urand(TPCH_STARTDATE, TPCH_ORDERS_ENDDATE));
+      }
+      last_order_id = orderkey_from_index(end);
+   }
+
+   // Fold one generated lineitem into the per-order accumulator.
+   // Called inline from every lineitem insert site.
+   void accumulate_for_order(Integer orderkey, const lineitem_t& l)
+   {
+      auto& agg = order_aggregates[orderkey];
+      agg.line_count += 1;
+      // §4.2.3: o_totalprice = Σ l_extendedprice * (1 + l_tax) * (1 - l_discount)
+      agg.totalprice += l.l_extendedprice * (1.0 + l.l_tax) * (1.0 - l.l_discount);
+      if (l.l_linestatus.length == 1 && l.l_linestatus.data[0] == 'O') agg.ostatus_count += 1;
    }
 
    void recover_last_ids()
@@ -255,8 +294,9 @@ struct TPCHWorkload {
                auto it = order_dates.find(okey);
                if (it != order_dates.end())
                   o_orderdate = it->second;
-               auto rec = lineitem_t::generateRandomRecord([i]() { return i; }, [s]() { return s; },
-                                                          o_orderdate);
+               auto rec = lineitem_t::generateRandomRecord(i, s, o_orderdate,
+                                                          part_t::computeRetailPrice(i));
+               accumulate_for_order(okey, rec);
                l_insert_func(lineitem_t::Key{okey, lineitem_number}, rec);
                lineitem_number++;
                if (lineitem_number > lineitem_cnt_in_order) {
@@ -355,9 +395,10 @@ struct TPCHWorkload {
                 []() {});
          }
          assert(found);
-         insert_func(lineitem_t::Key{orderkey, j},
-                     lineitem_t::generateRandomRecord([p]() { return p; }, [s]() { return s; },
-                                                     o_orderdate));
+         auto rec = lineitem_t::generateRandomRecord(p, s, o_orderdate,
+                                                     part_t::computeRetailPrice(p));
+         accumulate_for_order(orderkey, rec);
+         insert_func(lineitem_t::Key{orderkey, j}, rec);
       }
       return lineitem_cnt;
    }
@@ -399,12 +440,31 @@ struct TPCHWorkload {
       auto custkey_gen = generate_custkey_for_orders();
       for (Integer i = start; i <= end; i++) {
          Integer orderkey = orderkey_from_index(i);
-         orders_t rec = orders_t::generateRandomRecord(custkey_gen);
-         order_dates[orderkey] = rec.o_orderdate;
+         // Orderdate was pre-populated by `prepopulate_order_dates`; aggregates
+         // were populated by `loadPartsuppLineitem` / `loadLineitem` while
+         // generating the order's lineitems.
+         Timestamp orderdate = order_dates[orderkey];
+         auto agg_it = order_aggregates.find(orderkey);
+         Numeric totalprice = (agg_it != order_aggregates.end()) ? agg_it->second.totalprice : 0;
+         Varchar<1> orderstatus = derive_orderstatus(agg_it);
+         orders_t rec = orders_t::generateRandomRecord(custkey_gen, orderdate, orderstatus, totalprice);
          insert_func(orders_t::Key{orderkey}, rec);
          printProgress("orders", i, start, end);
       }
       last_order_id = orderkey_from_index(end);
+   }
+
+   // §4.2.3: o_orderstatus = 'O' if all lineitems are 'O', 'F' if all are 'F',
+   // 'P' otherwise. Orders with no lineitems (legitimate per spec) default to 'F'.
+   Varchar<1> derive_orderstatus(typename std::unordered_map<Integer, OrderAggregate>::const_iterator agg_it) const
+   {
+      if (agg_it == order_aggregates.end() || agg_it->second.line_count == 0)
+         return Varchar<1>("F");
+      Integer total = agg_it->second.line_count;
+      Integer o    = agg_it->second.ostatus_count;
+      if (o == total) return Varchar<1>("O");
+      if (o == 0)    return Varchar<1>("F");
+      return Varchar<1>("P");
    }
 
    void loadOrders(Integer start = 1, Integer end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
