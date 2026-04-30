@@ -312,6 +312,11 @@ struct PremergedJoin {
             break;
          }
       }
+      // Flush the last group: when scan_next() returns nullopt, next()
+      // exits without joining the final batch in records_to_join. Force
+      // one more join_and_clear so the last orderkey group is emitted.
+      join_state.refresh(JK::max());
+      join_state.drain();
    }
 
    JK jk_to_join() const { return join_state.jk_to_join; }

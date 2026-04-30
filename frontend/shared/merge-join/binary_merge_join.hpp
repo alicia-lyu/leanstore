@@ -79,8 +79,12 @@ struct BinaryMergeJoin {
       while (next_left || next_right) {
          next();
       }
+      // Flush the last group: refresh_join_state() early-returns when both
+      // sides exhaust (both JKs = max), leaving the final batch in
+      // records_to_join un-joined. Force one more join_and_clear.
+      join_state.refresh(JK::max());
       while (join_state.has_next()) {
-         join_state.next();  // consume the remaining records
+         join_state.next();
       }
    }
 
