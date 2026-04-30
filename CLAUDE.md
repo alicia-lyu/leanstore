@@ -95,28 +95,10 @@ This also regenerates `.vscode/launch.json` with LLDB debug configurations.
 
 ### TPC-H unit tests and load tests
 
-```
-# macOS — build and run unit tests
-mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
-make -C frontend test_views_ol -j$(sysctl -n hw.ncpu)
-./frontend/test_views_ol            # 12 unit tests for views_ol.hpp
-
-# macOS — build standalone MI[0] load-test
-make -C frontend test_load_merged_lsm -j$(sysctl -n hw.ncpu)
-mkdir -p test_data test_csv
-./frontend/test_load_merged_lsm \
-    --ssd_path=./test_data \
-    --csv_path=./test_csv \
-    --tpch_scale_factor=1
-# Expected: prints "MI[0] size (MiB): <nonzero>"
-# Note: --ssd_path and --csv_path must be DISTINCT directories. RocksDB
-# writes its info log as ./<ssd_path>/log; the Logger calls
-# create_directories(csv_path) which fails if csv_path collides with that
-# file. Don't use --ssd_path=. (collides with the default --csv_path=./log).
-
-# Linux — additionally:
-make -C frontend test_load_merged_btree -j$(nproc)
-```
+See [`frontend/tpch/CLAUDE.md §Tests`](frontend/tpch/CLAUDE.md#tests) for
+the full index of TPC-H tests and their build/run commands. Per-query
+specifics (e.g. Q12 view load-test) live alongside the per-query
+directory: [`frontend/tpch/q12/CLAUDE.md §Tests`](frontend/tpch/q12/CLAUDE.md#tests).
 
 ## Architecture
 

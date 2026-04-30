@@ -200,6 +200,54 @@ expected ranges derived from the TPC-H spec).
 
 Structure 0 (data reload) is handled before the switch in each executable.
 
+## Tests
+
+Index of all TPC-H tests across this subtree. Commands live next to the
+directory that owns the test sources (DRY) — this section is the entry
+point. Run from the repo root.
+
+| Test | Owner | Backend(s) | Source |
+|------|-------|-----------|--------|
+| `test_views_ol` | this dir | RocksDB (mac+Linux) | `tests/test_views_ol.cpp` |
+| `test_load_merged_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_merged_rocksdb.cpp` |
+| `test_load_merged_btree` | this dir | LeanStore (Linux only) | `tests/test_load_merged_leanstore.cpp` |
+| `test_load_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_load_q12_rocksdb.cpp` |
+| `test_load_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_load_q12_leanstore.cpp` |
+| Q3/Q9 tests | `q3/`, `q9/` | — | none yet (load/query bodies TODO) |
+
+### Commands for this directory's tests
+
+```bash
+# Build (macOS)
+make -C build/frontend test_views_ol test_load_merged_lsm \
+    -j$(sysctl -n hw.ncpu)
+
+# Build (Linux adds the leanstore variant)
+make -C build/frontend test_load_merged_btree -j$(nproc)
+
+# Run unit tests for views_ol.hpp (12 cases)
+./build/frontend/test_views_ol
+
+# Run MI[0] load test
+mkdir -p test_data test_csv
+./build/frontend/test_load_merged_lsm \
+    --ssd_path=./test_data \
+    --csv_path=./test_csv \
+    --tpch_scale_factor=1
+# Expected: prints MI[0] distribution stats with all [OK] tags.
+```
+
+**Note**: `--ssd_path` and `--csv_path` MUST be distinct directories.
+RocksDB writes its info log inside `ssd_path`; the Logger calls
+`create_directories(csv_path)` which fails if `csv_path` collides with
+that log file. Don't reuse `--ssd_path=.` (collides with the default
+`--csv_path=./log`).
+
+### Per-query test commands
+
+- Q12 — see [`q12/CLAUDE.md §Tests`](q12/CLAUDE.md#tests)
+- Q3, Q9 — none yet
+
 ## Completed (post-skeleton)
 
 - **`views_ol.hpp` fully implemented** (2026-04-29): `ol_sort_key_t` (match,

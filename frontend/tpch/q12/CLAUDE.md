@@ -474,6 +474,49 @@ For the current paper (single MI per query, no maintenance), use monolithic styl
 
 ---
 
+## Tests
+
+Tests owned by this directory. The tpch-level index is in
+[`../CLAUDE.md §Tests`](../CLAUDE.md#tests).
+
+| Test | Backend | Source |
+|------|---------|--------|
+| `test_load_q12_lsm` | RocksDB (mac+Linux) | `../tests/q12/test_load_q12_rocksdb.cpp` |
+| `test_load_q12_btree` | LeanStore (Linux only) | `../tests/q12/test_load_q12_leanstore.cpp` |
+
+Both binaries build MI[0] + the pipeline view, then cross-check that
+both structures agree on row count and orderkey range.
+
+### Commands
+
+```bash
+# Build (macOS)
+make -C build/frontend test_load_q12_lsm -j$(sysctl -n hw.ncpu)
+
+# Build (Linux adds the leanstore variant)
+make -C build/frontend test_load_q12_btree -j$(nproc)
+
+# Run
+mkdir -p test_data2 test_csv2
+./build/frontend/test_load_q12_lsm \
+    --ssd_path=./test_data2 \
+    --csv_path=./test_csv2 \
+    --tpch_scale_factor=1
+# Expected:
+#   - MI[0] distribution stats block (all [OK])
+#   - Pipeline view stats block (rows, orderkey range, size MiB)
+#   - Cross-check block: [OK] view rows == MI lineitem rows,
+#     [OK] orderkey ranges agree.
+# Any [FAIL] indicates a loading bug.
+```
+
+**Note**: use distinct directories from the tpch-level test
+(`test_data2` / `test_csv2` instead of `test_data` / `test_csv`) to
+avoid clobbering the MI-only load test's data. See `../CLAUDE.md §Tests`
+for the rationale on `--ssd_path` vs `--csv_path` separation.
+
+---
+
 ## Implementation Status
 
 **Shared infrastructure completed** (2026-04-29):
