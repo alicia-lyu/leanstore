@@ -306,6 +306,14 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   cross-reference comments pointing to OPERATORS.md from each per-query
   `workload.hpp` / `query.tpp` / `load.tpp` so programmers filling in
   `query_by_*` bodies land on the right operator strategy.
+- **View size reporting fixed; MI/view size cross-check added** (2026-04-30):
+  `RocksDB.hpp::get_size<Record>()` now uses `SizeApproximationOptions` with
+  `include_memtables=true`, `include_files=true`, `files_size_error_margin=0.1`,
+  fixing spurious 0.00 MiB readings for sub-CF prefix ranges at small scale
+  factors. `compare_mi_and_view` in `q12/test_load_view_stats.hpp` prints an
+  `[OK]/[FAIL]` bound (0.3×–5× MI[0] size). At SF=1 the view reports 0.28 MiB
+  and the cross-check is `[OK]`. The `get_size` fix benefits all per-Record
+  sizing calls across the codebase, not just Q12.
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 

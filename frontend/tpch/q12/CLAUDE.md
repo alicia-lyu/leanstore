@@ -506,7 +506,8 @@ mkdir -p test_data2 test_csv2
 #   - MI[0] distribution stats block (all [OK])
 #   - Pipeline view stats block (rows, orderkey range, size MiB)
 #   - Cross-check block: [OK] view rows == MI lineitem rows,
-#     [OK] orderkey ranges agree.
+#     [OK] orderkey ranges agree,
+#     [OK] view size in plausible range vs MI (0.3x-5x).
 # Any [FAIL] indicates a loading bug.
 ```
 
@@ -542,7 +543,11 @@ for the rationale on `--ssd_path` vs `--csv_path` separation.
 - `Params::defaults()` — validation parameters (MAIL/SHIP, DATE_1994). Done.
 - `q12_agg_row_t::print()` — formatted output. Done.
 - `test_load_q12_lsm` / `test_load_q12_btree` load-test binaries pass all
-  [OK] cross-checks at SF=1.
+  [OK] cross-checks at SF=1, including the view-size sanity bound
+  (0.3×–5× MI[0] size). View reports 0.28 MiB at SF=1.
+- **View size reporting fixed** (2026-04-30): `RocksDB.hpp::get_size<Record>()`
+  now uses `SizeApproximationOptions` with `include_memtables=true` to fix
+  spurious 0.00 MiB readings for sub-CF prefix ranges.
 
 **Q12 query bodies remain TODO** (`query.tpp`):
 
