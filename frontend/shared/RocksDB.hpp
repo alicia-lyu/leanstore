@@ -180,7 +180,11 @@ struct RocksDB {
       double default_full_size = get_size(cf_handles[0]);
       u64 size = 0;
       rocksdb::Range range(min_slice, max_slice);
-      tx_db->GetApproximateSizes(cf_handles[0], &range, 1, &size);
+      rocksdb::SizeApproximationOptions opts;
+      opts.include_memtables = true;
+      opts.include_files = true;
+      opts.files_size_error_margin = 0.1;
+      tx_db->GetApproximateSizes(opts, cf_handles[0], &range, 1, &size);
       double size_in_mib = static_cast<double>(size) / (1024 * 1024);
       std::cout << "RocksDB: Approximate size for Record id " << Record::id << " is " << size_in_mib
                 << " MiB (default full size: " << default_full_size << " MiB)" << std::endl;

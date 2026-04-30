@@ -70,6 +70,17 @@ inline void compare_mi_and_view(
    std::cout << pass(v.max_orderkey == mi.max_orderkey)
              << " max orderkey agree: "
              << v.max_orderkey << " vs " << mi.max_orderkey << "\n";
+   // mi.size_mib is the MI[0] approximate size (MergedOlStats::size_mib).
+   // View rows carry both ORDERS and LINEITEM payloads so view size should be
+   // in the same order of magnitude as MI[0]. Bounds are loose to accommodate
+   // RocksDB approximation slack and encoding differences.
+   const double lower = 0.3 * mi.size_mib;
+   const double upper = 5.0 * mi.size_mib;
+   const bool size_ok = v.size_mib >= lower && v.size_mib <= upper;
+   std::cout << pass(size_ok)
+             << " view size in plausible range vs MI: "
+             << v.size_mib << " MiB (expected "
+             << lower << "-" << upper << " MiB)\n";
 }
 
 }  // namespace tpch::q12
