@@ -11,12 +11,16 @@
 // tpch::BaseStructure / ViewStructure / ... templates defined in
 // frontend/tpch/per_structure_workload.hpp, whose method bodies forward
 // directly to w.query_by_*() and w.get_size() — no extra definitions needed.
-//
-// query_by_* bodies remain TODO stubs (separate plan).
 
 #pragma once
 
+#include <algorithm>
 #include <ostream>
+#include <string_view>
+
+#include "../../shared/merge-join/binary_merge_join.hpp"
+#include "../../shared/merge-join/hash_join.hpp"
+#include "../../shared/merge-join/premerged_join.hpp"
 
 namespace tpch::q12
 {
@@ -49,24 +53,34 @@ inline void q12_agg_row_t::print(std::ostream& os) const
 
 // Applied to a raw lineitem before joining (structures 1 and 4).
 // See: OPERATORS.md §5 Q12; q12/CLAUDE.md §Q12-Specific Operator Configurations.
-inline bool q12_predicate_lineitem(const lineitem_t& /* l */, const Params& /* p */)
+inline bool q12_predicate_lineitem(const lineitem_t& l, const Params& p)
 {
-   // TODO(skeleton): Implement:
-   //   l_shipmode IN (p.shipmode1, p.shipmode2)
-   //   AND l_shipdate < l_commitdate
-   //   AND l_commitdate < l_receiptdate
-   //   AND l_receiptdate >= p.receiptdate_lo
-   //   AND l_receiptdate <  p.receiptdate_hi
-   return false;
+   auto sm  = std::string_view(l.l_shipmode.data, l.l_shipmode.length);
+   auto sm1 = std::string_view(p.shipmode1.data, p.shipmode1.length);
+   auto sm2 = std::string_view(p.shipmode2.data, p.shipmode2.length);
+   return (sm == sm1 || sm == sm2)
+       && l.l_shipdate    < l.l_commitdate
+       && l.l_commitdate  < l.l_receiptdate
+       && l.l_receiptdate >= p.receiptdate_lo
+       && l.l_receiptdate <  p.receiptdate_hi;
 }
 
 // Applied to a fully-assembled joined_ol_t (structures 2 and 3).
-// Same predicate as above expressed over joined_ol_t fields.
-// See: frontend/tpch/views_ol.hpp joined_ol_t::line() / order().
-inline bool q12_predicate_joined(const joined_ol_t& /* j */, const Params& /* p */)
+// Delegates to q12_predicate_lineitem to keep both paths semantically identical
+// (defends OPERATORS.md §6.1: same predicate across S1–S4).
+inline bool q12_predicate_joined(const joined_ol_t& j, const Params& p)
 {
-   // TODO(skeleton): read fields from j.line().l_shipmode, j.line().l_shipdate, etc.
-   return false;
+   return q12_predicate_lineitem(j.line(), p);
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+
+// Returns true for the two "high priority" order priorities in Q12.
+static inline bool is_high_priority(const Varchar<15>& p)
+{
+   auto s = std::string_view(p.data, p.length);
+   return s == "1-URGENT" || s == "2-HIGH";
 }
 
 // ---------------------------------------------------------------------------
@@ -75,42 +89,188 @@ inline bool q12_predicate_joined(const joined_ol_t& /* j */, const Params& /* p 
 template <typename Backend>
 long Q12Workload<Backend>::query_by_base(std::vector<q12_agg_row_t>& out)
 {
-   // TODO(skeleton): Drive BinaryMergeJoin over base tables; apply
-   // q12_predicate_lineitem per lineitem before joining, accumulate
-   // high/low counts per shipmode, write q12_agg_row_t rows into `out`.
-   // See: OPERATORS.md §3 op 4 (S1), §5 Q12.
-   out.clear();
-   return 0;
+   // S1: BinaryMergeJoin over base ORDERS and LINEITEM scanners.
+   // Filter-pushdown on the LINEITEM side: the fetch lambda skips rows that
+   // fail q12_predicate_lineitem so the join callback never sees them.
+   // OPERATORS.md §3 op 4 (S1), §5 Q12.
+
+   struct slot { Varchar<10> mode; Integer high = 0, low = 0; };
+   slot a{params.shipmode1}, b{params.shipmode2};
+
+   auto bump = [&](const orders_t& o, const lineitem_t& l) {
+      auto sm   = std::string_view(l.l_shipmode.data, l.l_shipmode.length);
+      auto a_sv = std::string_view(a.mode.data, a.mode.length);
+      auto b_sv = std::string_view(b.mode.data, b.mode.length);
+      slot* s = (sm == a_sv) ? &a : (sm == b_sv) ? &b : nullptr;
+      if (!s) return;
+      if (is_high_priority(o.o_orderpriority)) s->high += 1;
+      else                                     s->low  += 1;
+   };
+
+   auto emit_and_sort = [&]() -> long {
+      out.clear();
+      out.push_back({a.mode, a.high, a.low});
+      out.push_back({b.mode, b.high, b.low});
+      std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) {
+         return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
+              < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
+      });
+      return static_cast<long>(out.size());
+   };
+
+   auto os = orders.getScanner();
+   auto ls = lineitem.getScanner();
+
+   auto fetch_orders = [&]() { return os->next(); };
+   auto fetch_lineitem = [&]() -> std::optional<std::pair<lineitem_t::Key, lineitem_t>> {
+      while (auto kv = ls->next()) {
+         if (q12_predicate_lineitem(kv->second, params)) return kv;
+      }
+      return std::nullopt;
+   };
+
+   BinaryMergeJoin<ol_sort_key_t, joined_ol_t, orders_t, lineitem_t>
+       joiner(fetch_orders, fetch_lineitem,
+              [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
+                 bump(jr.order(), jr.line());
+              });
+   joiner.run();
+   return emit_and_sort();
 }
 
 template <typename Backend>
 long Q12Workload<Backend>::query_by_view(std::vector<q12_agg_row_t>& out)
 {
-   // TODO(skeleton): Scan pipeline_view adapter; for each joined_ol_t row,
-   // apply q12_predicate_joined, accumulate counts, write to `out`.
-   // See: OPERATORS.md §3 op 4 (S2).
-   out.clear();
-   return 0;
+   // S2: scan the materialized pipeline view (unfiltered joined_ol_t rows).
+   // The view stores unfiltered rows (predicate hoisting per OPERATORS.md §4
+   // Q12 bullet); apply q12_predicate_joined post-scan.
+   // OPERATORS.md §3 op 4 (S2).
+
+   struct slot { Varchar<10> mode; Integer high = 0, low = 0; };
+   slot a{params.shipmode1}, b{params.shipmode2};
+
+   auto bump = [&](const orders_t& o, const lineitem_t& l) {
+      auto sm   = std::string_view(l.l_shipmode.data, l.l_shipmode.length);
+      auto a_sv = std::string_view(a.mode.data, a.mode.length);
+      auto b_sv = std::string_view(b.mode.data, b.mode.length);
+      slot* s = (sm == a_sv) ? &a : (sm == b_sv) ? &b : nullptr;
+      if (!s) return;
+      if (is_high_priority(o.o_orderpriority)) s->high += 1;
+      else                                     s->low  += 1;
+   };
+
+   auto emit_and_sort = [&]() -> long {
+      out.clear();
+      out.push_back({a.mode, a.high, a.low});
+      out.push_back({b.mode, b.high, b.low});
+      std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) {
+         return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
+              < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
+      });
+      return static_cast<long>(out.size());
+   };
+
+   auto vs = pipeline_view.getScanner();
+   while (auto kv = vs->next()) {
+      const joined_ol_t& jr = kv->second;
+      if (!q12_predicate_joined(jr, params)) continue;
+      bump(jr.order(), jr.line());
+   }
+   return emit_and_sort();
 }
 
 template <typename Backend>
 long Q12Workload<Backend>::query_by_merged(std::vector<q12_agg_row_t>& out)
 {
-   // TODO(skeleton): Drive PremergedJoin over MI[0]; apply q12_predicate_joined
-   // per row, accumulate counts per shipmode, write to `out`.
-   // See: OPERATORS.md §3 op 4 (S3), §5 Q12.
-   out.clear();
-   return 0;
+   // S3: PremergedJoin over MI[0] (merged ORDERS x LINEITEM index).
+   // Post-join filter via q12_predicate_joined.
+   // OPERATORS.md §3 op 4 (S3), §5 Q12.
+
+   struct slot { Varchar<10> mode; Integer high = 0, low = 0; };
+   slot a{params.shipmode1}, b{params.shipmode2};
+
+   auto bump = [&](const orders_t& o, const lineitem_t& l) {
+      auto sm   = std::string_view(l.l_shipmode.data, l.l_shipmode.length);
+      auto a_sv = std::string_view(a.mode.data, a.mode.length);
+      auto b_sv = std::string_view(b.mode.data, b.mode.length);
+      slot* s = (sm == a_sv) ? &a : (sm == b_sv) ? &b : nullptr;
+      if (!s) return;
+      if (is_high_priority(o.o_orderpriority)) s->high += 1;
+      else                                     s->low  += 1;
+   };
+
+   auto emit_and_sort = [&]() -> long {
+      out.clear();
+      out.push_back({a.mode, a.high, a.low});
+      out.push_back({b.mode, b.high, b.low});
+      std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) {
+         return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
+              < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
+      });
+      return static_cast<long>(out.size());
+   };
+
+   auto scanner = ol.merged_scanner();
+   PremergedJoin<decltype(*scanner), ol_sort_key_t, joined_ol_t,
+                 orders_t, lineitem_t>
+       joiner(*scanner,
+              [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
+                 if (!q12_predicate_joined(jr, params)) return;
+                 bump(jr.order(), jr.line());
+              });
+   joiner.run();
+   return emit_and_sort();
 }
 
 template <typename Backend>
 long Q12Workload<Backend>::query_by_hash(std::vector<q12_agg_row_t>& out)
 {
-   // TODO(skeleton): Drive HashJoin over base tables; apply q12_predicate_joined,
-   // accumulate counts per shipmode, write to `out`.
-   // See: OPERATORS.md §3 op 4 (S4 baseline), §5 Q12.
-   out.clear();
-   return 0;
+   // S4: HashJoin baseline. Build side = ORDERS; probe side = filtered LINEITEM.
+   // Same filter pushdown as S1 (OPERATORS.md §6.1: same predicate across S1–S4).
+   // OPERATORS.md §3 op 4 (S4 baseline), §5 Q12.
+
+   struct slot { Varchar<10> mode; Integer high = 0, low = 0; };
+   slot a{params.shipmode1}, b{params.shipmode2};
+
+   auto bump = [&](const orders_t& o, const lineitem_t& l) {
+      auto sm   = std::string_view(l.l_shipmode.data, l.l_shipmode.length);
+      auto a_sv = std::string_view(a.mode.data, a.mode.length);
+      auto b_sv = std::string_view(b.mode.data, b.mode.length);
+      slot* s = (sm == a_sv) ? &a : (sm == b_sv) ? &b : nullptr;
+      if (!s) return;
+      if (is_high_priority(o.o_orderpriority)) s->high += 1;
+      else                                     s->low  += 1;
+   };
+
+   auto emit_and_sort = [&]() -> long {
+      out.clear();
+      out.push_back({a.mode, a.high, a.low});
+      out.push_back({b.mode, b.high, b.low});
+      std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) {
+         return std::string_view(x.l_shipmode.data, x.l_shipmode.length)
+              < std::string_view(y.l_shipmode.data, y.l_shipmode.length);
+      });
+      return static_cast<long>(out.size());
+   };
+
+   auto os = orders.getScanner();
+   auto ls = lineitem.getScanner();
+
+   auto fetch_orders = [&]() { return os->next(); };
+   auto fetch_lineitem = [&]() -> std::optional<std::pair<lineitem_t::Key, lineitem_t>> {
+      while (auto kv = ls->next()) {
+         if (q12_predicate_lineitem(kv->second, params)) return kv;
+      }
+      return std::nullopt;
+   };
+
+   HashJoin<ol_sort_key_t, joined_ol_t, orders_t, lineitem_t>
+       joiner(fetch_orders, fetch_lineitem, ol_sort_key_t::max(),
+              [&](const joined_ol_t::Key&, const joined_ol_t& jr) {
+                 bump(jr.order(), jr.line());
+              });
+   joiner.run();
+   return emit_and_sort();
 }
 
 }  // namespace tpch::q12

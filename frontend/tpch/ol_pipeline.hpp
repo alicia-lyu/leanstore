@@ -43,6 +43,13 @@ class OrdersLineitemPipeline
 
    // Returns the estimated size of merged_ol in MiB.
    double get_merged_size() const;
+
+   // Returns a scanner over MI[0], typed for the ol_sort_key_t / joined_ol_t
+   // join pair. Used by query_by_merged in q{N}/query.tpp.
+   auto merged_scanner()
+   {
+      return merged_ol.template getScanner<ol_sort_key_t, joined_ol_t>();
+   }
 };
 
 }  // namespace tpch

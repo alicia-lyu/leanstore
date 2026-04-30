@@ -125,6 +125,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- test_query_q12_lsm: Q12 all-four query_by_* cross-structure parity test (RocksDB) ---
+    add_executable(test_query_q12_lsm tpch/tests/q12/test_query_q12_rocksdb.cpp)
+    target_compile_definitions(test_query_q12_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_query_q12_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_query_q12_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
 else()
     # =========================================================================
     # Linux build: full leanstore + RocksDB (original behavior)
@@ -168,5 +183,11 @@ else()
 
     add_executable(test_load_q12_lsm tpch/tests/q12/test_load_q12_rocksdb.cpp)
     target_link_libraries(test_load_q12_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_query_q12_btree tpch/tests/q12/test_query_q12_leanstore.cpp)
+    target_link_libraries(test_query_q12_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(test_query_q12_lsm tpch/tests/q12/test_query_q12_rocksdb.cpp)
+    target_link_libraries(test_query_q12_lsm PUBLIC RocksDBLogger Threads::Threads)
 
 endif()
