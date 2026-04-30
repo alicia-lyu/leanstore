@@ -128,6 +128,20 @@ struct joined_ol_t : public joined_t<30, ol_sort_key_t, false, orders_t, lineite
    // Convenience accessors that hide std::get<N>(payloads).
    const orders_t& order() const { return std::get<0>(payloads); }
    const lineitem_t& line() const { return std::get<1>(payloads); }
+
+   // Override the generic unfoldKey: the base joined_t::unfoldKeyHelper for
+   // fold_pks=false tries `typename Ts::Key{key.jk}` which would require
+   // orders_t::Key{ol_sort_key_t} and lineitem_t::Key{ol_sort_key_t} — those
+   // constructors don't exist. Instead we reconstruct via the custom
+   // joined_ol_t::Key(ol_sort_key_t) ctor that knows how to split the sort key.
+   template <typename K>
+   static unsigned unfoldKey(const uint8_t* in, K& key)
+   {
+      ol_sort_key_t jk;
+      unsigned read = ol_sort_key_t::keyunfold(in, jk);
+      key = K(jk);
+      return read;
+   }
 };
 
 }  // namespace tpch
