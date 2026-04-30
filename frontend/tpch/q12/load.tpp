@@ -78,14 +78,9 @@ Q12Workload<Backend>::Q12Workload(
 template <typename Backend>
 void Q12Workload<Backend>::load()
 {
-   // Base tables are loaded by the caller via tpch.load() before this method.
-   // Secondary structures are dispatched here; each case is a one-liner.
-   switch (FLAGS_storage_structure) {
-      case 1: case 4: break;                                              // base only
-      case 2: populate_q12_view<Backend>(orders, lineitem, pipeline_view); break;
-      case 3: ol.populate_merged(); break;
-      default: throw std::runtime_error("invalid --storage_structure");
-   }
+   tpch.load();
+   populate_q12_view<Backend>(orders, lineitem, pipeline_view);
+   ol.populate_merged();
 }
 
 template <typename Backend>

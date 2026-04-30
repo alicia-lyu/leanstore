@@ -122,8 +122,8 @@ class Q12Workload
    // Loading / sizing
    // ------------------------------------------------------------------
 
-   // Dispatches on FLAGS_storage_structure to call tpch.load() plus
-   // whichever secondary structure load is needed.
+   // Loads base tables via tpch.load(), then builds all secondary
+   // structures (pipeline view + merged index) unconditionally.
    void load();
 
    // Returns the size (MiB) of the secondary structure for the active

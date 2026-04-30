@@ -16,7 +16,7 @@ vscode_launch_obj = {
 }
 
 build_dirs = ["build", "build-debug"]
-exec_names = ["geo_btree", "geo_lsm"]
+exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm"]
 data_disk = Path("$(data_disk)")
 IS_MACOS = platform.system() == "Darwin"
 shared_flags: dict[str, str] = {
@@ -325,12 +325,16 @@ LOADING_META_FILE = "./frontend/tpch/tpch_workload.hpp"
 
 DIFF_DIRS = {
  "geo_lsm": "geo",
- "geo_btree": "geo"
+ "geo_btree": "geo",
+ "q12_lsm": "tpch/q12",
+ "q12_btree": "tpch/q12",
 }
             
 STRUCTURE_OPTIONS = {
     "geo_btree": [1, 2, 3, 4],
-    "geo_lsm": [1, 2, 3, 4]
+    "geo_lsm": [1, 2, 3, 4],
+    "q12_btree": [1, 2, 3, 4],
+    "q12_lsm": [1, 2, 3, 4],
 }
 
 def main() -> None:

@@ -40,6 +40,9 @@ int dispatch_storage_structure(QWorkload& q, std::vector<AggRow>& out)
                    << FLAGS_storage_structure << std::endl;
          return 1;
    }
+   for (auto& row : out) {
+      row.print(std::cout);
+   }
    return 0;
 }
 

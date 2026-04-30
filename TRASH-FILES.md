@@ -8,3 +8,6 @@ build/log - moved to TRASH/build-log-stale-file - regular file blocking create_d
 build/log - moved to TRASH/build-log-stale-file-2 - second stale RocksDB log blocking Logger
 test_data{2,4,5,6,7} - moved to TRASH/ - stale RocksDB test instance dirs from earlier load-test runs
 test_csv{2,4,5,6,7} - moved to TRASH/ - stale CSV log dirs paired with the above
+test_q12_data - moved to TRASH/ - stale test data from prior Q12 run
+test_q12_csv - moved to TRASH/ - stale test CSV from prior Q12 run
+test_q12.json - moved to TRASH/ - stale persist file from prior Q12 run
