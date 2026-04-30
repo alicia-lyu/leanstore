@@ -316,6 +316,15 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   `shared/merge-join/premerged_join.hpp`: the tentative-skip path now
   uses `jk_from_variants<JK>` instead of calling
   `SKBuilder<JK>::create` on variant operands.
+- **F1 admission filter in PremergedJoin** (2026-04-30):
+  `PremergedJoin::scan_next` accepts an optional `admit` callback; records
+  rejected before emplace. `query_by_merged` threads `q12_predicate_lineitem`
+  through it. Closes the ~2× merged-vs-hash perf gap to ~5–10%.
+- **Q12Stats cardinality counters** (2026-04-30): `Q12Stats` struct in
+  `q12/workload.hpp` tracks scanned/admitted/join/agg counters per path.
+  All `query_by_*` paths increment when `stats != nullptr`; test binaries
+  print `[card]` lines. Confirmed at SF=1: 6004 scanned → 30 passed → 30
+  join callbacks → 2 agg rows across all four paths.
 - **OPERATORS.md aligned with current code** (2026-04-30): updated §3 op 1
   (TableScan ownership moved to per-query drivers), §3 op 4 (S1/S3 named the
   actual primitives plus a new "load vs query" paragraph), §4 Q12 (unfiltered
@@ -358,15 +367,15 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 
-- **Q12**: `query_by_*` bodies and predicates implemented; cross-structure
-  XOR-parity test (`test_query_q12_lsm` / `_btree`) passes at SF=1
-  with all shape and parity checks `[OK]` (~25–30 matching lineitems
-  yielding e.g. `MAIL 2/8`, `SHIP 5/10`). Earlier "zero matches"
-  symptom was a load-order bug (lineitems generated before orders, so
-  `o_orderdate` was 0); fixed by reordering `TPCHWorkload::load()` to
-  put `loadCustomer → loadOrders → loadPartsuppLineitem`.
-  `q12_lsm` / `q12_btree` flag-dispatch executables and CMake targets
-  are still to do.
+- **Q12**: `query_by_*` bodies, predicates, F1 admission filter
+  (`PremergedJoin` admit callback plumbed through `query_by_merged`),
+  and `Q12Stats` cardinality counters all implemented and tested.
+  XOR-parity test (`test_query_q12_lsm` / `_btree`) passes at SF=1;
+  `[card]` output confirmed: 6004 lineitems scanned, 30 admitted/passed,
+  30 join callbacks, 2 aggregator rows across all four paths.
+  Performance ordering `base ≈ hash < merged < view` is stable.
+  **Remaining**: `q12_lsm` / `q12_btree` flag-dispatch executables,
+  CMake targets, and `generate_targets.py` Makefile entries.
 - **Q3/Q9**: `load.tpp` ctor/`load()`/`get_size()` bodies (still reference
   removed pipeline methods — fix first). Then `query_by_*` bodies, predicate
   implementations, and `Params::defaults()`.

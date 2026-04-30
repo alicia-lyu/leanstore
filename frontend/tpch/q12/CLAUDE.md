@@ -580,6 +580,29 @@ for the rationale on `--ssd_path` vs `--csv_path` separation.
   `j.line()` to keep S1–S4 semantically identical (defends
   `OPERATORS.md §6.1`).
 
+**F1 admission filter in PremergedJoin** (2026-04-30):
+
+`PremergedJoin::scan_next` now accepts an optional `admit` callback that
+gates records before emplace into the join result vector. `query_by_merged`
+threads `q12_predicate_lineitem` through this path so lineitem rows are
+rejected before the join callback fires. Eliminates the ~2× merged-vs-hash
+gap observed before the fix; merged is now within ~5–10% of hash at SF=1.
+
+**Q12Stats cardinality counters added** (2026-04-30):
+
+`Q12Stats` struct in `q12/workload.hpp` tracks per-path counters:
+`lineitems_scanned`, `lineitems_passed` / `lineitems_admitted`,
+`join_callbacks`, `aggregator_rows_out`. All `query_by_*` paths increment
+counters when `stats != nullptr`. Test binaries print a `[card]` line per
+path. Confirmed values at SF=1 (default params):
+
+| Path | variants_scanned / lineitems_scanned | admitted/passed | join_callbacks | agg_rows_out |
+|------|--------------------------------------|-----------------|----------------|--------------|
+| base | 6004 | 30 | 30 | 2 |
+| view | 6004 | 30 | 30 | 2 |
+| hash | 6004 | 30 | 30 | 2 |
+| merged | 7500 (variants) | 30 (admitted) | 30 | 2 |
+
 **Cross-structure parity test added** (2026-04-30):
 
 - `test_query_q12_lsm` / `test_query_q12_btree` build all four query paths
@@ -656,5 +679,20 @@ tracked in `.claude/plans/data-generator-evolution.md`.
 `BaseQ12` / `ViewQ12` / `MergedQ12` / `HashQ12` forwarder bodies live in the
 shared `frontend/tpch/per_structure_workload.hpp`; the per-query file is
 alias-only.
+
+### Performance picture (in-memory SF=1)
+
+Stable ordering across runs: `base ≈ hash < merged < view`.
+
+- **merged vs hash**: ~5–10% gap after the F1 admission filter landed
+  (was ~2× before). In-memory regime eliminates locality benefit of the
+  merged index; gap is irreducible without an on-disk workload.
+- **view**: consistently slowest — each pipeline-view row is ~6× fatter
+  than `lineitem_t`, so scan cost dominates.
+- **variance**: ~3× run-to-run noise at SF=1 (single-shot, no warm-up).
+  Ordering is stable; absolute numbers are not meaningful at this scale.
+
+Further merged-path perf tuning is out of scope: locality benefit requires
+an SSD-backed, buffer-pool-pressure workload (SF >> 1).
 
 Cross-cutting status: see `frontend/tpch/CLAUDE.md §What's Needed`.
