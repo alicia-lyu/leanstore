@@ -399,7 +399,22 @@ See `executable_rocksdb.cpp` / `executable_leanstore.cpp` for the actual code
 
 ## Dependency on Tagged Row Format
 
-The current plan uses fold-length discrimination (4 vs 8 bytes) for MI[0], which works for Q12. Tagged row format migration is tracked separately and is NOT a blocker for initial Q12 implementation. Can be retrofitted later.
+Q12's MI[0] continues to use fold-length discrimination (4 vs 8 bytes for
+`orders_t` vs `lineitem_t`). The Calcite-style tagged-key format has been
+implemented for the COLI pipeline (`views_coli.hpp`) via the
+`Record::matches` SFINAE hook in `LeanStoreMergedAdapter::toType()`. OL
+records do not opt in and the heuristic path is unchanged.
+
+The `test_query_q12_lsm` XOR-parity digest (`0x90000070006039`) is
+identical before and after the domain-tag refactor, confirming the
+fold-length fallback is unaffected. Tagged-key migration for OL records
+remains out of scope for the current paper.
+
+The `executable_rocksdb.cpp` / `executable_leanstore.cpp` files compile
+in the COLI merged adapter (via `#include "coli_pipeline.hpp"`), but Q12's
+four storage structures (S1–S4) do not use it at query time. It is
+present to validate that the tagged-key types and `SKMatcher`
+specializations link cleanly alongside the OL pipeline.
 
 ---
 

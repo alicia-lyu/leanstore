@@ -9,12 +9,17 @@ Shared files (used by all three queries):
 
 - `tpch_tables.hpp` — all 8 TPC-H base table record types (`orders_t`,
   `lineitem_t`, `customerh_t`, `part_t`, `supplier_t`, `partsupp_t`,
-  `nation_t`, `region_t`). Date constants `DATE_1994_01_01 = 8766` and
-  `DATE_1995_01_01 = 9131` (days since 1970-01-01) are defined here.
+  `nation_t`, `region_t`) plus `invoice_t` (one invoice per ~1.5 orders,
+  keyed by `i_invoicekey`). `lineitem_t` carries an `l_invoicekey` payload
+  linking each lineitem to its invoice. Date constants `DATE_1994_01_01 = 8766`
+  and `DATE_1995_01_01 = 9131` (days since 1970-01-01) are defined here.
 - `tpch_workload.hpp` — `TPCHWorkload<Adapter>`: loads and recovers all 8
-  base tables. `loadPartsuppLineitem` and `loadLineitem` call
-  `orderkey_from_index()` to produce sparse order keys that match
+  base tables plus `invoice_t`. `loadPartsuppLineitem` and `loadLineitem`
+  call `orderkey_from_index()` to produce sparse order keys that match
   `loadOrders`; using raw indices would orphan ~75% of lineitems.
+  `loadInvoiceAndLinkLineitem()` runs after `loadOrders`: it creates one
+  invoice per ~1.5 orders and back-fills `l_invoicekey` on each lineitem
+  via a second lineitem pass.
 - `views_ol.hpp` — `ol_sort_key_t`, `joined_ol_t` (the ORDERS × LINEITEM
   join result type shared by Q12/Q3/Q9), and the `SKBuilder` specialization.
   `joined_ol_t` is a derived struct (not a `using` alias) with an explicit
@@ -29,6 +34,23 @@ Shared files (used by all three queries):
   `get_merged_size`. Operator drivers and view loading are **not** here — they
   depend on per-query types and live in `q{N}/query.tpp` and `q{N}/load.tpp`.
   See §Pipeline Convention below.
+- `views_coli.hpp` — four Calcite-style tagged record types for the
+  CUSTOMER × ORDERS × LINEITEM × INVOICE 4-table merged index:
+  `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t`.
+  Each `Key` carries a `using path = tagged_path<IdxId, Steps...>` declaration
+  (pointer-to-member steps: `tag_field_step`, `tag_fields2_step`) plus a
+  `static bool matches(const u8*, size_t)` override that reads the trailing
+  `idx_id` byte. Sentinel tag `index=0` sorts before all domain tags
+  (`customer=1`, `orders=2`, `lineitem=3`, `invoice=4`), so parent rows sort
+  before children naturally within each key group. Twelve explicit
+  `SKMatcher<R1,R2>` specializations cover all 16 ordered pairs (10 unique +
+  reverse delegations).
+- `coli_pipeline.hpp` / `coli_pipeline.tpp` —
+  `COLIPipeline<Backend>`: owns `MergedAdapter<customer_coli_t,
+  orders_coli_t, lineitem_coli_t, invoice_coli_t>`. `populate_merged()`
+  does a dual-write replay across customer/orders/lineitem/invoice base
+  adapters, resolving each lineitem's `custkey` via an in-memory
+  orderkey→custkey map built during the orders pass.
 - `per_structure_workload.hpp` — shared `BaseStructure` / `ViewStructure` /
   `MergedStructure` / `HashStructure` templates parametrized by
   `<typename Workload, typename AggRow>` with inline forwarder bodies. Each
@@ -151,9 +173,14 @@ base class to update.
 
 ### Current state
 
-The only pipeline today is `OrdersLineitemPipeline<Backend>` (`ol_pipeline.hpp`).
-Q12, Q3, and Q9 each hold exactly one instance named `ol` and dispatch
-merged-index loading through it.
+Two pipelines exist:
+
+- `OrdersLineitemPipeline<Backend>` (`ol_pipeline.hpp`) — 2-table OL merged
+  index. Q12, Q3, and Q9 each hold exactly one instance named `ol`.
+- `COLIPipeline<Backend>` (`coli_pipeline.hpp`) — 4-table COLI merged index
+  (CUSTOMER × ORDERS × LINEITEM × INVOICE). Uses tagged-key format with
+  `views_coli.hpp` types. Currently a standalone pipeline not yet wired into
+  any per-query workload class.
 
 ## Per-query File Convention
 
@@ -209,8 +236,11 @@ point. Run from the repo root.
 | Test | Owner | Backend(s) | Source |
 |------|-------|-----------|--------|
 | `test_views_ol` | this dir | RocksDB (mac+Linux) | `tests/test_views_ol.cpp` |
+| `test_views_coli` | this dir | RocksDB (mac+Linux) | `tests/test_views_coli.cpp` |
+| `test_sk_matcher_compat` | this dir | RocksDB (mac+Linux) | `tests/test_sk_matcher_compat.cpp` |
 | `test_load_merged_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_merged_rocksdb.cpp` |
 | `test_load_merged_btree` | this dir | LeanStore (Linux only) | `tests/test_load_merged_leanstore.cpp` |
+| `test_load_coli_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_coli_rocksdb.cpp` |
 | `test_load_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_load_q12_rocksdb.cpp` |
 | `test_load_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_load_q12_leanstore.cpp` |
 | `test_query_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_query_q12_rocksdb.cpp` |
@@ -354,6 +384,40 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   `o_orderdate`. The placeholder fields flagged in the
   `data-generator-evolution` plan are gone; only `o_clerk` and various
   `randomastring` comment fields remain placeholders (none are query-critical).
+- **`invoice_t` schema + loader** (2026-05-01): `invoice_t` added to
+  `tpch_tables.hpp` (keyed by `i_invoicekey`). `lineitem_t` gained
+  `l_invoicekey` payload. `TPCHWorkload::loadInvoiceAndLinkLineitem()`
+  runs after `loadOrders`, creates ~1.5× orders count invoices, and
+  back-fills `l_invoicekey` on each lineitem.
+- **COLI 4-table merged index pipeline** (2026-05-01): `views_coli.hpp`
+  defines `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`,
+  `invoice_coli_t` with Calcite-style tagged keys (`tagged_path` helper,
+  pointer-to-member `tag_field_step` / `tag_fields2_step`). Sentinel
+  tag `index=0` ensures parent rows sort before children within each key
+  group (`customer=1`, `orders=2`, `lineitem=3`, `invoice=4`). Twelve
+  explicit `SKMatcher<R1,R2>` specializations cover all 16 ordered pairs.
+  `COLIPipeline<Backend>` in `coli_pipeline.{hpp,tpp}` owns the
+  `MergedAdapter<...>` and resolves `custkey` for lineitems via an
+  in-memory orderkey→custkey map built during the orders pass.
+  `test_load_coli_lsm` (`tests/test_load_coli_rocksdb.cpp`) verifies row
+  counts, FK resolution, and hierarchical scan order at SF=1 — all [OK].
+- **Merged-adapter `matches` dispatch hook** (2026-05-01): `LeanStoreMergedAdapter::toType()`
+  now tries `Record::matches(key, key_len)` via SFINAE before falling back
+  to the `(maxFoldLength, sizeof(payload))` heuristic. Existing OL/Q12
+  records opt out silently; tagged COLI records opt in via explicit
+  `static bool matches(...)`. Additive — existing tests pass byte-for-byte.
+- **`SKMatcher` abstraction + `sk_for_t` rename** (2026-05-01):
+  `SKMatcher<R1,R2>` per-pair join-matching abstraction introduced in
+  `frontend/shared/view_templates.hpp`. Default specialization wraps legacy
+  `SKBuilder<JK>::create + JK::match` so OL pipelines require no changes.
+  `SortKeyFor<R>` opt-in trait and `HasSharedSKBuilder` concept gate the
+  default. Sort-key alias renamed from `sort_key_t<R>` to `sk_for_t<R>` to
+  avoid collision with `geo::sort_key_t`. `test_sk_matcher_compat.cpp`
+  (4 tests) proves sign/zero equivalence for OL records.
+  `test_views_coli.cpp` (6 tests) covers tagged-key encoding, `matches`
+  dispatch, and sentinel ordering. Both test suites pass.
+  `test_query_q12_lsm` XOR-parity digest unchanged (`0x90000070006039`)
+  confirming the fold-length fallback path is unaffected.
 - **Data-generation load order fixed** (2026-04-30): `TPCHWorkload::load()`
   now runs `loadCustomer → loadOrders → loadPartsuppLineitem` (previously
   partsupp+lineitem ran before orders/customer). The earlier order left
@@ -458,7 +522,10 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 The following are explicitly deferred and not part of this skeleton:
 
 - Update / maintenance paths (RF1 insert, RF2 delete).
-- Tagged-row format migration (current fold-length discrimination is
-  sufficient for the initial implementation).
+- Tagged-row format migration for OL records (fold-length discrimination
+  is sufficient for Q12/Q3/Q9; COLI already uses tagged keys — see
+  §Completed above).
 - `joined_t` flattening (the generic `joined_t` template from
   `frontend/shared/view_templates.hpp` is used as-is).
+- Wiring `COLIPipeline` into a per-query workload (pipeline exists and
+  load-tested; no query drives it yet).
