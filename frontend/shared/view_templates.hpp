@@ -224,9 +224,9 @@ JK jk_from_variants(const K& k, const V& v) {
 // Specialize this alongside each SKBuilder<JK> specialization so that
 // HasSharedSKBuilder<R1, R2> can detect a common JK without SFINAE probing.
 //
-// Example (in views_ol.hpp, next to SKBuilder<ol_sort_key_t>):
-//   template <> struct SortKeyFor<orders_t>   { using type = ol_sort_key_t; };
-//   template <> struct SortKeyFor<lineitem_t>  { using type = ol_sort_key_t; };
+// Example (in views_ol.hpp, next to SKBuilder<ol_sk_for_t>):
+//   template <> struct SortKeyFor<orders_t>   { using type = ol_sk_for_t; };
+//   template <> struct SortKeyFor<lineitem_t>  { using type = ol_sk_for_t; };
 template <typename R>
 struct SortKeyFor {
    // No `type` member by default — leaves the record out of the default
@@ -234,15 +234,15 @@ struct SortKeyFor {
 };
 
 template <typename R>
-using sort_key_t = typename SortKeyFor<R>::type;
+using sk_for_t = typename SortKeyFor<R>::type;
 
 // Concept: both R1 and R2 map to the same sort-key type via SortKeyFor.
 template <typename R1, typename R2>
 concept HasSharedSKBuilder =
     requires {
-       typename sort_key_t<R1>;
-       typename sort_key_t<R2>;
-    } && std::is_same_v<sort_key_t<R1>, sort_key_t<R2>>;
+       typename sk_for_t<R1>;
+       typename sk_for_t<R2>;
+    } && std::is_same_v<sk_for_t<R1>, sk_for_t<R2>>;
 
 // ---------------------------------------------------------------------------
 // SKMatcher<R1, R2>: per-pair join matcher.
@@ -267,13 +267,13 @@ struct SKMatcher;
 // Default specialization: back-compat with SKBuilder<JK> + JK::match.
 // Resolved when both R1 and R2 share a sort-key type via SortKeyFor.
 //
-// ol_sort_key_t::match returns a signed int (not clamped to -1/0/+1), but
+// ol_sk_for_t::match returns a signed int (not clamped to -1/0/+1), but
 // the contract is: negative / zero / positive. Callers must only test the
 // sign. No normalization is needed.
 template <typename R1, typename R2>
    requires HasSharedSKBuilder<R1, R2>
 struct SKMatcher<R1, R2> {
-   using JK = sort_key_t<R1>;
+   using JK = sk_for_t<R1>;
 
    static int match(const typename R1::Key& k1, const R1& v1,
                     const typename R2::Key& k2, const R2& v2)
