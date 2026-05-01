@@ -34,11 +34,17 @@ namespace tpch
 // Domain tag enum: identifies a key segment's owner, or the sentinel.
 
 enum class coli_domain_tag : u8 {
-   customer = 0,
-   orders   = 1,
-   lineitem = 2,
-   invoice  = 3,
-   index    = 4,  // sentinel: end of (tag, field) pairs
+   // Sentinel = 0 so it sorts STRICTLY BEFORE any field tag at the same
+   // hierarchical level. This is what makes parent rows naturally sort
+   // before child rows (e.g. customer before orders within a custkey,
+   // orders before its lineitems within an orderkey): the parent row's
+   // key terminates with [index=0][idx_id], while the child row continues
+   // with [child_field_tag>0][child_field]... — and 0 < any positive tag.
+   index    = 0,  // sentinel: end of (tag, field) pairs
+   customer = 1,
+   orders   = 2,
+   lineitem = 3,
+   invoice  = 4,
 };
 
 // Index identifier: trailing byte that names the leaf record type.

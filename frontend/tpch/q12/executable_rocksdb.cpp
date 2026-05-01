@@ -52,7 +52,8 @@ int main(int argc, char** argv)
    B::MergedAdapter<orders_t, lineitem_t>     merged_ol(rocks_db);
 
    // COLI pipeline substrate (compiled here; used by Q3I/Q9I/Q12I extensions).
-   B::MergedAdapter<customerh_t, orders_t, lineitem_t, invoice_t> merged_coli(rocks_db);
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
+                    tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
 
    rocks_db.open();  // must be called after all adapters register their CFs
 

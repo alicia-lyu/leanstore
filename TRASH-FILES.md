@@ -11,3 +11,16 @@ test_csv{2,4,5,6,7} - moved to TRASH/ - stale CSV log dirs paired with the above
 test_q12_data - moved to TRASH/ - stale test data from prior Q12 run
 test_q12_csv - moved to TRASH/ - stale test CSV from prior Q12 run
 test_q12.json - moved to TRASH/ - stale persist file from prior Q12 run
+test_data_coli_run1 - moved to TRASH/ - temporary test RocksDB data from first COLI load test run
+test_csv_coli_run1 - moved to TRASH/ - temporary test CSV/log dir from first COLI load test run
+test_data_coli_run2 - moved to TRASH/ - second COLI load test run data
+test_csv_coli_run2 - moved to TRASH/ - second COLI load test run CSV
+test_data_coli_run3 - moved to TRASH/ - third COLI load test run data
+test_csv_coli_run3 - moved to TRASH/ - third COLI load test run CSV
+test_data_coli_run4 - moved to TRASH/ - diagnostic run 4
+test_csv_coli_run4 - moved to TRASH/ - diagnostic run 4 CSV
+test_data_coli_run5 - moved to TRASH/ - diagnostic run 5
+test_csv_coli_run5 - moved to TRASH/ - diagnostic run 5 CSV
+test_data_coli_run6 - moved to TRASH/ - diagnostic run 6
+test_csv_coli_run6 - moved to TRASH/ - diagnostic run 6 CSV
+test_coli_data - moved to TRASH/test_coli_data_<ts> - stale RocksDB test instance from prior coli load-test run
