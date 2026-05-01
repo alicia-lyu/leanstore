@@ -112,7 +112,7 @@ struct LeanStoreMergedAdapter {
       std::variant<Records...> result_rec;
 
       (([&]() {
-          if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
+          if (!matched && record_matches<Records>(k.data(), k.size(), v.size())) {
              typename Records::Key key;
              Records::unfoldKey(k.data(), key);
              const Records& rec = *reinterpret_cast<const Records*>(v.data());
