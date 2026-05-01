@@ -20,6 +20,7 @@
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
 
+#include "../coli_pipeline.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -50,12 +51,17 @@ int main(int argc, char** argv)
    B::Adapter<tpch::q12::q12_pipeline_view_t> pipeline_view(rocks_db);
    B::MergedAdapter<orders_t, lineitem_t>     merged_ol(rocks_db);
 
+   // COLI pipeline substrate (compiled here; used by Q3I/Q9I/Q12I extensions).
+   B::MergedAdapter<customerh_t, orders_t, lineitem_t, invoice_t> merged_coli(rocks_db);
+
    rocks_db.open();  // must be called after all adapters register their CFs
 
    RocksDBLogger logger(rocks_db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q12::Q12Workload<B> q12(tpch, orders, lineitem, pipeline_view, merged_ol);
+   tpch::CustomerOrdersLineitemInvoicePipeline<B> coli_pipeline(
+       customer, orders, lineitem, invoice, merged_coli);
 
    if (!FLAGS_recover) {
       q12.load();
