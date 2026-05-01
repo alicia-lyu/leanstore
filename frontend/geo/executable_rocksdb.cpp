@@ -50,6 +50,7 @@ int main(int argc, char** argv)
    RocksDBAdapter<lineitem_t> lineitem(rocks_db);
    RocksDBAdapter<nation_t> nation(rocks_db);
    RocksDBAdapter<region_t> region(rocks_db);
+   RocksDBAdapter<invoice_t> invoice(rocks_db);
    // Additional indexes
    RocksDBAdapter<nation2_t> nation2(rocks_db);
    RocksDBAdapter<states_t> states(rocks_db);
@@ -66,7 +67,7 @@ int main(int argc, char** argv)
    rocks_db.open();  // only after all adapters are created (along with their column families)
 
    RocksDBLogger logger(rocks_db);
-   TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
+   TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, invoice, logger);
    GJ tpchGeoJoin(tpch, mergedGeoJoin, geo_view, cust_count_view, view, nation2, states, county, city, customer2);
    if (!FLAGS_recover) {
       tpchGeoJoin.load();

@@ -46,6 +46,7 @@ int main(int argc, char** argv)
    LeanStoreAdapter<lineitem_t> lineitem;
    LeanStoreAdapter<nation_t> nation;
    LeanStoreAdapter<region_t> region;
+   LeanStoreAdapter<invoice_t> invoice;
    // Additional indexes
    LeanStoreAdapter<nation2_t> nation2;
    LeanStoreAdapter<states_t> states;
@@ -68,7 +69,8 @@ int main(int argc, char** argv)
       customer = LeanStoreAdapter<customerh_t>(db, "customer");
       orders = LeanStoreAdapter<orders_t>(db, "orders");
       nation = LeanStoreAdapter<nation_t>(db, "nation");
-      region = LeanStoreAdapter<region_t>(db, "region");
+      region  = LeanStoreAdapter<region_t>(db, "region");
+      invoice = LeanStoreAdapter<invoice_t>(db, "invoice");
 
       nation2 = LeanStoreAdapter<nation2_t>(db, "nation2");
       states = LeanStoreAdapter<states_t>(db, "states");
@@ -84,7 +86,7 @@ int main(int argc, char** argv)
    db.registerConfigEntry("tpch_scale_factor", FLAGS_tpch_scale_factor);
    // -------------------------------------------------------------------------------------
    LeanStoreLogger logger(db);
-   TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
+   TPCHWorkload<LeanStoreAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, invoice, logger);
    GJ tpchGeoJoin(tpch, mergedGeoJoin, geo_view, cust_count_view, view, nation2, states, county, city, customer2);
 
    if (!FLAGS_recover) {

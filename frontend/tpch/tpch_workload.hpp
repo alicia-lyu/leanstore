@@ -26,6 +26,7 @@ struct TPCHWorkload {
    AdapterType<lineitem_t>& lineitem;
    AdapterType<nation_t>& nation;
    AdapterType<region_t>& region;
+   AdapterType<invoice_t>& invoice;
 
    // Per-spec §4.2.3: scale factors (counts in thousands, multiplied by SF at runtime)
    inline static Integer PART_SCALE = 200;      // 200K per SF
@@ -34,6 +35,8 @@ struct TPCHWorkload {
    inline static Integer ORDERS_SCALE = 1500;    // 1.5M per SF
    inline static Integer LINEITEM_SCALE = 6000;  // ~6M per SF (avg 4 lineitems per order)
    inline static Integer PARTSUPP_SCALE = 800;   // 800K per SF
+   // Invoice scale: ceil(1.5 × ORDERS_SCALE) — ~2.25M per SF
+   inline static Integer INVOICE_SCALE = 2250;
    inline static Integer NATION_COUNT = 25;
    inline static Integer REGION_COUNT = 5;
 
@@ -65,6 +68,7 @@ struct TPCHWorkload {
                 AdapterType<lineitem_t>& l,
                 AdapterType<nation_t>& n,
                 AdapterType<region_t>& r,
+                AdapterType<invoice_t>& inv,
                 Logger& logger)
        : logger(logger),
          part(p),
@@ -75,6 +79,7 @@ struct TPCHWorkload {
          lineitem(l),
          nation(n),
          region(r),
+         invoice(inv),
          last_part_id(0),
          last_supplier_id(0),
          last_customer_id(0),
@@ -98,6 +103,7 @@ struct TPCHWorkload {
       prepopulate_order_dates();
       loadPartsuppLineitem();
       loadOrders();
+      loadInvoiceAndLinkLineitem();
       loadNation();
       loadRegion();
    }
@@ -502,6 +508,205 @@ struct TPCHWorkload {
       loadRegion([this](const region_t::Key& k, const region_t& v) { this->region.insert(k, v); });
    }
 
+   // Generate invoice records and rewrite each lineitem with its assigned
+   // `l_invoicekey`.  Must be called after `loadOrders` and
+   // `loadPartsuppLineitem` have both committed, since we read back
+   // `order_aggregates` (for per-lineitem revenue) and the lineitem adapter
+   // (for the rewrite pass).
+   //
+   // Algorithm (plan §4):
+   //   1. Scan orders and group by custkey, recording (orderdate, orderkey).
+   //   2. Scan lineitems grouped by orderkey (natural key order), accumulate
+   //      per-order into a per-custkey list of (orderkey, linenumber, lineitem).
+   //   3. For each customer: allocate ceil(1.5 * N) invoice slots.
+   //      Walk lineitems in (orderdate, orderkey, linenumber) order, assigning
+   //      each to the current invoice; close and advance after
+   //      total_lineitems / num_invoices lineitems.
+   //   4. Insert invoice rows; erase+reinsert each lineitem with its invoicekey.
+   //
+   // Secondary indexes for Structure 1 (custkey-sorted Invoice and custkey-
+   // sorted Orders for sibling merge join) are a TODO: no secondary-index
+   // adapter pattern exists yet in this codebase.  When added, populate them
+   // here after inserting each invoice / order record.
+   void loadInvoiceAndLinkLineitem()
+   {
+      std::cout << "Building customer→orders and customer→lineitems maps..." << std::endl;
+
+      // Per-order metadata we need when sorting and closing invoices.
+      struct OrderMeta {
+         Timestamp orderdate;
+         Integer   orderkey;
+      };
+      // Per-lineitem snapshot stored in memory for the rewrite pass.
+      struct LineitemEntry {
+         Integer     orderkey;
+         Integer     linenumber;
+         Timestamp   orderdate;  // copied from parent order for sort key
+         lineitem_t  rec;
+      };
+
+      // custkey → list of orders, sorted later by orderdate
+      std::unordered_map<Integer, std::vector<OrderMeta>> cust_orders;
+      // custkey → list of lineitems (unsorted; we sort inside the loop)
+      std::unordered_map<Integer, std::vector<LineitemEntry>> cust_lineitems;
+
+      // --- Pass 1: scan orders to build cust_orders map ---
+      orders.scan(
+          orders_t::Key{std::numeric_limits<Integer>::min()},
+          [&](const orders_t::Key& ok, const orders_t& o) {
+             cust_orders[o.o_custkey].push_back({o.o_orderdate, ok.o_orderkey});
+             return true;
+          },
+          []() {});
+
+      // --- Pass 2: scan lineitems, joining to order date via cust_orders ---
+      // Build a temporary orderkey→custkey map for O(1) lookup per lineitem.
+      std::unordered_map<Integer, Integer> order_to_cust;
+      order_to_cust.reserve(cust_orders.size());
+      for (auto& [ck, oms] : cust_orders) {
+         for (auto& om : oms)
+            order_to_cust[om.orderkey] = ck;
+      }
+
+      lineitem.scan(
+          lineitem_t::Key{std::numeric_limits<Integer>::min(),
+                          std::numeric_limits<Integer>::min()},
+          [&](const lineitem_t::Key& lk, const lineitem_t& l) {
+             auto it = order_to_cust.find(lk.l_orderkey);
+             if (it == order_to_cust.end())
+                return true;  // orphan lineitem — skip
+             Integer ck = it->second;
+             // Look up orderdate for this orderkey (needed for sort key).
+             Timestamp odate = 0;
+             auto dt = order_dates.find(lk.l_orderkey);
+             if (dt != order_dates.end())
+                odate = dt->second;
+             cust_lineitems[ck].push_back(
+                 {lk.l_orderkey, lk.l_linenumber, odate, l});
+             return true;
+          },
+          []() {});
+
+      // --- Pass 3: per-customer invoice generation ---
+      // Global invoice key counter, 1-based.
+      Integer next_invoicekey = 1;
+
+      long customers_processed = 0;
+      long invoices_inserted   = 0;
+      long lineitems_rewritten = 0;
+
+      for (auto& [custkey, order_metas] : cust_orders) {
+         auto& items = cust_lineitems[custkey];  // may be empty
+         Integer N = static_cast<Integer>(order_metas.size());
+         // ceil(1.5 * N)
+         Integer num_invoices = (3 * N + 1) / 2;
+
+         // Sort lineitems by (orderdate, orderkey, linenumber) so that
+         // lineitems from the same order cluster together and earlier orders
+         // appear first — matching the plan §4 traversal order.
+         std::sort(items.begin(), items.end(),
+                   [](const LineitemEntry& a, const LineitemEntry& b) {
+                      if (a.orderdate != b.orderdate) return a.orderdate < b.orderdate;
+                      if (a.orderkey  != b.orderkey)  return a.orderkey  < b.orderkey;
+                      return a.linenumber < b.linenumber;
+                   });
+
+         Integer total_lineitems = static_cast<Integer>(items.size());
+         // Target lineitems per invoice (≥ 1 to avoid division by zero).
+         Integer target_per_invoice =
+             (num_invoices > 0 && total_lineitems > 0)
+                 ? std::max(Integer(1), total_lineitems / num_invoices)
+                 : 1;
+
+         // State for the current open invoice.
+         Integer first_invoice_of_cust = next_invoicekey;
+         Integer inv_idx    = 0;       // which invoice slot we are filling
+         Integer inv_count  = 0;       // lineitems assigned to current invoice
+         Integer invoicekey = next_invoicekey;
+         next_invoicekey   += num_invoices;
+
+         // Collect per-invoice metadata for final insert.
+         struct InvoiceDraft {
+            Integer   invoicekey;
+            Timestamp max_orderdate;
+            Numeric   totaldue;
+         };
+         std::vector<InvoiceDraft> drafts;
+         drafts.reserve(static_cast<size_t>(num_invoices));
+         // Initialise first draft.
+         drafts.push_back({invoicekey, 0, 0.0});
+
+         // Assign lineitems to invoices; rewrite each with its invoicekey.
+         for (auto& entry : items) {
+            // Close current invoice and open next if threshold reached.
+            if (inv_count >= target_per_invoice && inv_idx + 1 < num_invoices) {
+               ++inv_idx;
+               invoicekey = first_invoice_of_cust + inv_idx;
+               drafts.push_back({invoicekey, 0, 0.0});
+               inv_count     = 0;
+            }
+
+            auto& draft = drafts.back();
+            // Accumulate invoice totals.
+            draft.totaldue +=
+                entry.rec.l_extendedprice
+                * (1.0 - static_cast<double>(entry.rec.l_discount))
+                * (1.0 + static_cast<double>(entry.rec.l_tax));
+            if (entry.orderdate > draft.max_orderdate)
+               draft.max_orderdate = entry.orderdate;
+
+            // Rewrite lineitem: erase old, insert with assigned invoicekey.
+            lineitem_t updated = entry.rec;
+            updated.l_invoicekey = invoicekey;
+            lineitem_t::Key lk{entry.orderkey, entry.linenumber};
+            lineitem.erase(lk);
+            lineitem.insert(lk, updated);
+            ++inv_count;
+            ++lineitems_rewritten;
+         }
+
+         // Insert invoice records for all drafts allocated to this customer.
+         // Any trailing invoice slots with no lineitems get zero totaldue and
+         // max_orderdate = 0 (edge case: customer has more invoice slots than
+         // lineitems).  Emit them to satisfy the "every invoicekey reachable"
+         // invariant checked by the load-test.
+         for (Integer slot = 0; slot < num_invoices; ++slot) {
+            Integer ikey = first_invoice_of_cust + slot;
+            Timestamp idate = 0;
+            Numeric   idue  = 0.0;
+            if (slot < static_cast<Integer>(drafts.size())) {
+               idate = drafts[static_cast<size_t>(slot)].max_orderdate;
+               idue  = drafts[static_cast<size_t>(slot)].totaldue;
+            }
+            // i_invoicedate = max(orderdate of bundled orders) + uniform(7,60)
+            idate += urand(7, 60);
+
+            // i_status weighted random: 'P' 70%, 'O' 25%, 'L' 5%
+            Integer roll = urand(1, 100);
+            Varchar<1> status(roll <= 70 ? "P" : (roll <= 95 ? "O" : "L"));
+
+            invoice_t rec{custkey, idate, idue, status,
+                          randomastring<25>(0, 25),
+                          randomastring<79>(0, 79)};
+            invoice.insert(invoice_t::Key{ikey}, rec);
+            ++invoices_inserted;
+
+            // TODO(secondary-index): when a custkey-sorted secondary index on
+            // Invoice is added (needed for Structure 1 sibling merge join),
+            // insert into it here alongside the primary insert.
+         }
+
+         // TODO(secondary-index): when a custkey-sorted secondary index on
+         // Orders is added (needed for Structure 1 sibling merge join), scan
+         // this customer's orders and insert into the secondary index here.
+
+         inspect_produced("customers with invoices", customers_processed);
+      }
+
+      std::cout << "\nInserted " << invoices_inserted << " invoices, rewrote "
+                << lineitems_rewritten << " lineitems." << std::endl;
+   }
+
    void log_sizes()
    {
       std::map<std::string, double> sizes = {{"part", part.size()},
@@ -511,7 +716,8 @@ struct TPCHWorkload {
                                              {"orders", orders.size()},
                                              {"lineitem", lineitem.size()},
                                              {"nation", nation.size()},
-                                             {"region", region.size()}};
+                                             {"region", region.size()},
+                                             {"invoice", invoice.size()}};
       logger.log_sizes(sizes);
    }
 

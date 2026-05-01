@@ -43,6 +43,7 @@ int main(int argc, char** argv)
    B::Adapter<lineitem_t>  lineitem(rocks_db);
    B::Adapter<nation_t>    nation(rocks_db);
    B::Adapter<region_t>    region(rocks_db);
+   B::Adapter<invoice_t>   invoice(rocks_db);
 
    B::Adapter<tpch::q9::q9_pipeline_view_t> pipeline_view(rocks_db);
    B::MergedAdapter<orders_t, lineitem_t>   merged_ol(rocks_db);
@@ -51,7 +52,7 @@ int main(int argc, char** argv)
 
    RocksDBLogger logger(rocks_db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                  orders, lineitem, nation, region, logger);
+                                  orders, lineitem, nation, region, invoice, logger);
    tpch::q9::Q9Workload<B> q9(tpch, orders, lineitem, nation, supplier,
                                 part, partsupp, pipeline_view, merged_ol);
 
