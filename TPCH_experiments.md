@@ -295,6 +295,43 @@ These do not require full query implementations:
 
 3. **MI density analysis**: For each query's MI, measure what fraction of records belong to each table type. High skew means single-table scans pay high overhead.
 
+## Memory-Pressure Experiments
+
+### Motivation
+
+At SF=40 with `--dram_gib=0.1`, ORDERS (~60K rows, ~2–3 MiB) fits in
+RocksDB's block cache. Hash join builds the entire orders side into an
+in-memory `std::unordered_multimap` — no spill, no I/O for the build side.
+This masks the locality advantage of MI and merge join (both streaming).
+
+### Experiment Matrix
+
+| Experiment | SF | dram_gib | Build-side fits? | Purpose |
+|---|---|---|---|---|
+| Baseline | 40 | 0.1 | Yes | Current results |
+| Low DRAM | 40 | 0.01 | Marginal | Block cache eviction |
+| High SF | 100 | 0.1 | No | Orders grows 2.5x |
+| High SF + Low DRAM | 100 | 0.01 | No | Strongest MI advantage |
+
+### Expected Outcomes
+
+- MI and merge join: degrade gracefully (streaming sequential I/O)
+- Hash join: degrades sharply (build phase triggers random reads when orders
+  exceeds block cache; `unordered_multimap` is always in-memory, no spill)
+- Pipeline view: degrades proportionally with data size
+
+### Implementation Note
+
+The hash join in `frontend/shared/merge-join/hash_join.hpp` uses
+`std::unordered_multimap` with no spill. At very high SF the build side
+may OOM. Accept OOM as evidence of hash join's limitation (honest for paper).
+
+### Reviewer 2 D2 Connection
+
+Provides nuanced trade-off data — at small scales hash join is competitive
+(simpler, no index overhead), but at realistic scales MI's locality advantage
+becomes decisive.
+
 ## Implementation Order
 
 1. **Q12 all structures** — plans ready for all 4 structures; implement C++ execution code

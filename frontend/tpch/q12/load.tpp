@@ -87,7 +87,7 @@ template <typename Backend>
 double Q12Workload<Backend>::get_size() const
 {
    switch (FLAGS_storage_structure) {
-      case 1: case 4: return 0.0;
+      case 1: case 4: return orders.size() + lineitem.size();
       case 2: return pipeline_view.size();
       case 3: return ol.get_merged_size();
       default: throw std::runtime_error("invalid --storage_structure");

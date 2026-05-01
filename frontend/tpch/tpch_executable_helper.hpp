@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -45,8 +46,9 @@ struct TpchExecutableHelper {
 
    void run()
    {
-      std::cout << std::string(20, '=') << structure_name << ","
-                << wrapper.get_size() << std::string(20, '=') << std::endl;
+      std::cout << "\n-- " << structure_name << " "
+                << std::string(std::max(1, 40 - (int)structure_name.size()), '-')
+                << std::endl;
       tpch.prepare();
       tput_tx("query");
    }
@@ -91,6 +93,14 @@ struct TpchExecutableHelper {
       long duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = static_cast<double>(count.load()) / duration * 1e6;
       tpch.logger.log(tput, count.load(), tx_name, structure_name, wrapper.get_size());
+
+      double avg_latency_ms = (tput > 0) ? 1000.0 / tput : 0.0;
+      double elapsed_s = duration / 1e6;
+      std::cout << "\n  Summary: " << std::fixed << std::setprecision(2)
+                << tput << " TX/s  |  " << avg_latency_ms << " ms/query  |  "
+                << count.load() << " queries in " << std::setprecision(1)
+                << elapsed_s << "s  |  " << std::setprecision(2)
+                << wrapper.get_size() << " MiB\n" << std::endl;
    }
 };
 

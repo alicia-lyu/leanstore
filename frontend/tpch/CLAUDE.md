@@ -365,6 +365,67 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   Spec-compliant date math in `lineitem_t::generateRandomRecord` is
   preserved.
 
+## Q12 Completed — Lessons for Q3/Q9
+
+### Reusable Infrastructure (copy directly)
+
+- `OrdersLineitemPipeline<Backend>` — same MI(ORDERS, LINEITEM), same
+  `populate_merged()` / `get_merged_size()`
+- Join drivers: `BinaryMergeJoin`, `PremergedJoin`, `HashJoin` all typed on
+  `ol_sort_key_t` / `joined_ol_t` from `views_ol.hpp`
+- `TpchExecutableHelper` for throughput measurement
+- Per-structure wrapper aliases (`per_structure_workload.hpp`)
+- `load.tpp` structure: `tpch.load()` → `populate_view()` →
+  `ol.populate_merged()`
+- F1 admission filter pattern in `PremergedJoin::scan_next` via `admit`
+  callback
+
+### What must be reimplemented per query
+
+- **View types + view loading**: Q12 uses manual two-pointer merge in
+  `populate_q12_view`; each query needs its own view type and loading
+  function
+- **Predicates and aggregates**: Different filter conditions, different
+  grouping keys, different output shape (`q{N}_agg_row_t`)
+- **`Params` struct**: Different substitution parameters per query
+- **Downstream joins**: Q3 needs CUSTOMER hash join; Q9 needs PART,
+  SUPPLIER, PARTSUPP, NATION lookups
+- **Post-aggregate processing**: Q3 needs ORDER BY + LIMIT 10; Q9 needs
+  GROUP BY (nation, year) with no LIMIT
+
+### Performance observations (SF=40)
+
+| Structure | TX/s | SSTRead(us)/TX | Size (MiB) |
+|-----------|------|----------------|------------|
+| base_merge_join (S1) | 10.74 | 24845 | ~37 |
+| pipeline_view (S2) | 10.40 | 31579 | 35.50 |
+| mi_premerged (S3) | 11.51 | 25143 | 32.15 |
+| base_hash_join (S4) | 11.21 | 26269 | ~37 |
+
+- MI advantage modest (~7%) for 2-table join — expect similar for Q3/Q9
+  since the OL pipeline dominates and extra joins are small-table lookups
+- Hash beats merge because build side fits in memory — need memory-pressure
+  experiments (see `TPCH_experiments.md §Memory-Pressure Experiments`)
+- Pipeline view slowest — fat rows increase scan cost proportionally
+- MI advantage should widen under I/O pressure (higher SF, lower DRAM)
+- MI is actually *smaller* than base tables because it shares the orderkey
+  prefix
+
+### Checklist for implementing Q3
+
+1. Fix `q3/load.tpp` — replace removed `ol.populate_view()` /
+   `ol.get_view_size()` with per-query `populate_q3_view()` and local size
+2. Define `q3_pipeline_view_t` (replace `using = joined_ol_t` placeholder)
+3. Implement `Params::defaults()` (mktsegment=BUILDING,
+   orderdate < 1995-03-15, shipdate > 1995-03-15)
+4. Implement predicates: `q3_predicate_orders`, `q3_predicate_lineitem`,
+   `q3_predicate_joined`
+5. Implement all 4 `query_by_*` bodies — same monolithic post-join pattern
+   as Q12, adding CUSTOMER hash lookup inside the callback
+6. Add top-10 selection (priority queue or partial sort)
+7. Add XOR parity test (`test_query_q3_lsm`)
+8. Add CMake targets and `generate_targets.py` entries
+
 ## What's Needed to Fully Implement Q12/Q3/Q9
 
 - **Q12**: `query_by_*` bodies, predicates, F1 admission filter
