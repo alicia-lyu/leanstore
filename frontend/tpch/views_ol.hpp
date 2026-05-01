@@ -146,6 +146,19 @@ struct joined_ol_t : public joined_t<30, ol_sort_key_t, false, orders_t, lineite
 
 }  // namespace tpch
 
+// SortKeyFor specializations: register orders_t and lineitem_t as participants
+// in the ol_sort_key_t join key. This enables the default SKMatcher<R1, R2>
+// specialization (HasSharedSKBuilder) to resolve automatically for these types.
+template <>
+struct SortKeyFor<orders_t> {
+   using type = tpch::ol_sort_key_t;
+};
+
+template <>
+struct SortKeyFor<lineitem_t> {
+   using type = tpch::ol_sort_key_t;
+};
+
 // SKBuilder specialization: how to derive ol_sort_key_t from each
 // participating record type. Required by PremergedJoin / BinaryMergeJoin.
 template <>

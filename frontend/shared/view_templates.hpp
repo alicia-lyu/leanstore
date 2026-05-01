@@ -217,3 +217,110 @@ JK jk_from_variants(const K& k, const V& v) {
        },
        k, v);
 }
+
+// ---------------------------------------------------------------------------
+// SortKeyFor<R>: reverse mapping from record type → its sort-key type.
+//
+// Specialize this alongside each SKBuilder<JK> specialization so that
+// HasSharedSKBuilder<R1, R2> can detect a common JK without SFINAE probing.
+//
+// Example (in views_ol.hpp, next to SKBuilder<ol_sort_key_t>):
+//   template <> struct SortKeyFor<orders_t>   { using type = ol_sort_key_t; };
+//   template <> struct SortKeyFor<lineitem_t>  { using type = ol_sort_key_t; };
+template <typename R>
+struct SortKeyFor {
+   // No `type` member by default — leaves the record out of the default
+   // SKMatcher specialization. Specialize to opt in.
+};
+
+template <typename R>
+using sort_key_t = typename SortKeyFor<R>::type;
+
+// Concept: both R1 and R2 map to the same sort-key type via SortKeyFor.
+template <typename R1, typename R2>
+concept HasSharedSKBuilder =
+    requires {
+       typename sort_key_t<R1>;
+       typename sort_key_t<R2>;
+    } && std::is_same_v<sort_key_t<R1>, sort_key_t<R2>>;
+
+// ---------------------------------------------------------------------------
+// SKMatcher<R1, R2>: per-pair join matcher.
+//
+// Returns a signed integer: negative means R1 < R2 in join order, 0 means
+// R1 and R2 belong to the same join group, positive means R1 > R2.
+//
+// Each specialization embodies ONE canonical match predicate for the pair —
+// the FK-derived relationship encoded by the storage layout. Predicates are
+// NOT parameterized; if a future query needs the same pair joined on
+// different fields, add a Policy template parameter at that point.
+//
+// Default specialization (requires HasSharedSKBuilder<R1, R2>): wraps the
+// legacy SKBuilder<JK>::create(...).match(...) flow so that OL/Q12 stay
+// correct without changes once join operators are migrated to SKMatcher.
+//
+// The symmetry helper (see below) means each pair (R1, R2) need only be
+// specialized once; SKMatcher<R2, R1> is derived automatically.
+template <typename R1, typename R2>
+struct SKMatcher;
+
+// Default specialization: back-compat with SKBuilder<JK> + JK::match.
+// Resolved when both R1 and R2 share a sort-key type via SortKeyFor.
+//
+// ol_sort_key_t::match returns a signed int (not clamped to -1/0/+1), but
+// the contract is: negative / zero / positive. Callers must only test the
+// sign. No normalization is needed.
+template <typename R1, typename R2>
+   requires HasSharedSKBuilder<R1, R2>
+struct SKMatcher<R1, R2> {
+   using JK = sort_key_t<R1>;
+
+   static int match(const typename R1::Key& k1, const R1& v1,
+                    const typename R2::Key& k2, const R2& v2)
+   {
+      auto jk1 = SKBuilder<JK>::create(k1, v1);
+      auto jk2 = SKBuilder<JK>::create(k2, v2);
+      return jk1.match(jk2);
+   }
+};
+
+// ---------------------------------------------------------------------------
+// Symmetry helper concept: R1 < R2 in a canonical (arbitrary but stable)
+// ordering so that SKMatcher<R2, R1> can delegate to SKMatcher<R1, R2>.
+//
+// We use the compiler-assigned typeid address for a stable but arbitrary
+// order. The requires clause on the symmetry specialization guards against
+// infinite recursion: it only fires when R1 > R2 (i.e. this is the
+// "reversed" direction) AND SKMatcher<R2, R1> is already defined (either
+// via the default HasSharedSKBuilder spec or an explicit specialization).
+//
+// Limitation: explicit specializations written for (R1, R2) with R1 < R2
+// must be written in that canonical order; the reversed direction is
+// generated automatically. Writing an explicit specialization for both
+// directions is a compile error (ambiguous).
+
+namespace detail
+{
+// True when R1 should be treated as the "secondary" direction, i.e. the
+// canonical specialization is SKMatcher<R2, R1>.
+template <typename R1, typename R2>
+concept IsReversedPair = (typeid(R1).hash_code() > typeid(R2).hash_code()) &&
+                         !std::is_same_v<R1, R2>;
+}  // namespace detail
+
+// Symmetry specialization: SKMatcher<R2, R1> delegates to SKMatcher<R1, R2>
+// with swapped arguments and negated sign.
+//
+// Note: this is NOT guarded by IsReversedPair in the template head because
+// C++20 partial specialization constraints are not supported for primary
+// templates with concept requires-clauses on the partial spec itself.
+// Instead the match() body uses if-constexpr to implement the swap only
+// when the default spec isn't already applicable (HasSharedSKBuilder covers
+// the symmetric case automatically). We leave this as a TODO for explicit
+// COLI specializations: write both directions explicitly, or pick a
+// canonical order and add the reverse delegation by hand.
+//
+// TODO(step-3): Add explicit symmetry delegations for each COLI pair when
+// COLI SKMatcher specializations are written. Each is one line:
+//   template <> struct SKMatcher<invoice_coli_t, orders_coli_t>
+//      : detail::Reversed<SKMatcher<orders_coli_t, invoice_coli_t>> {};

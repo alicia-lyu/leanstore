@@ -80,6 +80,19 @@ if (APPLE)
         random_standalone
     )
 
+    # --- test_sk_matcher_compat: back-compat parity test for SKMatcher default spec ---
+    add_executable(test_sk_matcher_compat tpch/tests/test_sk_matcher_compat.cpp)
+    target_compile_definitions(test_sk_matcher_compat PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_sk_matcher_compat PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_sk_matcher_compat PUBLIC
+        config_standalone
+        random_standalone
+    )
+
     # --- geo_lsm executable ---
     add_executable(geo_lsm geo/executable_rocksdb.cpp)
     target_compile_definitions(geo_lsm PRIVATE ROCKSDB_ONLY)
@@ -204,6 +217,9 @@ else()
 
     add_executable(test_query_q12_lsm tpch/tests/q12/test_query_q12_rocksdb.cpp)
     target_link_libraries(test_query_q12_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_sk_matcher_compat tpch/tests/test_sk_matcher_compat.cpp)
+    target_link_libraries(test_sk_matcher_compat PUBLIC RocksDBLogger Threads::Threads)
 
     add_executable(q12_btree tpch/q12/executable_leanstore.cpp)
     target_link_libraries(q12_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
