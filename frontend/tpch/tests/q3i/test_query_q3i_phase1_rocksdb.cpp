@@ -141,11 +141,18 @@ int main(int argc, char** argv)
 
    std::cout << "\nTotal rows: " << row_count << "\n";
 
-   // Sanity check: expect at least one qualifying row at SF=1 for BUILDING.
-   // Previously failed with row_count=0 due to stale data from a
-   // pre-randomNumeric-fix load; now resolved (see q3i/CLAUDE.md §Phase 1).
-   bool ok = (row_count > 0);
-   std::cout << (ok ? "[OK]   " : "[FAIL] ")
-             << " row_count > 0  (got " << row_count << ", expected ≥1)\n";
+   // Sanity check: apply_topN(out, 10, ...) is called in query_by_merged, so
+   // exactly 10 rows should be returned at SF=1 (> 10 qualifying rows exist).
+   // Also verify rows are revenue-sorted descending (top-10 ORDER BY revenue DESC).
+   bool count_ok = (row_count == 10);
+   bool sorted_ok = true;
+   for (long i = 1; i < row_count; ++i) {
+      if (out[i].revenue > out[i - 1].revenue) { sorted_ok = false; break; }
+   }
+   bool ok = count_ok && sorted_ok;
+   std::cout << (count_ok ? "[OK]   " : "[FAIL] ")
+             << " row_count == 10  (got " << row_count << ")\n";
+   std::cout << (sorted_ok ? "[OK]   " : "[FAIL] ")
+             << " rows sorted by revenue DESC\n";
    return ok ? 0 : 1;
 }

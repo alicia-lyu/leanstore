@@ -1,7 +1,8 @@
 // Operator-translation reference: see ../OPERATORS.md
 //   §3 (per-operator strategy)    — what each operator looks like in C++
 //   §3 op 4 (load vs query)       — keep query-time joins on shared JoinState
-//   §6 (comparison-integrity)     — read before changing join strategy
+//   §6 Filter Pushdown            — predicate hoisting / short-circuit rules
+//   §7 (comparison-integrity)     — read before changing join strategy
 //
 // Template method bodies for Q3IWorkload<Backend> query methods,
 // Params::defaults(), q3i_agg_row_t::print(), and predicate implementations.
@@ -10,6 +11,8 @@
 
 #include <ostream>
 #include <string_view>
+
+#include "../operators.hpp"
 
 namespace tpch::q3i
 {
@@ -137,100 +140,130 @@ struct LineitemRevenueAccumulator {
 };
 
 // ---------------------------------------------------------------------------
+// COLIGroupWalkVisitor — lifted to namespace scope so Phase 2B S1/S2/S4
+// drivers can reference the same Visitor type without duplication.
+//
+// Design notes:
+//   • threshold_ok is computed once per custkey group, the first time
+//     on_order fires.  Because invoices precede orders in COLI byte-lex
+//     order (tag 2 < tag 3), open_due.value is fully accumulated before
+//     the first on_order call — so the threshold check is final at that
+//     point.  on_order / on_lineitem no-op for the rest of the group when
+//     threshold_ok is false, honouring OPERATORS.md §6 Filter Pushdown:
+//     the aggregate-output filter fuses with the SortedAggregate, never
+//     a post-walk Filter node.
+//   • The Visitor collects all qualifying rows into `out`; apply_topN is
+//     called by query_by_merged after the walk to enforce ORDER BY revenue
+//     DESC LIMIT 10 (OPERATORS.md §3 op 8–9).
+
+struct COLIGroupWalkVisitor {
+   const Params& params;
+   std::vector<q3i_agg_row_t>& out;
+
+   // Inside-pipeline accumulators (factored — S1 reuses these in Phase 2).
+   CustomerOpenDueAccumulator open_due;
+   LineitemRevenueAccumulator rev;
+
+   // Per-custkey gates.
+   bool mktsegment_ok = false;  // set by on_customer; gate for entire group
+   bool threshold_ok  = false;  // set on first on_order; gate for OL work
+
+   // Current open order register: reset per order, flushed at next order
+   // or at on_group_end.  Lineitems are co-located under their parent order
+   // in COLI byte order, so a single register suffices.
+   bool      have_open_order = false;
+   Integer   cur_orderkey    = 0;
+   Timestamp cur_orderdate   = 0;
+   Integer   cur_shippriority = 0;
+
+   // Emit the current order and reset per-order state.
+   // Called at each on_order boundary and at on_group_end.
+   void flush_order() {
+      if (!have_open_order) return;
+      // threshold_ok already confirmed — emit unconditionally.
+      out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
+                     cur_shippriority, open_due.value});
+      have_open_order = false;
+      rev.reset();
+   }
+
+   // Gate predicate: returning false suppresses on_invoice / on_order /
+   // on_lineitem for the entire custkey group (on_group_end still fires).
+   bool on_customer(Integer /*ck*/, const customer_coli_t& c) {
+      auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
+      auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+      mktsegment_ok = (sm == psm);
+      return mktsegment_ok;
+   }
+
+   // Accumulate open-due sub-aggregate before any order rows arrive
+   // (guaranteed by invoice tag = 2 < orders tag = 3 in byte-lex order).
+   void on_invoice(const invoice_coli_t::Key&, const invoice_coli_t& i) {
+      open_due.consume_invoice(i);
+   }
+
+   // First on_order call: finalise threshold_ok (open_due is complete).
+   // Subsequent calls: flush the previous order register, open a new one
+   // only when both the date filter and the threshold pass.
+   void on_order(const orders_coli_t::Key& k, const orders_coli_t& o) {
+      if (!threshold_ok) {
+         // First order for this custkey — evaluate threshold now that all
+         // invoices have been consumed.
+         threshold_ok = (open_due.value > params.threshold);
+         if (!threshold_ok) return;  // skip entire OL sub-hierarchy
+      } else {
+         flush_order();  // close previous order before opening a new one
+      }
+      if (o.o_orderdate >= params.orderdate) return;  // single-table date filter
+      have_open_order  = true;
+      cur_orderkey     = k.orderkey;
+      cur_orderdate    = o.o_orderdate;
+      cur_shippriority = o.o_shippriority;
+   }
+
+   // Accumulate revenue; no-op when threshold failed or order was filtered.
+   void on_lineitem(const lineitem_coli_t::Key&, const lineitem_coli_t& l) {
+      if (!threshold_ok || !have_open_order) return;
+      rev.consume(l, params);
+   }
+
+   // Emit last open order for this group, then reset per-group state.
+   void on_group_end(Integer /*ck*/) {
+      if (threshold_ok) flush_order();
+      mktsegment_ok  = false;
+      threshold_ok   = false;
+      open_due.reset();
+   }
+};
+
+// ---------------------------------------------------------------------------
 // Q3IWorkload query methods
 
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
 {
-   // S3: COLIGroupWalk visitor over the 4-table COLI MI.
+   // S3: COLIGroupWalk over the 4-table COLI MI using the namespace-scope
+   // COLIGroupWalkVisitor.  After the walk, apply_topN enforces
+   // ORDER BY revenue DESC LIMIT 10 (OPERATORS.md §3 op 8–9).
    //
-   // Byte-lex order within a custkey group (after tag reorder in views_coli.hpp):
+   // Byte-lex order within a custkey group:
    //   customer → invoice* → (orders → lineitems*)+
    //
-   // This means cust_open_due is fully accumulated before any on_order fires,
-   // enabling a single streaming pass with no buffering or hashmaps.
-   //
-   // The Visitor delegates consume_invoice / consume to the standalone
-   // accumulators above. Phase 2's S1 path reuses the same accumulators.
-   // Outside-pipeline threshold filter applied at flush_order time
-   // (OPERATORS.md §3 op 7).
-
-   struct Visitor {
-      const Params& params;
-      std::vector<q3i_agg_row_t>& out;
-
-      // Inside-pipeline accumulators (factored — S1 reuses these in Phase 2).
-      CustomerOpenDueAccumulator open_due;
-      LineitemRevenueAccumulator rev;
-
-      // Per-custkey gate: set by on_customer, cleared by on_group_end.
-      bool mktsegment_ok = false;
-
-      // Current open order register: reset per order, flushed at next order
-      // or at on_group_end. Lineitems are co-located under their parent order
-      // in COLI byte order, so a single register suffices.
-      bool      have_open_order = false;
-      Integer   cur_orderkey;
-      Timestamp cur_orderdate;
-      Integer   cur_shippriority;
-
-      // Emit the current order if it passes the outside-pipeline threshold
-      // filter (OPERATORS.md §3 op 7) and reset per-order state.
-      void flush_order() {
-         if (!have_open_order) return;
-         if (open_due.value > params.threshold) {
-            out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
-                           cur_shippriority, open_due.value});
-         }
-         have_open_order = false;
-         rev.reset();
-      }
-
-      // Gate predicate: return false to suppress on_invoice / on_order /
-      // on_lineitem for the entire group (on_group_end is still called).
-      bool on_customer(Integer /*ck*/, const customer_coli_t& c) {
-         auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
-         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-         mktsegment_ok = (sm == psm);
-         return mktsegment_ok;
-      }
-
-      // Accumulate open-due sub-aggregate before any order rows arrive
-      // (guaranteed by invoice tag = 2 < orders tag = 3 in byte-lex order).
-      void on_invoice(const invoice_coli_t::Key&, const invoice_coli_t& i) {
-         open_due.consume_invoice(i);
-      }
-
-      // Single-table filter on o_orderdate; open the per-order register.
-      void on_order(const orders_coli_t::Key& k, const orders_coli_t& o) {
-         flush_order();
-         if (o.o_orderdate >= params.orderdate) return;  // single-table filter
-         have_open_order  = true;
-         cur_orderkey     = k.orderkey;
-         cur_orderdate    = o.o_orderdate;
-         cur_shippriority = o.o_shippriority;
-      }
-
-      // Accumulate revenue for the open order; silently skip if no open order
-      // (the parent order was filtered out by o_orderdate).
-      void on_lineitem(const lineitem_coli_t::Key&, const lineitem_coli_t& l) {
-         if (!have_open_order) return;
-         rev.consume(l, params);
-      }
-
-      // Emit last open order for this group, then reset per-group state.
-      void on_group_end(Integer /*ck*/) {
-         flush_order();
-         mktsegment_ok = false;
-         open_due.reset();
-      }
-   };
-
+   // cust_open_due is fully accumulated before the first on_order fires,
+   // so the threshold check is computed once and used as a short-circuit
+   // gate for the entire OL sub-hierarchy of each custkey group
+   // (OPERATORS.md §6 Filter Pushdown: aggregate-output filter fuses with
+   // the SortedAggregate, never a post-walk Filter node).
    out.clear();
    // All remaining Visitor fields have in-class default initializers; only
    // params and out lack defaults so they are named explicitly.
-   Visitor v{.params = params, .out = out};
+   COLIGroupWalkVisitor v{.params = params, .out = out};
    coli_group_walk<Backend>(coli.merged_adapter(), v);
+   // Apply top-10 ordered by revenue DESC outside the pipeline
+   // (OPERATORS.md §3 op 8–9).
+   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return a.revenue > b.revenue;
+   });
    return static_cast<long>(out.size());
 }
 
