@@ -1,7 +1,7 @@
 // Q3I S3 physical plan — substitutes the family logical plan with a
 // single COLIGroupWalk over the 4-table COLI MergedAdapter.
 //
-// Why one operator replaces five: the COLI MI co-locates CUSTOMER,
+// Why one operator replaces nine: the COLI MI co-locates CUSTOMER,
 // INVOICE, ORDERS, and LINEITEM by custkey using Calcite-style tagged
 // keys. Within a custkey group, byte-lex order is:
 //
@@ -11,47 +11,59 @@
 // tag = 3, so all invoices arrive before any order). This means a
 // single forward streaming pass — no buffering, no hashmaps — can:
 //
-//   1. Apply the c_mktsegment gate at the customer record
-//   2. Accumulate cust_open_due over invoices BEFORE any order arrives
-//   3. Maintain a per-orderkey revenue accumulator, flushing at each
-//      order boundary
-//   4. Apply the threshold filter at flush time
+//   1. Apply the c_mktsegment gate at the customer record (suppresses
+//      the rest of the group when the gate fails)
+//   2. Apply the i_status='O' filter at each on_invoice and accumulate
+//      cust_open_due over the surviving invoices BEFORE any order arrives
+//   3. Apply the threshold filter at flush time — groups failing the
+//      threshold short-circuit the OL accumulation entirely (or at
+//      minimum, suppress emission)
+//   4. Apply o_orderdate < DATE at on_order; if the order fails, no
+//      lineitems for that orderkey are admitted
+//   5. Apply l_shipdate > DATE at on_lineitem; failing lineitems are
+//      simply not added to the per-orderkey revenue
+//
+// FILTER PUSHDOWN STATUS: every filter from family_logical.dot is fused
+// into the walker. None applies post-join. The walker emits already
+// threshold-passed, mktsegment-passed q3i_agg_row_t rows; outside the
+// walker we only sort and truncate.
 //
 // C++ implementation map (q3i/query.tpp::query_by_merged):
 //
 //   coli_group_walk<Backend>(merged_coli, Visitor{...})
 //
 //     Visitor::on_customer  → c_mktsegment gate (returns false to
-//                             suppress on_invoice/order/lineitem)
-//     Visitor::on_invoice   → CustomerOpenDueAccumulator::consume_invoice
-//                             (filters i_status='O' inline)
+//                             suppress on_invoice/order/lineitem); this
+//                             realises the FILTER on CUSTOMER.
+//     Visitor::on_invoice   → q3i_predicate_invoice (i_status='O') +
+//                             CustomerOpenDueAccumulator::consume_invoice
 //     Visitor::on_order     → flush_order(); start new orderkey register
-//                             if o_orderdate < DATE
-//     Visitor::on_lineitem  → LineitemRevenueAccumulator::consume
-//                             (filters l_shipdate > DATE inline)
+//                             only if q3i_predicate_orders passes
+//                             (o_orderdate < DATE)
+//     Visitor::on_lineitem  → q3i_predicate_lineitem(l_shipdate > DATE)
+//                             + LineitemRevenueAccumulator::consume
 //     Visitor::on_group_end → final flush_order(); reset accumulators
 //
 //     flush_order()         → emits q3i_agg_row_t IFF
-//                             cust_open_due > THRESHOLD (outside-pipeline
-//                             threshold filter; OPERATORS.md §3 op 7)
+//                             cust_open_due > THRESHOLD (THRESHOLD filter
+//                             from family_logical fused at the
+//                             SortedAggregate output, per OPERATORS.md §6
+//                             "no post-join filter")
 //
 // PremergedJoin / BinaryMergeJoin are NOT instantiated here — the COLI
 // merged adapter's tagged-key encoding makes the Visitor pattern strictly
-// more expressive (4-way custkey grouping with 2 distinct sub-aggregates).
-// This is the operator-level expression of the §3.1.2 sibling +
-// §3.1.3 hierarchical hybrid pattern.
+// more expressive (4-way custkey grouping with 2 distinct sub-aggregates
+// + 5 fused filters). This is the operator-level expression of the
+// §3.1.2 sibling + §3.1.3 hierarchical hybrid pattern.
 
 digraph {
   rankdir=BT;
 
-  mi [label="MergedScanner(MI_COLI)\n= [customer_coli_t, invoice_coli_t,\n   orders_coli_t, lineitem_coli_t]\nkeyed by custkey (tagged keys)",
+  mi [label="MergedScanner(MI_COLI)\n= [customer_coli_t, invoice_coli_t,\n   orders_coli_t, lineitem_coli_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLIGroupWalk(Visitor)\nsubsumes:\n  • per-table Filters\n  • per-CUSTKEY SortedAggregate (invoice)\n  • CUSTOMER ⋈ ORDERS ⋈ LINEITEM\n  • per-ORDERKEY SortedAggregate (lineitem)\n  • Project → q3i_agg_row_t",
+  walk [label="COLIGroupWalk(Visitor)\nsubsumes:\n  • all 4 per-table filters (fused at on_*)\n  • per-CUSTKEY SortedAggregate (invoice)\n  • THRESHOLD filter (fused at flush_order)\n  • CUSTOMER ⋈ ORDERS ⋈ LINEITEM\n  • per-ORDERKEY SortedAggregate (lineitem)\n  • Project → q3i_agg_row_t",
          shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
-
-  out_filt [label="Filter(cust_open_due > THRESHOLD)\nfused in Visitor::flush_order",
-            shape=box, style=filled, fillcolor="#E6F4EA"];
 
   sort  [label="Sort(revenue DESC)\n[apply_top10 partial_sort]",
          shape=box, style=filled, fillcolor="#E6F4EA"];
@@ -59,7 +71,6 @@ digraph {
          shape=box, style=filled, fillcolor="#E6F4EA"];
 
   mi    -> walk;
-  walk  -> out_filt;
-  out_filt -> sort;
+  walk  -> sort;
   sort  -> limit;
 }

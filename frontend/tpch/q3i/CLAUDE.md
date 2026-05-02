@@ -72,11 +72,105 @@ Q3I is the **COLI MI showcase** for combining §3.1.3 hierarchical join with a
 
 ---
 
-## Calcite Column Index Mapping
+## Plan Descriptions
 
-TODO: fill in once Calcite plan files for Q3I exist. The concatenated
-CUSTOMER ∥ ORDERS ∥ LINEITEM ∥ INVOICE schema will be indexed and the mapping
-from Calcite's `$N` references to C++ struct fields will be documented here.
+Three DOT files in [`plans/`](plans/) document the operator graphs for the
+four storage structures:
+
+- [`plans/family_logical.dot`](plans/family_logical.dot) — **shared logical
+  plan for S1, S2, S3.** The merged-index family agrees on this graph; only
+  the inside-pipeline physical operator differs (the comparison axis).
+- [`plans/family_s3_physical.dot`](plans/family_s3_physical.dot) — **S3
+  physical specialisation.** A single `coli_group_walk` over the 4-table
+  COLI MergedAdapter subsumes the per-table filters, both SortedAggregates,
+  the threshold filter, and the 3-way join.
+- [`plans/baseline_s4.dot`](plans/baseline_s4.dot) — **S4 baseline.** A
+  HashJoin chain over base tables with two pre-built hashmaps standing in
+  for the missing custkey ordering.
+
+### Filter pushdown principle (applied across all three plans)
+
+Every parameterised filter is pushed as far down the operator graph as
+possible, **stopping only at secondary structures** so they remain
+reusable across param sets (predicate hoisting, mirroring Q12 §4). For
+Q3I this means:
+
+- The COLI MI, the COLI custkey-sorted secondaries, and the
+  `q3i_pipeline_view_t` are all loaded **without** applying mktsegment,
+  threshold, orderdate, shipdate, or status='O' filters. A new param set
+  triggers a new query, not a new load.
+- Single-table filters (`i_status`, `c_mktsegment`, `o_orderdate`,
+  `l_shipdate`) fuse with their TableScan at query time.
+- The threshold filter on `cust_open_due` fuses with the per-customer
+  SortedAggregate — it fires the moment the aggregate value is finalised
+  for a custkey, **before** that custkey enters the OL join. It is never
+  a post-join Filter node.
+- For merged-index physical execution (S3), the principle is sharper:
+  every filter applies **during** the group walk, at the Visitor's
+  `on_*` hook for that record type. There is no post-walk Filter node —
+  by the time a row leaves `coli_group_walk`, it has passed every
+  per-table predicate, the mktsegment gate, AND the threshold gate.
+
+### How the four approaches differ
+
+**S3 (MI[COLI] + COLIGroupWalk)** is the tightest expression of the
+plan. The COLI tagged-key encoding co-locates customer, invoice, orders,
+and lineitem records by `custkey` in byte-lex order
+(`customer → invoice* → (orders → lineitem*)+`), and the walker
+streams through them in a single forward pass. Every filter, both
+sub-aggregates, and the join all fuse into the Visitor's hooks. The
+mktsegment gate at `on_customer` skips the entire group; the threshold
+gate at `flush_order` skips per-orderkey emission; the per-table date
+filters are inline `if` checks at `on_order` / `on_lineitem`. No
+buffering, no hashmaps, no separate aggregate pass — this is the
+operator-level expression of the §3.1.2 sibling + §3.1.3 hierarchical
+hybrid pattern.
+
+**S1 (custkey-sorted secondaries + 4-way merge)** runs the same
+logical plan as S3 over four separate custkey-sorted streams (CUSTOMER
++ three COLI secondary indexes). Implemented as a 4-way streaming
+merge (`coli_secondary_group_walk`) that dispatches to the **same
+Visitor** as S3. The accumulators (`CustomerOpenDueAccumulator`,
+`LineitemRevenueAccumulator`) are reused verbatim. S1 differs from S3
+only in I/O pattern: four trees instead of one, four scanner-advance
+calls per group instead of one. This is what makes the S1-vs-S3
+comparison apples-to-apples per OPERATORS.md §6.1 — same logical
+plan, same accumulator code, same filter pushdown, only the physical
+scan substrate differs.
+
+**S2 (materialised pipeline view)** caches the post-aggregate output
+of the family logical plan as a `q3i_pipeline_view_t` table at load
+time. The view is loaded with the per-table filters fused but
+**without** the mktsegment or threshold filters (predicate hoisting),
+so it is reusable across param sets. Query time is then a sequential
+view scan, mktsegment + threshold filters applied per row, then sort
++ limit. S2 measures "what if we paid for the inside-pipeline work
+once at load time" against S1/S3's "do it every query".
+
+**S4 (HashJoin chain baseline)** uses Calcite's default plan because
+nothing is custkey-sorted. The same filter-pushdown principle applies:
+per-table filters fuse with TableScans before HashJoin, the threshold
+filter fuses with the invoice aggregate so only surviving custkeys
+land in `open_due`, and mktsegment fuses with the customer scan so
+only surviving custkeys land in `cust_seg`. Probe-time hashmap
+lookups against `open_due` and `cust_seg` are then **lookups, not
+filters** — the predicates were applied earlier; absence from a map
+just means "this row was already excluded". The remaining
+`unordered_map<orderkey, q3i_agg_row_t>` is the hashmap tax S4 pays
+for unsorted HashJoin output, not a filter. S4 measures the
+no-merged-index baseline that the family is compared against.
+
+### Comparison axis summary
+
+| Approach | Inside-pipeline physical | Filters resolved by |
+|----------|--------------------------|---------------------|
+| S1 (merge family) | 4-way custkey merge over secondaries | Visitor `on_*` hooks (same code as S3) |
+| S2 (merge family) | sequential view scan | TableScan-time filters baked into view; mktsegment / threshold per-row at query time |
+| S3 (merge family) | `coli_group_walk` over MI[COLI] | Visitor `on_*` hooks (same code as S1) |
+| S4 (baseline)     | HashJoin(O ⋈ L) + 2 probe hashmaps | TableScan + per-aggregate; probe lookups encode the rest |
+
+All four agree on what's outside the pipeline: `apply_top10` (sort by
+revenue DESC + truncate to 10).
 
 ---
 
