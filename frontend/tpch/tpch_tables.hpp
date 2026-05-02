@@ -15,6 +15,7 @@ inline constexpr Timestamp TPCH_ENDDATE = 10591;         // 1998-12-31
 inline constexpr Timestamp TPCH_ORDERS_ENDDATE = 10440;  // 1998-08-02 (ENDDATE - 151)
 inline constexpr Timestamp DATE_1994_01_01 = 8766;       // 1994-01-01 (Q12 default receiptdate_lo)
 inline constexpr Timestamp DATE_1995_01_01 = 9131;       // 1995-01-01 (Q12 default receiptdate_hi)
+inline constexpr Timestamp DATE_1995_03_15 = 9204;       // 1995-03-15 (Q3/Q3I default orderdate/shipdate)
 
 // P_NAME color words (92 values from TPC-H spec §4.2.3)
 inline constexpr const char* TPCH_COLORS[] = {

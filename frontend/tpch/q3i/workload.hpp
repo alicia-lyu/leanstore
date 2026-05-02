@@ -101,7 +101,10 @@ class Q3IWorkload
        typename Backend::template Adapter<invoice_t>& invoice,
        typename Backend::template Adapter<q3i_pipeline_view_t>& pipeline_view,
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
-                                                lineitem_coli_t, invoice_coli_t>& merged_coli);
+                                                lineitem_coli_t, invoice_coli_t>& merged_coli,
+       typename Backend::template Adapter<orders_coli_t>&   orders_secondary,
+       typename Backend::template Adapter<lineitem_coli_t>& lineitem_secondary,
+       typename Backend::template Adapter<invoice_coli_t>&  invoice_secondary);
 
    // ------------------------------------------------------------------
    // Queries — one per storage structure.

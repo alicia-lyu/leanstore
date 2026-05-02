@@ -31,3 +31,9 @@ test_data_coli2 - moved to TRASH/ - COLI load-test run verifying 2× invoice car
 test_csv_coli2 - moved to TRASH/ - CSV/log dir paired with test_data_coli2
 test_data_q12_verify - moved to TRASH/ - Q12 parity regression test run after COLI tag reorder
 test_csv_q12_verify - moved to TRASH/ - CSV/log dir paired with test_data_q12_verify
+test_data_q3i - moved to TRASH/ - q3i phase 1 test harness rocksdb data
+test_csv_q3i - moved to TRASH/ - q3i phase 1 test harness logs
+test_data_q3i - moved to TRASH/ - q3i phase 1 harness rocksdb data (multiple iterations during debug)
+test_csv_q3i - moved to TRASH/ - q3i phase 1 harness logs (multiple iterations during debug)
+test_data_q12 - moved to TRASH/ - q12 verification rocksdb data
+test_csv_q12 - moved to TRASH/ - q12 verification logs
