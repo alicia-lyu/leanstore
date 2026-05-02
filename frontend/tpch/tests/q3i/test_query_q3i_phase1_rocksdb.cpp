@@ -142,14 +142,10 @@ int main(int argc, char** argv)
    std::cout << "\nTotal rows: " << row_count << "\n";
 
    // Sanity check: expect at least one qualifying row at SF=1 for BUILDING.
-   // Currently fails with row_count=0 due to a known invoice payload
-   // corruption in the COLI merged adapter (see q3i/CLAUDE.md §Phase 1).
+   // Previously failed with row_count=0 due to stale data from a
+   // pre-randomNumeric-fix load; now resolved (see q3i/CLAUDE.md §Phase 1).
    bool ok = (row_count > 0);
-   std::cout << (ok ? "[OK]   " : "[KNOWN-ISSUE]")
-             << " row_count > 0  (got " << row_count
-             << ", expected ≥1; tracking in q3i/CLAUDE.md)\n";
-
-   // Returning 0 even on the known issue so CI/build pipelines can run this
-   // harness without false-failing while the merged-adapter fix is pending.
-   return 0;
+   std::cout << (ok ? "[OK]   " : "[FAIL] ")
+             << " row_count > 0  (got " << row_count << ", expected ≥1)\n";
+   return ok ? 0 : 1;
 }

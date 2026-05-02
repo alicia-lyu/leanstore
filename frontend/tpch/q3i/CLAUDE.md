@@ -124,7 +124,7 @@ add_executable(q3i_lsm   tpch/q3i/executable_rocksdb.cpp)
 
 ### Phase 1 — Minimal end-to-end: merged path only (S3)
 
-**Status (2026-05-01): substantially complete; one residual blocker.**
+**Status (2026-05-01): complete.**
 
 **Goal**: one runnable path that exercises the COLI MI showcase end-to-end.
 
@@ -137,15 +137,11 @@ add_executable(q3i_lsm   tpch/q3i/executable_rocksdb.cpp)
 - `tests/q3i/test_query_q3i_phase1_rocksdb.cpp` + CMake target `test_query_q3i_phase1_lsm` — temporary Phase 1 harness that loads S3 and runs `query_by_merged` directly. Includes a `coli_group_walk` diagnostic Visitor reporting building-customer counts.
 - `frontend/shared/randutils.hpp` — fixed `randomNumeric` to map `getRandU64()` correctly to `[min, max)`. Previous implementation divided by `RAND_MAX` (2^31), producing `~1e8` magnitudes for `l_discount` / `l_tax` instead of `[0, 0.1]` / `[0, 0.08]`. This is a real codebase-wide bug fix (Q12 didn't expose it because it doesn't read those fields). Q12 XOR-parity digest is unchanged: cross-structure agreement still holds within each run; absolute digest varies because the RNG sequence shifted (every previous Q12 run consumed `randomNumeric` calls during data generation, so changing its output naturally changes the seed-derived digest — but all four S1/S2/S3/S4 paths still see the same data and produce the same per-row totals).
 
-**Known residual blocker (not in Phase 1 scope to fix):**
-
-`query_by_merged` currently emits **0 rows** at SF=1 instead of the expected ~50–100. Root cause: some `invoice_coli_t` records read back from `merged_coli` carry **garbage `i_totaldue`** (magnitudes `~1e22`), even though the BASE `invoice_t` adapter holds correct values for the same keys. The `coli_group_walk` diagnostic at the top of the harness shows `building_custs=~30`, `open_invoices_in_building=~2700` (normal), but `w_open_due=0` because cumulative `cust_open_due` flips negative when a corrupted invoice is summed — failing the `cust_open_due > threshold` check. This is a `populate_merged` / merged-adapter serialization issue specific to `invoice_coli_t`, not a q3i logic issue. It does NOT affect q12, which doesn't store invoice records in its merged index. Investigate whether `invoice_coli_t::from_base` brace-init copies all fields when called as a temporary into `merged_coli.insert`, and whether the merged-adapter's record-payload serialization matches `*reinterpret_cast<const invoice_coli_t*>(v.data())` on read.
-
-The Phase 1 harness exits with code 0 (treating the issue as known) and prints `[KNOWN-ISSUE]` on the row-count assertion so build pipelines aren't false-failed while the fix is pending.
+**Resolved:** Earlier 0-row symptom was stale data from a pre-`randomNumeric`-fix load. After a clean reload, `query_by_merged` returns ~129 rows at SF=1 with correct `cust_open_due`. Defensive `memcpy` added in `variant_utils.hpp::toType` (and `LeanStoreMergedAdapter::toType`) to harden against potential alignment UB on platforms where RocksDB value buffers aren't 8-byte aligned.
 
 **Not yet in Phase 1**: top-10 sort; baseline S1/S2/S4 paths.
 
-**Exit criterion (revised)**: structural deliverables landed and `test_query_q3i_phase1_lsm` runs end-to-end. The row-count assertion will flip to `[OK]` when the merged-adapter invoice corruption is fixed, without any q3i code changes (Visitor logic and accumulators are correct as written).
+**Exit criterion satisfied**: `test_query_q3i_phase1_lsm` runs end-to-end and exits with `[OK]   row_count > 0` (row_count ≈ 129 at SF=1).
 
 ---
 
