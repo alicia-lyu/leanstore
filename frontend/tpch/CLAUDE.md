@@ -78,8 +78,9 @@ Per-query subdirectories:
 - `q3/`  — Shipping Priority (3 tables, 2 joins; adds CUSTOMER adapter).
 - `q9/`  — Product Type Profit Measure (6 tables, 5 joins; adds NATION,
   SUPPLIER, PART, PARTSUPP adapters).
-- `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; skeleton present,
-  bodies in progress — see `q3i/CLAUDE.md §Implementation Phases`).
+- `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; all four
+  `query_by_*` bodies complete, cross-structure parity verified at SF=1 —
+  see `q3i/CLAUDE.md §Implementation Phases`).
 - `q5i/` — Q5 + Invoice payment-status split (design doc only; no skeleton yet).
 - `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
 
@@ -257,6 +258,7 @@ point. Run from the repo root.
 | `test_load_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_load_q12_leanstore.cpp` |
 | `test_query_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_query_q12_rocksdb.cpp` |
 | `test_query_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_query_q12_leanstore.cpp` |
+| `test_query_q3i_lsm` | `q3i/` | RocksDB (mac+Linux) | `tests/q3i/test_query_q3i_rocksdb.cpp` |
 | Q3/Q9 tests | `q3/`, `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
@@ -307,7 +309,7 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 - Q12 — see [`q12/CLAUDE.md §Tests`](q12/CLAUDE.md#tests)
 - Q3, Q9 — none yet
-- Q3I — none yet (Phase 3 deliverable; see `q3i/CLAUDE.md §Implementation Phases`)
+- Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
 ## Completed (post-skeleton)
 

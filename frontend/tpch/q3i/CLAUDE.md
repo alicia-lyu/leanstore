@@ -189,20 +189,22 @@ revenue DESC + truncate to 10).
 
 | File | Status |
 |------|--------|
-| `views.hpp` | Skeleton — `q3i_pipeline_view_t` alias and `q3i_agg_row_t` declared |
-| `workload.hpp` | Skeleton — `Q3IWorkload<Backend>` declared, COLI pipeline member |
-| `per_structure_workload.hpp` | Skeleton — alias-only |
-| `load.tpp` | Skeleton — ctor wires refs; `load()` / `get_size()` bodies are TODO stubs |
-| `query.tpp` | Skeleton — all `query_by_*`, predicates, `print()` are TODO |
-| `executable_rocksdb.cpp` | Skeleton — `main()` returns 0 |
-| `executable_leanstore.cpp` | Skeleton — `main()` returns 0 (`#ifndef ROCKSDB_ONLY`) |
+| `views.hpp` | Complete — `q3i_pipeline_view_t`, `cust_open_due_t`, `lineitem_agg_t`, join result types `q3i_jr{1,2,3}_t`, `q3i_agg_row_t`; `SKBuilder` specializations for both join key types |
+| `workload.hpp` | Complete — `Q3IWorkload<Backend>` with all adapter members, `coli_pipeline()` accessor, `Q3IStats`, all `query_by_*` declarations |
+| `per_structure_workload.hpp` | Complete — alias-only (`BaseQ3I`, `ViewQ3I`, `MergedQ3I`, `HashQ3I`) |
+| `load.tpp` | Complete — ctor, `load()`, `get_size()`, `populate_q3i_view` free function |
+| `query.tpp` | Complete — all four `query_by_*` bodies, accumulators, `COLIGroupWalkVisitor`, predicates, `print()` |
+| `executable_rocksdb.cpp` | Skeleton — `main()` returns 0 (Phase 3) |
+| `executable_leanstore.cpp` | Skeleton — `main()` returns 0 (`#ifndef ROCKSDB_ONLY`) (Phase 3) |
 | `CLAUDE.md` | This file |
 
 ---
 
 ## CMake Targets
 
-TODO: add to `frontend/CMakeLists.txt` when body implementations land.
+`test_query_q3i_lsm` is wired in `frontend/CMakeLists.txt` (macOS + Linux).
+
+Production targets `q3i_lsm` / `q3i_btree` are Phase 3 deliverables (TODO):
 
 ```cmake
 # macOS (ROCKSDB_ONLY) section:
@@ -212,6 +214,25 @@ add_executable(q3i_lsm tpch/q3i/executable_rocksdb.cpp)
 # Linux section:
 add_executable(q3i_btree tpch/q3i/executable_leanstore.cpp)
 add_executable(q3i_lsm   tpch/q3i/executable_rocksdb.cpp)
+```
+
+---
+
+## Tests
+
+```bash
+# Build (macOS)
+make -C build/frontend test_query_q3i_lsm -j$(sysctl -n hw.ncpu)
+
+# Run cross-structure parity test (SF=1)
+mkdir -p test_data_q3i test_csv_q3i
+./build/frontend/test_query_q3i_lsm \
+    --ssd_path=./test_data_q3i \
+    --csv_path=./test_csv_q3i \
+    --tpch_scale_factor=1
+# Expected: 4 identical digests, 4 × row_count=10, exit 0.
+# Verified: all four digests match within a single run (seed-dependent value
+# varies across runs; cross-structure agreement is the invariant).
 ```
 
 ---
@@ -277,45 +298,63 @@ Phase 1 surfaced four lessons that reshape the remaining phases:
 
 ### Phase 2 — All four paths, top-10, single harness
 
+**Status (2026-05-02): complete.**
+
 **Goal**: spec-compliant Q3I executable + a single `test_query_q3i_lsm`
-harness that loads each storage structure in turn, runs `query_by_*`,
-and asserts XOR parity across all four. Replaces the temporary Phase 1
+harness that loads once, runs all four `query_by_*` paths against the same
+data, and asserts XOR parity across all four. Replaces the temporary Phase 1
 binary entirely.
 
-**Deliverables**:
+**Landed:**
 
-1. `query.tpp` — three new bodies, each ending with a top-10 `partial_sort_copy`:
-   - `query_by_base` (S1): scan `coli.split_invoice()` (custkey-sorted)
-     into a `cust_open_due` hashmap via `CustomerOpenDueAccumulator` →
-     `BinaryMergeJoin` over `coli.split_orders()` and
-     `coli.split_lineitem()` (also custkey-sorted) → CUSTOMER hash
-     lookup → `LineitemRevenueAccumulator` per orderkey → threshold
-     filter on `cust_open_due`.
-   - `query_by_view` (S2): same hashmap pre-pass; scan
-     `q3i_pipeline_view_t` (still `joined_ol_t`) → CUSTOMER hash filter
-     → revenue accumulation per orderkey.
-   - `query_by_hash` (S4): same hashmap pre-pass; `HashJoin(OL)` over
-     base ORDERS / LINEITEM + CUSTOMER hash lookup.
-2. `query_by_merged` — refactor to also emit top-10 via the same
-   `partial_sort_copy` epilogue, replacing Phase 1's "all qualifying
-   rows" return.
-3. `load.tpp` — extend the `load()` / `get_size()` switch:
-   - S1: `coli.populate_split()` (already wired in Phase 1)
-   - S2: `populate_q3i_view(pipeline_view, ...)` — two-pointer merge over
-     base OL scanners, emit one `joined_ol_t` per lineitem
-   - S4: base only (no extras)
-4. `tests/q3i/test_query_q3i_rocksdb.cpp` — the unified harness:
-   - Iterates `FLAGS_storage_structure` ∈ {1,2,3,4}
-   - Wipes `--ssd_path` between iterations to defeat the stale-load trap
-   - Runs `query_by_*`, computes a XOR digest over the result rows
-   - Asserts equal digest across all four structures
-   - Prints top-10 rows for visual inspection
-5. CMake: add `test_query_q3i_lsm` target; **delete**
-   `test_query_q3i_phase1_lsm` and move the Phase 1 binary's source to
-   `TRASH/` per project rules.
+- `query.tpp` — `query_by_base` (S1: 3-BMJ chain over custkey-sorted COLI
+  split indexes via `CustomerOpenDueAggregator` + `LineitemRevenueAggregator`
+  scanner-wrappers), `query_by_view` (S2: sequential view scan with per-row
+  mktsegment + threshold filters), `query_by_hash` (S4: 3-HJ chain over base
+  tables). All four paths end with `apply_topN(..., 10, revenue DESC)`.
+- `load.tpp` — `populate_q3i_view` free function (two-pointer merge over
+  orders + lineitem, l_shipdate filter baked in at load time using default
+  params, one row per `(custkey, orderkey)`).
+- `tests/q3i/test_query_q3i_rocksdb.cpp` — load-once harness: single
+  `tpch.load()` + explicit `populate_q3i_view` / `populate_split` /
+  `populate_merged`, all four paths against the same DB, XOR parity +
+  row-count checks, top-10 printed.
+- CMake: `test_query_q3i_lsm` added; `test_query_q3i_phase1_lsm` removed.
 
-**Exit criterion**: `test_query_q3i_lsm` at SF=1 prints top-10 rows
-matching the spec column order and reports `[OK]` parity across S1/S2/S3/S4.
+**Implementation notes:**
+
+- `q3i_pipeline_view_t` is a real struct (not a `joined_ol_t` alias) keyed
+  by `(custkey, orderkey)`. One row per order — cardinality ≈ `|orders|`.
+  Carries `revenue`, `cust_open_due`, `c_mktsegment`, `o_orderdate`,
+  `o_shippriority`. The `l_shipdate` filter is baked in at load time (default
+  `DATE_1995_03_15`); `o_orderdate` and mktsegment/threshold are re-applied
+  at query time (predicate hoisting).
+- `CustomerOpenDueAggregator<Backend>` and `LineitemRevenueAggregator<Backend>`
+  are scanner-wrapper aggregators (OPERATORS.md §3 op 6) that drive
+  `split_invoice` and `split_lineitem` respectively, emitting one aggregate
+  row per group boundary. Both reuse the namespace-scope accumulator structs
+  (`CustomerOpenDueAccumulator`, `LineitemRevenueAccumulator`) shared with S3.
+- S1 3-BMJ chain: `customer ⋈ cust_open_due` (BMJ#1) `⋈ orders_coli_t`
+  (BMJ#2) `⋈ lineitem_agg_t` (BMJ#3), all on custkey / (custkey,orderkey).
+  S4 3-HJ chain is the isomorphic hash-join baseline: invoice aggregate
+  hashmap + customer mktsegment map pre-built, then orders map filtered by
+  date/custkey, then lineitem probe accumulating revenue per orderkey.
+- The `secondary` → `split` rename (Phase 2A) disambiguates COLI split
+  adapters from base-table secondary indexes.
+- `apply_topN` epilogue is uniform across all four paths (OPERATORS.md §3
+  op 8–9): `partial_sort_copy` into a 10-element output vector, ordered by
+  `revenue DESC`.
+- **S3 bug fixed (Phase 2C):** `COLIGroupWalkVisitor::flush_order` was
+  emitting orders with `revenue=0` (orders whose lineitems all failed the
+  shipdate filter). SQL requires a matching lineitem; zero-revenue orders
+  are now suppressed.
+- **S2 bug fixed (Phase 2C):** `populate_q3i_view` was not applying the
+  `l_shipdate` filter; `query_by_view` intentionally does not re-apply it
+  ("baked in at load time"). Filter now applied in the view loader.
+
+**Exit criterion satisfied**: `test_query_q3i_lsm` at SF=1 reports
+`[OK]` parity across S1/S2/S3/S4, 10 rows each (all four digests identical
+within a run; value is seed-dependent across runs), exit 0.
 
 ---
 
