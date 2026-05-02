@@ -84,15 +84,20 @@ static void populate_q3i_view(
       Integer             orderkey = cur_ord->first.o_orderkey;
       Integer             custkey  = o.o_custkey;
 
-      // Accumulate revenue for all lineitems under this order.
+      // Accumulate revenue for qualifying lineitems (shipdate filter baked in
+      // at load time using the default param value DATE_1995_03_15, consistent
+      // with query_by_view which does NOT re-apply the shipdate predicate).
+      // orderdate is stored in the view row and re-checked at query time.
       Numeric revenue = 0;
       while (cur_lin && cur_lin->first.l_orderkey == orderkey) {
          const lineitem_t& l = cur_lin->second;
-         revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
+         if (l.l_shipdate > DATE_1995_03_15)
+            revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
          cur_lin = lin_scan->next();
       }
 
-      // Emit one view row per (custkey, orderkey) — unfiltered on params.
+      // Emit one view row per (custkey, orderkey) — unfiltered on params
+      // except for the constant l_shipdate default baked into revenue above.
       q3i_pipeline_view_t::Key vk{custkey, orderkey};
       q3i_pipeline_view_t      vv;
       vv.revenue        = revenue;

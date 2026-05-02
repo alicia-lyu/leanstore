@@ -184,10 +184,14 @@ struct COLIGroupWalkVisitor {
    // Called at each on_order boundary and at on_group_end.
    void flush_order() {
       if (!have_open_order) return;
-      // threshold_ok already confirmed — emit unconditionally.
-      out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
-                     cur_shippriority, open_due.value});
       have_open_order = false;
+      // threshold_ok already confirmed. Only emit when at least one lineitem
+      // passed the shipdate filter (revenue > 0). Orders whose lineitems all
+      // fail the shipdate predicate have no matching rows in the SQL result.
+      if (rev.revenue > Numeric(0)) {
+         out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
+                        cur_shippriority, open_due.value});
+      }
       rev.reset();
    }
 
