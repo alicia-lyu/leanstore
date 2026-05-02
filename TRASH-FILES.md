@@ -37,3 +37,5 @@ test_data_q3i - moved to TRASH/ - q3i phase 1 harness rocksdb data (multiple ite
 test_csv_q3i - moved to TRASH/ - q3i phase 1 harness logs (multiple iterations during debug)
 test_data_q12 - moved to TRASH/ - q12 verification rocksdb data
 test_csv_q12 - moved to TRASH/ - q12 verification logs
+test_data_q3i - moved to TRASH/test_data_q3i_1777692050 - stale q3i RocksDB data from pre-fix run
+test_csv_q3i - moved to TRASH/test_csv_q3i_1777692050 - stale q3i CSV/log dir from pre-fix run
