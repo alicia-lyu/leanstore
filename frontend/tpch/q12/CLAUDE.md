@@ -402,7 +402,7 @@ See `executable_rocksdb.cpp` / `executable_leanstore.cpp` for the actual code
 Q12's MI[0] continues to use fold-length discrimination (4 vs 8 bytes for
 `orders_t` vs `lineitem_t`). The Calcite-style tagged-key format has been
 implemented for the COLI pipeline (`views_coli.hpp`) via the
-`Record::matches` SFINAE hook in `LeanStoreMergedAdapter::toType()`. OL
+`Record::accepts_key` SFINAE hook in `LeanStoreMergedAdapter::toType()`. OL
 records do not opt in and the heuristic path is unchanged.
 
 The `test_query_q12_lsm` XOR-parity digest (`0x90000070006039`) is

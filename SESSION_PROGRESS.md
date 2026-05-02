@@ -1,76 +1,125 @@
-# Session Progress: TPC-H Tier 1 Queries (Q12, Q3, Q9)
+# Session Progress: TPC-H Tier 1 Queries (Q12, Q3I, Q5I, Q10I)
 
 ## Status
 
-Plans, per-query CLAUDE.md docs, and shared TPC-H infrastructure are complete and spec-compliant. **Ready to start C++ query implementation, beginning with Q12.**
+Q12 four-structure implementation complete (XOR parity passing, SF=40 benchmarked).
+COLI 4-table merged index infrastructure landed and load-tested (`test_load_coli_lsm` passes at SF=1).
+Q3I Phase 1 (S3 merged path) complete — `query_by_merged` returns ~129 rows at SF=1, exit criterion satisfied.
+Active work: Q3I Phase 2 (baseline S1/S2/S4 paths + XOR parity) and Q3I Phase 3 (top-10 + CMake targets).
+Q5I/Q10I are design-doc only; skeletons pending Q3I Phase 3.
+Stock-TPC-H track (Q3/Q9 baseline structures) reframed per Goetz feedback to add a stock-TPC-H comparison arm (commit `2ad654ee`).
 
 ## Scope
 
-Current paper: each Tier 1 query uses **at most one merged index** that interleaves the source tables of a single pipeline (matching the geo benchmark). The four storage structure variants per query are:
+Current paper: each Tier 1 query uses **at most one merged index** interleaving the source tables of a single pipeline.
+The four storage structure variants per query are:
 
 | # | Strategy | Description |
 | - | -------- | ----------- |
 | 1 | Traditional + merge join | Separate per-table B-trees, merge join on shared sort key |
-| 2 | Materialized view | **Intermediate pipeline view** (the join output of the same pipeline whose sources the MI interleaves), not the final query result |
-| 3 | Single merged index | `MergedIndex(ORDERS, LINEITEM)` by `orderkey`; PremergedJoin at query time |
-| 4 | Clustered + hash join | Clustered indexes; hash join chain at query time |
+| 2 | Materialized view | Intermediate pipeline view (join output of the MI-source pipeline) |
+| 3 | Single merged index | `PremergedJoin` at query time |
+| 4 | Clustered + hash join | Traditional indexes, hash join chain at query time |
 
-The master document for the experiment plan, plan-source mapping, query selection rationale, and reviewer-critique mapping is [`TPCH_experiments.md`](./TPCH_experiments.md). Multi-MI pipeline cascades (described in `calcite-integration-info/test-plans/` and the original Q12 grand plan) are **next-paper scope** and intentionally out of scope here.
+The master experiment plan is [`TPCH_experiments.md`](./TPCH_experiments.md).
+Multi-MI pipeline cascades are **next-paper scope**.
 
 ## Completed
 
-- **Q12/Q3/Q9 skeletons** committed (`d9cb0d95`, `83fb6583`, `e78a48e2`). Each query has the full 7-file shape under `frontend/tpch/q{N}/`: `views.hpp`, `workload.hpp`, `per_structure_workload.hpp`, `load.tpp`, `query.tpp`, `executable_rocksdb.cpp`, `executable_leanstore.cpp`. All method bodies are `// TODO(skeleton)` stubs citing the relevant CLAUDE.md section. `frontend/tpch/CLAUDE.md` added as the top-level skeleton guide (`355e3a96`).
-- **Shared substrate** (`aefffeab`): `backend.hpp` (RocksDB/LeanStore traits structs collapsing 4 template params to 1), `ol_pipeline.hpp` + `ol_pipeline.tpp` (`OrdersLineitemPipeline<Backend>` with stub join drivers and load helpers shared by all three queries). `views_ol.hpp` tracked (`355e3a96`).
-- **Architectural departures from geo** locked in: single `Backend` traits param (no 4-param explosion), no virtual dispatch in per-structure wrappers, monolithic post-join (filter/project/aggregate fused in the join callback).
-- **Plans (DOT, Graphviz)** for Q12, Q3, Q9 across all four structures live in `frontend/tpch/<q>/plans/`:
-  - `structure_1.dot` — interesting-ordering optimized (Calcite `EnumerableMergeJoin` with explicit sorts)
-  - `structure_2_4_default.dot` — default Calcite plan (hash joins)
-  - `structure_3_draft.dot` — MI-adapted (innermost merge-join pipeline replaced with `EnumerablePremergedJoin` over an MI)
-- **Per-query CLAUDE.md docs**: `frontend/tpch/q12/CLAUDE.md`, `frontend/tpch/q3/CLAUDE.md`, `frontend/tpch/q9/CLAUDE.md`. Each contains:
-  - The TPC-H spec SQL, substitution parameters, and validation values.
-  - Column-index mappings for every plan variant.
-  - Per-structure plan walk-through.
-  - "Execution Style: Monolithic vs Cascade" feasibility analysis (recommendation: monolithic post-join for the current paper; see Conceptual decisions below).
-- **DOT plan bug fixes** committed:
-  - Q12 `CASE` expression corrected to match TPC-H spec (HIGH = `'1-URGENT' OR '2-HIGH'`, LOW = neither) across `structure_1.dot`, `structure_2_4_default.dot`, `structure_3_draft.dot`.
-  - Q3 plans: filters pushed down immediately after table scans; `structure_3_draft.dot` rewritten with corrected Project column indices for the PremergedJoin output schema.
-- **Shared TPC-H tables/workload rewritten for spec compliance** and moved to `frontend/tpch/` (commits `ccdefa71`, `ef4ec028`, `e7afb10a`). This is **not** a copy-paste migration — ~300 lines changed in `tpch_tables.hpp` and ~450 lines in `tpch_workload.hpp`, covering spec §4.2.3 domain arrays, sparse orderkeys, date-correlated lineitem fields, the `o_custkey % 3` constraint, exactly 4 PARTSUPP rows per part, and hardcoded `NATIONS[25]` / `REGIONS[5]`. See the **Shared TPC-H Infrastructure** section in [`TPCH_experiments.md`](./TPCH_experiments.md) for the full list and rationale. Old `frontend/geo/tpch_*.hpp` are thin `#include` wrappers preserved so the geo benchmark continues to build.
+- **Q12/Q3/Q9/Q3I skeletons** — full 7-file shape under `frontend/tpch/q{N}/`.
+- **Shared substrate** — `backend.hpp`, `ol_pipeline.hpp`, `views_ol.hpp` (fully implemented + 12 unit tests),
+  `per_structure_workload.hpp` (shared `BaseStructure`/`ViewStructure`/`MergedStructure`/`HashStructure` templates),
+  `tpch_executable.hpp` (`dispatch_storage_structure` helper).
+- **Spec-compliant TPC-H data generation** — `tpch_tables.hpp` / `tpch_workload.hpp` rewritten: sparse orderkeys,
+  date-correlated lineitem fields, `o_totalprice` / `o_orderstatus` derived from lineitems, correct load order
+  (`loadCustomer → loadOrders → loadPartsuppLineitem`). `randomNumeric` fixed (was dividing by 2^31, yielding
+  ~1e8 magnitudes instead of `[0, 0.1]`).
+- **Q12 fully implemented** — all four `query_by_*` paths, F1 admission filter in `PremergedJoin`, `Q12Stats`
+  cardinality counters, XOR-parity test (`test_query_q12_lsm`) passing at SF=1 (digest `0x90000070006039`).
+  SF=40 benchmark: MI ~7% ahead of base merge join; hash beats merge at low DRAM (fits in memory).
+  **Remaining**: `q12_lsm` / `q12_btree` flag-dispatch executables + CMake targets + `generate_targets.py` entries.
+- **`invoice_t` schema + loader** — `tpch_tables.hpp`; `lineitem_t` gains `l_invoicekey`;
+  `TPCHWorkload::loadInvoiceAndLinkLineitem()` back-fills FK links.
+- **COLI 4-table merged index** — `views_coli.hpp` (tagged-key types with `tagged_path`, `accepts_key`,
+  sentinel ordering `customer=1 < invoice=2 < orders=3 < lineitem=4`); `COLIPipeline<Backend>`
+  (`coli_pipeline.hpp/.tpp`); `test_load_coli_lsm` all [OK] at SF=1.
+- **`SKMatcher` + `accepts_key` dispatch** — `SKMatcher<R1,R2>` per-pair join-matching abstraction
+  (`view_templates.hpp`); `LeanStoreMergedAdapter::toType` tries `Record::accepts_key` via SFINAE before
+  fold-length fallback; `sk_for_t<R>` rename (was `sort_key_t`). Tests: `test_sk_matcher_compat` (4),
+  `test_views_coli` (6). Q12 parity digest unchanged — fold-length path unaffected.
+- **Defensive `memcpy` in `variant_utils::toType`** — guards against alignment UB on platforms where
+  RocksDB value buffers are not 8-byte aligned (commit `d8980426`).
+- **Q3I Phase 1 (S3 merged path)** — `query_by_merged` with `coli_group_walk` Visitor,
+  `CustomerOpenDueAccumulator` + `LineitemRevenueAccumulator` factored at namespace scope for Phase 2 reuse,
+  `Params::defaults()` (`BUILDING / 1995-03-15 / threshold=0`), `load.tpp` S3/S1 dispatch, full `main()`
+  in both executables. Phase 1 harness `test_query_q3i_phase1_lsm` exits `[OK]` (row_count ≈ 129 at SF=1).
+  Stale test artifacts moved to TRASH (commit `cbd7a870`).
+- **MI candidate analysis reframed** — `INVOICE_EXTENSION_CANDIDATES.md` updated to add stock-TPC-H
+  comparison track per Goetz feedback (commit `2ad654ee`).
 
-## Conceptual Decisions Captured in Docs
+## Conceptual Decisions
 
-1. **`joined_t` is required by merge-join infrastructure.** Every `frontend/shared/merge-join/*` template (`PremergedJoin`, `BinaryMergeJoin`, `HashJoin`, `JoinState`) takes the join-result type `JR` as a template parameter and requires it to satisfy `Key(Rs::Key...)` and `JR(Rs...)` constructors. Monolithic execution can fuse only **post-join** operators (filter, project, aggregate) into callbacks; the typed join result itself is unavoidable. All three per-query CLAUDE.md docs were corrected to reflect this.
-2. **Storage structure 2 = intermediate pipeline view, not the final query result.** Per the paper's "Spectrum of Pre-computation" section, the most apples-to-apples alternative to a merged index is the materialized output of the same pipeline whose sources the MI interleaves. For all Tier 1 queries this is `ORDERS ⋈ LINEITEM`. Comparing MI against a final-result view would require a hybrid query+update workload that is not native to TPC-H; we may build one separately, but it is not the primary comparison.
+1. **`joined_t` is required** — merge-join infrastructure takes `JR` as a template param; monolithic execution
+   fuses only post-join operators into callbacks.
+2. **Structure 2 = intermediate pipeline view** — materialized output of the MI-source pipeline
+   (ORDERS ⋈ LINEITEM for OL queries; not the final query result).
+3. **Accumulator structs at namespace scope** — Q3I Phase 1 factored `CustomerOpenDueAccumulator` and
+   `LineitemRevenueAccumulator` outside the Visitor so Phase 2's S1/S4 paths can reuse them directly
+   (comparison-integrity guarantee: identical accumulation logic across all structures).
 
 ## Next Steps
 
-### [Short-term] Per-query refactor — move operator drivers and view loading out of pipeline
+### [Short-term] Q3I Phase 2 — baseline S1, S2, S4 paths (`frontend/tpch/q3i/`)
 
-`OrdersLineitemPipeline` now only owns `populate_merged` + `get_merged_size`. The per-query stubs in `q{N}/load.tpp` reference removed methods (`ol.populate_view`, `ol.get_view_size`). Fix in this order:
+- `query.tpp` — `query_by_base` (S1): pre-build `cust_open_due` hashmap from INVOICE; `BinaryMergeJoin(OL)` +
+  CUSTOMER hash lookup; threshold filter.
+- `query.tpp` — `query_by_view` (S2): same hashmap pre-build; view scan + CUSTOMER hash filter.
+- `query.tpp` — `query_by_hash` (S4): hashmap pre-build; `HashJoin(OL)` + CUSTOMER hash lookup.
+- `views.hpp` — widen `q3i_pipeline_view_t` beyond `joined_ol_t` alias to include `cust_open_due` field.
+- `load.tpp` — S2 `populate_q3i_view` body (two-pointer merge + invoice hashmap); S4 base-only path.
+- Exit criterion: XOR parity across all four paths at SF=1.
 
-- `q12/load.tpp` — replace `ol.populate_view` / `ol.get_view_size` stubs with per-query view adapter calls; wire `Q12Workload` ctor and `load()` / `get_size()`.
-- `q12/query.tpp` — implement `scan_merged` (PremergedJoin driver), `merge_join_base` (BinaryMergeJoin driver), `hash_join_base` (HashJoin driver) as per-query methods; add predicates, projection, aggregator bodies with monolithic post-join lambdas.
-- `q12/views.hpp` — `Params::defaults()`.
-- Build smoke test: scale=1, cross-validate results across all four structures (use `test_load_merged_lsm` to confirm MI[0] loads correctly first).
-- Repeat for Q3 (adds CUSTOMER hash join + top-10 sort) and Q9 (adds NATION/SUPPLIER hashmaps + PART/PARTSUPP joins inside callback).
+### [Short-term] Q3I Phase 3 — top-10 + CMake targets + experiment harness (`frontend/tpch/q3i/`)
 
-### [Short-term] Build-system integration — `frontend/CMakeLists.txt` + `generate_targets.py`
+- `query.tpp` — top-10 `ORDER BY revenue DESC` via priority queue across all four paths.
+- `frontend/CMakeLists.txt` — add `q3i_lsm` (mac+Linux) and `q3i_btree` (Linux) targets.
+- `tests/` — `test_load_q3i_lsm` and `test_query_q3i_lsm` (parity + shape check).
+- `frontend/tpch/CLAUDE.md §Tests` — update index with Q3I rows.
+- `generate_targets.py` — entries for `q3i_lsm` / `q3i_btree`.
 
-- Add CMake targets `q12_lsm`, `q12_btree`, `q3_lsm`, `q3_btree`, `q9_lsm`, `q9_btree` mirroring `geo_lsm` / `geo_btree`.
-- Add entries to `generate_targets.py` (`exec_names`, `STRUCTURE_OPTIONS`, `DIFF_DIRS`), regenerate `targets.mk`.
+### [Short-term] Q12 build-system integration (`frontend/`)
 
-### [Medium-term] Ad-hoc experiments (after all three queries compile and validate)
+- `frontend/CMakeLists.txt` — add `q12_lsm` / `q12_btree` targets (load-test targets already present).
+- `generate_targets.py` — `exec_names`, `STRUCTURE_OPTIONS`, `DIFF_DIRS` entries; regenerate `targets.mk`.
 
-- Scan-selectivity sweep on Q12 (1-month / 1-year / 3-year date windows) — addresses Reviewer 3 W2/D5.
-- Single-table `LINEITEM`-only scan: standalone index vs. MI with ORDERS interleaved — addresses Reviewer 3 W3/D6.
+### [Medium-term] Q5I and Q10I body implementation
+
+- Q5I (Local Supplier Volume + invoice payment-status split): skeleton pending; follows Q3I 3-phase pattern.
+- Q10I (Returned Item Reporting + customer payment-behaviour overlay): same.
+- Both share `COLIPipeline<Backend>`; per-query `load.tpp` delegates S3 to `coli.populate_merged()`.
+
+### [Medium-term] Q3/Q9 baseline body implementation
+
+- Fix `q3/load.tpp` and `q9/load.tpp` references to removed `ol.populate_view` / `ol.get_view_size`.
+- Q3: per-query view type, `BinaryMergeJoin` + CUSTOMER hash join, top-10 sort.
+- Q9: NATION/SUPPLIER hashmap construction; PART/PARTSUPP merge joins inside callback; LIKE filter on `p_name`.
+
+### [Medium-term] Ad-hoc Q12 experiments
+
+- Scan-selectivity sweep (1-month / 1-year / 3-year date windows) — Reviewer 3 W2/D5.
+- Single-table LINEITEM-only scan: standalone index vs. MI with ORDERS interleaved — Reviewer 3 W3/D6.
+- Memory-pressure sweep (low DRAM / high SF) to confirm MI advantage widens under I/O pressure.
 
 ## Open / Side-Track Items
 
-- **Tagged row format** for merged adapters/scanners. Still pending. Becomes load-bearing for Q9, whose MI may interleave record types with non-distinct key lengths once we extend beyond `(ORDERS, LINEITEM)`. Migration strategy choice (new default + update geo / parameterize per index / Q12-only new classes) is unresolved.
-- `joined_t` flattening: store flattened projection instead of a tuple of input records.
-- Rename `JK` → `SK` (sort key) for naming consistency with the paper.
-- Investigate `JoinState` overhead in hash join — previously implemented without it.
-- LeanStore background-insert bug: records shifting pages causes issues; RocksDB unaffected.
+- **LeanStore background-insert bug**: records shifting pages causes issues under concurrent inserts;
+  RocksDB unaffected. Deferred — all current experiments use RocksDB backend.
+- **`joined_t` flattening**: store flattened projection instead of tuple of input records. Deferred.
+- **Stock-TPC-H Q3/Q9 baseline comparison arm**: reframed in `INVOICE_EXTENSION_CANDIDATES.md` per Goetz
+  feedback; experiment design not yet written up in `TPCH_experiments.md`.
 
 ## Long-Term (Next-Paper Scope)
 
-Multi-MI pipeline cascades (each query may have multiple merged indexes — e.g., Q12 with 2 MIs, Q9 with 5) live in `calcite-integration-info/test-plans/` and are documented in `frontend/tpch/q12/CLAUDE.md`. They are explicitly out of scope for the current paper.
+Multi-MI pipeline cascades (each query with multiple merged indexes — Q12 with 2 MIs, Q9 with 5) are
+documented in `calcite-integration-info/test-plans/` and `frontend/tpch/q12/CLAUDE.md`. Out of scope here.
+General plan interpreter (JSON → C++ operator tree) replacing manually-coded templates. Out of scope here.

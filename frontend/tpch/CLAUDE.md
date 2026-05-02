@@ -430,11 +430,16 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   in-memory orderkey→custkey map built during the orders pass.
   `test_load_coli_lsm` (`tests/test_load_coli_rocksdb.cpp`) verifies row
   counts, FK resolution, and hierarchical scan order at SF=1 — all [OK].
-- **Merged-adapter `matches` dispatch hook** (2026-05-01): `LeanStoreMergedAdapter::toType()`
-  now tries `Record::matches(key, key_len)` via SFINAE before falling back
+- **Merged-adapter `accepts_key` dispatch hook** (2026-05-01, renamed from
+  `matches` 2026-05-02 to disambiguate from `SKMatcher::match` join-pair
+  matching): `LeanStoreMergedAdapter::toType()` now tries
+  `Record::accepts_key(key, key_len)` via SFINAE before falling back
   to the `(maxFoldLength, sizeof(payload))` heuristic. Existing OL/Q12
   records opt out silently; tagged COLI records opt in via explicit
-  `static bool matches(...)`. Additive — existing tests pass byte-for-byte.
+  `static bool accepts_key(...)`. Additive — existing tests pass byte-for-byte.
+  `toType` also `memcpy`s the value bytes (instead of `reinterpret_cast`) to
+  guard against potential alignment UB on platforms where RocksDB value
+  buffers aren't 8-byte aligned.
 - **`SKMatcher` abstraction + `sk_for_t` rename** (2026-05-01):
   `SKMatcher<R1,R2>` per-pair join-matching abstraction introduced in
   `frontend/shared/view_templates.hpp`. Default specialization wraps legacy

@@ -23,10 +23,11 @@ The COLI 4-table merged index (`customer_coli_t`, `orders_coli_t`,
 Q5I, Q10I — are the active showcase for the §3.1.2 sibling sub-aggregate
 pattern: Invoice attaches under Customer as a sibling of Orders, and the COLI
 MI co-locates all four record types per `custkey` so a single `PremergedJoin`
-pass computes per-customer invoice aggregates alongside the O×L join. Q3I has
-a skeleton; Q5I and Q10I are design-doc only. Bodies proceed in three phases
-(S3 merged path first, then baselines, then top-N + harness) — see
-`frontend/tpch/q3i/CLAUDE.md §Implementation Phases`.
+pass computes per-customer invoice aggregates alongside the O×L join. **Q3I
+Phase 1 (S3 merged path) is complete** — `query_by_merged` returns ~129 rows
+at SF=1 with verified `cust_open_due` aggregates. Q5I and Q10I are design-doc
+only. Phases 2 (baseline S1/S2/S4 paths) and 3 (top-N + harness) are next —
+see `frontend/tpch/q3i/CLAUDE.md §Implementation Phases`.
 
 ### TPC-H Q12 Implementation (In Progress)
 
