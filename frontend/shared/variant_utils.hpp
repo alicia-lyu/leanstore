@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstring>
 #include <variant>
 #include "leanstore/KVInterface.hpp"
 #include <rocksdb/slice.h>
@@ -44,7 +45,10 @@ inline std::pair<std::variant<typename Records::Key...>, std::variant<Records...
        if (!matched && record_matches<Records>(k.data(), k.size(), v.size())) {
           typename Records::Key key;
           Records::unfoldKey(k.data(), key);
-          const Records& rec = *reinterpret_cast<const Records*>(v.data());
+          // RocksDB does not guarantee 8-byte alignment of value buffers;
+          // reinterpret_cast on misaligned data is UB and the fields contain doubles.
+          Records rec;
+          std::memcpy(&rec, v.data(), sizeof(Records));
           matched = true;
           result_key = key;
           result_rec = rec;
@@ -66,7 +70,10 @@ inline std::pair<std::variant<typename Records::Key...>, std::variant<Records...
        if (!matched && record_matches<Records>(k.data(), k.size(), v.size())) {
           typename Records::Key key;
           Records::unfoldKey(reinterpret_cast<const u8*>(k.data()), key);
-          const Records& rec = *reinterpret_cast<const Records*>(v.data());
+          // RocksDB does not guarantee 8-byte alignment of value buffers;
+          // reinterpret_cast on misaligned data is UB and the fields contain doubles.
+          Records rec;
+          std::memcpy(&rec, v.data(), sizeof(Records));
           matched = true;
           result_key = key;
           result_rec = rec;

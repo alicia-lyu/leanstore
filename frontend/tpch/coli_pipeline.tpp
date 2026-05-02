@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <unordered_map>
 
 #include "views_coli.hpp"
@@ -104,9 +105,10 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_merged()
       while (auto kv = scanner->next()) {
          const invoice_t::Key& ik = kv->first;
          const invoice_t& iv      = kv->second;
+         invoice_coli_t converted  = invoice_coli_t::from_base(iv);
          merged_coli.template insert<invoice_coli_t>(
              invoice_coli_t::key_from_base(iv.i_custkey, ik),
-             invoice_coli_t::from_base(iv));
+             converted);
       }
    }
 }
