@@ -284,7 +284,22 @@ shared `HashJoin` build-phase tables once at query start. Then
 because the group-by key is unrelated to the pipeline sort key, so we
 are past the comparison axis. Full sketch in `q9/CLAUDE.md`.
 
-## 6. Comparison-Integrity Rules
+## 6. Filter Pushdown
+
+Every parameterised filter pushes as far down the operator graph as possible,
+stopping ONLY at secondary structures (so MIs / split indexes / pipeline views
+stay reusable across param sets — predicate hoisting). Concretely:
+
+- Single-table filters fuse with TableScan at query time.
+- Aggregate-output filters (e.g. Q3I's threshold on `cust_open_due`) fuse with
+  the SortedAggregate; never a post-aggregate Filter node.
+- For merged-index physical execution (single-scanner walkers), every filter
+  applies inside the Visitor's `on_*` hook for that record type — there is no
+  post-walk Filter node.
+- Secondary structures (MIs, split indexes, pipeline views) are loaded
+  UNFILTERED on parameterised predicates.
+
+## 7. Comparison-Integrity Rules
 
 1. **No hash-aggregate inside the merged-index-family pipeline.**
    Hash-aggregating inside S3 would lose the ordering signal
@@ -303,7 +318,7 @@ are past the comparison axis. Full sketch in `q9/CLAUDE.md`.
    (rule 1 violation by analogy) or a forced re-sort (rule 2
    violation).
 
-## 7. Why HashJoin Outside the Pipeline
+## 8. Why HashJoin Outside the Pipeline
 
 Calcite's family logical plan picks `MergeJoin` for the CUSTOMER side of
 Q3 because both inputs are sorted on the join key after an explicit
@@ -330,7 +345,7 @@ This is a deliberate deviation. If revisiting later, the re-sort cost
 is the only thing standing between us and an honest `MergeJoin`
 downstream.
 
-## 8. Pointers
+## 9. Pointers
 
 - Per-query plan rationale and SQL: `q{N}/CLAUDE.md §Plan Descriptions`,
   `§Execution Style`.

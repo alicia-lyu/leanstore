@@ -90,10 +90,12 @@ four storage structures:
 
 ### Filter pushdown principle (applied across all three plans)
 
+See the canonical rule in [Filter Pushdown](../OPERATORS.md#filter-pushdown).
+The Q3I-specific application:
+
 Every parameterised filter is pushed as far down the operator graph as
 possible, **stopping only at secondary structures** so they remain
-reusable across param sets (predicate hoisting, mirroring Q12 §4). For
-Q3I this means:
+reusable across param sets (predicate hoisting). For Q3I this means:
 
 - The COLI MI, the COLI custkey-sorted secondaries, and the
   `q3i_pipeline_view_t` are all loaded **without** applying mktsegment,
