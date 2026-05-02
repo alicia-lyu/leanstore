@@ -7,9 +7,9 @@
 //
 //   populate_merged()      — dual-write replay over the four base adapters
 //   get_merged_size()      — estimated size in MiB of merged_coli
-//   populate_secondaries() — build three custkey-sorted secondary indexes
+//   populate_split()       — build three custkey-sorted split indexes
 //                            (orders, lineitem, invoice) for S1 BinaryMergeJoin
-//   get_secondaries_size() — sum of the three secondary adapter sizes in MiB
+//   get_split_size()       — sum of the three split adapter sizes in MiB
 //
 // COLIGroupWalk driver (coli_group_walk):
 //   A pure-dispatch iterator over the merged index parameterized by a Visitor.
@@ -80,13 +80,13 @@ class CustomerOrdersLineitemInvoicePipeline
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                             lineitem_coli_t, invoice_coli_t>& merged_coli;
 
-   // Custkey-sorted secondary indexes for S1 (BinaryMergeJoin on custkey).
-   // Customer is already custkey-keyed via customerh_t, so no secondary needed.
+   // Custkey-sorted split indexes for S1 (BinaryMergeJoin on custkey).
+   // Customer is already custkey-keyed via customerh_t, so no split index needed.
    // These reuse the *_coli_t tagged-key encoding; the same key_from_base
    // factories and custkey prefix apply.
-   typename Backend::template Adapter<orders_coli_t>&   orders_secondary;
-   typename Backend::template Adapter<lineitem_coli_t>& lineitem_secondary;
-   typename Backend::template Adapter<invoice_coli_t>&  invoice_secondary;
+   typename Backend::template Adapter<orders_coli_t>&   split_orders;
+   typename Backend::template Adapter<lineitem_coli_t>& split_lineitem;
+   typename Backend::template Adapter<invoice_coli_t>&  split_invoice;
 
   public:
    CustomerOrdersLineitemInvoicePipeline(
@@ -96,26 +96,26 @@ class CustomerOrdersLineitemInvoicePipeline
        typename Backend::template Adapter<invoice_t>&    invoice,
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_coli_t, invoice_coli_t>& merged_coli,
-       typename Backend::template Adapter<orders_coli_t>&   orders_secondary,
-       typename Backend::template Adapter<lineitem_coli_t>& lineitem_secondary,
-       typename Backend::template Adapter<invoice_coli_t>&  invoice_secondary);
+       typename Backend::template Adapter<orders_coli_t>&   split_orders,
+       typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
+       typename Backend::template Adapter<invoice_coli_t>&  split_invoice);
 
    // Dual-write replay: scans all four base tables and inserts each record
    // into merged_coli using *_coli_t tagged keys. Lineitem records are rekeyed
    // from (orderkey, linenumber) to include custkey resolved from orders.
    void populate_merged();
 
-   // Populate three custkey-sorted secondary indexes for S1 (BinaryMergeJoin).
+   // Populate three custkey-sorted split indexes for S1 (BinaryMergeJoin).
    // Mirrors populate_merged's scan order and orderkey→custkey map; each
-   // *_coli_t record is inserted into the corresponding single-type secondary
+   // *_coli_t record is inserted into the corresponding single-type split
    // adapter using the same tagged custkey-prefix key as in merged_coli.
-   void populate_secondaries();
+   void populate_split();
 
    // Returns the estimated size of merged_coli in MiB.
    double get_merged_size() const;
 
-   // Returns the sum of the three secondary adapter sizes in MiB.
-   double get_secondaries_size() const;
+   // Returns the sum of the three split adapter sizes in MiB.
+   double get_split_size() const;
 
    // Expose the merged adapter so per-query drivers can call coli_group_walk.
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,

@@ -51,16 +51,16 @@ Q3IWorkload<Backend>::Q3IWorkload(
     typename Backend::template Adapter<q3i_pipeline_view_t>& pipeline_view,
     typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                              lineitem_coli_t, invoice_coli_t>& merged_coli,
-    typename Backend::template Adapter<orders_coli_t>&   orders_secondary,
-    typename Backend::template Adapter<lineitem_coli_t>& lineitem_secondary,
-    typename Backend::template Adapter<invoice_coli_t>&  invoice_secondary)
+    typename Backend::template Adapter<orders_coli_t>&   split_orders,
+    typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
+    typename Backend::template Adapter<invoice_coli_t>&  split_invoice)
     : tpch(tpch),
       customer(customer),
       orders(orders),
       lineitem(lineitem),
       invoice(invoice),
       coli(customer, orders, lineitem, invoice, merged_coli,
-           orders_secondary, lineitem_secondary, invoice_secondary),
+           split_orders, split_lineitem, split_invoice),
       pipeline_view(pipeline_view),
       params(Params::defaults())
 {
@@ -71,7 +71,7 @@ void Q3IWorkload<Backend>::load()
 {
    tpch.load();
    switch (FLAGS_storage_structure) {
-      case 1: coli.populate_secondaries(); break;
+      case 1: coli.populate_split(); break;
       case 4: break;  // base tables only
       case 2: /* TODO Phase 2: populate_q3i_view */ break;
       case 3: coli.populate_merged(); break;
@@ -85,7 +85,7 @@ double Q3IWorkload<Backend>::get_size() const
    double base = customer.size() + orders.size()
                + lineitem.size() + invoice.size();
    switch (FLAGS_storage_structure) {
-      case 1: return base + coli.get_secondaries_size();
+      case 1: return base + coli.get_split_size();
       case 4: return base;
       case 2: return 0.0;  // TODO Phase 2
       case 3: return coli.get_merged_size();

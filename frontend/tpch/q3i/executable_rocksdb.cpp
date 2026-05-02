@@ -52,10 +52,10 @@ int main(int argc, char** argv)
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
 
-   // S1 custkey-sorted secondary indexes (populated by load for --storage_structure=1).
-   B::Adapter<tpch::orders_coli_t>   orders_secondary(rocks_db);
-   B::Adapter<tpch::lineitem_coli_t> lineitem_secondary(rocks_db);
-   B::Adapter<tpch::invoice_coli_t>  invoice_secondary(rocks_db);
+   // S1 custkey-sorted split indexes (populated by load for --storage_structure=1).
+   B::Adapter<tpch::orders_coli_t>   split_orders(rocks_db);
+   B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
+   B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
    rocks_db.open();  // must be called after all adapters register their CFs
 
@@ -64,7 +64,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   orders_secondary, lineitem_secondary, invoice_secondary);
+                                   split_orders, split_lineitem, split_invoice);
 
    if (!FLAGS_recover) {
       q3i.load();

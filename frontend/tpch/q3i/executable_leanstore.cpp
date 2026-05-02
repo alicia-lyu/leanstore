@@ -52,10 +52,10 @@ int main(int argc, char** argv)
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli;
 
-   // S1 custkey-sorted secondary indexes.
-   B::Adapter<tpch::orders_coli_t>   orders_secondary;
-   B::Adapter<tpch::lineitem_coli_t> lineitem_secondary;
-   B::Adapter<tpch::invoice_coli_t>  invoice_secondary;
+   // S1 custkey-sorted split indexes.
+   B::Adapter<tpch::orders_coli_t>   split_orders;
+   B::Adapter<tpch::lineitem_coli_t> split_lineitem;
+   B::Adapter<tpch::invoice_coli_t>  split_invoice;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -71,9 +71,9 @@ int main(int argc, char** argv)
       pipeline_view     = B::Adapter<tpch::q3i::q3i_pipeline_view_t>(db, "q3i_pipeline_view");
       merged_coli       = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                                            tpch::lineitem_coli_t, tpch::invoice_coli_t>(db, "q3i_merged_coli");
-      orders_secondary   = B::Adapter<tpch::orders_coli_t>(db, "q3i_orders_sec");
-      lineitem_secondary = B::Adapter<tpch::lineitem_coli_t>(db, "q3i_lineitem_sec");
-      invoice_secondary  = B::Adapter<tpch::invoice_coli_t>(db, "q3i_invoice_sec");
+      split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q3i_orders_sec");
+      split_lineitem = B::Adapter<tpch::lineitem_coli_t>(db, "q3i_lineitem_sec");
+      split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "q3i_invoice_sec");
    });
 
    LeanStoreLogger logger(db);
@@ -81,7 +81,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   orders_secondary, lineitem_secondary, invoice_secondary);
+                                   split_orders, split_lineitem, split_invoice);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {

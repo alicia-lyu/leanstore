@@ -324,8 +324,8 @@ int main(int argc, char** argv)
    std::cout << "       MI size: " << merged_coli.size() << " MiB\n";
 
    // -----------------------------------------------------------------------
-   // Secondary index check: populate_secondaries() and verify row counts.
-   coli_pipe.populate_secondaries();
+   // Split-index check: populate_split() and verify row counts.
+   coli_pipe.populate_split();
 
    // Count rows in each secondary by scanning forward.
    long sec_orders_count   = 0;
@@ -383,7 +383,7 @@ int main(int argc, char** argv)
    std::cout << pass(orders_sec_sorted)
              << " orders secondary is custkey-sorted\n";
 
-   std::cout << "       secondaries size: " << coli_pipe.get_secondaries_size() << " MiB\n";
+   std::cout << "       secondaries size: " << coli_pipe.get_split_size() << " MiB\n";
 
    return 0;
 }

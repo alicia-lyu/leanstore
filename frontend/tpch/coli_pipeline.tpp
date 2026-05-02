@@ -23,17 +23,17 @@ CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePip
     typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                              lineitem_coli_t, invoice_coli_t>&
         merged_coli,
-    typename Backend::template Adapter<orders_coli_t>&   orders_secondary,
-    typename Backend::template Adapter<lineitem_coli_t>& lineitem_secondary,
-    typename Backend::template Adapter<invoice_coli_t>&  invoice_secondary)
+    typename Backend::template Adapter<orders_coli_t>&   split_orders,
+    typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
+    typename Backend::template Adapter<invoice_coli_t>&  split_invoice)
     : customer(customer),
       orders(orders),
       lineitem(lineitem),
       invoice(invoice),
       merged_coli(merged_coli),
-      orders_secondary(orders_secondary),
-      lineitem_secondary(lineitem_secondary),
-      invoice_secondary(invoice_secondary)
+      split_orders(split_orders),
+      split_lineitem(split_lineitem),
+      split_invoice(split_invoice)
 {
 }
 
@@ -114,17 +114,17 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_merged()
 }
 
 // ---------------------------------------------------------------------------
-// populate_secondaries: build three custkey-sorted secondary indexes for S1.
+// populate_split: build three custkey-sorted split indexes for S1.
 //
 // Mirrors populate_merged's scan order and the orderkey→custkey map pattern.
-// Each record is inserted into its dedicated single-type secondary adapter
+// Each record is inserted into its dedicated single-type split adapter
 // using the same tagged-key encoding as in merged_coli, so the same
 // key_from_base factories apply without duplication.
 //
-// Customer is already custkey-keyed via customerh_t, so no secondary for it.
+// Customer is already custkey-keyed via customerh_t, so no split index for it.
 
 template <typename Backend>
-void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_secondaries()
+void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_split()
 {
    // --- Pass 0: scan orders + build orderkey → custkey map ---
    std::unordered_map<Integer, Integer> orderkey_to_custkey;
@@ -134,7 +134,7 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_secondaries()
          const orders_t::Key& ok = kv->first;
          const orders_t& ov      = kv->second;
          orderkey_to_custkey.emplace(ok.o_orderkey, ov.o_custkey);
-         orders_secondary.insert(
+         split_orders.insert(
              orders_coli_t::key_from_base(ov.o_custkey, ok),
              orders_coli_t::from_base(ov));
       }
@@ -150,7 +150,7 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_secondaries()
          assert(it != orderkey_to_custkey.end()
                 && "lineitem references unknown orderkey");
          Integer custkey = it->second;
-         lineitem_secondary.insert(
+         split_lineitem.insert(
              lineitem_coli_t::key_from_base(custkey, lk, lv),
              lineitem_coli_t::from_base(lv));
       }
@@ -162,7 +162,7 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_secondaries()
       while (auto kv = scanner->next()) {
          const invoice_t::Key& ik = kv->first;
          const invoice_t& iv      = kv->second;
-         invoice_secondary.insert(
+         split_invoice.insert(
              invoice_coli_t::key_from_base(iv.i_custkey, ik),
              invoice_coli_t::from_base(iv));
       }
@@ -179,12 +179,12 @@ double CustomerOrdersLineitemInvoicePipeline<Backend>::get_merged_size() const
 }
 
 // ---------------------------------------------------------------------------
-// get_secondaries_size: sum of the three secondary adapter sizes in MiB.
+// get_split_size: sum of the three split adapter sizes in MiB.
 
 template <typename Backend>
-double CustomerOrdersLineitemInvoicePipeline<Backend>::get_secondaries_size() const
+double CustomerOrdersLineitemInvoicePipeline<Backend>::get_split_size() const
 {
-   return orders_secondary.size() + lineitem_secondary.size() + invoice_secondary.size();
+   return split_orders.size() + split_lineitem.size() + split_invoice.size();
 }
 
 }  // namespace tpch

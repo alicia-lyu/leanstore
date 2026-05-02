@@ -226,7 +226,7 @@ add_executable(q3i_lsm   tpch/q3i/executable_rocksdb.cpp)
 
 - `tpch_tables.hpp` — `DATE_1995_03_15 = 9204` constant.
 - `q3i/query.tpp` — `Params::defaults()` (`BUILDING / 1995-03-15 / threshold=0`); all four predicates; `q3i_agg_row_t::print()`; **standalone accumulator structs** `CustomerOpenDueAccumulator` and `LineitemRevenueAccumulator` factored at namespace scope so Phase 2's S1 path reuses them unchanged (OPERATORS.md §6.1 comparison-integrity); `query_by_merged` body using `coli_group_walk` Visitor that delegates to the two accumulators.
-- `q3i/load.tpp` — `load()` and `get_size()` dispatch on `FLAGS_storage_structure`. S3 calls `coli.populate_merged()`; S1 calls `coli.populate_secondaries()`; S4 base-only; S2 TODO Phase 2.
+- `q3i/load.tpp` — `load()` and `get_size()` dispatch on `FLAGS_storage_structure`. S3 calls `coli.populate_merged()`; S1 calls `coli.populate_split()`; S4 base-only; S2 TODO Phase 2.
 - `q3i/executable_{rocksdb,leanstore}.cpp` — full `main()` mirroring Q12, dispatching all four storage structures via `tpch::dispatch_storage_structure`.
 - `tests/q3i/test_query_q3i_phase1_rocksdb.cpp` + CMake target `test_query_q3i_phase1_lsm` — temporary Phase 1 harness that loads S3 and runs `query_by_merged` directly. Includes a `coli_group_walk` diagnostic Visitor reporting building-customer counts.
 - `frontend/shared/randutils.hpp` — fixed `randomNumeric` to map `getRandU64()` correctly to `[min, max)`. Previous implementation divided by `RAND_MAX` (2^31), producing `~1e8` magnitudes for `l_discount` / `l_tax` instead of `[0, 0.1]` / `[0, 0.08]`. This is a real codebase-wide bug fix (Q12 didn't expose it because it doesn't read those fields). Q12 XOR-parity digest is unchanged: cross-structure agreement still holds within each run; absolute digest varies because the RNG sequence shifted (every previous Q12 run consumed `randomNumeric` calls during data generation, so changing its output naturally changes the seed-derived digest — but all four S1/S2/S3/S4 paths still see the same data and produce the same per-row totals).
@@ -276,10 +276,10 @@ binary entirely.
 **Deliverables**:
 
 1. `query.tpp` — three new bodies, each ending with a top-10 `partial_sort_copy`:
-   - `query_by_base` (S1): scan `coli.invoice_secondary` (custkey-sorted)
+   - `query_by_base` (S1): scan `coli.split_invoice()` (custkey-sorted)
      into a `cust_open_due` hashmap via `CustomerOpenDueAccumulator` →
-     `BinaryMergeJoin` over `coli.orders_secondary` and
-     `coli.lineitem_secondary` (also custkey-sorted) → CUSTOMER hash
+     `BinaryMergeJoin` over `coli.split_orders()` and
+     `coli.split_lineitem()` (also custkey-sorted) → CUSTOMER hash
      lookup → `LineitemRevenueAccumulator` per orderkey → threshold
      filter on `cust_open_due`.
    - `query_by_view` (S2): same hashmap pre-pass; scan
@@ -291,7 +291,7 @@ binary entirely.
    `partial_sort_copy` epilogue, replacing Phase 1's "all qualifying
    rows" return.
 3. `load.tpp` — extend the `load()` / `get_size()` switch:
-   - S1: `coli.populate_secondaries()` (already wired in Phase 1)
+   - S1: `coli.populate_split()` (already wired in Phase 1)
    - S2: `populate_q3i_view(pipeline_view, ...)` — two-pointer merge over
      base OL scanners, emit one `joined_ol_t` per lineitem
    - S4: base only (no extras)

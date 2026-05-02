@@ -218,15 +218,15 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
 {
-   // S1: BinaryMergeJoin over custkey-sorted secondary indexes.
+   // S1: BinaryMergeJoin over custkey-sorted split COLI indexes.
    //
    // Phase 2 deliverable — reuses CustomerOpenDueAccumulator and
-   // LineitemRevenueAccumulator (declared above) over custkey-sorted
-   // secondary scanners.
+   // LineitemRevenueAccumulator (declared above) over the custkey-sorted
+   // split scanners exposed by COLIPipeline.
    //
    // OPERATORS.md §3 op 4 (S1): pre-build cust_open_due via stream scan
-   // of invoice_secondary sorted by custkey; BinaryMergeJoin(OL) over
-   // orders_secondary / lineitem_secondary; CUSTOMER hash lookup.
+   // of split_invoice (custkey-sorted); BinaryMergeJoin(OL) over
+   // split_orders / split_lineitem; CUSTOMER hash lookup.
    out.clear();
    return 0;  // TODO Phase 2
 }

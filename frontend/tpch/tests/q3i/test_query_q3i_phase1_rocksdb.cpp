@@ -63,10 +63,10 @@ int main(int argc, char** argv)
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
 
-   // S1 secondary indexes (unused for S3 but required by the ctor).
-   B::Adapter<tpch::orders_coli_t>   orders_secondary(rocks_db);
-   B::Adapter<tpch::lineitem_coli_t> lineitem_secondary(rocks_db);
-   B::Adapter<tpch::invoice_coli_t>  invoice_secondary(rocks_db);
+   // S1 split indexes (unused for S3 but required by the ctor).
+   B::Adapter<tpch::orders_coli_t>   split_orders(rocks_db);
+   B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
+   B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
    rocks_db.open();
 
@@ -76,7 +76,7 @@ int main(int argc, char** argv)
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   orders_secondary, lineitem_secondary, invoice_secondary);
+                                   split_orders, split_lineitem, split_invoice);
 
    // Load: tpch.load() + coli.populate_merged() (storage_structure=3).
    std::cout << "Loading SF=" << FLAGS_tpch_scale_factor
