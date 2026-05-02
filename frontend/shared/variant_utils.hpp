@@ -9,26 +9,26 @@
 // Opt-in discrimination hook.
 //
 // A record type may define:
-//   static bool matches(const u8* key_bytes, size_t key_len);
+//   static bool accepts_key(const u8* key_bytes, size_t key_len);
 //
 // When present, toType() calls it *before* the legacy (maxFoldLength, sizeof)
 // check.  If it returns true the record wins; no other record is tried.
-// Records that do not define `matches` fall through to the legacy path unchanged.
+// Records that do not define `accepts_key` fall through to the legacy path unchanged.
 // -------------------------------------------------------------------------------------
 template <typename R>
-concept HasMatchesHook = requires(const u8* key_bytes, size_t key_len) {
-   { R::matches(key_bytes, key_len) } -> std::same_as<bool>;
+concept HasAcceptsKey = requires(const u8* key_bytes, size_t key_len) {
+   { R::accepts_key(key_bytes, key_len) } -> std::same_as<bool>;
 };
 
-// Dispatch helper: try the matches() hook if present, otherwise fall back to
+// Dispatch helper: try the accepts_key() hook if present, otherwise fall back to
 // the legacy (maxFoldLength == key_len && sizeof(R) == val_len) check.
 // key_bytes is accepted as const void* to avoid deduction failures when the
 // caller's pointer element type differs (u8 vs char).
 template <typename R>
 inline bool record_matches(const void* key_bytes, size_t key_len, size_t val_len)
 {
-   if constexpr (HasMatchesHook<R>) {
-      return R::matches(reinterpret_cast<const u8*>(key_bytes), key_len);
+   if constexpr (HasAcceptsKey<R>) {
+      return R::accepts_key(reinterpret_cast<const u8*>(key_bytes), key_len);
    } else {
       return key_len == R::maxFoldLength() && val_len == sizeof(R);
    }

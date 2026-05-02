@@ -202,8 +202,21 @@ struct customer_coli_t {
       static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
       static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
 
-      // Discrimination hook: the trailing byte is idx_id; fast O(1) check.
-      static bool matches(const u8* key_bytes, size_t key_len)
+      // accepts_key: cheap type-dispatch hook for the merged-scanner
+      // std::variant. Checks ONLY (a) total folded key length and (b) the
+      // trailing idx_id byte. This works because keys and values are
+      // stored separately, idx_id is constant-width (1 byte), and idx_id
+      // values are unique per COLI type (see coli_idx_id enum).
+      //
+      // Limitation: a malformed key whose final byte coincidentally equals
+      // our idx_id will be falsely accepted, and unfoldKey would then read
+      // garbage from intermediate tag positions. The "ideal" implementation
+      // would walk bytes step-by-step (domain tag, field, next tag, …)
+      // sharing logic with unfoldKey, but that requires restructuring
+      // unfoldKey to be try-or-fail. Deferred until we encounter actual
+      // collisions; the present check is sufficient for well-formed COLI
+      // keys produced by populate_merged.
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
       {
          return key_len == maxFoldLength()
              && key_bytes[key_len - 1] == static_cast<u8>(coli_idx_id::customer);
@@ -276,7 +289,7 @@ struct orders_coli_t {
       static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
       static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
 
-      static bool matches(const u8* key_bytes, size_t key_len)
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
       {
          return key_len == maxFoldLength()
              && key_bytes[key_len - 1] == static_cast<u8>(coli_idx_id::orders);
@@ -356,7 +369,7 @@ struct lineitem_coli_t {
       static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
       static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
 
-      static bool matches(const u8* key_bytes, size_t key_len)
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
       {
          return key_len == maxFoldLength()
              && key_bytes[key_len - 1] == static_cast<u8>(coli_idx_id::lineitem);
@@ -441,7 +454,7 @@ struct invoice_coli_t {
       static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
       static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
 
-      static bool matches(const u8* key_bytes, size_t key_len)
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
       {
          return key_len == maxFoldLength()
              && key_bytes[key_len - 1] == static_cast<u8>(coli_idx_id::invoice);

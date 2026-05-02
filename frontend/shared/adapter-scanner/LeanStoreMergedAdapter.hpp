@@ -1,5 +1,6 @@
 #pragma once
 // #include <stdexcept>
+#include <cstring>
 #include <variant>
 #include "Exceptions.hpp"
 #include "LeanStoreMergedScanner.hpp"
@@ -115,7 +116,9 @@ struct LeanStoreMergedAdapter {
           if (!matched && record_matches<Records>(k.data(), k.size(), v.size())) {
              typename Records::Key key;
              Records::unfoldKey(k.data(), key);
-             const Records& rec = *reinterpret_cast<const Records*>(v.data());
+             // Alignment not guaranteed; use memcpy to avoid UB on structs with doubles.
+             Records rec;
+             std::memcpy(&rec, v.data(), sizeof(Records));
              matched = true;
              result_key = key;
              result_rec = rec;
