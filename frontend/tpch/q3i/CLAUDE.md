@@ -145,37 +145,101 @@ add_executable(q3i_lsm   tpch/q3i/executable_rocksdb.cpp)
 
 ---
 
-### Phase 2 — Baseline structures (S1, S2, S4)
+### Phase 1 → Phase 2 design adjustments
 
-**Goal**: all four `query_by_*` paths produce identical aggregate results (no top-10 yet), verified by XOR parity.
+Phase 1 surfaced four lessons that reshape the remaining phases:
 
-**Deliverables**:
-
-- `load.tpp` — `load()` and `get_size()` extended for S1 (base only), S2 (`populate_q3i_view`), S4 (base only).
-- `views.hpp` — `q3i_pipeline_view_t` widened beyond the `joined_ol_t` alias to include a `cust_open_due` aggregate field, enabling S2 to pre-materialise the per-customer invoice sum.
-- `query.tpp` — `query_by_base` (S1): pre-build `cust_open_due` hashmap from INVOICE; `BinaryMergeJoin(OL)` + CUSTOMER hash lookup; threshold filter on hashmap entry.
-- `query.tpp` — `query_by_view` (S2): pre-build `cust_open_due` hashmap; view scan + CUSTOMER hash filter.
-- `query.tpp` — `query_by_hash` (S4): pre-build `cust_open_due` hashmap; `HashJoin(OL)` + CUSTOMER hash lookup.
-- `populate_q3i_view` body: two-pointer merge over OL scanners, emit one `q3i_pipeline_view_t` row per lineitem with `cust_open_due` field populated from the pre-built hashmap.
-
-**Exit criterion**: XOR parity check across all four paths passes at SF=1. Identical digest for S1/S2/S3/S4.
-
----
-
-### Phase 3 — Top-10 selection + experiment harness
-
-**Goal**: spec-compliant top-10 and runnable `q3i_lsm` / `q3i_btree` executables.
-
-**Deliverables**:
-
-- `query.tpp` — top-10 `ORDER BY revenue DESC` across all four paths via priority queue or `partial_sort`.
-- `frontend/CMakeLists.txt` — add `q3i_lsm` (macOS + Linux) and `q3i_btree` (Linux only) targets following the `geo_lsm` / `geo_btree` pattern.
-- `tests/` — `test_load_q3i_lsm` (load S3 and report COLI distribution stats) and `test_query_q3i_lsm` (all four paths + parity + shape check) binaries.
-- `frontend/tpch/CLAUDE.md §Tests` index updated with new rows.
-- `generate_targets.py` entries for `q3i_lsm` / `q3i_btree` Makefile targets.
-
-**Exit criterion**: `test_query_q3i_lsm` at SF=1 reports top-10 rows, identical parity across all four paths, and non-degenerate digest.
+1. **The two namespace-scope accumulators (`CustomerOpenDueAccumulator`,
+   `LineitemRevenueAccumulator`) are the right unit of reuse.** S1 can drive
+   them over the COLI custkey-sorted invoice secondary index + a parallel
+   merge-join scan over the OL secondaries, with no body-level duplication
+   from S3. This honours OPERATORS.md §6.1 comparison-integrity: the same
+   per-record accumulation logic runs against every storage structure.
+2. **`q3i_pipeline_view_t` should stay aliased to `joined_ol_t`.** Embedding
+   `cust_open_due` per-lineitem-row in the materialised view inflates the
+   view by a factor of ~`avg(lineitems_per_customer)` and makes S2 unfair
+   relative to S3. Keep the view as the OL join only; build
+   `cust_open_due` at query time from a single INVOICE scan into a
+   hashmap, identical to S1/S4.
+3. **Top-10 is cheap and belongs in Phase 2.** No reason to gate it behind
+   a separate phase: `std::partial_sort_copy` over the per-orderkey result
+   vec is one statement per `query_by_*` and gives spec-compliant output
+   for the parity check itself.
+4. **The stale-data trap (Phase 1's apparent bug) must not recur.** The
+   single unified harness should always wipe its data dir before loading
+   so a build that changes the RNG sequence or schema never reads old
+   bytes.
 
 ---
 
-Q5I and Q10I will follow the same 3-phase pattern once Q3I Phase 3 lands.
+### Phase 2 — All four paths, top-10, single harness
+
+**Goal**: spec-compliant Q3I executable + a single `test_query_q3i_lsm`
+harness that loads each storage structure in turn, runs `query_by_*`,
+and asserts XOR parity across all four. Replaces the temporary Phase 1
+binary entirely.
+
+**Deliverables**:
+
+1. `query.tpp` — three new bodies, each ending with a top-10 `partial_sort_copy`:
+   - `query_by_base` (S1): scan `coli.invoice_secondary` (custkey-sorted)
+     into a `cust_open_due` hashmap via `CustomerOpenDueAccumulator` →
+     `BinaryMergeJoin` over `coli.orders_secondary` and
+     `coli.lineitem_secondary` (also custkey-sorted) → CUSTOMER hash
+     lookup → `LineitemRevenueAccumulator` per orderkey → threshold
+     filter on `cust_open_due`.
+   - `query_by_view` (S2): same hashmap pre-pass; scan
+     `q3i_pipeline_view_t` (still `joined_ol_t`) → CUSTOMER hash filter
+     → revenue accumulation per orderkey.
+   - `query_by_hash` (S4): same hashmap pre-pass; `HashJoin(OL)` over
+     base ORDERS / LINEITEM + CUSTOMER hash lookup.
+2. `query_by_merged` — refactor to also emit top-10 via the same
+   `partial_sort_copy` epilogue, replacing Phase 1's "all qualifying
+   rows" return.
+3. `load.tpp` — extend the `load()` / `get_size()` switch:
+   - S1: `coli.populate_secondaries()` (already wired in Phase 1)
+   - S2: `populate_q3i_view(pipeline_view, ...)` — two-pointer merge over
+     base OL scanners, emit one `joined_ol_t` per lineitem
+   - S4: base only (no extras)
+4. `tests/q3i/test_query_q3i_rocksdb.cpp` — the unified harness:
+   - Iterates `FLAGS_storage_structure` ∈ {1,2,3,4}
+   - Wipes `--ssd_path` between iterations to defeat the stale-load trap
+   - Runs `query_by_*`, computes a XOR digest over the result rows
+   - Asserts equal digest across all four structures
+   - Prints top-10 rows for visual inspection
+5. CMake: add `test_query_q3i_lsm` target; **delete**
+   `test_query_q3i_phase1_lsm` and move the Phase 1 binary's source to
+   `TRASH/` per project rules.
+
+**Exit criterion**: `test_query_q3i_lsm` at SF=1 prints top-10 rows
+matching the spec column order and reports `[OK]` parity across S1/S2/S3/S4.
+
+---
+
+### Phase 3 — Production targets + experiment integration
+
+**Goal**: standalone `q3i_lsm` / `q3i_btree` executables wired into the
+existing experiment Makefile flow.
+
+**Deliverables**:
+
+- `frontend/CMakeLists.txt` — `q3i_lsm` (macOS + Linux) and `q3i_btree`
+  (Linux only), mirroring `q12_lsm` / `q12_btree`.
+- `generate_targets.py` — `q3i_lsm` / `q3i_btree` entries (`exec_names`,
+  `STRUCTURE_OPTIONS`, `DIFF_DIRS`); regenerate `targets.mk`.
+- `tests/test_load_q3i_rocksdb.cpp` (optional) — load S3 only and report
+  COLI distribution stats. Skip if `test_load_coli_lsm` already covers
+  the relevant invariants.
+- `frontend/tpch/CLAUDE.md §Tests` and `§Layout` index entries.
+
+**Exit criterion**: `make q3i_lsm scale=1` runs end-to-end across all four
+structures and emits CSV metrics; `make q3i_lsm_3 dram=0.1` runs S3 in
+isolation for memory-pressure experiments.
+
+---
+
+Q5I and Q10I will follow the same 2-phase pattern (combined paths/top-10
+harness, then production targets) once Q3I Phase 2 lands. The accumulator
+factoring in Phase 1 is the template: each new query should land its
+namespace-scope accumulators alongside the merged-path body so the
+baseline-path bodies can compose them unchanged.
