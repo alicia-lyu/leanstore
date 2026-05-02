@@ -9,7 +9,7 @@ Shared files (used by all three queries):
 
 - `tpch_tables.hpp` — all 8 TPC-H base table record types (`orders_t`,
   `lineitem_t`, `customerh_t`, `part_t`, `supplier_t`, `partsupp_t`,
-  `nation_t`, `region_t`) plus `invoice_t` (one invoice per ~1.5 orders,
+  `nation_t`, `region_t`) plus `invoice_t` (~1.5 invoices per order,
   keyed by `i_invoicekey`). `lineitem_t` carries an `l_invoicekey` payload
   linking each lineitem to its invoice. Date constants `DATE_1994_01_01 = 8766`
   and `DATE_1995_01_01 = 9131` (days since 1970-01-01) are defined here.
@@ -18,7 +18,7 @@ Shared files (used by all three queries):
   call `orderkey_from_index()` to produce sparse order keys that match
   `loadOrders`; using raw indices would orphan ~75% of lineitems.
   `loadInvoiceAndLinkLineitem()` runs after `loadOrders`: it creates one
-  invoice per ~1.5 orders and back-fills `l_invoicekey` on each lineitem
+  ~1.5 invoices per order and back-fills `l_invoicekey` on each lineitem
   via a second lineitem pass.
 - `views_ol.hpp` — `ol_sort_key_t`, `joined_ol_t` (the ORDERS × LINEITEM
   join result type shared by Q12/Q3/Q9), and the `SKBuilder` specialization.

@@ -59,8 +59,10 @@ PS=PARTSUPP, N=NATION, R=REGION.
 > Note: an earlier draft of the scouting pass marked Q9 as C+O+L=Y by
 > mistake. The canonical Q9 SQL joins PART, PARTSUPP, SUPPLIER,
 > LINEITEM, ORDERS, NATION — no CUSTOMER. Q9 is correctly N in the
-> table above. The existing `q9i/` skeleton is therefore a contrived
-> extension by the same standard as `q12i/`.
+> table above. The earlier `q9i/` and `q12i/` skeletons (both
+> contrived extensions of queries lacking the C+O+L footprint) have
+> been deleted; this document is now the sole record of those
+> rejections.
 
 ## 2. Natural-Fit Shortlist
 
@@ -159,9 +161,9 @@ PS=PARTSUPP, N=NATION, R=REGION.
 | Q2 | Supplier-side; no orders/lineitem |
 | Q4 | O+L only, no Customer |
 | Q6 | Lineitem-only |
-| Q9 | No Customer; invoice extension is contrived (skeleton kept under `q9i/`) |
+| Q9 | No Customer; invoice extension is contrived (earlier `q9i/` skeleton deleted) |
 | Q11 | Stock/supplier; no orders/lineitem |
-| Q12 | O+L only, no Customer (skeleton kept under `q12i/`) |
+| Q12 | O+L only, no Customer (earlier `q12i/` skeleton deleted) |
 | Q13 | C+O only, no Lineitem — but a different MI (CO+I) might be interesting; out of scope |
 | Q14, Q17, Q19 | Lineitem×Part; no custkey path |
 | Q15 | Lineitem×Supplier; no custkey path |
@@ -190,10 +192,12 @@ Implement **Q10I** as the secondary candidate:
 3. Shape is different enough from Q3I/Q5I to widen the experiment
    suite without redundancy.
 
-**Keep `q9i/` and `q12i/` skeletons** as documented "contrived
-extension" cases. They serve as contrast: when the query doesn't
-already join C+O+L, the COLI MI's natural advantage degrades to
-mediocre. This contrast is itself a paper-worthy point.
+The earlier `q9i/` and `q12i/` skeletons have been **deleted**: the
+contrast point ("queries without C+O+L are bad invoice-extension
+candidates") is fully captured by §3 of this document, and keeping
+unused skeletons in the tree is dead weight. If those contrast cases
+become paper-worthy later, they can be re-introduced from this
+document's specification.
 
 **Defer** Q7I, Q8I, Q18I unless the experimental suite needs more
 queries. Q18I is the strongest of these three if a fourth is needed.
@@ -220,7 +224,7 @@ queries. Q18I is the strongest of these three if a fourth is needed.
 
 1. User review of Q5I/Q10I as the recommended candidates.
 2. On approval: add `q5i/` and `q10i/` skeleton directories using the
-   same 8-file shape as `q3i/q9i/q12i/`.
+   same 8-file shape as the existing `q3i/`.
 3. Implement query bodies in dependency order: Q3I first (it's the
    pedagogical anchor), then Q5I, then Q10I.
 4. Defer CMake targets and tests until at least one query body is

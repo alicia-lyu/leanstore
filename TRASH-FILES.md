@@ -24,3 +24,6 @@ test_csv_coli_run5 - moved to TRASH/ - diagnostic run 5 CSV
 test_data_coli_run6 - moved to TRASH/ - diagnostic run 6
 test_csv_coli_run6 - moved to TRASH/ - diagnostic run 6 CSV
 test_coli_data - moved to TRASH/test_coli_data_<ts> - stale RocksDB test instance from prior coli load-test run
+test_{coli,q12}_{data,csv}, test_{data,csv}{,2,3,_card,_coli,_diag1,_diag2,_final}, test_{data,csv}_run{1..10}, test_q12.json - moved to TRASH/test_artifacts_$(date)/ - bulk cleanup of accumulated load/query test runtime artifacts from project root
+frontend/tpch/q9i/ - moved to TRASH/q9i_skeleton/ - per INVOICE_EXTENSION_CANDIDATES.md, Q9 has no Customer; contrived extension. Rejection rationale is in the candidate doc itself.
+frontend/tpch/q12i/ - moved to TRASH/q12i_skeleton/ - per INVOICE_EXTENSION_CANDIDATES.md, Q12 has no Customer; contrived extension. Rejection rationale is in the candidate doc itself.
