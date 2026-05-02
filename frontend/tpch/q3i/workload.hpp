@@ -93,6 +93,11 @@ class Q3IWorkload
    Params params;
    Q3IStats* stats = nullptr;
 
+   // Expose the COLI pipeline so test harnesses can call populate_split() and
+   // populate_merged() directly without routing through load()'s
+   // FLAGS_storage_structure switch.
+   CustomerOrdersLineitemInvoicePipeline<Backend>& coli_pipeline() { return coli; }
+
    Q3IWorkload(
        TPCHWorkload<Backend::template Adapter>& tpch,
        typename Backend::template Adapter<customerh_t>& customer,

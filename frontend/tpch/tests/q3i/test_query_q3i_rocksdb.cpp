@@ -1,26 +1,25 @@
-// Unified Phase 2 harness for Q3I: loads each storage structure in turn and
-// verifies cross-structure result parity.
+// Unified Phase 2C harness for Q3I: loads ALL secondary structures once, then
+// runs all four query_by_* paths and asserts cross-structure result parity.
 //
-// For each structure in {1, 2, 3, 4}:
-//   - Wipes --ssd_path (re-opens a fresh RocksDB) to avoid stale-load traps.
-//   - Loads via Q3IWorkload::load() (dispatches on FLAGS_storage_structure).
-//   - Runs the matching query_by_* path.
-//   - Computes an XOR digest over the result rows (order-independent).
-//
-// All four structures must produce the same digest.  Top-10 rows are printed
-// for visual inspection (structure 3 = reference oracle).
+// Loading once (vs. per-structure wipe/reload) is essential for parity: the
+// TPC-H data generator advances global RNG state during each tpch.load() call,
+// so re-loading four times produces four different datasets.  By loading once
+// and populating every secondary up front, all four paths see identical data.
 //
 // Usage:
-//   mkdir -p test_data_q3i2 test_csv_q3i2
+//   mkdir -p test_data_q3i test_csv_q3i
 //   ./build/frontend/test_query_q3i_lsm \
-//       --ssd_path=./test_data_q3i2 \
-//       --csv_path=./test_csv_q3i2 \
+//       --ssd_path=./test_data_q3i \
+//       --csv_path=./test_csv_q3i \
 //       --tpch_scale_factor=1
+//
+// Expected: 4 identical digests, 4 identical row counts (10 at SF=1), exit 0.
 
 #include <gflags/gflags.h>
-#include <filesystem>
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <vector>
 
 #include "../../../shared/RocksDB.hpp"
@@ -44,7 +43,7 @@ thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 // XOR digest over result rows (order-independent parity check).
 //
 // Mixes each row's fields via rotate-left + XOR so single-field errors flip
-// the digest.  The digest is order-independent because XOR is commutative.
+// the digest.  Order-independent because XOR is commutative.
 
 static uint64_t row_digest(const tpch::q3i::q3i_agg_row_t& r)
 {
@@ -74,102 +73,133 @@ int main(int argc, char** argv)
 
    using B = tpch::RocksDBBackend;
 
-   // Collect per-structure results for parity check.
-   std::vector<tpch::q3i::q3i_agg_row_t> results[5];  // index = storage_structure
-   uint64_t digests[5] = {};
-   bool     all_ok     = true;
+   RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
 
-   const std::string base_ssd  = FLAGS_ssd_path;
-   const std::string base_csv  = FLAGS_csv_path;
+   // All 8 TPC-H base tables.
+   B::Adapter<part_t>      part(rocks_db);
+   B::Adapter<supplier_t>  supplier(rocks_db);
+   B::Adapter<partsupp_t>  partsupp(rocks_db);
+   B::Adapter<customerh_t> customer(rocks_db);
+   B::Adapter<orders_t>    orders(rocks_db);
+   B::Adapter<lineitem_t>  lineitem(rocks_db);
+   B::Adapter<nation_t>    nation(rocks_db);
+   B::Adapter<region_t>    region(rocks_db);
+   B::Adapter<invoice_t>   invoice(rocks_db);
 
-   for (int s : {3, 1, 2, 4}) {
-      // Wipe ssd_path to ensure a clean load (guards against stale-data bugs
-      // arising from re-use of a previous structure's on-disk state).
-      std::filesystem::remove_all(base_ssd);
-      std::filesystem::create_directories(base_ssd);
-      std::filesystem::create_directories(base_csv);
+   // Q3I-specific adapters.
+   B::Adapter<tpch::q3i::q3i_pipeline_view_t> pipeline_view(rocks_db);
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
+                    tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
+   B::Adapter<tpch::orders_coli_t>   split_orders(rocks_db);
+   B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
+   B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
-      FLAGS_storage_structure = s;
+   rocks_db.open();
 
-      RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
+   RocksDBLogger logger(rocks_db);
+   TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
+                                  orders, lineitem, nation, region, invoice, logger);
 
-      // All 8 TPC-H base tables.
-      B::Adapter<part_t>      part(rocks_db);
-      B::Adapter<supplier_t>  supplier(rocks_db);
-      B::Adapter<partsupp_t>  partsupp(rocks_db);
-      B::Adapter<customerh_t> customer(rocks_db);
-      B::Adapter<orders_t>    orders(rocks_db);
-      B::Adapter<lineitem_t>  lineitem(rocks_db);
-      B::Adapter<nation_t>    nation(rocks_db);
-      B::Adapter<region_t>    region(rocks_db);
-      B::Adapter<invoice_t>   invoice(rocks_db);
+   tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
+                                   pipeline_view, merged_coli,
+                                   split_orders, split_lineitem, split_invoice);
 
-      // Q3I-specific adapters.
-      B::Adapter<tpch::q3i::q3i_pipeline_view_t> pipeline_view(rocks_db);
-      B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
-                       tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
-      B::Adapter<tpch::orders_coli_t>   split_orders(rocks_db);
-      B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
-      B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
+   // Load base tables ONCE — this is the key fix vs. Phase 2B's per-structure
+   // wipe/reload pattern.  All four paths will see the same data.
+   std::cout << "=== Loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
+   tpch.load();
 
-      rocks_db.open();
+   // Populate every secondary up front so all four paths are ready.
+   // DO NOT route through q3i.load() here — that dispatches on
+   // FLAGS_storage_structure and would only populate one secondary.
+   std::cout << "=== Populating secondaries ===\n";
+   tpch::q3i::populate_q3i_view<B>(customer, orders, lineitem, invoice, pipeline_view);  // S2
+   q3i.coli_pipeline().populate_split();    // S1
+   q3i.coli_pipeline().populate_merged();   // S3
+   // S4 needs no secondary.
 
-      RocksDBLogger logger(rocks_db);
-      TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                     orders, lineitem, nation, region, invoice, logger);
+   // Run all four paths.
+   std::cout << "=== Running queries ===\n";
+   std::vector<tpch::q3i::q3i_agg_row_t> r_base, r_view, r_merged, r_hash;
+   tpch::q3i::Q3IStats st_base, st_view, st_merged, st_hash;
 
-      tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
-                                      pipeline_view, merged_coli,
-                                      split_orders, split_lineitem, split_invoice);
+   q3i.stats = &st_base;   q3i.query_by_base  (r_base);
+   q3i.stats = &st_view;   q3i.query_by_view  (r_view);
+   q3i.stats = &st_merged; q3i.query_by_merged(r_merged);
+   q3i.stats = &st_hash;   q3i.query_by_hash  (r_hash);
+   q3i.stats = nullptr;
 
-      std::cout << "\n=== S" << s << ": loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
-      q3i.load();
+   // Sort each result by o_orderkey ASC for digest stability (rows that tie on
+   // revenue would be ordered non-deterministically across paths otherwise).
+   auto by_orderkey = [](const tpch::q3i::q3i_agg_row_t& a,
+                         const tpch::q3i::q3i_agg_row_t& b) {
+      return a.o_orderkey < b.o_orderkey;
+   };
+   std::sort(r_base.begin(),   r_base.end(),   by_orderkey);
+   std::sort(r_view.begin(),   r_view.end(),   by_orderkey);
+   std::sort(r_merged.begin(), r_merged.end(), by_orderkey);
+   std::sort(r_hash.begin(),   r_hash.end(),   by_orderkey);
 
-      std::vector<tpch::q3i::q3i_agg_row_t> out;
-      tpch::q3i::Q3IStats st;
-      q3i.stats = &st;
+   // Compute digests.
+   uint64_t d_base   = digest_rows(r_base);
+   uint64_t d_view   = digest_rows(r_view);
+   uint64_t d_merged = digest_rows(r_merged);
+   uint64_t d_hash   = digest_rows(r_hash);
 
-      long rows = 0;
-      switch (s) {
-         case 1: rows = q3i.query_by_base(out);   break;
-         case 2: rows = q3i.query_by_view(out);   break;
-         case 3: rows = q3i.query_by_merged(out); break;
-         case 4: rows = q3i.query_by_hash(out);   break;
-      }
+   // Print result sizes and digests.
+   auto print_digest = [](const char* name, size_t n, uint64_t d) {
+      std::cout << std::left << std::setw(14) << name
+                << " rows=" << std::setw(4) << n
+                << " digest=0x" << std::hex << d << std::dec << "\n";
+   };
+   std::cout << "\n=== Results ===\n";
+   print_digest("S1 (base)",   r_base.size(),   d_base);
+   print_digest("S2 (view)",   r_view.size(),   d_view);
+   print_digest("S3 (merged)", r_merged.size(), d_merged);
+   print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
-      results[s] = out;
-      digests[s] = digest_rows(out);
+   // Print top-10 of S3 (merged oracle) sorted by revenue DESC for inspection.
+   auto r_merged_top = r_merged;
+   std::sort(r_merged_top.begin(), r_merged_top.end(),
+             [](const tpch::q3i::q3i_agg_row_t& a,
+                const tpch::q3i::q3i_agg_row_t& b) { return a.revenue > b.revenue; });
+   std::cout << "\n=== Top-10 S3 (merged) by revenue DESC ===\n";
+   std::cout << "  o_orderkey\trevenue\to_orderdate\to_shippriority\tcust_open_due\n";
+   for (const auto& r : r_merged_top) r.print(std::cout);
 
-      std::cout << "S" << s << " rows=" << rows
-                << "  digest=0x" << std::hex << digests[s] << std::dec << "\n";
-
-      // Print top-10 for S3 (reference oracle) and for every path as a visual check.
-      std::cout << "  o_orderkey\trevenue\to_orderdate\to_shippriority\tcust_open_due\n";
-      for (const auto& r : out) r.print(std::cout);
-   }
-
+   // Parity check: all four digests must match.
    std::cout << "\n=== Parity check ===\n";
-   uint64_t ref = digests[3];  // S3 is the reference oracle
-   for (int s : {1, 2, 3, 4}) {
-      bool ok = (digests[s] == ref);
-      if (!ok) all_ok = false;
-      std::cout << (ok ? "[OK]   " : "[FAIL] ")
-                << "S" << s << " digest=0x" << std::hex << digests[s] << std::dec
-                << (ok ? "" : "  (expected 0x" + [&]{ std::ostringstream ss; ss << std::hex << ref; return ss.str(); }() + ")")
+   uint64_t ref  = d_merged;  // S3 is the oracle
+   bool     ok_b = (d_base   == ref);
+   bool     ok_v = (d_view   == ref);
+   bool     ok_m = (d_merged == ref);
+   bool     ok_h = (d_hash   == ref);
+
+   auto parity_line = [&](const char* tag, bool ok, uint64_t d) {
+      std::ostringstream ss;
+      ss << std::hex << ref;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ") << tag
+                << " digest=0x" << std::hex << d << std::dec
+                << (ok ? "" : "  (expected S3 0x" + ss.str() + ")")
                 << "\n";
-   }
+   };
+   parity_line("S1 base  ", ok_b, d_base);
+   parity_line("S2 view  ", ok_v, d_view);
+   parity_line("S3 merged", ok_m, d_merged);
+   parity_line("S4 hash  ", ok_h, d_hash);
 
-   // Shape check: all structures must return exactly 10 rows (SF=1 has > 10
-   // qualifying rows after the BUILDING / threshold=0 filters).
+   // Shape check: all four must return 10 rows at SF=1.
    bool shape_ok = true;
-   for (int s : {1, 2, 3, 4}) {
-      bool ok = (results[s].size() == 10);
-      if (!ok) { shape_ok = false; all_ok = false; }
-      std::cout << (ok ? "[OK]   " : "[FAIL] ")
-                << "S" << s << " row_count==" << results[s].size()
-                << " (expected 10)\n";
+   for (auto [tag, n] : {std::pair{"S1", r_base.size()},
+                         std::pair{"S2", r_view.size()},
+                         std::pair{"S3", r_merged.size()},
+                         std::pair{"S4", r_hash.size()}}) {
+      bool ok = (n == 10);
+      if (!ok) shape_ok = false;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ") << tag
+                << " row_count=" << n << " (expected 10)\n";
    }
-   (void)shape_ok;
 
+   bool all_ok = ok_b && ok_v && ok_m && ok_h && shape_ok;
    return all_ok ? 0 : 1;
 }
