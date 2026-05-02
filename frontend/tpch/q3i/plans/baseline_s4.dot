@@ -1,0 +1,102 @@
+// Q3I S4 baseline plan — no merged index; default Calcite-style plan
+// extended with the invoice sub-aggregate.
+//
+// Diverges from the family logical plan because no input is custkey-
+// sorted: ORDERS / LINEITEM are orderkey-sorted, INVOICE is invoicekey-
+// sorted. Instead of a streaming custkey walk, S4 uses three pre-built
+// hashmaps and a HashJoin chain. Per OPERATORS.md §6.4, S4 is allowed
+// its own logical plan.
+//
+// C++ implementation map (q3i/query.tpp::query_by_hash):
+//
+//   Pre-build (off the comparison axis):
+//   ─────────────────────────────────────
+//     1. open_due: unordered_map<custkey, Numeric>
+//        ─ scan base INVOICE; CustomerOpenDueAccumulator across each
+//          custkey transition; only entries > THRESHOLD survive (or
+//          filter at probe time — implementation choice).
+//     2. cust_seg: unordered_map<custkey, Varchar<10>>
+//        ─ scan base CUSTOMER; capture mktsegment for the probe-time
+//          filter.
+//
+//   Query-time HashJoin chain:
+//   ──────────────────────────
+//     HashJoin<JK=Integer, JR=joined_ol_t, R1=orders_t, R2=lineitem_t>
+//       (orders.getScanner(), lineitem.getScanner())
+//
+//     hj.run([&](const joined_ol_t& jr) {
+//        // probe-time filters (single-table predicates first)
+//        if (!q3i_predicate_orders(o, params))   return;
+//        if (!q3i_predicate_lineitem(l, params)) return;
+//        // outside-pipeline filters via lookup
+//        auto seg = cust_seg.find(o.o_custkey);
+//        if (seg == cust_seg.end() || seg->second != params.mktsegment) return;
+//        auto due = open_due.find(o.o_custkey);
+//        Numeric due_val = (due == open_due.end()) ? 0 : due->second;
+//        if (due_val <= params.threshold) return;
+//        // post-aggregate slot per orderkey (HashJoin output is unsorted,
+//        // so we cannot stream-aggregate here)
+//        auto& slot = per_order[o.o_orderkey];
+//        ...
+//        LineitemRevenueAccumulator::consume_into(slot.revenue, l, params);
+//     });
+//
+// The post-join unordered_map<orderkey, q3i_agg_row_t> is acceptable in
+// S4 because §6.1's "no hash-aggregate inside the merged-index family
+// pipeline" rule applies to S1/S2/S3 only. S4 already pays the
+// hashmap tax for its custkey lookups, so a third hashmap on orderkey
+// is in keeping with the "no merge ordering" baseline.
+//
+// Reuse from the family code: CustomerOpenDueAccumulator and
+// LineitemRevenueAccumulator (the latter via a static helper that
+// takes an external Numeric&). Same per-record arithmetic across all
+// four structures — OPERATORS.md §6.1 comparison-integrity preserved
+// even through the divergent operator graph.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Sources ───────────
+  s_inv  [label="TableScan(INVOICE)",  shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_cust [label="TableScan(CUSTOMER)", shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)",   shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)", shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  // ─────────── Pre-build hashmaps ───────────
+  prebuild_due  [label="Aggregate(group=[i_custkey],\n  cust_open_due = SUM(i_totaldue))\nfilter i_status='O'\n→ unordered_map<custkey, Numeric>\n[CustomerOpenDueAccumulator]",
+                 shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+  prebuild_cust [label="Project(custkey, mktsegment)\n→ unordered_map<custkey, Varchar<10>>",
+                 shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── HashJoin OL ───────────
+  hj_ol [label="HashJoin(o_orderkey = l_orderkey)\n[shared HashJoin primitive]\n→ joined_ol_t",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  // ─────────── Probe-time filters / lookups ───────────
+  probe [label="Filter & Lookups (in HashJoin callback):\n  q3i_predicate_orders(o)\n  q3i_predicate_lineitem(l)\n  cust_seg[o.o_custkey] == SEGMENT\n  open_due[o.o_custkey] > THRESHOLD"];
+
+  // ─────────── Post-join aggregate ───────────
+  post_agg [label="Aggregate(group=[o_orderkey],\n  revenue += l_extendedprice * (1 - l_discount))\n→ unordered_map<orderkey, q3i_agg_row_t>\n[LineitemRevenueAccumulator inner expr]",
+            shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── Outside-pipeline tail (constant) ───────────
+  sort  [label="Sort(revenue DESC)\n[apply_top10 partial_sort]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+  limit [label="Limit 10\n[apply_top10 resize]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  s_inv  -> prebuild_due;
+  s_cust -> prebuild_cust;
+
+  s_ord  -> hj_ol [label="0"];
+  s_lin  -> hj_ol [label="1"];
+
+  hj_ol -> probe;
+  prebuild_due  -> probe [style=dashed, label="lookup"];
+  prebuild_cust -> probe [style=dashed, label="lookup"];
+
+  probe -> post_agg;
+  post_agg -> sort;
+  sort -> limit;
+}
