@@ -55,6 +55,13 @@ int main(int argc, char** argv)
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
 
+   // S1 custkey-sorted secondary indexes for the COLI pipeline.
+   // Q12 does not use these at query time; they are declared so the COLI
+   // pipeline compiles cleanly and is ready for Q3I S1 use.
+   B::Adapter<tpch::orders_coli_t>   coli_orders_sec(rocks_db);
+   B::Adapter<tpch::lineitem_coli_t> coli_lineitem_sec(rocks_db);
+   B::Adapter<tpch::invoice_coli_t>  coli_invoice_sec(rocks_db);
+
    rocks_db.open();  // must be called after all adapters register their CFs
 
    RocksDBLogger logger(rocks_db);
@@ -62,7 +69,8 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q12::Q12Workload<B> q12(tpch, orders, lineitem, pipeline_view, merged_ol);
    tpch::CustomerOrdersLineitemInvoicePipeline<B> coli_pipeline(
-       customer, orders, lineitem, invoice, merged_coli);
+       customer, orders, lineitem, invoice, merged_coli,
+       coli_orders_sec, coli_lineitem_sec, coli_invoice_sec);
 
    if (!FLAGS_recover) {
       q12.load();

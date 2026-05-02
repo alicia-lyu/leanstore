@@ -233,6 +233,11 @@ int main(int argc, char** argv)
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
 
+   // S1 custkey-sorted secondary indexes under test.
+   B::Adapter<tpch::orders_coli_t>   orders_sec(rocks_db);
+   B::Adapter<tpch::lineitem_coli_t> lineitem_sec(rocks_db);
+   B::Adapter<tpch::invoice_coli_t>  invoice_sec(rocks_db);
+
    rocks_db.open();
 
    RocksDBLogger logger(rocks_db);
@@ -241,7 +246,8 @@ int main(int argc, char** argv)
    tpch.load();
 
    tpch::CustomerOrdersLineitemInvoicePipeline<B> coli_pipe(
-       customer, orders, lineitem, invoice, merged_coli);
+       customer, orders, lineitem, invoice, merged_coli,
+       orders_sec, lineitem_sec, invoice_sec);
    coli_pipe.populate_merged();
 
    // -----------------------------------------------------------------------
@@ -316,6 +322,68 @@ int main(int argc, char** argv)
              << ": customer,invoices*,(orders+lineitems)+\n";
 
    std::cout << "       MI size: " << merged_coli.size() << " MiB\n";
+
+   // -----------------------------------------------------------------------
+   // Secondary index check: populate_secondaries() and verify row counts.
+   coli_pipe.populate_secondaries();
+
+   // Count rows in each secondary by scanning forward.
+   long sec_orders_count   = 0;
+   long sec_lineitem_count = 0;
+   long sec_invoice_count  = 0;
+
+   {
+      auto sc = orders_sec.getScanner();
+      while (sc->next()) sec_orders_count++;
+   }
+   {
+      auto sc = lineitem_sec.getScanner();
+      while (sc->next()) sec_lineitem_count++;
+   }
+   {
+      auto sc = invoice_sec.getScanner();
+      while (sc->next()) sec_invoice_count++;
+   }
+
+   const long sec_total = sec_orders_count + sec_lineitem_count + sec_invoice_count;
+   // Expected totals match the merged-index counts for the non-customer types.
+   const long expected_sec_orders   = stats.orders_count;
+   const long expected_sec_lineitem = stats.lineitem_count;
+   const long expected_sec_invoice  = stats.invoice_count;
+   const long expected_sec_total    = expected_sec_orders + expected_sec_lineitem + expected_sec_invoice;
+
+   std::cout << "\n=== Secondary index distribution (scale_factor=" << sf << ") ===\n";
+   std::cout << pass(sec_orders_count == expected_sec_orders)
+             << " orders secondary count:   " << sec_orders_count
+             << "  (expected " << expected_sec_orders << ")\n";
+   std::cout << pass(sec_lineitem_count == expected_sec_lineitem)
+             << " lineitem secondary count: " << sec_lineitem_count
+             << "  (expected " << expected_sec_lineitem << ")\n";
+   std::cout << pass(sec_invoice_count == expected_sec_invoice)
+             << " invoice secondary count:  " << sec_invoice_count
+             << "  (expected " << expected_sec_invoice << ")\n";
+   std::cout << pass(sec_total == expected_sec_total)
+             << " secondary total:          " << sec_total
+             << "  (expected " << expected_sec_total << ")\n";
+
+   // Verify orders secondary is custkey-sorted: consecutive keys have
+   // non-decreasing custkey.
+   bool orders_sec_sorted = true;
+   {
+      Integer prev_custkey = -1;
+      auto sc = orders_sec.getScanner();
+      while (auto kv = sc->next()) {
+         if (kv->first.custkey < prev_custkey) {
+            orders_sec_sorted = false;
+            break;
+         }
+         prev_custkey = kv->first.custkey;
+      }
+   }
+   std::cout << pass(orders_sec_sorted)
+             << " orders secondary is custkey-sorted\n";
+
+   std::cout << "       secondaries size: " << coli_pipe.get_secondaries_size() << " MiB\n";
 
    return 0;
 }

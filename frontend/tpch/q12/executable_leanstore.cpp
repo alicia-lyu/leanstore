@@ -20,6 +20,7 @@
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
 
+#include "../coli_pipeline.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -48,6 +49,17 @@ int main(int argc, char** argv)
    B::Adapter<tpch::q12::q12_pipeline_view_t> pipeline_view;
    B::MergedAdapter<orders_t, lineitem_t>     merged_ol;
 
+   // COLI pipeline substrate (compiled here; used by Q3I/Q9I/Q12I extensions).
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
+                    tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli;
+
+   // S1 custkey-sorted secondary indexes for the COLI pipeline.
+   // Q12 does not use these at query time; declared so the COLI pipeline
+   // compiles cleanly and is ready for Q3I S1 use.
+   B::Adapter<tpch::orders_coli_t>   coli_orders_sec;
+   B::Adapter<tpch::lineitem_coli_t> coli_lineitem_sec;
+   B::Adapter<tpch::invoice_coli_t>  coli_invoice_sec;
+
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
       part          = B::Adapter<part_t>(db, "part");
@@ -61,12 +73,20 @@ int main(int argc, char** argv)
       invoice       = B::Adapter<invoice_t>(db, "invoice");
       pipeline_view = B::Adapter<tpch::q12::q12_pipeline_view_t>(db, "q12_pipeline_view");
       merged_ol     = B::MergedAdapter<orders_t, lineitem_t>(db, "q12_merged_ol");
+      merged_coli   = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
+                                       tpch::lineitem_coli_t, tpch::invoice_coli_t>(db, "coli_merged");
+      coli_orders_sec   = B::Adapter<tpch::orders_coli_t>(db, "coli_orders_sec");
+      coli_lineitem_sec = B::Adapter<tpch::lineitem_coli_t>(db, "coli_lineitem_sec");
+      coli_invoice_sec  = B::Adapter<tpch::invoice_coli_t>(db, "coli_invoice_sec");
    });
 
    LeanStoreLogger logger(db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q12::Q12Workload<B> q12(tpch, orders, lineitem, pipeline_view, merged_ol);
+   tpch::CustomerOrdersLineitemInvoicePipeline<B> coli_pipeline(
+       customer, orders, lineitem, invoice, merged_coli,
+       coli_orders_sec, coli_lineitem_sec, coli_invoice_sec);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {

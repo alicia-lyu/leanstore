@@ -3,10 +3,19 @@
 // CUSTOMER × ORDERS × LINEITEM × INVOICE merged-index substrate.
 //
 // This pipeline owns MI(customer_coli_t, orders_coli_t, lineitem_coli_t,
-// invoice_coli_t) keyed by Calcite-style tagged keys and exposes only
-// the truly-shared subset:
-//   - populate_merged(): dual-write replay over the four base adapters
-//   - get_merged_size(): estimated size in MiB
+// invoice_coli_t) keyed by Calcite-style tagged keys and exposes:
+//
+//   populate_merged()      — dual-write replay over the four base adapters
+//   get_merged_size()      — estimated size in MiB of merged_coli
+//   populate_secondaries() — build three custkey-sorted secondary indexes
+//                            (orders, lineitem, invoice) for S1 BinaryMergeJoin
+//   get_secondaries_size() — sum of the three secondary adapter sizes in MiB
+//
+// COLIGroupWalk driver (coli_group_walk):
+//   A pure-dispatch iterator over the merged index parameterized by a Visitor.
+//   The walker calls the appropriate Visitor hook for each record and
+//   on_group_end at each custkey boundary. All query-specific assembly and
+//   aggregation live in the Visitor.
 //
 // Operator drivers (PremergedJoin / BinaryMergeJoin / HashJoin) and view
 // loading are per-query and live in q{N}/query.tpp / q{N}/load.tpp.
@@ -24,6 +33,42 @@
 namespace tpch
 {
 
+// ---------------------------------------------------------------------------
+// COLIGroupWalk — pure-dispatch walker over a COLI merged index.
+//
+// Iterates the merged scanner forward and dispatches each row to the
+// corresponding Visitor hook.  Detects custkey group boundaries and calls
+// on_group_end(prev_custkey) before advancing into the next group.
+//
+// Byte-lex order within a custkey group (guaranteed by the coli_domain_tag
+// encoding in views_coli.hpp):
+//   customer → invoice* → (orders → lineitems*)+ ...
+//
+// Visitor contract (all methods optional; absent methods are skipped via
+// "if constexpr requires"):
+//
+//   bool on_customer(Integer custkey, const customer_coli_t&)
+//       Return false to suppress on_invoice / on_order / on_lineitem for
+//       the rest of this group.  on_group_end is still called.
+//
+//   void on_invoice (const invoice_coli_t::Key&,  const invoice_coli_t&)
+//   void on_order   (const orders_coli_t::Key&,   const orders_coli_t&)
+//   void on_lineitem(const lineitem_coli_t::Key&, const lineitem_coli_t&)
+//   void on_group_end(Integer custkey)
+//
+// The walker is deliberately narrow: it knows only about byte layout and
+// custkey transitions.  All per-query record assembly, projection, and
+// aggregation logic lives in the Visitor.
+
+template <typename Backend, typename Visitor>
+void coli_group_walk(
+    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
+                                             lineitem_coli_t, invoice_coli_t>& mi,
+    Visitor& visitor);
+
+// ---------------------------------------------------------------------------
+// CustomerOrdersLineitemInvoicePipeline
+
 template <typename Backend>
 class CustomerOrdersLineitemInvoicePipeline
 {
@@ -35,6 +80,14 @@ class CustomerOrdersLineitemInvoicePipeline
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                             lineitem_coli_t, invoice_coli_t>& merged_coli;
 
+   // Custkey-sorted secondary indexes for S1 (BinaryMergeJoin on custkey).
+   // Customer is already custkey-keyed via customerh_t, so no secondary needed.
+   // These reuse the *_coli_t tagged-key encoding; the same key_from_base
+   // factories and custkey prefix apply.
+   typename Backend::template Adapter<orders_coli_t>&   orders_secondary;
+   typename Backend::template Adapter<lineitem_coli_t>& lineitem_secondary;
+   typename Backend::template Adapter<invoice_coli_t>&  invoice_secondary;
+
   public:
    CustomerOrdersLineitemInvoicePipeline(
        typename Backend::template Adapter<customerh_t>&  customer,
@@ -42,15 +95,32 @@ class CustomerOrdersLineitemInvoicePipeline
        typename Backend::template Adapter<lineitem_t>&   lineitem,
        typename Backend::template Adapter<invoice_t>&    invoice,
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
-                                                lineitem_coli_t, invoice_coli_t>& merged_coli);
+                                                lineitem_coli_t, invoice_coli_t>& merged_coli,
+       typename Backend::template Adapter<orders_coli_t>&   orders_secondary,
+       typename Backend::template Adapter<lineitem_coli_t>& lineitem_secondary,
+       typename Backend::template Adapter<invoice_coli_t>&  invoice_secondary);
 
    // Dual-write replay: scans all four base tables and inserts each record
    // into merged_coli using *_coli_t tagged keys. Lineitem records are rekeyed
    // from (orderkey, linenumber) to include custkey resolved from orders.
    void populate_merged();
 
+   // Populate three custkey-sorted secondary indexes for S1 (BinaryMergeJoin).
+   // Mirrors populate_merged's scan order and orderkey→custkey map; each
+   // *_coli_t record is inserted into the corresponding single-type secondary
+   // adapter using the same tagged custkey-prefix key as in merged_coli.
+   void populate_secondaries();
+
    // Returns the estimated size of merged_coli in MiB.
    double get_merged_size() const;
+
+   // Returns the sum of the three secondary adapter sizes in MiB.
+   double get_secondaries_size() const;
+
+   // Expose the merged adapter so per-query drivers can call coli_group_walk.
+   typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
+                                            lineitem_coli_t, invoice_coli_t>&
+   merged_adapter() { return merged_coli; }
 };
 
 }  // namespace tpch
