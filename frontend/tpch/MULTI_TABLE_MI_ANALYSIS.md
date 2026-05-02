@@ -87,7 +87,8 @@ not: **balanced cardinality across tables** and/or **non-hierarchical
 **TPC-H queries**: Q3 (stubbed), Q5, Q7, Q10, Q18 — 5 full 3-table
 queries, plus Q13 and Q22 using 2-of-3 subsets.
 
-**Why ruled out**: `custkey` is functionally dependent on `orderkey` (each
+**Why initially deprioritised (see §6 for reframing)**: `custkey` is
+functionally dependent on `orderkey` (each
 order belongs to exactly one customer). Prepending custkey to the
 ORDERS and LINEITEM keys creates a hierarchical prefix chain:
 
@@ -297,3 +298,69 @@ The trade-off is that Invoice is a synthetic table requiring custom data
 generation and queries (no standard TPC-H queries use it). This is
 acceptable because the goal is to validate the paper's theoretical claims,
 not to benchmark standard query workloads.
+
+> See §6 for an updated recommendation that restores Candidate A as a
+> complementary stock-TPC-H track in response to reviewer-risk feedback.
+
+## 6. Reviewer-Risk Reframing (Goetz, 2026-05-01)
+
+After the v1 analysis was circulated, Goetz raised a reviewer-facing
+concern that warrants reopening the candidate ranking. The core point:
+**standard TPC-H must also be shown to benefit from merged indexes**,
+otherwise reviewers will dismiss the technique as something that "only
+pays off in artificially constructed workloads."
+
+### Feedback (paraphrased from email of 2026-05-01)
+
+> It would be important, in the sense of convincing readers and reviewers,
+> to demonstrate that even a simplistic database and workload such as
+> TPC-H can benefit from merged indexes. It might be easy to dismiss the
+> technique with: "The authors couldn't even find a worthwhile example in
+> the standard workloads; this only pays off in their artificially
+> constructed workloads."
+>
+> - Yes, most merged indexes will include one index on a primary key.
+> - Yes, in hierarchical sets of tables, the leaf table will often be the
+>   largest "dominating" one — in those cases, the merged index will be
+>   good for all point lookups but for scans only if the largest table is
+>   required in the query.
+> - Yes, even in non-hierarchical sets of tables, one table might be the
+>   largest one by far — e.g., in a merged index on partkey or on suppkey
+>   — less so in a merged index on nationkey.
+> - Yes, examples adding invoices might enable further experiments and
+>   insights.
+
+### What this changes
+
+1. **Candidate A (C-O-L on custkey) is promoted from "ruled out" to
+   "complementary track."** It validates the §3.1.3 hierarchical pattern
+   on standard TPC-H Q3/Q5/Q10/Q18, which is exactly the credibility
+   anchor Goetz argues for. The geo benchmark already covers hierarchical
+   joins, but its data is synthetic — TPC-H is the standard workload
+   reviewers expect to see.
+2. **Candidate B (P-PS-L on partkey) is no longer dismissed**, only
+   deprioritised. It is a useful "even with a dominant table, the MI
+   still pays off for queries that need that table" data point. Defer
+   unless the suite needs more queries.
+3. **Candidate C (COLI on custkey + Invoice) remains the recommended
+   primary contribution**, but is now framed as **additive** to the
+   stock-TPC-H story rather than a replacement for it.
+
+### Dual-track execution plan
+
+- **Track 1 — Stock TPC-H with COL MI** (credibility floor): Q3, Q5, Q10
+  (already in the `INVOICE_EXTENSION_CANDIDATES.md` shortlist).
+  MI(CUSTOMER, ORDERS, LINEITEM) on custkey, with ORDERS and LINEITEM as
+  secondary indexes. No schema extension; queries unchanged from the
+  TPC-H spec.
+- **Track 2 — Invoice extension with COLI MI** (headline result): Q3I,
+  Q5I, Q10I (existing plan; skeletons under `q3i/`, `q5i/`, `q10i/`).
+  Adds Invoice as a §3.1.2 sibling under custkey on top of Track 1.
+- **Implementation order**: Track 1 first — it is cheap because it reuses
+  the existing `views_ol.hpp` and `OrdersLineitemPipeline` substrate plus
+  a custkey-sorted secondary index on ORDERS and LINEITEM. Track 2 next.
+
+The per-query analysis in `INVOICE_EXTENSION_CANDIDATES.md` for Q3/Q5/Q10
+applies to **both** tracks: the predicate-hoisting and S1–S4 comparisons
+are largely shared, with Track 2 adding one extra invoice-variant
+predicate hoisted into the COLI scan.

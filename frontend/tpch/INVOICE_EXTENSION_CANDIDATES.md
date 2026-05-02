@@ -173,6 +173,16 @@ PS=PARTSUPP, N=NATION, R=REGION.
 
 ## 4. Recommendation
 
+> **Stock TPC-H baseline (added 2026-05-02 per reviewer-risk feedback)**:
+> Q3, Q5, and Q10 should *first* be evaluated with a plain
+> MI(CUSTOMER, ORDERS, LINEITEM) on custkey — no Invoice. This addresses
+> the reviewer concern that the merged-index technique only pays off on
+> synthetic extensions. The Q3I/Q5I/Q10I invoice variants are additive:
+> they share the per-query predicate-hoisting and S1–S4 analyses below,
+> with COLI replacing COL and one extra invoice-variant predicate
+> hoisted into the scan. See `MULTI_TABLE_MI_ANALYSIS.md §6` for the
+> dual-track rationale.
+
 Implement **Q5I** as the primary post-Q3 invoice extension:
 
 1. Strong, realistic business question (paid vs. nominal regional
