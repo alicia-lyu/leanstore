@@ -6,18 +6,21 @@
 //
 // Key byte layouts (all integers fold to 4 bytes big-endian XOR-flipped; u8 = 1 byte):
 //
-//   customer : [t=0][custkey:4]                                            [t=4][idx=0]  =  7 B
-//   orders   : [t=0][custkey:4][t=1][orderkey:4]                           [t=4][idx=1]  = 12 B
-//   lineitem : [t=0][custkey:4][t=1][orderkey:4][t=2][invoicekey:4][lnum:4][t=4][idx=2]  = 21 B
-//   invoice  : [t=0][custkey:4][t=3][invoicekey:4]                         [t=4][idx=3]  = 12 B
+//   customer : [t=1][custkey:4]                                            [t=0][idx=0]  =  7 B
+//   invoice  : [t=1][custkey:4][t=2][invoicekey:4]                         [t=0][idx=3]  = 12 B
+//   orders   : [t=1][custkey:4][t=3][orderkey:4]                           [t=0][idx=1]  = 12 B
+//   lineitem : [t=1][custkey:4][t=3][orderkey:4][t=4][invoicekey:4][lnum:4][t=0][idx=2]  = 21 B
 //
-// Byte-lex sort order derived from the encoding:
-//   For a shared custkey, customer (idx=0, tag prefix t=0) sorts first.
-//   Orders (t=0,t=1) and lineitem (t=0,t=1,t=2) share a common prefix through
-//   orderkey — lineitems nest after their parent order.
-//   Invoice (t=0,t=3) sorts after all orders/lineitems (t=3 > t=1).
+// Byte-lex sort order within a custkey group: customer → invoice → orders → lineitems.
+//   customer: after [1][custkey] the next byte is 0 (sentinel), smaller than any domain tag.
+//   invoice (t=2) sorts before orders (t=3) and lineitem (t=3,t=4) — t=2 < t=3.
+//   orders and lineitems share the [t=3][orderkey] prefix; orders' sentinel (t=0) sorts
+//   before lineitems' tag (t=4) — lineitems nest after their parent order.
 //
-// §3.1.2 sibling and §3.1.3 hierarchy layouts fall out of byte-lex order automatically.
+// §3.1.2 sibling sub-aggregate pattern: summary/sub-aggregate records with smaller
+// cardinality (invoices) come first so consumers can finalize per-custkey state
+// (e.g. cust_open_due) before the bulk O×L records stream by.
+// §3.1.3 hierarchy layout falls out of byte-lex order automatically.
 
 #include <cassert>
 #include <cstdint>
@@ -42,9 +45,9 @@ enum class coli_domain_tag : u8 {
    // with [child_field_tag>0][child_field]... — and 0 < any positive tag.
    index    = 0,  // sentinel: end of (tag, field) pairs
    customer = 1,
-   orders   = 2,
-   lineitem = 3,
-   invoice  = 4,
+   invoice  = 2,  // precedes orders/lineitems: summary records finalize first
+   orders   = 3,  // was 2
+   lineitem = 4,  // was 3
 };
 
 // Index identifier: trailing byte that names the leaf record type.
@@ -182,7 +185,7 @@ struct tagged_path {
 
 // customer_coli_t — stores customerh_t payload under tagged key.
 //
-// Key layout: [t=customer][custkey:4][t=index][idx=customer]  = 7 bytes
+// Key layout: [t=1(cust)][custkey:4][t=0(idx)][idx=customer]  = 7 bytes
 struct customer_coli_t {
    static constexpr int id = 30;
 
@@ -254,7 +257,7 @@ static_assert(sizeof(customer_coli_t) == sizeof(customerh_t),
 // ---------------------------------------------------------------------------
 // orders_coli_t — stores orders_t payload under tagged key.
 //
-// Key layout: [t=customer][custkey:4][t=orders][orderkey:4][t=index][idx=orders]  = 12 bytes
+// Key layout: [t=1(cust)][custkey:4][t=3(ord)][orderkey:4][t=0(idx)][idx=orders]  = 12 bytes
 struct orders_coli_t {
    static constexpr int id = 31;
 
@@ -329,8 +332,8 @@ static_assert(sizeof(orders_coli_t) == sizeof(orders_t),
 // lineitem_coli_t — stores lineitem_t payload under tagged key.
 //
 // Key layout:
-//   [t=customer][custkey:4][t=orders][orderkey:4][t=lineitem][invoicekey:4][linenumber:4]
-//   [t=index][idx=lineitem]  =  21 bytes
+//   [t=1(cust)][custkey:4][t=3(ord)][orderkey:4][t=4(li)][invoicekey:4][linenumber:4]
+//   [t=0(idx)][idx=lineitem]  =  21 bytes
 struct lineitem_coli_t {
    static constexpr int id = 32;
 
@@ -419,7 +422,7 @@ static_assert(sizeof(lineitem_coli_t) == sizeof(lineitem_t),
 // ---------------------------------------------------------------------------
 // invoice_coli_t — stores invoice_t payload under tagged key.
 //
-// Key layout: [t=customer][custkey:4][t=invoice][invoicekey:4][t=index][idx=invoice]  = 12 bytes
+// Key layout: [t=1(cust)][custkey:4][t=2(inv)][invoicekey:4][t=0(idx)][idx=invoice]  = 12 bytes
 struct invoice_coli_t {
    static constexpr int id = 33;
 

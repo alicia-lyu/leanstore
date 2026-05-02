@@ -9,7 +9,7 @@ Shared files (used by all three queries):
 
 - `tpch_tables.hpp` — all 8 TPC-H base table record types (`orders_t`,
   `lineitem_t`, `customerh_t`, `part_t`, `supplier_t`, `partsupp_t`,
-  `nation_t`, `region_t`) plus `invoice_t` (~1.5 invoices per order,
+  `nation_t`, `region_t`) plus `invoice_t` (~2 invoices per order,
   keyed by `i_invoicekey`). `lineitem_t` carries an `l_invoicekey` payload
   linking each lineitem to its invoice. Date constants `DATE_1994_01_01 = 8766`
   and `DATE_1995_01_01 = 9131` (days since 1970-01-01) are defined here.
@@ -17,8 +17,8 @@ Shared files (used by all three queries):
   base tables plus `invoice_t`. `loadPartsuppLineitem` and `loadLineitem`
   call `orderkey_from_index()` to produce sparse order keys that match
   `loadOrders`; using raw indices would orphan ~75% of lineitems.
-  `loadInvoiceAndLinkLineitem()` runs after `loadOrders`: it creates one
-  ~1.5 invoices per order and back-fills `l_invoicekey` on each lineitem
+  `loadInvoiceAndLinkLineitem()` runs after `loadOrders`: it creates 2
+  invoices per order and back-fills `l_invoicekey` on each lineitem
   via a second lineitem pass.
 - `views_ol.hpp` — `ol_sort_key_t`, `joined_ol_t` (the ORDERS × LINEITEM
   join result type shared by Q12/Q3/Q9), and the `SKBuilder` specialization.
@@ -41,8 +41,11 @@ Shared files (used by all three queries):
   (pointer-to-member steps: `tag_field_step`, `tag_fields2_step`) plus a
   `static bool matches(const u8*, size_t)` override that reads the trailing
   `idx_id` byte. Sentinel tag `index=0` sorts before all domain tags
-  (`customer=1`, `orders=2`, `lineitem=3`, `invoice=4`), so parent rows sort
-  before children naturally within each key group. Twelve explicit
+  (`customer=1`, `invoice=2`, `orders=3`, `lineitem=4`). Within a custkey
+  group the byte-lex order is customer → invoice → orders → lineitems:
+  invoice (t=2) precedes orders/lineitems (t=3/4) so consumers finalize
+  per-custkey sub-aggregates (e.g. `cust_open_due`) before bulk O×L
+  records stream by (§3.1.2 sibling pattern). Twelve explicit
   `SKMatcher<R1,R2>` specializations cover all 16 ordered pairs (10 unique +
   reverse delegations).
 - `coli_pipeline.hpp` / `coli_pipeline.tpp` —
@@ -420,7 +423,7 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   `invoice_coli_t` with Calcite-style tagged keys (`tagged_path` helper,
   pointer-to-member `tag_field_step` / `tag_fields2_step`). Sentinel
   tag `index=0` ensures parent rows sort before children within each key
-  group (`customer=1`, `orders=2`, `lineitem=3`, `invoice=4`). Twelve
+  group (`customer=1`, `invoice=2`, `orders=3`, `lineitem=4`). Twelve
   explicit `SKMatcher<R1,R2>` specializations cover all 16 ordered pairs.
   `COLIPipeline<Backend>` in `coli_pipeline.{hpp,tpp}` owns the
   `MergedAdapter<...>` and resolves `custkey` for lineitems via an

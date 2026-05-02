@@ -6,7 +6,7 @@
 //   3. Σ i_totaldue ≈ Σ l_extendedprice*(1-l_discount)*(1+l_tax) (±0.5%).
 //   4. Every lineitem's l_invoicekey resolves to a real invoice row in the scan.
 //   5. Hierarchical scan order for a randomly picked custkey:
-//      customer, (orders followed by its lineitems)+, invoice+.
+//      customer, invoice+, (orders followed by its lineitems)+.
 
 #include <gflags/gflags.h>
 #include <cassert>
@@ -122,24 +122,24 @@ Integer find_custkey_with_orders(
 // check_hierarchical_order: scan the custkey range for a specific custkey and
 // verify the byte-lex sequence matches the tagged-key encoding.
 //
-// Actual byte-lex order for a given custkey (sentinel=0, customer=1, orders=2,
-// lineitem=3, invoice=4):
-//   1. customer_coli_t  — key: [t=1(cust)][custkey][t=0(end)][idx=0]
+// Actual byte-lex order for a given custkey (sentinel=0, customer=1, invoice=2,
+// orders=3, lineitem=4):
+//   1. customer_coli_t  — key: [t=1(cust)][custkey][t=0(idx)][idx=0]
 //      Sorts FIRST: after the [1][custkey] prefix, the next byte is 0 (sentinel),
-//      strictly smaller than any other record's next byte (orders' t=2, invoice's t=4).
-//   2. Per orderkey group (orderkeys in ascending order):
-//      - orders_coli_t  — key: [1][custkey][2(ord)][orderkey][0][idx=1]
+//      strictly smaller than any domain tag (invoice's t=2, orders' t=3).
+//   2. invoice_coli_t rows — key: [1][custkey][2(inv)][invoicekey][0][idx=3]
+//      Sort BEFORE orders+lineitems because invoice tag (2) < orders tag (3).
+//   3. Per orderkey group (orderkeys in ascending order):
+//      - orders_coli_t  — key: [1][custkey][3(ord)][orderkey][0][idx=1]
 //        Parent order sorts BEFORE its lineitems because next byte after
-//        [orderkey] is 0 (sentinel) < 3 (lineitem tag).
-//      - lineitem rows — key: [1][custkey][2][orderkey][3(li)][invoicekey][lnum][0][idx=2]
-//   3. invoice_coli_t rows — key: [1][custkey][4(inv)][invoicekey][0][idx=3]
-//      Sort AFTER all orders+lineitems because invoice tag (4) > orders tag (2).
+//        [orderkey] is 0 (sentinel) < 4 (lineitem tag).
+//      - lineitem rows — key: [1][custkey][3][orderkey][4(li)][invoicekey][lnum][0][idx=2]
 //
 // Expected invariants:
 //   - Exactly one customer record.
-//   - At least one orderkey group (each group = lineitems* + one order).
-//   - Zero or more invoice records after all orders.
-//   - No customer/lineitem/order records after the first invoice.
+//   - Zero or more invoice records immediately after customer (before any order).
+//   - At least one orderkey group (each group = one order followed by its lineitems).
+//   - No invoice records after the first order or lineitem.
 
 template <typename Backend>
 bool check_hierarchical_order(
@@ -155,10 +155,10 @@ bool check_hierarchical_order(
    // Seek to the customer record for this custkey.
    scanner->template seek<customer_coli_t>(customer_coli_t::Key{custkey});
 
-   // State: 0=before customer, 1=inside orders+lineitems, 2=inside invoices.
-   int state        = 0;
-   int cust_count   = 0;
-   int orders_seen  = 0;
+   // State: 0=before customer, 1=after customer (invoices allowed), 2=inside orders+lineitems.
+   int state       = 0;
+   int cust_count  = 0;
+   int orders_seen = 0;
 
    while (auto kv = scanner->next()) {
       // Stop when we leave this custkey's range.
@@ -183,19 +183,19 @@ bool check_hierarchical_order(
                 state = 1;
                 cust_count++;
                 return true;
-             } else if constexpr (std::is_same_v<V, lineitem_coli_t>) {
-                // Lineitems precede their parent order in byte-lex; must be in state 1.
-                if (state != 1) return false;
+             } else if constexpr (std::is_same_v<V, invoice_coli_t>) {
+                // Invoices precede orders (t=2 < t=3); must not appear after any order/lineitem.
+                if (state == 0 || state == 2) return false;
                 return true;
              } else if constexpr (std::is_same_v<V, orders_coli_t>) {
-                // Orders follow their lineitems; must be in state 1 (not after invoices).
-                if (state != 1) return false;
-                orders_seen++;
-                return true;
-             } else if constexpr (std::is_same_v<V, invoice_coli_t>) {
-                // Invoices follow all orders (t=3 > t=1); must have seen customer first.
+                // Orders follow invoices; transition to state 2 on first order seen.
                 if (state == 0) return false;
                 state = 2;
+                orders_seen++;
+                return true;
+             } else if constexpr (std::is_same_v<V, lineitem_coli_t>) {
+                // Lineitems follow their parent order in byte-lex; must be in state 2.
+                if (state != 2) return false;
                 return true;
              }
              return false;
@@ -252,8 +252,8 @@ int main(int argc, char** argv)
    const long expected_orders   = TPCHWorkload<B::Adapter>::ORDERS_SCALE   * sf;
    const long expected_lineitem_min = expected_orders * 1;
    const long expected_lineitem_max = expected_orders * 7;
-   const long expected_invoice_lo   = static_cast<long>(expected_orders * 1.4);  // ~1.5×±2%
-   const long expected_invoice_hi   = static_cast<long>(expected_orders * 1.6);
+   const long expected_invoice_lo   = static_cast<long>(expected_orders * 1.9);  // ~2×±5%
+   const long expected_invoice_hi   = static_cast<long>(expected_orders * 2.1);
 
    ColiStats stats = scan_coli_stats<B>(merged_coli);
 
@@ -276,7 +276,7 @@ int main(int argc, char** argv)
    std::cout << pass(stats.invoice_count >= expected_invoice_lo
                      && stats.invoice_count <= expected_invoice_hi)
              << " invoice count:  " << stats.invoice_count
-             << "  (expected ~" << (expected_orders * 3 / 2)
+             << "  (expected ~" << (expected_orders * 2)
              << ", range [" << expected_invoice_lo << "," << expected_invoice_hi << "])\n";
 
    // Total MI cardinality == sum of per-type counts (trivially true by construction,
@@ -313,7 +313,7 @@ int main(int argc, char** argv)
                && check_hierarchical_order<B>(merged_coli, spot_custkey);
    std::cout << pass(hier_ok)
              << " hierarchical order for custkey=" << spot_custkey
-             << ": customer,(orders+lineitems)+,invoices+\n";
+             << ": customer,invoices*,(orders+lineitems)+\n";
 
    std::cout << "       MI size: " << merged_coli.size() << " MiB\n";
 

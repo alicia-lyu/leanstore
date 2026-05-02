@@ -27,3 +27,7 @@ test_coli_data - moved to TRASH/test_coli_data_<ts> - stale RocksDB test instanc
 test_{coli,q12}_{data,csv}, test_{data,csv}{,2,3,_card,_coli,_diag1,_diag2,_final}, test_{data,csv}_run{1..10}, test_q12.json - moved to TRASH/test_artifacts_$(date)/ - bulk cleanup of accumulated load/query test runtime artifacts from project root
 frontend/tpch/q9i/ - moved to TRASH/q9i_skeleton/ - per INVOICE_EXTENSION_CANDIDATES.md, Q9 has no Customer; contrived extension. Rejection rationale is in the candidate doc itself.
 frontend/tpch/q12i/ - moved to TRASH/q12i_skeleton/ - per INVOICE_EXTENSION_CANDIDATES.md, Q12 has no Customer; contrived extension. Rejection rationale is in the candidate doc itself.
+test_data_coli2 - moved to TRASH/ - COLI load-test run verifying 2× invoice cardinality and tag reorder (Phase 1 prerequisites)
+test_csv_coli2 - moved to TRASH/ - CSV/log dir paired with test_data_coli2
+test_data_q12_verify - moved to TRASH/ - Q12 parity regression test run after COLI tag reorder
+test_csv_q12_verify - moved to TRASH/ - CSV/log dir paired with test_data_q12_verify

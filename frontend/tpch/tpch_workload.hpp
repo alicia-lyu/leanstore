@@ -35,8 +35,8 @@ struct TPCHWorkload {
    inline static Integer ORDERS_SCALE = 1500;    // 1.5M per SF
    inline static Integer LINEITEM_SCALE = 6000;  // ~6M per SF (avg 4 lineitems per order)
    inline static Integer PARTSUPP_SCALE = 800;   // 800K per SF
-   // Invoice scale: ceil(1.5 × ORDERS_SCALE) — ~2.25M per SF
-   inline static Integer INVOICE_SCALE = 2250;
+   // Invoice scale: 2 × ORDERS_SCALE — ~3M per SF
+   inline static Integer INVOICE_SCALE = 3000;
    inline static Integer NATION_COUNT = 25;
    inline static Integer REGION_COUNT = 5;
 
@@ -518,7 +518,7 @@ struct TPCHWorkload {
    //   1. Scan orders and group by custkey, recording (orderdate, orderkey).
    //   2. Scan lineitems grouped by orderkey (natural key order), accumulate
    //      per-order into a per-custkey list of (orderkey, linenumber, lineitem).
-   //   3. For each customer: allocate ceil(1.5 * N) invoice slots.
+   //   3. For each customer: allocate 2 * N invoice slots.
    //      Walk lineitems in (orderdate, orderkey, linenumber) order, assigning
    //      each to the current invoice; close and advance after
    //      total_lineitems / num_invoices lineitems.
@@ -598,8 +598,8 @@ struct TPCHWorkload {
       for (auto& [custkey, order_metas] : cust_orders) {
          auto& items = cust_lineitems[custkey];  // may be empty
          Integer N = static_cast<Integer>(order_metas.size());
-         // ceil(1.5 * N)
-         Integer num_invoices = (3 * N + 1) / 2;
+         // 2 invoices per order
+         Integer num_invoices = 2 * N;
 
          // Sort lineitems by (orderdate, orderkey, linenumber) so that
          // lineitems from the same order cluster together and earlier orders
