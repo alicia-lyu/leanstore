@@ -249,12 +249,19 @@ Phase 1 surfaced four lessons that reshape the remaining phases:
    merge-join scan over the OL secondaries, with no body-level duplication
    from S3. This honours OPERATORS.md §6.1 comparison-integrity: the same
    per-record accumulation logic runs against every storage structure.
-2. **`q3i_pipeline_view_t` should stay aliased to `joined_ol_t`.** Embedding
-   `cust_open_due` per-lineitem-row in the materialised view inflates the
-   view by a factor of ~`avg(lineitems_per_customer)` and makes S2 unfair
-   relative to S3. Keep the view as the OL join only; build
-   `cust_open_due` at query time from a single INVOICE scan into a
-   hashmap, identical to S1/S4.
+2. **`q3i_pipeline_view_t` is widened to a real struct keyed by `(custkey,
+   orderkey)`.** The family logical plan's inside-pipeline `SortedAggregate`
+   collapses all lineitems per orderkey into one revenue sum before the
+   pipeline output is materialised. The view therefore has one row per
+   `(custkey, orderkey)` — cardinality ≈ `|orders|` — far smaller than a
+   `joined_ol_t` row per `(order, lineitem)` pair. Carrying `cust_open_due`,
+   `c_mktsegment`, `o_orderdate`, and `o_shippriority` in the view row means
+   S2's query time is a plain sequential scan with per-row mktsegment and
+   threshold filters, requiring no secondary invoice lookup. This makes S2 a
+   fair comparison point against S1/S3 (both of which compute `cust_open_due`
+   in a single streaming pass) while keeping the view **unfiltered** on
+   parametrised predicates so it stays reusable across param sets (predicate
+   hoisting — see [Filter Pushdown](../OPERATORS.md#filter-pushdown)).
 3. **Top-10 is cheap and belongs in Phase 2.** No reason to gate it behind
    a separate phase: `std::partial_sort_copy` over the per-orderkey result
    vec is one statement per `query_by_*` and gives spec-compliant output

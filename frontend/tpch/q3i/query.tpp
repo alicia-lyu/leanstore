@@ -28,6 +28,25 @@ inline Params Params::defaults()
 }
 
 // ---------------------------------------------------------------------------
+// Print helpers for new view / intermediate row types.
+
+inline void q3i_pipeline_view_t::print(std::ostream& os) const
+{
+   os << "view(" << revenue << "," << cust_open_due << "," << o_orderdate
+      << "," << o_shippriority << ")\n";
+}
+
+inline void cust_open_due_t::print(std::ostream& os) const
+{
+   os << "open_due(" << cust_open_due << ")\n";
+}
+
+inline void lineitem_agg_t::print(std::ostream& os) const
+{
+   os << "lineitem_agg(" << revenue << ")\n";
+}
+
+// ---------------------------------------------------------------------------
 // q3i_agg_row_t::print — tab-separated output.
 
 inline void q3i_agg_row_t::print(std::ostream& os) const
