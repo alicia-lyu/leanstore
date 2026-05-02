@@ -31,9 +31,9 @@ CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePip
       lineitem(lineitem),
       invoice(invoice),
       merged_coli(merged_coli),
-      split_orders(split_orders),
-      split_lineitem(split_lineitem),
-      split_invoice(split_invoice)
+      split_orders_ref(split_orders),
+      split_lineitem_ref(split_lineitem),
+      split_invoice_ref(split_invoice)
 {
 }
 
@@ -134,7 +134,7 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_split()
          const orders_t::Key& ok = kv->first;
          const orders_t& ov      = kv->second;
          orderkey_to_custkey.emplace(ok.o_orderkey, ov.o_custkey);
-         split_orders.insert(
+         split_orders_ref.insert(
              orders_coli_t::key_from_base(ov.o_custkey, ok),
              orders_coli_t::from_base(ov));
       }
@@ -150,7 +150,7 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_split()
          assert(it != orderkey_to_custkey.end()
                 && "lineitem references unknown orderkey");
          Integer custkey = it->second;
-         split_lineitem.insert(
+         split_lineitem_ref.insert(
              lineitem_coli_t::key_from_base(custkey, lk, lv),
              lineitem_coli_t::from_base(lv));
       }
@@ -162,7 +162,7 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_split()
       while (auto kv = scanner->next()) {
          const invoice_t::Key& ik = kv->first;
          const invoice_t& iv      = kv->second;
-         split_invoice.insert(
+         split_invoice_ref.insert(
              invoice_coli_t::key_from_base(iv.i_custkey, ik),
              invoice_coli_t::from_base(iv));
       }
@@ -184,7 +184,7 @@ double CustomerOrdersLineitemInvoicePipeline<Backend>::get_merged_size() const
 template <typename Backend>
 double CustomerOrdersLineitemInvoicePipeline<Backend>::get_split_size() const
 {
-   return split_orders.size() + split_lineitem.size() + split_invoice.size();
+   return split_orders_ref.size() + split_lineitem_ref.size() + split_invoice_ref.size();
 }
 
 }  // namespace tpch

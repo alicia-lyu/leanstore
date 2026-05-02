@@ -84,9 +84,10 @@ class CustomerOrdersLineitemInvoicePipeline
    // Customer is already custkey-keyed via customerh_t, so no split index needed.
    // These reuse the *_coli_t tagged-key encoding; the same key_from_base
    // factories and custkey prefix apply.
-   typename Backend::template Adapter<orders_coli_t>&   split_orders;
-   typename Backend::template Adapter<lineitem_coli_t>& split_lineitem;
-   typename Backend::template Adapter<invoice_coli_t>&  split_invoice;
+   // Named with _ref suffix to avoid collision with the public accessor methods.
+   typename Backend::template Adapter<orders_coli_t>&   split_orders_ref;
+   typename Backend::template Adapter<lineitem_coli_t>& split_lineitem_ref;
+   typename Backend::template Adapter<invoice_coli_t>&  split_invoice_ref;
 
   public:
    CustomerOrdersLineitemInvoicePipeline(
@@ -121,6 +122,17 @@ class CustomerOrdersLineitemInvoicePipeline
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                             lineitem_coli_t, invoice_coli_t>&
    merged_adapter() { return merged_coli; }
+
+   // Expose custkey-sorted split adapters so per-query S1 drivers can scan
+   // the single-type indexes directly (parallel to merged_adapter() for S3).
+   typename Backend::template Adapter<orders_coli_t>&
+   split_orders() { return split_orders_ref; }
+
+   typename Backend::template Adapter<lineitem_coli_t>&
+   split_lineitem() { return split_lineitem_ref; }
+
+   typename Backend::template Adapter<invoice_coli_t>&
+   split_invoice() { return split_invoice_ref; }
 };
 
 }  // namespace tpch

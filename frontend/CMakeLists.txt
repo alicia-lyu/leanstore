@@ -182,7 +182,7 @@ if (APPLE)
     )
 
     # --- test_query_q3i_phase1_lsm: TEMPORARY Phase 1 harness for Q3I query_by_merged (RocksDB) ---
-    # Phase 3 will replace this with a formal test_query_q3i_lsm covering all four structures.
+    # Replaced by test_query_q3i_lsm (all four structures + parity) in Phase 2.
     add_executable(test_query_q3i_phase1_lsm tpch/tests/q3i/test_query_q3i_phase1_rocksdb.cpp)
     target_compile_definitions(test_query_q3i_phase1_lsm PRIVATE ROCKSDB_ONLY)
     target_include_directories(test_query_q3i_phase1_lsm PRIVATE
@@ -191,6 +191,21 @@ if (APPLE)
         ${SHARED_INCLUDE_DIRECTORY}
     )
     target_link_libraries(test_query_q3i_phase1_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
+    # --- test_query_q3i_lsm: Q3I all-four query_by_* cross-structure parity test (RocksDB) ---
+    add_executable(test_query_q3i_lsm tpch/tests/q3i/test_query_q3i_rocksdb.cpp)
+    target_compile_definitions(test_query_q3i_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_query_q3i_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_query_q3i_lsm PUBLIC
         RocksDBLogger
         jumpmu_standalone
         random_standalone
@@ -269,9 +284,13 @@ else()
     target_link_libraries(test_load_coli_lsm PUBLIC RocksDBLogger Threads::Threads)
 
     # TEMPORARY Phase 1 harness for Q3I query_by_merged (RocksDB).
-    # Phase 3 will replace this with a formal test_query_q3i_lsm.
+    # Replaced by test_query_q3i_lsm (all four structures + parity) in Phase 2.
     add_executable(test_query_q3i_phase1_lsm tpch/tests/q3i/test_query_q3i_phase1_rocksdb.cpp)
     target_link_libraries(test_query_q3i_phase1_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    # Q3I all-four query_by_* cross-structure parity test (RocksDB).
+    add_executable(test_query_q3i_lsm tpch/tests/q3i/test_query_q3i_rocksdb.cpp)
+    target_link_libraries(test_query_q3i_lsm PUBLIC RocksDBLogger Threads::Threads)
 
     add_executable(q12_btree tpch/q12/executable_leanstore.cpp)
     target_link_libraries(q12_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)

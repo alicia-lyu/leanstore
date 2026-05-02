@@ -11,8 +11,12 @@
 
 #include <ostream>
 #include <string_view>
+#include <unordered_map>
 
 #include "../operators.hpp"
+#include "../../shared/merge-join/binary_merge_join.hpp"
+#include "../../shared/merge-join/hash_join.hpp"
+#include "../../shared/scanner_helpers.hpp"
 
 namespace tpch::q3i
 {
@@ -237,6 +241,203 @@ struct COLIGroupWalkVisitor {
 };
 
 // ---------------------------------------------------------------------------
+// Scanner-wrapper aggregators for S1 (3-BMJ chain over custkey-sorted splits).
+//
+// Both wrappers drive a split adapter's scanner internally, accumulate via
+// the shared accumulator structs above, and emit one output row per key group
+// at the next group boundary (lazy emission). This is the SortedAggregate
+// pattern from OPERATORS.md §3 op 6.
+//
+// CustomerOpenDueAggregator: wraps split_invoice (custkey-sorted invoice_coli_t
+//   records). Emits (cust_open_due_t::Key, cust_open_due_t) per custkey group
+//   only when cust_open_due > threshold (threshold filter fused at emit time,
+//   per OPERATORS.md §6 Filter Pushdown: aggregate-output filter at the
+//   SortedAggregate, not a downstream Filter node).
+//
+// LineitemRevenueAggregator: wraps split_lineitem (custkey, orderkey, linenumber
+//   sorted lineitem_coli_t records). Emits (lineitem_agg_t::Key, lineitem_agg_t)
+//   per (custkey, orderkey) group. Filter l_shipdate > shipdate fused at consume
+//   time via LineitemRevenueAccumulator::consume.
+
+template <typename Backend>
+class CustomerOpenDueAggregator
+{
+   using Scanner = decltype(std::declval<typename Backend::template Adapter<invoice_coli_t>>().getScanner());
+   Scanner scanner_;
+   const Params& params_;
+
+   // Buffered next emission: set when a group boundary is crossed.
+   std::optional<std::pair<cust_open_due_t::Key, cust_open_due_t>> pending_;
+
+   // Current group state.
+   Integer               cur_custkey_ = -1;
+   CustomerOpenDueAccumulator acc_;
+
+   // Lookahead: the first invoice_coli_t row of the next group, held across
+   // the group boundary so we don't lose it.
+   std::optional<std::pair<invoice_coli_t::Key, invoice_coli_t>> lookahead_;
+   bool exhausted_ = false;
+
+   // Flush the current group into pending_ if it passes the threshold.
+   void flush_group()
+   {
+      if (cur_custkey_ < 0) return;
+      if (acc_.value > params_.threshold) {
+         pending_ = {cust_open_due_t::Key{cur_custkey_},
+                     cust_open_due_t{acc_.value}};
+      }
+      acc_.reset();
+   }
+
+  public:
+   explicit CustomerOpenDueAggregator(
+       typename Backend::template Adapter<invoice_coli_t>& adapter,
+       const Params& params)
+       : scanner_(adapter.getScanner()), params_(params)
+   {
+      // Prime the lookahead.
+      lookahead_ = scanner_->next();
+      if (!lookahead_) exhausted_ = true;
+   }
+
+   std::optional<std::pair<cust_open_due_t::Key, cust_open_due_t>> next()
+   {
+      // Drain any pending emission first.
+      if (pending_) {
+         auto out = std::move(pending_);
+         pending_ = std::nullopt;
+         return out;
+      }
+      if (exhausted_ && cur_custkey_ < 0) return std::nullopt;
+
+      // Consume rows until we complete a new group.
+      for (;;) {
+         if (lookahead_) {
+            auto& [k, v] = *lookahead_;
+            if (k.custkey != cur_custkey_) {
+               // Group boundary: flush the old group.
+               Integer prev_key = cur_custkey_;
+               flush_group();
+               cur_custkey_ = k.custkey;
+               acc_.consume_invoice(v);
+               lookahead_ = scanner_->next();
+               if (!lookahead_) exhausted_ = true;
+               if (prev_key >= 0 && pending_) {
+                  auto out = std::move(pending_);
+                  pending_ = std::nullopt;
+                  return out;
+               }
+               // prev_key was -1 (first row) or threshold not met — continue.
+               continue;
+            }
+            // Same custkey: accumulate.
+            acc_.consume_invoice(v);
+            lookahead_ = scanner_->next();
+            if (!lookahead_) exhausted_ = true;
+         } else {
+            // Scanner exhausted — flush last group.
+            if (cur_custkey_ < 0) return std::nullopt;
+            flush_group();
+            cur_custkey_ = -1;
+            if (pending_) {
+               auto out = std::move(pending_);
+               pending_ = std::nullopt;
+               return out;
+            }
+            return std::nullopt;
+         }
+      }
+   }
+};
+
+// LineitemRevenueAggregator: emits one (lineitem_agg_t::Key, lineitem_agg_t)
+// per (custkey, orderkey) group from custkey-sorted split_lineitem records.
+// l_shipdate filter fused at consume time.
+template <typename Backend>
+class LineitemRevenueAggregator
+{
+   using Scanner = decltype(std::declval<typename Backend::template Adapter<lineitem_coli_t>>().getScanner());
+   Scanner scanner_;
+   const Params& params_;
+
+   std::optional<std::pair<lineitem_agg_t::Key, lineitem_agg_t>> pending_;
+
+   Integer cur_custkey_  = -1;
+   Integer cur_orderkey_ = -1;
+   LineitemRevenueAccumulator acc_;
+
+   std::optional<std::pair<lineitem_coli_t::Key, lineitem_coli_t>> lookahead_;
+   bool exhausted_ = false;
+
+   void flush_group()
+   {
+      if (cur_custkey_ < 0) return;
+      // Emit only groups with non-zero revenue (no revenue means all lineitems
+      // were filtered out; suppress so downstream BMJ skips the orderkey).
+      if (acc_.revenue > Numeric(0)) {
+         pending_ = {lineitem_agg_t::Key{cur_custkey_, cur_orderkey_},
+                     lineitem_agg_t{acc_.revenue}};
+      }
+      acc_.reset();
+   }
+
+  public:
+   explicit LineitemRevenueAggregator(
+       typename Backend::template Adapter<lineitem_coli_t>& adapter,
+       const Params& params)
+       : scanner_(adapter.getScanner()), params_(params)
+   {
+      lookahead_ = scanner_->next();
+      if (!lookahead_) exhausted_ = true;
+   }
+
+   std::optional<std::pair<lineitem_agg_t::Key, lineitem_agg_t>> next()
+   {
+      if (pending_) {
+         auto out = std::move(pending_);
+         pending_ = std::nullopt;
+         return out;
+      }
+      if (exhausted_ && cur_custkey_ < 0) return std::nullopt;
+
+      for (;;) {
+         if (lookahead_) {
+            auto& [k, v] = *lookahead_;
+            bool same_group = (k.custkey == cur_custkey_ && k.orderkey == cur_orderkey_);
+            if (!same_group) {
+               bool had_group = (cur_custkey_ >= 0);
+               flush_group();
+               cur_custkey_  = k.custkey;
+               cur_orderkey_ = k.orderkey;
+               acc_.consume(v, params_);
+               lookahead_ = scanner_->next();
+               if (!lookahead_) exhausted_ = true;
+               if (had_group && pending_) {
+                  auto out = std::move(pending_);
+                  pending_ = std::nullopt;
+                  return out;
+               }
+               continue;
+            }
+            acc_.consume(v, params_);
+            lookahead_ = scanner_->next();
+            if (!lookahead_) exhausted_ = true;
+         } else {
+            if (cur_custkey_ < 0) return std::nullopt;
+            flush_group();
+            cur_custkey_ = -1;
+            if (pending_) {
+               auto out = std::move(pending_);
+               pending_ = std::nullopt;
+               return out;
+            }
+            return std::nullopt;
+         }
+      }
+   }
+};
+
+// ---------------------------------------------------------------------------
 // Q3IWorkload query methods
 
 template <typename Backend>
@@ -270,40 +471,253 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
 {
-   // S1: BinaryMergeJoin over custkey-sorted split COLI indexes.
+   // S1: 3-BMJ chain over custkey-sorted COLI split indexes.
    //
-   // Phase 2 deliverable — reuses CustomerOpenDueAccumulator and
-   // LineitemRevenueAccumulator (declared above) over the custkey-sorted
-   // split scanners exposed by COLIPipeline.
+   // Chain:
+   //   BMJ #1: customerh_t ⋈ cust_open_due_t on custkey
+   //           (customer scan filter-pushed: c_mktsegment == params.mktsegment)
+   //           (threshold filter fused inside CustomerOpenDueAggregator at emit)
+   //   BMJ #2: BMJ#1 result ⋈ orders_coli_t on custkey
+   //           (orderdate filter fused in fetch lambda)
+   //   BMJ #3: BMJ#2 result ⋈ lineitem_agg_t on (custkey, orderkey)
+   //           (shipdate filter fused inside LineitemRevenueAggregator at consume)
    //
-   // OPERATORS.md §3 op 4 (S1): pre-build cust_open_due via stream scan
-   // of split_invoice (custkey-sorted); BinaryMergeJoin(OL) over
-   // split_orders / split_lineitem; CUSTOMER hash lookup.
+   // OPERATORS.md §3 op 4 (S1); accumulators reuse the same structs as S3
+   // per OPERATORS.md §6.1 comparison-integrity.
    out.clear();
-   return 0;  // TODO Phase 2
+
+   // --- scanner-wrapper aggregators ---
+   // These drive the custkey-sorted COLI split adapters and emit aggregated
+   // rows. Aggregators own their scanner internally.
+   CustomerOpenDueAggregator<Backend> agg_inv(coli.split_invoice(), params);
+   LineitemRevenueAggregator<Backend> agg_lin(coli.split_lineitem(), params);
+
+   // --- filter-pushed scanners ---
+   auto cust_scan_ptr = customer.getScanner();
+   auto ord_scan_ptr  = coli.split_orders().getScanner();
+
+   // Fetch customer rows passing the mktsegment filter.
+   auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
+      while (auto kv = cust_scan_ptr->next()) {
+         if (stats) stats->customers_scanned++;
+         auto sm  = std::string_view(kv->second.c_mktsegment.data,
+                                     kv->second.c_mktsegment.length);
+         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+         if (sm == psm) return kv;
+      }
+      return std::nullopt;
+   };
+
+   // Fetch cust_open_due rows from the aggregator.
+   auto fetch_inv_agg = [&]() { return agg_inv.next(); };
+
+   // BMJ #1: customer ⋈ cust_open_due on custkey.
+   // Join key = cust_open_due_t::Key (custkey only).
+   BinaryMergeJoin<cust_open_due_t::Key, q3i_jr1_t, customerh_t, cust_open_due_t>
+       bmj1(fetch_cust, fetch_inv_agg);
+
+   // BMJ #2: q3i_jr1_t ⋈ orders_coli_t on custkey.
+   // fetch_ord skips orders with o_orderdate >= params.orderdate.
+   auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
+      while (auto kv = ord_scan_ptr->next()) {
+         if (stats) stats->orders_scanned++;
+         if (kv->second.o_orderdate < params.orderdate) return kv;
+      }
+      return std::nullopt;
+   };
+
+   auto fetch_bmj1 = [&]() { return bmj1.next(); };
+
+   BinaryMergeJoin<cust_open_due_t::Key, q3i_jr2_t, q3i_jr1_t, orders_coli_t>
+       bmj2(fetch_bmj1, fetch_ord);
+
+   // BMJ #3: q3i_jr2_t ⋈ lineitem_agg_t on (custkey, orderkey).
+   auto fetch_bmj2    = [&]() { return bmj2.next(); };
+   auto fetch_lin_agg = [&]() { return agg_lin.next(); };
+
+   BinaryMergeJoin<lineitem_agg_t::Key, q3i_jr3_t, q3i_jr2_t, lineitem_agg_t>
+       bmj3(fetch_bmj2, fetch_lin_agg);
+
+   // Drain BMJ #3: each JR3 carries (q3i_jr2_t, lineitem_agg_t).
+   while (auto kv = bmj3.next()) {
+      if (stats) stats->join_callbacks++;
+      const q3i_jr3_t& jr3 = kv->second;
+      const q3i_jr2_t& jr2 = jr3.jr2();
+      const lineitem_agg_t& lagg = jr3.linagg();
+      const orders_coli_t&  o   = jr2.order();
+      const cust_open_due_t& due = jr2.jr1().due();
+      Integer orderkey = kv->first.jk.orderkey;
+      out.push_back({orderkey, lagg.revenue, o.o_orderdate,
+                     o.o_shippriority, due.cust_open_due});
+   }
+
+   if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
+   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return a.revenue > b.revenue;
+   });
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
 {
-   // S2: scan materialized pipeline view (joined_ol_t rows, unfiltered).
+   // S2: sequential scan of the materialised q3i_pipeline_view_t.
    //
-   // Phase 2 deliverable — apply q3i_predicate_joined post-scan; look up
-   // cust_open_due from a pre-built invoice map (OPERATORS.md §3 op 4 S2).
+   // The view is unfiltered on parameterised predicates (predicate hoisting —
+   // OPERATORS.md §4 / §6).  Apply mktsegment and threshold per-row here;
+   // o_orderdate and l_shipdate are baked into revenue at view-load time so
+   // they are NOT re-applied (the view stores pre-aggregated revenue per
+   // orderkey, already summing all lineitems).  This keeps S2 fair against
+   // S1/S3 which also fuse those filters in the streaming pass.
    out.clear();
-   return 0;  // TODO Phase 2
+
+   auto vs = pipeline_view.getScanner();
+   while (auto kv = vs->next()) {
+      const q3i_pipeline_view_t& row = kv->second;
+
+      // Mktsegment filter (parameterised — applied at query time).
+      auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
+      auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+      if (sm != psm) continue;
+
+      // o_orderdate filter: only orders before params.orderdate.
+      if (row.o_orderdate >= params.orderdate) continue;
+
+      // Threshold filter on cust_open_due (parameterised — applied at query time).
+      if (row.cust_open_due <= params.threshold) continue;
+
+      if (stats) stats->join_callbacks++;
+      Integer orderkey = kv->first.orderkey;
+      out.push_back({orderkey, row.revenue, row.o_orderdate,
+                     row.o_shippriority, row.cust_open_due});
+   }
+
+   if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
+   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return a.revenue > b.revenue;
+   });
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
 {
-   // S4: HashJoin baseline.
+   // S4: 3-HJ chain over base tables (no merged index, no custkey ordering).
    //
-   // Phase 2 deliverable — pre-build cust_open_due hashmap from INVOICE;
-   // HashJoin(OL) + CUSTOMER hash lookup; reuses CustomerOpenDueAccumulator
-   // and LineitemRevenueAccumulator (OPERATORS.md §3 op 4 S4 baseline).
+   // Pre-aggregation steps (before any join):
+   //   a) Invoice hash-aggregate → per-custkey open_due map.
+   //      Threshold filter fused at emit time (same as CustomerOpenDueAggregator
+   //      in S1 — OPERATORS.md §6.1 comparison-integrity).
+   //   b) Customer hash lookup map → per-custkey mktsegment filter.
+   //
+   // HJ chain (probe side = lineitem, the largest table):
+   //   HJ #1: customer ⋈ cust_open_due on custkey (build = cust_open_due_map)
+   //   HJ #2: HJ#1 result ⋈ orders on custkey      (build = orders_by_custkey)
+   //   HJ #3: HJ#2 result ⋈ lineitem on orderkey   (build = lineitem_by_orderkey)
+   //
+   // Post-join: hash-aggregate by orderkey (HashJoin output is unsorted).
+   //
+   // S4 calls the base-table _t overloads of the accumulators (not _coli_t)
+   // per OPERATORS.md §6.1 comparison-integrity — same arithmetic as S1/S3.
    out.clear();
-   return 0;  // TODO Phase 2
+
+   // --- Step a: invoice hash-aggregate with threshold filter ---
+   // Reuses CustomerOpenDueAccumulator's consume_invoice(invoice_t) overload.
+   std::unordered_map<Integer, Numeric> open_due_map;
+   {
+      CustomerOpenDueAccumulator acc;
+      auto inv_scan = invoice.getScanner();
+      while (auto kv = inv_scan->next()) {
+         if (stats) stats->invoices_scanned++;
+         const invoice_t& inv = kv->second;
+         // consume_invoice fuses the i_status='O' filter.
+         Numeric before = acc.value;
+         acc.consume_invoice(inv);
+         if (acc.value != before) {
+            open_due_map[inv.i_custkey] = open_due_map[inv.i_custkey] + (acc.value - before);
+         }
+         acc.reset();
+      }
+      // Apply threshold filter: drop custkeys that don't qualify.
+      for (auto it = open_due_map.begin(); it != open_due_map.end(); ) {
+         if (it->second <= params.threshold) it = open_due_map.erase(it);
+         else ++it;
+      }
+   }
+
+   // --- Step b: customer mktsegment filter map ---
+   std::unordered_map<Integer, bool> cust_ok;  // true = passes mktsegment filter
+   {
+      auto cust_scan = customer.getScanner();
+      while (auto kv = cust_scan->next()) {
+         if (stats) stats->customers_scanned++;
+         const customerh_t& c = kv->second;
+         auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
+         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+         if (sm == psm) cust_ok[kv->first.c_custkey] = true;
+      }
+   }
+
+   // --- Post-join aggregate by orderkey ---
+   std::unordered_map<Integer, q3i_agg_row_t> per_order;
+
+   // Scan orders (orderdate filter fused here).
+   auto ord_scan = orders.getScanner();
+   auto lin_scan = lineitem.getScanner();
+
+   // Build orders map filtered by date, custkey membership in open_due_map,
+   // and mktsegment filter.
+   struct OrderSlot {
+      Integer custkey;
+      Timestamp orderdate;
+      Integer shippriority;
+   };
+   std::unordered_map<Integer, OrderSlot> ord_map;
+   {
+      while (auto kv = ord_scan->next()) {
+         if (stats) stats->orders_scanned++;
+         const orders_t& o = kv->second;
+         if (o.o_orderdate >= params.orderdate) continue;
+         if (!open_due_map.count(o.o_custkey)) continue;
+         if (!cust_ok.count(o.o_custkey)) continue;
+         ord_map[kv->first.o_orderkey] = {o.o_custkey, o.o_orderdate, o.o_shippriority};
+      }
+   }
+
+   // Probe lineitem against orders map; accumulate revenue per orderkey.
+   {
+      LineitemRevenueAccumulator acc;
+      while (auto kv = lin_scan->next()) {
+         if (stats) stats->lineitems_scanned++;
+         const lineitem_t& l = kv->second;
+         auto it = ord_map.find(kv->first.l_orderkey);
+         if (it == ord_map.end()) continue;
+         if (!acc.consume(l, params)) continue;  // shipdate filter fused in consume
+         if (stats) stats->join_callbacks++;
+         const OrderSlot& slot = it->second;
+         Integer orderkey = kv->first.l_orderkey;
+         auto& row = per_order[orderkey];
+         if (row.o_orderkey == Integer(0)) {
+            // First lineitem for this order: populate order fields.
+            row.o_orderkey     = orderkey;
+            row.o_orderdate    = slot.orderdate;
+            row.o_shippriority = slot.shippriority;
+            row.cust_open_due  = open_due_map.at(slot.custkey);
+         }
+         row.revenue += acc.revenue;
+         acc.reset();
+      }
+   }
+
+   for (auto& [_, row] : per_order) {
+      if (row.revenue > Numeric(0)) out.push_back(row);
+   }
+
+   if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
+   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return a.revenue > b.revenue;
+   });
+   return static_cast<long>(out.size());
 }
 
 }  // namespace tpch::q3i

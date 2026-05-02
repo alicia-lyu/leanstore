@@ -11,6 +11,8 @@
 #include <gflags/gflags.h>
 
 #include <stdexcept>
+#include <string_view>
+#include <unordered_map>
 
 DECLARE_int32(storage_structure);
 
@@ -18,25 +20,90 @@ namespace tpch::q3i
 {
 
 // ---------------------------------------------------------------------------
-// View loading: materialise the ORDERS x LINEITEM join into a flat adapter.
+// View loading: materialise per-(custkey, orderkey) aggregates into the view.
 //
-// TODO Phase 2: implement populate_q3i_view using a manual two-pointer merge
-// over the orders and lineitem base scanners (same pattern as populate_q12_view
-// in q12/load.tpp). The view row type is currently aliased to joined_ol_t;
-// widen it to include cust_open_due once the S2 path lands.
+// The view is UNFILTERED on parameterised predicates (mktsegment, threshold,
+// orderdate, shipdate) — predicate hoisting per OPERATORS.md §4 so it stays
+// reusable across param sets.  Per-table filters (i_status='O') ARE applied
+// because they are constant, not parameterised.
+//
+// Algorithm:
+//   1. Scan invoice base table; accumulate cust_open_due per custkey in a
+//      hash map (i_status='O' filter fused here — constant, not parameterised).
+//   2. Scan customer base table; populate c_mktsegment per custkey map.
+//   3. Two-pointer merge over orders + lineitem base scanners (both sorted by
+//      orderkey); for each (order, lineitem) pair compute revenue and emit one
+//      q3i_pipeline_view_t row per (custkey, orderkey).  Lineitems within an
+//      order are collapsed into a single revenue sum (same SortedAggregate as
+//      the S3 inside-pipeline operator) so the view has one row per orderkey.
+//
+// This mirrors populate_q12_view's two-pointer merge pattern (Q12 load.tpp)
+// extended with the per-custkey invoice and customer lookups.
 
 template <typename Backend>
 static void populate_q3i_view(
-    typename Backend::template Adapter<customerh_t>&,
-    typename Backend::template Adapter<orders_t>&,
-    typename Backend::template Adapter<lineitem_t>&,
-    typename Backend::template Adapter<invoice_t>&,
-    typename Backend::template Adapter<q3i_pipeline_view_t>&)
+    typename Backend::template Adapter<customerh_t>& customer,
+    typename Backend::template Adapter<orders_t>&    orders,
+    typename Backend::template Adapter<lineitem_t>&  lineitem,
+    typename Backend::template Adapter<invoice_t>&   invoice,
+    typename Backend::template Adapter<q3i_pipeline_view_t>& pipeline_view)
 {
-   // TODO Phase 2: manual two-pointer merge over orders + lineitem scanners.
-   //       The cust_open_due sub-aggregate requires a prior invoice scan
-   //       grouped by i_custkey with i_status='O' filter.
-   //       Emit one q3i_pipeline_view_t row per (order, lineitem) pair.
+   // Step 1: build per-custkey open-due map from invoice (i_status='O' filter).
+   std::unordered_map<Integer, Numeric> open_due_map;
+   {
+      auto inv_scan = invoice.getScanner();
+      while (auto kv = inv_scan->next()) {
+         const invoice_t& inv = kv->second;
+         auto s = std::string_view(inv.i_status.data, inv.i_status.length);
+         if (s == "O") open_due_map[inv.i_custkey] += inv.i_totaldue;
+      }
+   }
+
+   // Step 2: build per-custkey mktsegment map from customer.
+   std::unordered_map<Integer, Varchar<10>> mktseg_map;
+   {
+      auto cust_scan = customer.getScanner();
+      while (auto kv = cust_scan->next()) {
+         mktseg_map[kv->first.c_custkey] = kv->second.c_mktsegment;
+      }
+   }
+
+   // Step 3: two-pointer merge over orders (sorted by orderkey) and lineitem
+   // (sorted by (orderkey, linenumber)).  Accumulate lineitem revenue per
+   // orderkey and emit one q3i_pipeline_view_t row per (custkey, orderkey).
+   //
+   // We need custkey for the view key.  orders_t carries o_custkey in payload.
+   auto ord_scan = orders.getScanner();
+   auto lin_scan = lineitem.getScanner();
+
+   std::optional<std::pair<orders_t::Key, orders_t>>     cur_ord   = ord_scan->next();
+   std::optional<std::pair<lineitem_t::Key, lineitem_t>> cur_lin   = lin_scan->next();
+
+   while (cur_ord) {
+      const orders_t&     o        = cur_ord->second;
+      Integer             orderkey = cur_ord->first.o_orderkey;
+      Integer             custkey  = o.o_custkey;
+
+      // Accumulate revenue for all lineitems under this order.
+      Numeric revenue = 0;
+      while (cur_lin && cur_lin->first.l_orderkey == orderkey) {
+         const lineitem_t& l = cur_lin->second;
+         revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
+         cur_lin = lin_scan->next();
+      }
+
+      // Emit one view row per (custkey, orderkey) — unfiltered on params.
+      q3i_pipeline_view_t::Key vk{custkey, orderkey};
+      q3i_pipeline_view_t      vv;
+      vv.revenue        = revenue;
+      vv.cust_open_due  = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
+      vv.c_mktsegment   = mktseg_map.count(custkey)   ? mktseg_map.at(custkey)   : Varchar<10>{};
+      vv.o_orderdate    = o.o_orderdate;
+      vv.o_shippriority = o.o_shippriority;
+      pipeline_view.insert(vk, vv);
+
+      cur_ord = ord_scan->next();
+   }
 }
 
 // ---------------------------------------------------------------------------
@@ -73,7 +140,7 @@ void Q3IWorkload<Backend>::load()
    switch (FLAGS_storage_structure) {
       case 1: coli.populate_split(); break;
       case 4: break;  // base tables only
-      case 2: /* TODO Phase 2: populate_q3i_view */ break;
+      case 2: populate_q3i_view<Backend>(customer, orders, lineitem, invoice, pipeline_view); break;
       case 3: coli.populate_merged(); break;
       default: throw std::runtime_error("invalid --storage_structure");
    }
@@ -87,7 +154,7 @@ double Q3IWorkload<Backend>::get_size() const
    switch (FLAGS_storage_structure) {
       case 1: return base + coli.get_split_size();
       case 4: return base;
-      case 2: return 0.0;  // TODO Phase 2
+      case 2: return pipeline_view.size();
       case 3: return coli.get_merged_size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
