@@ -551,6 +551,67 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   `test_load_q12_btree` are already added.)
 - `generate_targets.py` Makefile entries for the new targets.
 
+## Known Design Limitations
+
+### No project pushdown below secondary-structure loading
+
+Today, every secondary structure — merged indexes (MI[0], COLI MI),
+COLI custkey-sorted secondaries, and per-query pipeline views —
+stores **the full base record** for each row it carries. Filter
+pushdown into the load path is also avoided on purpose so that
+secondaries stay reusable across param sets (see Q12 §4 predicate
+hoisting, Q3I `plans/family_logical.dot`). Project pushdown is the
+companion optimisation that we have **not** taken: the secondaries
+materialise every column whether the queries need it or not.
+
+Concretely:
+
+- `MI[0]` (Q12 OL merged index) stores full `orders_t` and full
+  `lineitem_t` records, even though Q12's `query_by_*` only reads
+  `o_orderpriority`, `o_orderkey`, `l_shipmode`, `l_orderkey`,
+  `l_commitdate`, `l_receiptdate`, `l_shipdate`.
+- `MI[COLI]` (4-table) stores full `customer_coli_t`, `orders_coli_t`,
+  `lineitem_coli_t`, `invoice_coli_t`, even though Q3I (the first
+  consumer) only touches a small projection from each.
+- `q12_pipeline_view_t`, `q3i_pipeline_view_t` (planned), and the COLI
+  secondaries (`Adapter<orders_coli_t>` etc.) all carry the full
+  source-record payload for the same reason.
+
+This is intentional for the current paper — keeping secondaries
+schema-faithful makes them reusable across query variants and keeps
+the comparison axis clean (S1/S2/S3 read the same logical row, only
+the physical operator differs). But it also means MI scans pay a
+cache-line cost proportional to the **widest** consumer's record,
+not the narrowest active query's projection.
+
+**Worth exploring later, especially under any of these triggers:**
+
+1. **Cache-bound MI scans become a bottleneck** at scale factors
+   where the secondary's row width dominates wall-clock time. We can
+   measure this directly: profile L2/L3 miss rate against a
+   projected-payload variant.
+2. **A query needs only a narrow projection** of a wide base record
+   (e.g. a future query that only reads `c_acctbal` from
+   `customer_coli_t`'s 200+-byte payload).
+3. **Materialised pipeline views balloon at high SF** because their
+   row width is the union of every column the family logical plan
+   touches. Per-query projection-pushed views could shrink them
+   substantially.
+
+The principled fix is a per-secondary projection schema that ships
+only the columns the query family actually reads, with a
+`from_base()` helper analogous to `*_coli_t::from_base` but
+projecting rather than just retagging. Compile-time templating on
+the projection would keep the comparison axis honest (S1 reads the
+same projected record as S3). Calcite's `EnumerableProject` already
+expresses these projections at the planner level — wiring them
+through to the secondary-loading path is the missing piece.
+
+Until then: when adding a new query that touches a merged index, do
+not optimise this prematurely. Note the projection cost in the
+per-query CLAUDE.md §Implementation Status and revisit as part of
+performance-tuning, not initial bring-up.
+
 ## Out of Scope (Skeleton)
 
 The following are explicitly deferred and not part of this skeleton:
