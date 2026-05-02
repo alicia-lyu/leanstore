@@ -7,14 +7,29 @@ commit.
 
 ## Prerequisite
 
-`phase_2a_refactor.md` complete. Specifically:
+`phase_2a_refactor.md` complete (commits f91580b6 → 3a1d79d9). Concretely:
 
 - `coli.split_orders()` / `split_lineitem()` / `split_invoice()`
-  accessors exist
-- `apply_topN`, `make_filtered_scanner`, `scan_of` are available
-- `q3i_pipeline_view_t` is widened; `cust_open_due_t` and
-  `lineitem_agg_t` row types exist
-- `query_by_merged` (S3) emits top-10 via `apply_topN`
+  accessors exist (return `Backend::Adapter<{orders,lineitem,invoice}_coli_t>&`).
+- `apply_topN<R, Cmp>(out, K, cmp)` lives in `frontend/tpch/operators.hpp`.
+- `make_filtered_scanner` and `scan_of` (mutable + const) live in
+  `frontend/shared/scanner_helpers.hpp`. Read those headers before
+  using; the wrapper shape is what consumers (`BinaryMergeJoin`,
+  `HashJoin`) need.
+- `q3i_pipeline_view_t` (id=43) is a real struct keyed
+  `(custkey, orderkey)` carrying `revenue`, `cust_open_due`,
+  `c_mktsegment`, `o_orderdate`, `o_shippriority`. `cust_open_due_t`
+  (id=44, key=custkey) and `lineitem_agg_t` (id=45,
+  key=(custkey, orderkey)) exist with `ADD_KEY_TRAITS` /
+  `ADD_RECORD_TRAITS`.
+- `query_by_merged` (S3) emits top-10 via `apply_topN`; `Visitor` is
+  lifted to namespace `tpch::q3i::COLIGroupWalkVisitor` with
+  `mktsegment_ok` and `threshold_ok` gates.
+- Accumulators (`CustomerOpenDueAccumulator`,
+  `LineitemRevenueAccumulator`) have overloaded consume methods for
+  both `_t` (base table) and `_coli_t` (tagged COLI) records — ready
+  for S1 (uses `_coli_t` from split adapters) AND S4 (uses `_t` from
+  base adapters) without further changes.
 
 ## Design recap
 
@@ -63,8 +78,12 @@ struct LineitemRevenueAggregator {
 
 Both follow the `MergedScannerCounter` pattern in
 `frontend/geo/mixed_query.tpp`. Both embed the **shared accumulator
-structs from Phase 1** unchanged — that's what preserves §6.1
-comparison-integrity with S3.
+structs from Phase 1** unchanged — that's what preserves §7
+comparison-integrity with S3 (note: comparison-integrity is now §7
+in OPERATORS.md after the 2A insertion of §6 Filter Pushdown).
+S1 calls the `_coli_t` overloads of the accumulators since
+`split_invoice()` / `split_lineitem()` yield `invoice_coli_t` /
+`lineitem_coli_t` records.
 
 ### `query_by_base` body
 
@@ -243,9 +262,11 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
 S4 mirrors S1's chain length and join order. The only structural
 differences from S1 are (a) algorithm (HJ vs BMJ) and (b) the
 final hash-aggregate (because HashJoin output isn't sorted).
-`LineitemRevenueAccumulator::consume_into` static helper
-(introduced as part of Phase 2A's accumulator code, or added here)
-keeps the per-record arithmetic identical to S1's wrapper.
+S4 calls the `_t` (base-table) overloads of the accumulators that
+already exist post-2A — `CustomerOpenDueAccumulator::consume_invoice(invoice_t)`
+and `LineitemRevenueAccumulator::consume(lineitem_t, params)` — keeping
+the per-record arithmetic identical to S1's wrapper. No new
+`consume_into` helper is needed.
 
 ### Refresh `q3i/plans/baseline_s4.dot`
 
