@@ -75,6 +75,10 @@ Per-query subdirectories:
 - `q3/`  — Shipping Priority (3 tables, 2 joins; adds CUSTOMER adapter).
 - `q9/`  — Product Type Profit Measure (6 tables, 5 joins; adds NATION,
   SUPPLIER, PART, PARTSUPP adapters).
+- `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; skeleton present,
+  bodies in progress — see `q3i/CLAUDE.md §Implementation Phases`).
+- `q5i/` — Q5 + Invoice payment-status split (design doc only; no skeleton yet).
+- `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
 
 Each per-query directory contains the same 8-file shape described in
 §Per-query file convention below.
@@ -197,6 +201,11 @@ Each `q{N}/` directory contains:
 | `executable_leanstore.cpp` | Same as above, guarded by `#ifndef ROCKSDB_ONLY`, uses `LeanStoreBackend`. |
 | `CLAUDE.md` | Per-query SQL, plan descriptions, execution style analysis, column index mappings, and an "Implementation Status (skeleton)" section appended when the skeleton was created. |
 
+**Invoice-extended queries (q3i/, q5i/, q10i/)**: the workload composes
+`CustomerOrdersLineitemInvoicePipeline<Backend> coli;` instead of the OL
+pipeline. The `coli` member owns the 4-table COLI merged index; per-query
+`load()` delegates S3 population to `coli.populate_merged()`.
+
 ## Cross-Structure Result Consistency: XOR Parity
 
 When per-query implementations land, every `query_by_*` driver
@@ -269,6 +278,22 @@ mkdir -p test_data test_csv
 # Expected: prints MI[0] distribution stats with all [OK] tags.
 ```
 
+```bash
+# Build COLI load test (macOS)
+make -C build/frontend test_load_coli_lsm -j$(sysctl -n hw.ncpu)
+
+# Run COLI load test
+# Each invocation needs a fresh --ssd_path (RocksDB does not cleanly
+# overwrite an existing DB; use a new directory or delete the old one).
+mkdir -p test_data_coli test_csv_coli
+./build/frontend/test_load_coli_lsm \
+    --ssd_path=./test_data_coli \
+    --csv_path=./test_csv_coli \
+    --tpch_scale_factor=1
+# Expected: row-count, FK-resolution, and sentinel-ordering checks,
+# all [OK] at SF=1.
+```
+
 **Note**: `--ssd_path` and `--csv_path` MUST be distinct directories.
 RocksDB writes its info log inside `ssd_path`; the Logger calls
 `create_directories(csv_path)` which fails if `csv_path` collides with
@@ -279,6 +304,7 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 - Q12 — see [`q12/CLAUDE.md §Tests`](q12/CLAUDE.md#tests)
 - Q3, Q9 — none yet
+- Q3I — none yet (Phase 3 deliverable; see `q3i/CLAUDE.md §Implementation Phases`)
 
 ## Completed (post-skeleton)
 
@@ -527,5 +553,12 @@ The following are explicitly deferred and not part of this skeleton:
   §Completed above).
 - `joined_t` flattening (the generic `joined_t` template from
   `frontend/shared/view_templates.hpp` is used as-is).
-- Wiring `COLIPipeline` into a per-query workload (pipeline exists and
-  load-tested; no query drives it yet).
+- Wiring `COLIPipeline` into Q5I / Q10I workloads (pipeline exists and
+  load-tested; Q3I is the first consumer, pending Phase 1 bodies).
+
+## Invoice Extension Candidates
+
+`INVOICE_EXTENSION_CANDIDATES.md` (this directory) is the **authoritative
+record** of which TPC-H queries are natural COLI MI extension candidates and
+which are not — including the rationale for each decision. Read it before
+proposing new `q{N}i/` directories.

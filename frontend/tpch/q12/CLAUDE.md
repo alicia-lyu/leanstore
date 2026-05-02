@@ -549,6 +549,14 @@ for the rationale on `--ssd_path` vs `--csv_path` separation.
 
 ## Implementation Status
 
+**COLI merged adapter compiled into Q12 executables** (2026-05-01):
+`executable_rocksdb.cpp` and `executable_leanstore.cpp` include
+`coli_pipeline.hpp`, pulling in all four tagged COLI record types and their
+`SKMatcher` specializations. Q12's four storage structures (S1–S4) do not
+use the COLI pipeline at query time; it is included to validate that tagged-key
+types and OL fold-length types link cleanly in the same translation unit.
+The `test_query_q12_lsm` XOR-parity digest is unchanged after this addition.
+
 **Shared infrastructure completed** (2026-04-29):
 
 - `views_ol.hpp`: fully implemented — `ol_sort_key_t` (2-component sort key:

@@ -15,6 +15,19 @@ The integration follows a **Plan Export + C++ Runtime Interpreter** approach:
 
 The goal is to replace manually-coded C++ template queries with optimizer-generated plans, scaling to full TPC-H and JOB (Join Order Benchmark) workloads.
 
+### COLI MI + Invoice-Extended Queries (Active Showcase)
+
+The COLI 4-table merged index (`customer_coli_t`, `orders_coli_t`,
+`lineitem_coli_t`, `invoice_coli_t`) is now implemented and load-tested
+(`test_load_coli_lsm` passes at SF=1). Three invoice-extended queries — Q3I,
+Q5I, Q10I — are the active showcase for the §3.1.2 sibling sub-aggregate
+pattern: Invoice attaches under Customer as a sibling of Orders, and the COLI
+MI co-locates all four record types per `custkey` so a single `PremergedJoin`
+pass computes per-customer invoice aggregates alongside the O×L join. Q3I has
+a skeleton; Q5I and Q10I are design-doc only. Bodies proceed in three phases
+(S3 merged path first, then baselines, then top-N + harness) — see
+`frontend/tpch/q3i/CLAUDE.md §Implementation Phases`.
+
 ### TPC-H Q12 Implementation (In Progress)
 
 The first Calcite-planned query being manually coded as a proof-of-concept, translating optimizer-generated plans from `calcite-integration-info/test-plans/q12/` into C++.

@@ -1,5 +1,11 @@
 # Q5I: Local Supplier Volume × Invoice Payment Status
 
+## Status
+
+Design-doc only; skeleton and bodies pending Q3I Phase 3 completion.
+
+---
+
 ## Original TPC-H Q5 (§2.4.5 — "Local Supplier Volume")
 
 ```sql

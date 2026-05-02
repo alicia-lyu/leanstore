@@ -1,5 +1,11 @@
 # Q10I: Returned Item Reporting × Customer Payment Behaviour
 
+## Status
+
+Design-doc only; skeleton and bodies pending Q3I Phase 3 completion.
+
+---
+
 ## Original TPC-H Q10 (§2.4.10 — "Returned Item Reporting")
 
 ```sql

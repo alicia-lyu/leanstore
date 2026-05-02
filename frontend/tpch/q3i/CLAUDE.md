@@ -120,37 +120,57 @@ add_executable(q3i_lsm   tpch/q3i/executable_rocksdb.cpp)
 
 ---
 
-## Implementation Status (skeleton)
+## Implementation Phases
 
-Stubbed (present, syntax-clean, but no logic):
+### Phase 1 — Minimal end-to-end: merged path only (S3)
 
-- `Q3IWorkload` ctor initialises member references; `params = Params::defaults()`
-- `load()` calls `tpch.load()` only — secondary structure population is TODO
-- `get_size()` returns `0.0` — dispatch on `FLAGS_storage_structure` is TODO
-- `populate_q3i_view` — declared, body empty
-- `Params::defaults()` returns `Params{}` — real values are TODO
-- `q3i_agg_row_t::print()` writes a TODO marker
-- All predicate bodies return `false` (except `q3i_predicate_joined`, which
-  delegates to the component predicates)
-- All `query_by_*` bodies call `out.clear(); return 0`
+**Goal**: one runnable path that exercises the COLI MI showcase end-to-end.
 
-Not yet present (out of scope for skeleton):
+**Deliverables**:
 
-- View row type wider than `joined_ol_t` (with `cust_open_due` field)
-- `query_by_*` operator logic
-- Predicate implementations
-- Top-10 selection (priority queue or partial sort)
-- XOR parity test
-- CMake targets
+- `load.tpp` — `load()` for structures 1/3: `tpch.load()` + `coli.populate_merged()` for S3; `get_size()` dispatch on `FLAGS_storage_structure`.
+- `query.tpp` — `query_by_merged` only: `PremergedJoin` over the 4-table COLI MI; `cust_open_due` accumulated in the custkey group while scanning `invoice_coli_t` siblings; threshold filter to skip entire custkey groups early.
+- `query.tpp` — `Params::defaults()` with real values: `mktsegment = "BUILDING"`, `date = 1995-03-15` (encoded as days since epoch), `threshold = 0`.
+- `query.tpp` — `q3i_agg_row_t::print()` — formatted output of `(o_orderkey, revenue, o_orderdate, o_shippriority, cust_open_due)`.
+- `query.tpp` — predicates sufficient for `query_by_merged`: `q3i_predicate_orders` (orderdate < date), `q3i_predicate_lineitem` (shipdate > date), `q3i_predicate_customer` (mktsegment match).
+
+**Not yet in Phase 1**: top-10 sort; baseline S1/S2/S4 paths.
+
+**Exit criterion**: `test_query_q3i_lsm` builds, loads S3, calls `query_by_merged`, and prints qualifying order rows without crashing. Row count non-zero at SF=1.
 
 ---
 
-## Out of Scope (Skeleton)
+### Phase 2 — Baseline structures (S1, S2, S4)
 
-- `query_by_*` body implementations
-- `populate_q3i_view` body
-- Substitution parameter values in `Params::defaults()`
-- Calcite plan generation / column-index mapping
-- Performance measurements
-- CMake target additions
-- Tests (`test_load_q3i_lsm`, `test_query_q3i_lsm`)
+**Goal**: all four `query_by_*` paths produce identical aggregate results (no top-10 yet), verified by XOR parity.
+
+**Deliverables**:
+
+- `load.tpp` — `load()` and `get_size()` extended for S1 (base only), S2 (`populate_q3i_view`), S4 (base only).
+- `views.hpp` — `q3i_pipeline_view_t` widened beyond the `joined_ol_t` alias to include a `cust_open_due` aggregate field, enabling S2 to pre-materialise the per-customer invoice sum.
+- `query.tpp` — `query_by_base` (S1): pre-build `cust_open_due` hashmap from INVOICE; `BinaryMergeJoin(OL)` + CUSTOMER hash lookup; threshold filter on hashmap entry.
+- `query.tpp` — `query_by_view` (S2): pre-build `cust_open_due` hashmap; view scan + CUSTOMER hash filter.
+- `query.tpp` — `query_by_hash` (S4): pre-build `cust_open_due` hashmap; `HashJoin(OL)` + CUSTOMER hash lookup.
+- `populate_q3i_view` body: two-pointer merge over OL scanners, emit one `q3i_pipeline_view_t` row per lineitem with `cust_open_due` field populated from the pre-built hashmap.
+
+**Exit criterion**: XOR parity check across all four paths passes at SF=1. Identical digest for S1/S2/S3/S4.
+
+---
+
+### Phase 3 — Top-10 selection + experiment harness
+
+**Goal**: spec-compliant top-10 and runnable `q3i_lsm` / `q3i_btree` executables.
+
+**Deliverables**:
+
+- `query.tpp` — top-10 `ORDER BY revenue DESC` across all four paths via priority queue or `partial_sort`.
+- `frontend/CMakeLists.txt` — add `q3i_lsm` (macOS + Linux) and `q3i_btree` (Linux only) targets following the `geo_lsm` / `geo_btree` pattern.
+- `tests/` — `test_load_q3i_lsm` (load S3 and report COLI distribution stats) and `test_query_q3i_lsm` (all four paths + parity + shape check) binaries.
+- `frontend/tpch/CLAUDE.md §Tests` index updated with new rows.
+- `generate_targets.py` entries for `q3i_lsm` / `q3i_btree` Makefile targets.
+
+**Exit criterion**: `test_query_q3i_lsm` at SF=1 reports top-10 rows, identical parity across all four paths, and non-degenerate digest.
+
+---
+
+Q5I and Q10I will follow the same 3-phase pattern once Q3I Phase 3 lands.
