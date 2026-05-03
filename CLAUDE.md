@@ -10,6 +10,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   Performance numbers and long-running TX loops belong on Linux. On
   macOS: build the target to verify it compiles, then stop. Use
   `test_query_q*_lsm` and `test_load_*_lsm` for correctness checks.
+- **Do not run end-to-end executables until correctness is verified
+  by shorter tests first.** Production per-query binaries
+  (`q*_lsm`, `q*_btree`) run multi-second TX loops and produce
+  performance numbers; they are not a debugging tool. Before invoking
+  any `q*_lsm` / `q*_btree`: (1) build clean, (2) run the
+  corresponding `test_load_*_lsm` to confirm secondaries populate,
+  (3) run the corresponding `test_query_*_lsm` to confirm
+  cross-structure parity. Only after all three are green should an
+  end-to-end executable run. Performance numbers from a binary that
+  hasn't passed parity are noise.
 
 ## Project Overview
 
