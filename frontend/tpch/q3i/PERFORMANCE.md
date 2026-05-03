@@ -13,13 +13,17 @@ runs live in
 
 **A2c is done at SF=15.** With `--coli_walker_variant=fused_emit`, S3
 matches or beats S1 on both backends in the cache-resident regime.
-H4 is CONFIRMED + REMEDIATED. **A2c is neutral at SF=40 disk-bound** —
-variant cost is masked by page-fault wait, so the live cost there is
-something else (paging, decompression, or LSM merge logic).
+H4 is CONFIRMED + REMEDIATED. **A2c is neutral at SF=40 disk-bound**
+on RocksDB; on LeanStore A3 (customer-level Seek-skip, gated by
+Backend trait) lifts SF=40 S3 from 0.29 → 33.69 TX/s and SF=15 from
+23.06 → 105.27 — see §2 H2 and §3 A3.
 
 The open question pivots: *is there a `(dram, SF)` operating point
-where S3 (with fused_emit) actually beats S1/S4?* If yes →
-merged-index pitch strengthens. If no → S5 carries the showcase alone.
+where S3 (with fused_emit + A3) actually beats S1/S4 on both
+backends?* On LeanStore SF=40 S3 = 33.69 already looks dominant; A6
+needs to remeasure all five paths with the trait on to confirm
+relative ordering. RocksDB still trends neutral at SF=40 disk-bound
+(trait stays off; Seek invalidates the SST prefetch buffer).
 
 S3 reference numbers (LeanStore SF=15 dram=0.1):
 
@@ -39,7 +43,7 @@ in `archive/PERFORMANCE-2026-05-03b.md` §1 + §3.
 | ID | Hypothesis                              | Status | One-line takeaway |
 |----|-----------------------------------------|--------|-------------------|
 | H1 | MI too large per row                    | **REFUTED**                       | `get_size` artefact (closed in `50fd2052`) |
-| H2 | Iter overhead on rejected groups        | **CONFIRMED, fix reverted on RocksDB; OPEN on LeanStore (A3)** | Forward iter cheaper on RocksDB; B-tree branch unexplored |
+| H2 | Iter overhead on rejected groups        | **CONFIRMED + REMEDIATED on LeanStore (A3, commit 83870b48); REVERTED on RocksDB (8d10782b)** | B-tree Seek to next custkey: SF=15 iso 23.06→105.27 TX/s (+356%); SF=40 iso 0.29→33.69 (+116×). RocksDB unchanged (trait stays false). |
 | H3 | Walker visits entire MI per query       | **CONFIRMED uniform (subsumed by H6)** | Doesn't explain S3-vs-S1 gap |
 | H4 | Per-record dispatch overhead            | **CONFIRMED + REMEDIATED at SF=15 (A2c)** | fused_emit closes per-call gap to ~3% of S1; S3 matches/beats S1 cache-resident; neutral at SF=40 disk-bound |
 | H5 | Storage-engine specific                 | **REFUTED**                       | Same direction on LeanStore |
@@ -173,18 +177,28 @@ LeanStore aCOLI reports 141 MiB at SF=40; cardinality estimate is
   H4 closed at SF=15 (A2c, +18-50% iso/shared). Reopen only if any
   test above surfaces a new per-call asymmetry.
 
-### A3 — Re-enable physical seek-skip on LeanStore (H2 B-tree branch)
+### A3 — DONE (commit 83870b48): customer-level seek-skip lifts LeanStore S3 dramatically on both SF cells.
 
-- **WHAT**: gate `USE_PHYSICAL_SEEK_SKIP` on the `Backend` trait so
-  LeanStore takes the Seek branch while RocksDB stays on forward
-  iteration.
-- **WHERE**: `frontend/tpch/coli_pipeline.tpp` (constexpr declaration
-  site).
-- **MEASURE**: SF=15 / SF=40 dram=0.1 LeanStore TX/s vs current iso
-  baseline (S3 fused_emit = 23.06 / ~0.30).
-- **WIN**: ≥10% lift on LeanStore SF=15 S3 over fused_emit. Predicted:
-  rejected groups span 10–50 records each; B-tree Seek is `O(log N)`
-  page touches with no prefetch buffer to invalidate.
+- `Backend::USE_PHYSICAL_SEEK_SKIP` trait added to `frontend/tpch/backend.hpp`
+  (RocksDB=false, LeanStore=true). Both walker variants
+  (`coli_group_walk` baseline + `coli_group_walk_fused_emit`) in
+  `coli_pipeline.tpp:557, :790` now read the trait. **Customer-level
+  seek only** — order-level skip stays as forward iteration on both
+  backends (order groups too small to pay back tree descent).
+- **Result, LeanStore iso, fused_emit, dram=0.1:**
+  - SF=15: 23.06 → **105.27 TX/s** (+356%). iter_next_calls/q drop
+    from ~160k (forward iter through every rejected group's records)
+    to 33,888.
+  - SF=40: 0.29 → **33.69 TX/s** (+116×). The forward-iter path was
+    paging in cold leaf pages for ~50 records per rejected custkey
+    (~80% of customers fail mktsegment); Seek is O(log N) page
+    touches against mostly-cached internal nodes.
+- **RocksDB regression check** (trait stays false, behaviour
+  unchanged): SF=15 iso S3 fused_emit = 2.68 TX/s (vs A2c reference
+  ~2.20, within noise); SF=40 iso = 0.78 TX/s.
+- **Implication for A6:** the SF=40 disk-bound regime now has a clear
+  S3 lift on LeanStore — A6 should remeasure the (dram, SF) sweep
+  with this trait on; H8 and the S3-vs-S1 question may both shift.
 
 ### A4 — H7 SSTWrite source attribution (RocksDB only)
 
@@ -203,19 +217,25 @@ LeanStore aCOLI reports 141 MiB at SF=40; cardinality estimate is
 
 - **WIN**: at least one variant drops SSTWrite/TX to ~0.
 
-### A7 — LeanStore aCOLI content-walk
+### A7 — Code landed (commit 83870b48); measurement blocked by harness
 
-- **WHAT**: mirror the RocksDB `[content/row]` + `[overhead]` walk for
-  the LeanStore harness so the LeanStore aCOLI inflation (141 MiB at
-  SF=40 vs ~30 MiB cardinality estimate) is traceable to leaf-fill
-  ratio rather than another measurement bug.
-- **WHERE**: `tests/q3i/test_query_q3i_leanstore.cpp` +
-  `frontend/shared/adapter-scanner/LeanStoreMergedAdapter.hpp` (add a
-  content-walk method).
-- **MEASURE**: estimatePages × page_size vs key+value content sum;
-  estimateLeafs vs internal-node count.
-- **WIN**: account for the ~5× inflation (e.g. "70% leaf fill + 18%
-  internal nodes") or surface a second measurement bug.
+- **Code**: `LeanStoreMergedAdapter::content_bytes_walk()` and the
+  typed `LeanStoreAdapter::content_bytes_walk()` added (driven via
+  `next_raw()` to bypass variant construction); `[content/row]` /
+  `[fill]` triple wired into `tests/q3i/test_query_q3i_leanstore.cpp`.
+- **Blocker**: the LeanStore parity harness segfaults during
+  `Populating secondaries` with `--vi=false --mv=false
+  --isolation_level=ser` at SF=1 — pre-existing issue independent of
+  this change (also fails before the A7 code lands; see the BTreeVI
+  re-insert limitation noted in commit `d05aa719`'s message). With
+  `--vi=true --wal=true` the harness aborts earlier in
+  `loadInvoiceAndLinkLineitem`.
+- **Next step (separate plan)**: get the LeanStore parity harness
+  green at SF=1, then call `content_bytes_walk()` and emit the
+  `[content/row]` / `[fill]` triple. The walk method itself is
+  validated by linkage and per-row arithmetic in the test code.
+  Measurement deferred until harness lands; pause-and-report rather
+  than back-fill via the production binary.
 
 ### A2-followups (DEPRIORITISED — H4 closed at SF=15)
 

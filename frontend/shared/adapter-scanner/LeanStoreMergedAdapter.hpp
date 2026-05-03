@@ -219,6 +219,29 @@ struct LeanStoreMergedAdapter {
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
 
+   // Content-walk: iterate every record, summing key+value bytes.
+   // Mirrors the RocksDB raw_bytes_in_cf pattern in
+   // tests/q3i/test_query_q3i_rocksdb.cpp. Use to compare reported (page-
+   // estimate) size against actual encoded payload — leaf-fill ratio.
+   //
+   // Implementation: drive the scanner via next_raw() to bypass variant
+   // construction; we only need byte counts. Returns (content_bytes,
+   // record_count). Caller is responsible for being inside an OLAP TX.
+   std::pair<long, long> content_bytes_walk()
+   {
+      // Pick any record type as the JK/JR anchor; we don't unfold values.
+      using FirstR = std::tuple_element_t<0, std::tuple<Records...>>;
+      auto scanner = this->template getScanner<typename FirstR::Key, FirstR>();
+      long rows = 0, bytes = 0;
+      while (auto raw = scanner->next_raw()) {
+         auto [tag, k_slice, v_slice] = *raw;
+         (void)tag;
+         rows  += 1;
+         bytes += static_cast<long>(k_slice.size() + v_slice.size());
+      }
+      return {bytes, rows};
+   }
+
    template <typename JK, typename JR>
    std::unique_ptr<LeanStoreMergedScanner<JK, JR, Records...>> getScanner() {
       if (FLAGS_vi) {

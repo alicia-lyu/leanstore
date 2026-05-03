@@ -268,4 +268,22 @@ struct LeanStoreAdapter : Adapter<Record> {
    }
 
    u64 estimateLeafs() final { return btree->estimateLeafs(); }
+
+   // Content-walk: iterate every record, summing key+value bytes.
+   // Mirrors the merged-adapter content_bytes_walk (see
+   // LeanStoreMergedAdapter.hpp). Returns (content_bytes, record_count).
+   // Caller is responsible for being inside an OLAP TX.
+   std::pair<long, long> content_bytes_walk()
+   {
+      long rows = 0, bytes = 0;
+      typename Record::Key start{};
+      this->scan(start,
+                 [&](const typename Record::Key&, const Record&) {
+                    rows  += 1;
+                    bytes += static_cast<long>(Record::maxFoldLength() + sizeof(Record));
+                    return true;
+                 },
+                 []{});
+      return {bytes, rows};
+   }
 };
