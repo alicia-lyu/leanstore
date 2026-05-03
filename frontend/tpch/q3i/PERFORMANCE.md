@@ -19,11 +19,15 @@ This is the opposite of the paper's pitch.
 
 **RocksDB-LSM (macOS / SF=40 dram=0.1):**
 
-| Configuration                       | S1 base_merge | S2 view | S3 mi_coli       | S4 hash |
-|-------------------------------------|---------------|---------|------------------|---------|
-| baseline (pre-skip; before 1dec2358) | 8.04          | 198.3   | 6.95             | ~8      |
-| with physical custkey-Seek skip     | 7.87          | 198.3   | 4.42 (regression)| 8.24    |
-| seek-skip disabled (current default)| 7.73          | 198.3   | 6.70 (~15% gap)  | 8.09    |
+| Configuration                       | S1 base_merge | S2 view | S3 mi_coli       | S4 hash | S5 aCOLI |
+|-------------------------------------|---------------|---------|------------------|---------|----------|
+| baseline (pre-skip; before 1dec2358) | 8.04          | 198.3   | 6.95             | ~8      | n/a      |
+| with physical custkey-Seek skip     | 7.87          | 198.3   | 4.42 (regression)| 8.24    | n/a      |
+| seek-skip disabled (current default)| 7.73          | 198.3   | 6.70 (~15% gap)  | 8.09    | 123.17   |
+
+(S5 was added in `16e98eb6` and only measured on the current default
+configuration. It pre-aggregates invoices and lineitems at load time —
+see H6.)
 
 **LeanStore-Btree (Linux / dram=0.1) — same ~15% gap, storage-engine-independent:**
 
@@ -131,8 +135,13 @@ it was designed to do — at the block-cache level too).
 Fix in `8d10782b`: `USE_PHYSICAL_SEEK_SKIP = false` constexpr default. The
 Visitor's `group_active = false` flag still short-circuits per-record
 dispatch; the underlying iterator just calls `Next()` through the rejected
-group's records. Hook is preserved for cache-resident A/B; flip to `true`
-when measuring SF=1 / fully-warm scenarios.
+group's records. The constexpr branch (Seek path) is kept in the source —
+not deleted — so a future experiment can flip the flag to `true` and
+re-run cache-resident scenarios (SF=1 or any config where all data fits
+in DRAM). The disk regression came from prefetch-buffer invalidation;
+when there's no SST read traffic to begin with, that cost vanishes and
+Seek may win again. Treat the constexpr as a documented A/B knob, not
+dead code.
 
 The hypothesis was real; the remedy was wrong on disk.
 
@@ -175,21 +184,75 @@ dispatches Visitor work on the ~20% that pass mktsegment + threshold. The
 remaining 80% pay iterator overhead (Slice copy, key-decode, variant tag
 check) with no Visitor cost.
 
-For comparison: S1's `BinaryMergeJoin` chain over custkey-sorted splits
-reads roughly the same number of base records but in *narrower* per-record
-streams that don't share blocks across record types — so each scan walks
-fewer SST blocks. S3 trades wider-block-locality for full-MI scan
-cardinality.
+For comparison, S1's `BinaryMergeJoin` chain over custkey-sorted splits
+**reads roughly the same total bytes** (LeanStore SF=40 footprints: S1
+= 265.6 MiB, S3 = 268.9 MiB; within 1.2%) and benefits equally from the
+DRAM budget. Block-cache locality should actually *favour* S3 — the MI
+co-locates all four record types per custkey in one stream, so a single
+block read brings in everything needed for that custkey's join, whereas
+S1 advances four separate iterators each pulling its own blocks.
 
-### H4 — Per-record `std::visit` dispatch overhead → OPEN
+So the gap is **not bytes-read or block locality**. The LeanStore
+SF=15 cycles-per-TX numbers point at CPU instead:
 
-The walker calls `std::visit` on every record (~425k/q). Modern compilers
-turn this into a small jump table, but at high cardinality even a few ns
-per record adds up (425k × 5ns = 2 ms/q — small fraction of the 22 ms gap
-to S1/S4 at SF=40).
+| Path | pp_0 cycles/TX | worker_1 cycles/TX | TX/s |
+|------|---------------:|-------------------:|-----:|
+| S1 base_merge | 80 M | 73 M | 30.36 |
+| S3 mi_coli    | 96 M | 83 M | 25.41 |
 
-Not microbenchmarked yet. Worth measuring with `perf record` or replacing
-`std::visit` with a templated dispatch behind a constexpr flag for A/B.
+S3 burns ~16% more CPU cycles per query than S1 — matching the ~16% TX/s
+gap almost exactly. The per-record cost of the COLI walker
+(`std::visit` on a 4-way variant + tagged-key decode per record + the
+`else if (group_active)` cascade) appears higher than the per-record
+cost of S1's narrow scanner advances feeding into a `BinaryMergeJoin`.
+This routes the investigation toward **H4** (per-record dispatch
+overhead, aggregated across the full walk) and away from storage-layout
+or block-cache hypotheses. Because H6 confirms all three raw paths
+full-scan their inputs uniformly, H6 explains the S5 win but not the
+S3-vs-S1 gap — H4 is the remaining live suspect for that gap.
+
+### H4 — Per-record dispatch overhead → OPEN, but `std::visit` is probably not the culprit
+
+**Do skipped records pay the `std::visit` cost?** Yes. The walker calls
+`std::visit` unconditionally on every record yielded by the scanner. The
+`else if (group_active)` short-circuit is *inside* the visit lambda — it
+suppresses the `on_invoice` / `on_order` / `on_lineitem` body, but the
+`std::visit` dispatch itself (variant tag check + lambda invocation +
+inner `if constexpr` type-tag chain) fires regardless.
+
+**But that overhead is small.** The geo benchmark uses the same variant
+pattern in `PremergedJoin` and showed no pathological dispatch cost at
+comparable scale. Modern compilers turn `std::visit` over a small variant
+into a jump table; per-record cost is a few ns. At 425k records/query
+that's ~2 ms — tiny next to the 22 ms gap to S1/S4 at SF=40.
+
+So if H4 is real, it's not `std::visit` itself but something *adjacent*
+that S3 pays for every record and S1 doesn't:
+
+- **Tagged-key decode**: S3 must parse the trailing `idx_id` byte and the
+  composite (custkey, [secondary fields]) on every record; S1's split
+  adapters decode plain `(custkey, ...)` keys. Decode cost differs.
+- **`scanner->next()` over a 4-record-type CF**: each next must emit a
+  fully-typed `std::variant<customer_coli_t, invoice_coli_t,
+  orders_coli_t, lineitem_coli_t>`. The merged scanner inspects the key
+  to dispatch to the right `accepts_key` and copies the right payload
+  size. S1's split scanners are monomorphic per record type.
+- **Iterator advance arithmetic**: S3 advances ONE iterator through 4
+  interleaved record types per custkey (~70 records per custkey at SF=40
+  on average). S1 advances 4 iterators through narrower streams; the
+  per-record cost is lower per iterator but there are 4 of them.
+
+These are all per-record costs aggregated over the full MI walk — exactly
+the cardinality H3 confirmed. The cycles gap (16% extra at SF=15) is
+plausibly the sum of these small overheads × 425k records, not any one
+of them in isolation.
+
+**Action**: micro-attribute via `perf record` or counter-instrument the
+walker dispatch path. The per-record `std::visit` is the cheapest
+suspect on the list; tagged-key decode is the next-cheapest;
+`scanner->next()` payload emission is the most likely source. Replacing
+`std::visit` with a templated dispatch may not move the needle by much
+— measure first.
 
 ### H5 — Storage-engine specific: RocksDB block layout / prefetch → REFUTED
 
@@ -202,18 +265,98 @@ This eliminates LSM-specific mitigations from the candidate fix list and
 redirects investigation to H3 + H4 (the COLI walk pattern itself: full-MI
 scan with low filter selectivity, plus per-record dispatch overhead).
 
-### H7 — Significant SSTWrite during read-only queries → OPEN
+### H6 — Low filter selectivity makes the raw paths uniformly inefficient → CONFIRMED (uniform across S1/S3/S4)
 
-Production runs report SSTWrite(µs)/TX values that are sometimes an
+Default Q3I params: `c_mktsegment='BUILDING'` (~20% of customers),
+`o_orderdate < 1995-03-15` (~50% of orders), threshold>0 (filters
+further). Final result: 7 rows at SF=1, ~10 rows at higher SF.
+
+**All three raw paths (S1/S3/S4) scan 100% of base records.** S1's
+BMJ chain reads every customer (to apply mktsegment), every invoice (to
+build the `cust_open_due` aggregate), every order (to apply orderdate),
+and every lineitem (to compute revenue) — the join semantics fire only
+on matches, but the *inputs* are full scans. S4's HJ chain has the same
+property: build-side hashmaps consume full table scans, then the probe
+side iterates the largest input in full. S3 walks the full MI for the
+same reason. So this hypothesis does **not** explain the S3-vs-S1 gap;
+it explains why all three raw paths leave a lot of I/O / dispatch work
+on the table relative to what the query semantically needs.
+
+**S5 (aCOLI MI, `16e98eb6`) is the path that breaks this floor.** By
+pre-aggregating invoices and lineitems at load time, S5 reduces the
+*scan cardinality* (not just the join output) from ~390M base records
+at SF=40 to ~61M aCOLI records (1.5M customers + 60M orders), and within
+that further down to 486 records at SF=1 because the residual scan
+applies all parameterised filters early. RocksDB SF=40 result:
+S5 = 123.17 TX/s, ~300× ahead of S1/S3/S4 (~0.4 TX/s, DRAM-spilling).
+
+**Open: S5 still trails S2 by ~38% (123 vs 198 TX/s)**, where the
+expectation is that S5 should match or beat S2 since both scan
+~|orders|-cardinality structures with the same pre-aggregated values
+fused. The likely culprits are:
+
+1. **Project-pushdown gap.** S2's `q3i_pipeline_view_t` carries only
+   the columns Q3I reads (`revenue`, `cust_open_due`, `c_mktsegment`,
+   `o_orderdate`, `o_shippriority`). S5's `customer_acoli_t` and
+   `orders_acoli_t` carry the *full* base record payload plus the
+   pre-aggregated field. Per-row scan bytes are higher; this is
+   exactly the "no project pushdown below secondary-structure loading"
+   limitation documented in `tpch/CLAUDE.md §Known Design Limitations`.
+2. **Variant dispatch.** S5 walks a `std::variant<customer_acoli_t,
+   orders_acoli_t>` (`std::visit` per record); S2 is a monomorphic
+   scan of `q3i_pipeline_view_t`. Marginal per-record cost for S5.
+3. **No order-as-the-only-row layout.** S2 has one row per
+   `(custkey, orderkey)`; S5 has one customer row plus N order rows
+   per custkey. The customer row contributes a small overhead per
+   group on the S5 side that S2 doesn't pay.
+
+The first item is the dominant suspect and is the one the paper would
+most naturally fix: a projection-pushed `customer_acoli_t` /
+`orders_acoli_t` would shrink record width to match the view's, which
+should close most of the gap. S5 retains its parameter-flexibility
+advantage over S2 either way: S2 bakes the full result projection at
+load time, while S5 lets the query-time predicate pick what to emit.
+
+A possible reordering of the spectrum, after a project-pushed S5:
+
+```
+   S3 (raw COLI)           S5 (aggregate-pushed COLI)        S2 (full view)
+   parameter-flexible      parameter-flexible                load-time-baked
+   slow                    fast                              fastest
+```
+
+S5 then becomes the recommended default and S2 the upper bound.
+
+**What this implies for the investigation**: H6 is the strongest argument
+for the aCOLI direction in REVIEWS.md §1.1 R2-D1 — pre-aggregating into
+the MI is the way to actually beat the raw-scan baseline. It also
+implies that *no per-record optimisation* on S3 (variant dispatch,
+tagged-key decode, walker layout) will close the S3-vs-S1 gap to a clear
+win — both still bottleneck on full-table scans, and the per-record
+overhead is incremental at best. The interesting question becomes: at
+what point on the aCOLI ↔ COLI spectrum does the merged index become
+worth its complexity?
+
+**Note on the customer-scan TX-count effect** (previously in
+`CLAUDE.md §Performance Notes`): at small SF the lower S3 TX/s
+proportionally lowers raw `customers_scanned` totals across the 15s
+window — not because S3 scans fewer customers per query (it scans the
+same set; `populate_merged` inserts every customer unconditionally), but
+because the window holds fewer of those identical full scans.
+
+### H7 — Significant SSTWrite during read-only queries → OPEN, RocksDB-specific
+
+Production RocksDB runs report SSTWrite(µs)/TX values sometimes an
 **order of magnitude larger than SSTRead(µs)/TX**, despite Q3I being a
-read-only workload at the application level (no inserts, updates, or
-deletes during the measurement loop).
+read-only workload at the application level. The 2026-05-02 LeanStore
+run reports `W MiB/TX = 0` across S1–S4 at both SF=15 and SF=40,
+confirming the write traffic is an LSM-engine artefact — not a
+workload property — and pinning H7 as RocksDB-specific.
 
 `128f6d44` added `RocksDBLogger::capture_baseline()` to subtract the
 post-load compaction histogram contribution before the measurement loop
 starts. **The baseline-subtract did not move the numbers materially** —
-indicating the writes are happening *during* `helper.run()`, not before
-it.
+indicating the writes happen *during* `helper.run()`, not before it.
 
 Plausible sources, none confirmed:
 
@@ -235,40 +378,12 @@ Plausible sources, none confirmed:
   compaction during `helper.run()` (`pause_background_work`) and
   re-measure.
 
-This is a known anomaly affecting all four S1–S4 figures uniformly, but
-it does mean the "SSTWrite/TX" column is currently not informative for
-distinguishing structures. Until ruled out, **focus on SSTRead/TX and
-TX/s** for cross-structure comparison.
-
-**Update (2026-05-02 LeanStore run):** LeanStore-Btree reports
-`W MiB/TX = 0` across S1–S4 at both SF=15 and SF=40. The write traffic
-is therefore an LSM-engine artefact — almost certainly background
-compaction triggered during the measurement window — not a workload
-property. This narrows H7's likely root cause to compaction-side effects
-on RocksDB; the remaining work is to attribute the writes precisely so
-the SSTWrite column becomes informative for RocksDB experiments.
-
-### H6 — Filter selectivity makes per-query "useful work" tiny → OPEN
-
-Default Q3I params: c_mktsegment='BUILDING' (~20% of customers),
-threshold>0 (~all customers w/ open invoices), o_orderdate < 1995-03-15
-(~50% of orders). Final result: 7 rows at SF=1 (LIMIT 10).
-
-The "useful work" per query is therefore proportional to ~20% × 50% ≈ 10%
-of base records, but S3 scans 100% of the MI to find them. S5 (aCOLI,
-`16e98eb6`) addresses this directly: pre-baking aggregates collapses the
-scan to 486 records at SF=1 — a 22× reduction. **Whether S3 can be saved
-without baking parameters is the open question that motivates the rest of
-this investigation.**
-
-This is also the framing for the customer-scan TX-count effect previously
-in `CLAUDE.md §Performance Notes`: at small SF (cache-resident data)
-S3's tagged-key overhead per query makes it slower than S1/S4, so it
-completes fewer queries in the 15s window, and `customers_scanned`
-totals look lower — not because S3 scans fewer per query (it scans
-the same number; `populate_merged` inserts every customer
-unconditionally), but because the 15s window holds fewer of those
-identical scans.
+This anomaly affects all four S1–S4 figures on RocksDB roughly uniformly,
+so it does not explain the S3-vs-S1 gap on its own — but it does mean
+the "SSTWrite/TX" column is not currently informative for distinguishing
+structures. Until ruled out, **focus on SSTRead/TX and TX/s** for
+cross-structure comparison on RocksDB; on LeanStore the column is
+trivially zero and not useful either way.
 
 ---
 
@@ -307,10 +422,15 @@ cache-resident → disk-bound transition. The merged-index advantage *should*
 appear at the disk-bound end. If it doesn't, H3 (full-MI walk dominates) is
 fundamental rather than tunable.
 
-### 3. Microbenchmark variant dispatch (H4)
+### 3. Micro-attribute the per-record cost (H4)
 
-Replace `std::visit` with a templated branchless dispatch behind a
-constexpr flag. Re-measure S3 at SF=40 dram=0.1.
+`perf record` the walker hot path on RocksDB at SF=15 and SF=40 to
+attribute the 16% extra cycles/TX. Suspects, ordered cheapest to most
+expensive: `std::visit` dispatch (likely small per geo precedent),
+tagged-key decode, merged-scanner `next()` payload emission. Replacing
+`std::visit` with a templated dispatch is one A/B knob; another is
+specialising the merged scanner to skip variant construction when the
+visitor has only `void`-returning hooks. Measure before optimising.
 
 ### 4. S3 vs S5 size / scan / parity matrix
 
@@ -329,20 +449,36 @@ window; bypass the histogram with `setperf_level(kEnableTimeAndCPUTimeExceptForM
 and inspect raw IOSTATS counters. The goal is to attribute every reported
 SSTWrite µs to a concrete source so the column becomes informative again.
 
-### 6. Bytes-read / SST-block profiling (H3 follow-up)
+### 6. Re-enable physical seek-skip on LeanStore (H2 B-tree branch)
 
-Count distinct SST blocks read per query for each path. Prediction: S3
-reads ~the entire MI's blocks while S1/S4 read sparser slices. Confirming
-this would localise the regression to LSM block-cache pressure rather than
-walker logic.
+Gate `USE_PHYSICAL_SEEK_SKIP` on the Backend trait
+(`coli_pipeline.tpp:539`) so LeanStore takes the Seek branch while
+RocksDB stays on forward iteration. Re-run SF=15 dram=0.1 on B-tree and
+record the delta vs S3=25.41 TX/s. The expected win is meaningful only
+when ~80% of customers fail mktsegment and each rejected group spans
+10–50 records on average (true at SF=15+ for default Q3I params).
 
 ---
 
 ## §5 — Reviewer relevance
 
-REVIEWS.md §4.2 (R3-W2 / R3-D3-5) explicitly asks for substantive evidence
-that merged indexes outperform traditional joins for medium-to-large scans.
-Q3I-on-RocksDB at SF=40 does **not** currently provide that evidence —
-S3 is ~15% behind S1/S4. The LeanStore run, the memory-pressure sweep,
-and the S3-vs-S5 matrix together form the response material. This document
-is the place to assemble it.
+REVIEWS.md §4.2 (R3-W2 / R3-D3-5) asks for substantive evidence that
+merged indexes outperform traditional joins on medium-to-large scans.
+**S3 alone does not provide that evidence at SF=40** (~15% behind S1/S4
+on both RocksDB and LeanStore). H6 explains why: all three raw paths
+(S1/S3/S4) full-scan their inputs equally, and the merged-index per-row
+overhead leaves S3 marginally worse than S1's narrow split scans.
+
+**S5 (aCOLI MI) is the path that earns the merged-index pitch.** By
+co-locating customer + order rows with pre-aggregated `cust_open_due`
+and `pre_revenue` columns, S5 collapses scan cardinality 22× at SF=1
+and runs ~300× faster than S1/S3/S4 at SF=40 dram=0.1 on RocksDB
+(123 TX/s vs ~0.4). This bridges the spectrum between raw co-location
+(S3) and full materialisation (S2), and directly addresses
+REVIEWS.md §1.1 R2-D1 ("merged indexes storing simple aggregates as
+included columns").
+
+The reviewer response built from this document should lead with S5,
+present S3 as the parameter-flexible counterpart, and use the
+S3-vs-S1/S4 gap as the *cost* of that flexibility — not as a failure
+of merged indexes generally.
