@@ -53,20 +53,62 @@ Each tagged **CONFIRMED** / **REFUTED** / **OPEN**, with the evidence trail.
 ### H1 — MI is too large per row → REFUTED
 
 Original suspicion: merged adapter reported 228 bytes/row vs split adapters
-~100 bytes/row. Investigation in `3200b2b4`: pure measurement artefact.
+~100 bytes/row. Investigation in `3200b2b4` confirmed the gap is largely a
+*measurement* artefact — but the two size paths use **different RocksDB
+APIs** that report different quantities:
 
-- `RocksDBMergedAdapter::size()` returns whole-CF live-data size including
-  per-CF SST footer + bloom filter + index blocks (over-reports ~22% at SF=1).
-- `RocksDBAdapter::size()` calls `GetApproximateSizes` over a key-prefix
-  range in the shared default CF — excludes per-CF metadata, allowed 10%
-  approximation slack (under-reports).
+- **Split adapters** (`RocksDBAdapter<R>::size()` →
+  `RocksDB::get_size<R>()`) call `GetApproximateSizes(opts, default_cf,
+  &range, 1, &size)` over a key-prefix range `[Record::id, Record::id+1)`.
+  This returns approximate *file-system bytes* within the SST files that
+  intersect the prefix range, with `files_size_error_margin = 0.1`
+  (RocksDB interpolates ±10% of any straddling file's size into the
+  range). The shared default CF holds 4 base tables + 3 split COLI
+  adapters at SF=40, so per-record-id prefix ranges don't align with
+  SST boundaries — error can be larger than the nominal 10% in practice.
+  Per-CF metadata (footer, bloom filters, index blocks) is allocated to
+  the whole CF, not the prefix subset, so this path effectively
+  *excludes* per-CF metadata.
+
+- **Merged adapter** (`RocksDBMergedAdapter::size()` →
+  `RocksDB::get_size(cf, name)`) force-compacts the CF
+  (`BottommostLevelCompaction::kForce`) and reads
+  `rocksdb.estimate-live-data-size`, the post-compaction live-data
+  estimate (live key+value bytes for non-tombstoned records). Because
+  each MergedAdapter owns its dedicated CF, this measurement covers the
+  whole CF — including per-CF SST footer, bloom filters, index blocks,
+  and properties amortised across the smaller content.
+
+**Are these "live data"? Could tombstones explain the asymmetry?** No.
+Q3I is read-only at the application level — no inserts/updates/deletes
+during the measurement window. At load time, every record is inserted
+exactly once. Both `size()` paths invoke `CompactRange` with
+`BottommostLevelCompaction::kForce` *before* measuring, which drops any
+intermediate L0/L1 tombstones at the bottommost level. After that, no
+garbage and no tombstones. The numbers reported are real live data.
+
+**What actually drives the asymmetry**, then, is the API contract:
+
+- Split path returns **compressed file bytes minus per-CF metadata** for
+  a prefix range, with ±10% slack. RocksDB's default block compression
+  (LZ4 / Snappy) cuts disk bytes ~2× vs raw KV — explains the 40–60%
+  underreport vs `[content/row]`.
+- Merged path returns the **post-compaction live-data estimate** for a
+  whole dedicated CF; per-CF metadata fraction (~22% at SF=1, shrinks at
+  higher SF) inflates the per-row figure proportionally.
 
 Truthful content/row (raw key + value bytes summed via direct iterator
 walk): MI=177, splits 150–190. Tagged-key overhead is ~5 bytes per
 orders/lineitem record; MI is **7% larger than splits, not 2×**.
 
-The `[content/row]` and `[overhead]` lines in `test_query_q3i_lsm` make
-this measurable for any future SF.
+**Performance impact**: largely none. Block cache eviction and SST read
+cost depend on actual on-disk file bytes, not on either reported number.
+At SF=40 the LeanStore-Btree run shows S1's whole footprint
+(265.6 MiB) and S3's whole footprint (268.9 MiB) within ~1.2% — so size
+is not driving the ~15% S3 gap. The asymmetry is a *reporting* problem
+that confused early analysis; the `[content/row]` and `[overhead]`
+lines in `test_query_q3i_lsm` are the like-for-like numbers for any
+future cross-structure size comparison.
 
 ### H2 — Iterator overhead on rejected custkey groups → CONFIRMED, fix reverted
 
@@ -93,6 +135,28 @@ group's records. Hook is preserved for cache-resident A/B; flip to `true`
 when measuring SF=1 / fully-warm scenarios.
 
 The hypothesis was real; the remedy was wrong on disk.
+
+**B-tree exception (open follow-up):** the prefetch-buffer rationale that
+killed the seek-skip on RocksDB does **not** apply to LeanStore's B-tree
+backend. A B-tree Seek is a tree descent (`O(log N)` page touches) with
+no prefetch buffer to invalidate. Forward iteration through a rejected
+custkey's invoices+orders+lineitems can touch 10–50 records at SF=40 —
+potentially across multiple leaf pages — whereas a direct Seek to the
+next customer is a single descent. **Physical seek-to-next-customer
+should win on B-tree.**
+
+Per-order seek (the symmetric optimisation when `o_orderdate` rejects an
+order) is probably NOT worth doing on either backend: order groups are
+small (~4 lineitems per order at SF=40) and the descent cost likely
+outweighs forward-iterating past a handful of records. The cost-benefit
+crossover happens around the average group size; below it, forward
+iteration wins; above it, Seek wins.
+
+Action item: gate the `USE_PHYSICAL_SEEK_SKIP` constexpr on the Backend
+trait so RocksDB and LeanStore can pick different defaults
+(`coli_pipeline.tpp:539`). Document the rationale next to the flag.
+Re-run the LeanStore SF=15 numbers with the B-tree branch active and
+record the delta vs the current S3=25.41 TX/s baseline.
 
 ### H3 — Walker visits the entire MI per query even with skips → CONFIRMED
 
@@ -222,6 +286,7 @@ identical scans.
 | `128f6d44`   | bool `on_xxx` hooks + SSTWrite baseline   | SF=1 / SF=40                                             | Logger captures baseline before `helper.run()`, but **SSTWrite/TX did not drop materially** — writes are happening during the measurement window, not before. See H7. |
 | `16e98eb6`   | S5 aCOLI MI                               | SF=1                                                     | 486 records vs S3's 10918 (22× scan reduction); 5-way digest match |
 | 2026-05-02   | LeanStore-Btree run on Linux              | SF=15 / SF=40 dram=0.1                                   | Same ~15% S3-vs-S1 gap as RocksDB → H5 REFUTED. `W MiB/TX = 0` on B-tree → SSTWrite anomaly is RocksDB-specific (compaction). |
+| 2026-05-03   | S5 aCOLI MI on RocksDB                    | SF=40 dram=0.1                                           | S5=123.17 TX/s — beats S1/S3/S4 (~0.4 TX/s, DRAM-spilling) by ~300×, behind S2 (198.3) by ~38%. Reported size 136.62 MiB suspiciously close to base alone (~130 MiB) — aCOLI MI delta ≈ 6 MiB; potential `get_aggregated_size()` measurement bug, not yet root-caused. |
 
 ---
 
