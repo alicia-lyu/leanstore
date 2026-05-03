@@ -49,3 +49,6 @@ test_csv_q3i - moved to TRASH/test_csv_q3i_stale - stale Q3I CSV/log dir before 
 
 /tmp/leanstore/q3i_lsm - moved to TRASH/q3i_lsm-pre-a1-* - prior run data, wiping for A1 baseline
 build/q3i_lsm - moved to TRASH/build-q3i_lsm-pre-a1-* - prior structure logs, wiping for A1 baseline
+build/q3i_btree_iso{1..5} - moved to TRASH/ - replaced by build/q3i_btree_iso/ unified tree (storages nested as iso_N/ on the data_disk side)
+build/q3i_lsm_iso3 - moved to TRASH/ - replaced by build/q3i_lsm_iso/ unified tree
+/mnt/ssd/q3i_{btree,lsm}_iso{1..5} - left in place (out-of-project; permission-blocked) - stale per-N image dirs replaced by /mnt/ssd/q3i_{btree,lsm}_iso/iso_N/; safe to delete manually

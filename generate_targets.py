@@ -132,18 +132,29 @@ class Experiment:
         """A5 isolated-DB variant: per-structure image + recover file.
 
         For each --storage_structure N, emits:
-          - $(data_disk)/{exec}_iso{N}/{scale}: the image dir/file
-          - $(data_disk)/{exec}_iso{N}/build/{scale}.json: persist target
-            (loads ONLY structure N's secondary via --load_only_structure=N)
+          - $(data_disk)/{exec}_iso/iso_{N}/{scale}: the image dir/file
+          - $(data_disk)/{exec}_iso/iso_{N}/build/{scale}.json: persist
+            target (loads ONLY structure N's secondary via
+            --load_only_structure=N)
           - {exec}_iso_{N}: recover + run target
           - {exec}_iso: aggregate of all structures.
+
+        Runtime / CSV output is shared at
+        build/{exec}_iso/{scale}-in-{dram}/, mirroring the non-iso
+        layout: per-structure log files cohabit one runtime dir, with
+        a single TPut.csv / size.csv carrying one row per N. Lets
+        downstream comparisons paste shared-vs-iso CSVs row-by-row.
         """
         self.makefile_subsection("A5 isolated-DB experiment")
         is_lsm = "lsm" in self.exec_fname
+        iso_runtime = Path(f"{self.build_dir}/{self.exec_fname}_iso/{SCALE_ENV}-in-$(dram)")
+        # Per-iso-target csv_path override so iso TPut/size CSVs land
+        # under build/{exec}_iso/, not the inherited non-iso runtime_dir.
+        iso_class_flags = self.class_flags.copy()
+        iso_class_flags["csv_path"] = str(iso_runtime)
         for n in STRUCTURE_OPTIONS[self.exec_fname]:
-            iso_image = data_disk / f"{self.exec_fname}_iso{n}" / f"{SCALE_ENV}"
-            iso_recover = data_disk / f"{self.exec_fname}_iso{n}" / "build" / f"{SCALE_ENV}.json"
-            iso_runtime = Path(f"{self.build_dir}/{self.exec_fname}_iso{n}/{SCALE_ENV}-in-$(dram)")
+            iso_image = data_disk / f"{self.exec_fname}_iso" / f"iso_{n}" / f"{SCALE_ENV}"
+            iso_recover = data_disk / f"{self.exec_fname}_iso" / f"iso_{n}" / "build" / f"{SCALE_ENV}.json"
             iso_image_str = str(iso_image) if is_lsm else f"{iso_image}.image"
             create_cmd, _ = get_image_command(is_lsm, Path(iso_image_str))
 
@@ -196,24 +207,26 @@ class Experiment:
                 print(
                     f"\tscript -q {iso_runtime}/structure{n}.log",
                     f"{self.exec_path}",
-                    kv_to_str(self.class_flags),
+                    kv_to_str(iso_class_flags),
                     kv_to_str(run_flags),
                     f"--storage_structure={n}",
                     "--micro_perf=true",
                     "--cfstats=true",
                     "--coli_walker_variant=$(coli_walker_variant)",
+                    "--use_seek_skip=$(use_seek_skip)",
                     f"2>{iso_runtime}/structure{n}_stderr.txt",
                     sep=" ",
                 )
             else:
                 print(
                     f"\tscript -q -c \"{self.exec_path}",
-                    kv_to_str(self.class_flags),
+                    kv_to_str(iso_class_flags),
                     kv_to_str(run_flags),
                     f"--storage_structure={n}",
                     "--micro_perf=true",
                     "--cfstats=true",
                     "--coli_walker_variant=$(coli_walker_variant)",
+                    "--use_seek_skip=$(use_seek_skip)",
                     f"2>{iso_runtime}/structure{n}_stderr.txt\"",
                     f"{iso_runtime}/structure{n}.log",
                     sep=" ",
@@ -355,8 +368,9 @@ class Experiment:
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
             # Diagnostic flags: opt-in via Makefile vars `micro_perf=true cfstats=true`.
             # Default false in the Makefile; A1 sweep enables them per-run.
-            # `coli_walker_variant` defaults to baseline; A2c sweep flips to fused_emit.
-            diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant)"
+            # `coli_walker_variant` default is fused_emit post-A2c.
+            # `use_seek_skip` default -1 = use Backend trait; A3-Linux sweep flips for RocksDB.
+            diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant) --use_seek_skip=$(use_seek_skip)"
             if IS_MACOS:
                 print(
                     f'\tscript -q {self.runtime_dir}/structure{structure}.log',

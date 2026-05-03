@@ -6,7 +6,14 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include <gflags/gflags.h>
+
 #include "views_coli.hpp"
+
+// A3-Linux re-A/B: runtime override for Backend::USE_PHYSICAL_SEEK_SKIP.
+// Defined in tpch_flags.hpp; declared here to avoid an include-order
+// dependency on the per-executable TPCH_DEFINE_FLAGS pattern.
+DECLARE_int32(use_seek_skip);
 
 namespace tpch
 {
@@ -556,11 +563,15 @@ void coli_group_walk(
          skip_pending = false;
          // Customer-level seek-skip ONLY (not order-level). Gated by the
          // Backend trait so RocksDB stays on forward iteration (Seek
-         // invalidates its prefetch buffer; archived A/B 2026-05-02)
-         // while LeanStore takes the Seek branch (B-tree descent is
-         // O(log N) page touches with no prefetch buffer to lose). See
-         // q3i/PERFORMANCE.md §3 A3 and backend.hpp.
-         if constexpr (Backend::USE_PHYSICAL_SEEK_SKIP) {
+         // invalidates its prefetch buffer; archived A/B 2026-05-02 was
+         // on macOS — A3-Linux re-A/B in flight) while LeanStore takes
+         // the Seek branch (B-tree descent is O(log N) page touches
+         // with no prefetch buffer to lose). See q3i/PERFORMANCE.md §3
+         // A3 and backend.hpp. FLAGS_use_seek_skip overrides at runtime.
+         const bool seek_skip =
+             FLAGS_use_seek_skip < 0 ? Backend::USE_PHYSICAL_SEEK_SKIP
+                                     : (FLAGS_use_seek_skip != 0);
+         if (seek_skip) {
             typename customer_coli_t::Key next_key{cur_custkey + 1};
             scanner->template seek<customer_coli_t>(next_key);
             if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
@@ -793,8 +804,12 @@ void coli_group_walk_fused_emit(
       if (skip_pending) {
          skip_pending = false;
          // Customer-level seek-skip ONLY (not order-level). Backend-trait
-         // gated; see baseline walker comment above and q3i/PERFORMANCE.md §3 A3.
-         if constexpr (Backend::USE_PHYSICAL_SEEK_SKIP) {
+         // gated with runtime override (FLAGS_use_seek_skip); see baseline
+         // walker comment above and q3i/PERFORMANCE.md §3 A3.
+         const bool seek_skip =
+             FLAGS_use_seek_skip < 0 ? Backend::USE_PHYSICAL_SEEK_SKIP
+                                     : (FLAGS_use_seek_skip != 0);
+         if (seek_skip) {
             typename customer_coli_t::Key next_key{cur_custkey + 1};
             scanner->template seek<customer_coli_t>(next_key);
             if constexpr (requires { visitor.on_group_end(cur_custkey); }) {

@@ -42,7 +42,11 @@ micro_perf  ?= false
 cfstats     ?= false
 # A2c walker A/B: 'baseline' (std::variant + visitor) or 'fused_emit'
 # (tag-byte switch + raw slices, no variant construction).
-coli_walker_variant ?= baseline
+# Default 'fused_emit' post-A2c (q3i/PERFORMANCE.md §2 H4); pass
+# coli_walker_variant=baseline to reproduce the regression A/B.
+coli_walker_variant ?= fused_emit
+# A3-Linux re-A/B: -1=use Backend trait (default), 0=force off, 1=force on.
+use_seek_skip ?= -1
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid

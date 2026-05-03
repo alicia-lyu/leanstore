@@ -39,16 +39,23 @@ namespace tpch
 // RocksDB backend
 
 struct RocksDBBackend {
-   // COLI walker: skip rejected customer groups via physical Seek to the
-   // next custkey rather than forward iteration. RocksDB pays a steep
-   // tax here — Seek invalidates the iterator's prefetch buffer (1–2
-   // SST blocks lookahead), regressing SF=40 disk-bound by ~5×. See
-   // q3i/PERFORMANCE.md §H2 and the archived A/B in
-   // archive/PERFORMANCE-2026-05-03.md.
+   // COLI walker: skip rejected customer groups via physical Seek to
+   // the next custkey rather than forward iteration. The original A/B
+   // (commit 8d10782b, archive/PERFORMANCE-2026-05-03.md §H2) ran on
+   // macOS and reported a ~5× regression at SF=40, attributed to the
+   // SST prefetch buffer being invalidated on Seek. The Linux re-A/B
+   // (q3i/PERFORMANCE.md §3 A3 RocksDB re-open) refutes that finding:
+   // SF=15 1.81→14.46 TX/s (+700%), SF=40 0.90→1.48 TX/s (+64%) at
+   // dram=0.1 iso S3 with fused_emit. The macOS regression appears
+   // to have been a page-cache artefact. Trait flipped to true on
+   // both backends as a result.
    //
    // Order-level skip stays as forward iteration on BOTH backends —
    // small order groups (~4 lineitems) don't pay back a tree descent.
-   static constexpr bool USE_PHYSICAL_SEEK_SKIP = false;
+   //
+   // Runtime override available via --use_seek_skip (-1=trait,
+   // 0=force off, 1=force on) for future regression A/B work.
+   static constexpr bool USE_PHYSICAL_SEEK_SKIP = true;
 
    // Single-type adapter and scanner.
    template <typename T>
@@ -73,11 +80,10 @@ struct RocksDBBackend {
 #ifndef ROCKSDB_ONLY
 struct LeanStoreBackend {
    // B-tree Seek is an O(log N) tree descent with no prefetch buffer to
-   // invalidate (unlike RocksDB). Forward iteration through a rejected
-   // custkey group can touch 10–50 records spread across separate leaf
-   // pages, so a Seek to the next customer should win. (A3.) Order-level
-   // skip remains forward-iteration on both backends — order groups are
-   // too small for the descent cost to pay back.
+   // invalidate. A3 (LeanStore): SF=15 23.06→105.27 TX/s (+356%),
+   // SF=40 0.29→33.69 TX/s (+116×). The Linux re-A/B confirmed the
+   // same direction wins on RocksDB too — see RocksDBBackend above.
+   // Order-level skip stays as forward iteration on both backends.
    static constexpr bool USE_PHYSICAL_SEEK_SKIP = true;
 
    template <typename T>
