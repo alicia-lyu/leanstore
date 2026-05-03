@@ -668,21 +668,37 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
    // Trait-gated by Backend::USE_PHYSICAL_SEEK_SKIP, runtime-overridden by
    // --use_seek_skip. See q3i/PERFORMANCE.md §3 A/B-1.
    //
-   // Why only agg_inv: BMJ#1's right side (cust_open_due) is 1:1 per
-   // custkey — exactly one open_due per customer. By the time bmj1's
-   // refill_current_key advances next_left via fetch_cust, the previous
-   // customer's open_due has been emplaced and the next agg_inv.next()
-   // is what we want to align with the new customer.
+   // Why only agg_inv (1:1 per custkey): fetch_cust returns one passing
+   // customer K per call; agg_inv is positioned at the matching open_due
+   // by Seek + next() returning the K-row. Forward-only seek is safe.
    //
-   // Why NOT ord_scan / agg_lin: BMJ#2/#3 right sides are 1:N (multiple
-   // orders / lineitems per custkey). When fetch_cust is called from
-   // inside bmj1's refill, bmj2's cached next_right may point at one of
-   // many K_prev orders that haven't been emplaced yet — seeking ahead
-   // would skip the rest. The S3 COLI walker avoids this because it has
-   // a single scanner with no intermediate caching layer. Mirroring the
-   // S3 trick on a 3-BMJ chain would require either (a) a buffered
-   // OrdersByCustkey wrapper or (b) intrusive BMJ changes; both are
-   // bigger refactors deferred until A/B-1 measures the agg_inv-only win.
+   // G6 attempted (and abandoned): deferred Seek on ord_scan / agg_lin
+   // (the BMJ#2/#3 right sides, 1:N per custkey). Three mechanics tried:
+   //
+   //   (a) Stash target in fetch_cust, apply on next fetch_ord. Bug: each
+   //       fetch_cust returns the *next* passing customer, so the target
+   //       gets overwritten before bmj2 has finished the prior group.
+   //   (b) Read bmj2.jk_to_join() inside fetch_ord. Bug: jk_to_join is the
+   //       smaller of next_left.JK and next_right.JK, so each gap-custkey
+   //       refill sees jk_to_join walk one step at a time — never a
+   //       sufficient jump to trigger a skip.
+   //   (c) Read bmj2.next_left, gated by a consume_joined-driven flag.
+   //       Bug: consume fires *after* a group's cross-product is queued;
+   //       by the time it sets the flag, ord_scan is already past that
+   //       group, but bmj2 may still be processing the *next* passing
+   //       group (next_left has advanced ahead of the active jk). Seek
+   //       skips the active group's remaining orders.
+   //
+   // The fundamental obstacle: BMJ doesn't expose "I am done refilling for
+   // jk=X" without intrusive hooks. A clean fix needs either:
+   //   - A buffered wrapper around ord_scan / agg_lin that pre-loads
+   //     orders for K passing customers ahead of bmj2 (defeats streaming).
+   //   - An `on_group_flush(jk)` callback inside BMJ::next_jk after refill
+   //     completes (intrusive change to the shared primitive).
+   // Both are bigger refactors. Deferred until measurements justify them
+   // (A/B-1 G6 attempt: btree gain ~10%, RocksDB regression — not worth
+   // the refactor cost). Records `bj_ord_skips` / `bj_lin_skips` are
+   // declared in the stats struct for forward compatibility but stay 0.
    const bool seek_skip =
        FLAGS_use_seek_skip < 0 ? Backend::USE_PHYSICAL_SEEK_SKIP
                                : (FLAGS_use_seek_skip != 0);

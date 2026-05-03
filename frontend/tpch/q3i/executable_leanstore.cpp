@@ -173,6 +173,10 @@ int main(int argc, char** argv)
              << "\n  aggregator_rows_out     = " << stats.aggregator_rows_out
              << "\n  mi_records_visited      = " << stats.mi_records_visited
              << "\n  mi_groups_skipped       = " << stats.mi_groups_skipped
+             << "\n  bj_groups_skipped       = " << stats.bj_groups_skipped
+             << "\n  bj_ord_skips            = " << stats.bj_ord_skips
+             << "\n  bj_lin_skips            = " << stats.bj_lin_skips
+             << "\n  hj_groups_skipped       = " << stats.hj_groups_skipped
              << "\n[q3i] per-stage wall-clock totals (us) | total_us=" << total_stage_us << ":"
              << "\n  scan_filter             = " << stats.stage_us_scan_filter
              << "\n  aggregator              = " << stats.stage_us_aggregator

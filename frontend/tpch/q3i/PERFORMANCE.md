@@ -155,6 +155,69 @@ Concretely at SF=15: S4 lineitems_scanned/q drops 90108 → 12153
 (87% reduction, ≈ mktsegment selectivity × order-date selectivity);
 S1 only saves on the much smaller invoice stream.
 
+### G6 attempt — ABANDONED: S1 deferred Seek-skip on ord_scan / agg_lin
+
+**Goal**: extend G1 (which only seeks `agg_inv` synchronously inside
+`fetch_cust`) to also seek the `ord_scan` and `agg_lin` right sides
+of BMJ#2 / BMJ#3 past failing-customer gaps. Aim: close the
+inside-pipeline gap to S3 (which gets per-customer skip via its
+single-scanner walker).
+
+**What I tried (three mechanics, all unsafe or no-op)**:
+
+1. **Stash target in `fetch_cust`, apply on next `fetch_ord`.** Bug:
+   each `fetch_cust` call returns the *next* passing customer, so
+   the target is overwritten before BMJ#2 finishes the prior group's
+   right-side refill. Result: orders for the prior group are dropped.
+
+2. **Read `bmj2.jk_to_join()` from inside `fetch_ord`.** Safe but
+   no-op: `jk_to_join` is the smaller of `next_left.JK` and
+   `next_right.JK`, so during gap walks it advances one custkey at a
+   time in lockstep with `ord_scan`. The seek-skip gate
+   (`T > last_returned_ck`) is never satisfied.
+
+3. **Read `bmj2.next_left` gated by a `consume_joined` flag.** Bug:
+   `consume_joined` fires *after* a group's cross-product is queued
+   (i.e. after refill+refresh complete). By then `next_left` is
+   already the next-passing-customer's lookahead, but BMJ#2 may
+   still be processing the *current* passing group — seeking
+   `ord_scan` to `next_left.JK` skips that group's remaining orders.
+
+**Root cause**: `BinaryMergeJoin` doesn't expose a
+`on_group_flush(jk)` hook (the only place where "I'm done with jk=X"
+is unambiguous). All three mechanics try to derive that signal from
+public BMJ state and either over-shoot or under-shoot.
+
+**Decision**: G6 abandoned. Two clean fixes both cost more than
+they're worth given measured impact:
+
+- *Buffered wrapper*: pre-load orders for the next K passing
+  customers into an in-memory queue. Defeats the streaming nature
+  of merge-join and adds a per-query allocation tax.
+- *BMJ refactor*: add an `on_group_flush(jk)` callback in
+  `BinaryMergeJoin::next_jk` after `refill_current_key` returns.
+  Touches the shared primitive (used by Q12 / Q3 / Q9 / Q3I); the
+  benefit is localised to one query.
+
+**Measured A/B (with the unsafe mechanic-3 implementation, before
+revert) at iso, dram=0.1, fused_emit**:
+
+| Cell                  | ss=0   | ss=1 (G6 unsafe) |
+|-----------------------|-------:|-----------------:|
+| S1 LeanStore SF=15    | 22.50  | 27.59            |
+| S1 LeanStore SF=40    | 0.30   | 0.42 (+10%)      |
+| S1 RocksDB SF=15      | 2.17   | 3.91 (+80%)      |
+| S1 RocksDB SF=40      | 0.89   | 0.52 (−42%)      |
+
+The btree gain (+10% SF=40) is real but modest. The RocksDB SF=40
+regression deepens vs G1-only (was −27%, now −42%) because each new
+Seek invalidates the SST prefetch buffer; G6 added two more
+Seek-prone paths (ord_scan, agg_lin) on top of agg_inv.
+
+**Counters preserved**: `bj_ord_skips` and `bj_lin_skips` stay in
+`Q3IStats` as zero-valued placeholders — re-enable when a future
+mechanic (buffered wrapper or BMJ hook) lands.
+
 ### A/B-2 — DONE: aCOLI Q3I-projected variant (G4+G5)
 
 **WHAT**: the S5 aCOLI MI carries full base-record payloads
