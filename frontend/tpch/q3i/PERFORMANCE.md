@@ -413,6 +413,56 @@ structures. Until ruled out, **focus on SSTRead/TX and TX/s** for
 cross-structure comparison on RocksDB; on LeanStore the column is
 trivially zero and not useful either way.
 
+### H8 — Shared-DB cache pollution from non-queried structures → OPEN
+
+All five storage structures are populated into a **single shared database
+instance** before any query runs. `Q3IWorkload::load()` unconditionally
+calls `populate_split()` (S1), `populate_q3i_view()` (S2),
+`populate_merged()` (S3), and `populate_aggregated()` (S5); S4 uses the
+base tables that are always present. The design is intentional — the
+Makefile loads once, then runs multiple `--recover` invocations selecting
+different `--storage_structure` values. Gating on the flag would leave
+3 of 4 secondaries empty, producing fantasy throughput on the
+empty-adapter paths (see comment in `load.tpp`).
+
+**Mechanism.** On RocksDB, all `RocksDBAdapter<R>` instances (8 base
+tables + S1 split indexes + S2 view) share the default column family.
+Each `RocksDBMergedAdapter` (S3 COLI MI, S5 aCOLI MI) gets a dedicated
+CF. A single `block_cache` — sized at 80% of `dram_gib` during query
+time — is shared across ALL CFs. On LeanStore, each adapter is a
+separate B-tree competing for the same buffer pool.
+
+**Footprint at SF=40.** Base tables ≈ 266 MiB, COLI MI ≈ 269 MiB,
+S1 split indexes ≈ 269 MiB, S5 aCOLI ≈ 141 MiB, plus the S2 view.
+Total DB footprint is ~950+ MiB. At `dram=0.1`, block cache ≈ 82 MiB.
+Data blocks from non-queried structures are evicted quickly under
+pressure, but SST metadata (bloom filters, block-index entries, table
+properties) from every CF occupies cache capacity even when the
+structure is never queried. Each non-queried CF/file set contributes a
+fixed metadata overhead.
+
+**Symmetry argument.** S3 and S1 read roughly the same total bytes
+(269 vs 266 MiB at SF=40 on LeanStore). The pollution from non-queried
+structures is **symmetric**: when S3 runs, S1's split indexes and S5's
+aCOLI pollute the cache; when S1 runs, S3's COLI MI and S5's aCOLI
+pollute the cache. Both pay approximately the same metadata tax.
+**H8 does NOT explain the S3-vs-S1 gap.** But it inflates absolute
+wall-clock times for all paths uniformly, making the benchmark
+pessimistic relative to a production deployment where only one
+secondary structure exists.
+
+**Actionable tests:**
+
+- **Isolated-DB test.** Build separate `--ssd_path` directories each
+  containing only base tables plus the single queried secondary. Compare
+  absolute TX/s and the S3-vs-S1 relative gap at SF=40 dram=0.1. If the
+  gap is unchanged in isolation, H8 is confirmed as a uniform overhead.
+  If the gap shifts, the pollution is differential and the shared-DB
+  design needs revisiting.
+- **Block-cache metadata audit.** Inspect `rocksdb.block-cache-entry-stats`
+  per CF before and after `helper.run()` to quantify the fraction of
+  block-cache capacity consumed by metadata from non-queried CFs.
+
 ---
 
 ## §3 — Investigations done (chronological)
@@ -487,6 +537,17 @@ RocksDB stays on forward iteration. Re-run SF=15 dram=0.1 on B-tree and
 record the delta vs S3=25.41 TX/s. The expected win is meaningful only
 when ~80% of customers fail mktsegment and each rejected group spans
 10–50 records on average (true at SF=15+ for default Q3I params).
+
+### 7. Quantify shared-DB cache pollution (H8)
+
+Run the isolated-DB test described in H8: build separate `--ssd_path`
+directories each containing only base tables plus the single queried
+secondary. Compare absolute TX/s and `block_cache_hit_rate` against the
+current shared-DB setup at SF=40 dram=0.1. If the S3-vs-S1 relative gap
+is unchanged in isolation, H8 is confirmed as a uniform overhead and the
+shared-DB design is validated for comparative benchmarking (even if
+absolute numbers are pessimistic). If the gap changes, the pollution is
+differential and the load strategy needs revisiting.
 
 ---
 
