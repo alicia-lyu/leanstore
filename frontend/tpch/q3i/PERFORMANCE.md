@@ -40,7 +40,7 @@ Compact status; full evidence in archive §2.
 | H1 | MI is too large per row | **REFUTED** | `get_size` reporting artefact; content/row 177 vs 150–190 splits |
 | H2 | Iterator overhead on rejected groups | **CONFIRMED, fix reverted on RocksDB; PENDING on LeanStore** | Forward iteration cheaper than physical Seek on RocksDB; B-tree branch unexplored (A3) |
 | H3 | Walker visits entire MI per query | **CONFIRMED uniform** (subsumed by H6) | ~425k records/q at SF=40; but S1/S4 also full-scan their inputs — doesn't explain the S3-vs-S1 gap |
-| H4 | Per-record dispatch overhead | **OPEN** | Not `std::visit` alone (geo precedent); A2 variants will attribute |
+| H4 | Per-record dispatch overhead | **OPEN, narrowed** | A1 macOS SF=15 refutes tagged-key decode (S3 does *fewer* comparisons than S1). Remaining suspect: scanner payload emit (A2c). |
 | H5 | Storage-engine specific (RocksDB block layout) | **REFUTED** | Same ~16% gap on LeanStore at SF=15 |
 | H6 | Low filter selectivity | **CONFIRMED uniform** | All raw paths full-scan; doesn't explain S3-vs-S1 gap; explains S5 win |
 | H7 | SSTWrite during read-only queries | **OPEN, RocksDB-specific** | Read-only workload but histogram inflated; A4 attributes to source |
@@ -71,22 +71,61 @@ Not a code A/B; the data run that picks A2 vs A3 vs A4.
   - S3 cache hit rate < S1's → H8 differential, jump to **A5**.
   - None stand out → **A2b** (variant dispatch) by elimination.
 
+#### macOS A1 partial result (2026-05-03, SF=15 dram=0.1, RocksDB, cache-resident)
+
+| Path | TX/s | user_key_cmp/q | iter_next_cpu/q | iostats bytes_read/q | hit_rate |
+|------|-----:|---------------:|----------------:|---------------------:|---------:|
+| S1 base_merge  | 1.67 | 274 336 | 549.7 ms | 17.4 MiB | 100% |
+| S2 view        | 13.03 | 12 | 72.0 ms | 2.7 KiB | 100% |
+| S3 mi_coli     | 1.58 | 159 663 | 578.2 ms | 16.5 MiB | 100% |
+| S4 base_hash   | 1.70 | 40 | 541.8 ms | 16.1 MiB | 100% |
+| S5 aCOLI       | 11.63 | 24 749 | 80.0 ms | 9.1 KiB | 100% |
+
+**Findings:**
+
+- **A2a (fast_decode) refuted.** S3 does *fewer* comparisons than S1
+  (160k vs 274k) — S1's 3-iterator BMJ chain calls the comparator more
+  times. Tagged-key decode is **not** the bottleneck. (S4 hash join is
+  even lower at 40 — joins via hash, not comparator.)
+- **A2c (fused_emit) is the live suspect.** `iter_next_cpu_nanos/q`
+  is ~5% higher on S3 (578 ms vs 550 ms), matching the ~5% TX/s gap
+  on macOS exactly. Per-record `next()` payload construction is the
+  remaining differential.
+- **Run is cache-resident** (100% hit rate across all paths). The
+  merged-index disk-pressure pitch can't be evaluated here — bumps
+  A6 (memory-pressure sweep) earlier in priority. macOS at
+  dram=0.02 GiB or SF=40 needed to force eviction.
+- **macOS gap is 5%, Linux is 16%** at same SF/dram. Awaiting user's
+  q3i_btree Linux numbers to compare scanner-emit attribution
+  cross-backend.
+
+#### Linux q3i_btree A1 result (pending)
+
+User running on Linux. Once landed, look for the same
+user_key_comparison_count asymmetry (refuting A2a) and the same
+or larger iter_next_cpu_nanos gap (confirming A2c).
+
 ### A2 — Walker dispatch variants (`--coli_walker_variant=...`)
 
-Run only after A1 attributes the gap to per-record cost. Three
-variants coexist behind one flag for within-process A/B; XOR parity
-across variants is mandatory.
+A1 narrowed this: tagged-key decode (A2a) is refuted on macOS;
+scanner emit (A2c) is the live suspect. Variants coexist behind one
+flag for within-process A/B; XOR parity across variants is mandatory.
 
-- **A2a `fast_decode`**: replace SFINAE `accepts_key` chain with
-  direct `key[key_len-1]` tag-byte switch.
-  WHERE: `frontend/tpch/coli_pipeline.tpp` walker dispatch site +
-  `frontend/shared/adapter-scanner/RocksDBMergedAdapter.hpp::toType`.
-  WIN: ~1ns/record × 425k = ~400 µs/query at SF=40.
-- **A2b `template_dispatch`**: hand-rolled templated dispatch over the
-  tag-byte switch; skip variant construction when visitor is void.
-- **A2c `fused_emit`**: specialise `RocksDBMergedScanner::next()` to
-  emit raw `(tag, k_view, v_view)` triple — no `std::variant`
-  construction.
+- **A2c `fused_emit` (PRIORITY)**: specialise
+  `RocksDBMergedScanner::next()` to emit raw `(tag, k_view, v_view)`
+  triple — no `std::variant` construction. Skip variant copy when
+  visitor returns void.
+  WHERE: `frontend/shared/adapter-scanner/RocksDBMergedScanner.hpp`
+  + walker call site in `frontend/tpch/coli_pipeline.tpp`.
+  WIN: close the 5–16% iter_next_cpu_nanos gap.
+- **A2b `template_dispatch`**: hand-rolled templated dispatch over a
+  tag-byte switch; skip variant construction in the dispatcher.
+  Probably subsumed by A2c if the bottleneck is the variant itself.
+- **A2a `fast_decode` (DEPRIORITISED, A1 REFUTED)**: replace SFINAE
+  `accepts_key` chain with direct `key[key_len-1]` tag-byte switch.
+  Predicted 1ns/record × 425k ≈ 400 µs/q win, but A1 macOS shows S3's
+  comparator count is *lower* than S1's — fast_decode optimises the
+  wrong axis. Keep on the bench; revisit only if A2c is also refuted.
 - WIN bar (any variant): ≥5% TX/s improvement on RocksDB SF=15
   dram=0.1 with parity intact, OR a clean declaration that the gap is
   fundamental.
