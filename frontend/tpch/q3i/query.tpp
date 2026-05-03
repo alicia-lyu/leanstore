@@ -169,6 +169,18 @@ struct COLIGroupWalkVisitor {
    void on_record_visited() { if (stats) stats->mi_records_visited++; }
    void on_group_skipped(Integer /*ck*/) { if (stats) stats->mi_groups_skipped++; }
 
+   // Visitor-driven custkey skip: set true to request walker to seek to
+   // the next custkey. Used when the cust_open_due threshold finalises
+   // false on the first on_order (the rest of the OL sub-tree of this
+   // custkey is doomed by the aggregate-output filter — no point
+   // streaming it).
+   bool skip_group_pending = false;
+   bool wants_skip_group() {
+      bool s = skip_group_pending;
+      skip_group_pending = false;  // one-shot — consumed by walker
+      return s;
+   }
+
    // Inside-pipeline accumulators (factored — S1 reuses these in Phase 2).
    CustomerOpenDueAccumulator open_due;
    LineitemRevenueAccumulator rev;
@@ -223,7 +235,13 @@ struct COLIGroupWalkVisitor {
          // First order for this custkey — evaluate threshold now that all
          // invoices have been consumed.
          threshold_ok = (open_due.value > params.threshold);
-         if (!threshold_ok) return;  // skip entire OL sub-hierarchy
+         if (!threshold_ok) {
+            // Request a physical custkey-skip from the walker; the rest
+            // of the OL sub-tree is rejected by the aggregate-output
+            // filter on cust_open_due (Q3I `oi.cust_open_due > :threshold`).
+            skip_group_pending = true;
+            return;
+         }
       } else {
          flush_order();  // close previous order before opening a new one
       }

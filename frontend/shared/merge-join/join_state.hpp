@@ -31,10 +31,9 @@ class JoinState
 
    ~JoinState()
    {
-      if (
-          // jk_to_join % 1000 == 1 || // sampling
-          joined > 10000)
-         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << jk_to_join << std::endl;
+      // Per-destructor join cardinality logging suppressed — at higher SF
+      // a single 15-second experiment can fire this hundreds of times,
+      // burying everything else. Re-enable per-debug-session by hand.
    }
 
    bool went_past(const JK& ballpark_jk) const

@@ -281,6 +281,19 @@ void coli_group_walk(
           },
           kv->second);
 
+      // Visitor-driven skip: lets a hook (e.g. on_order finalising the
+      // threshold filter on cust_open_due) request a custkey-level skip
+      // mid-group. Cheaper than waiting for the rest of the OL sub-tree
+      // to scroll past and be filtered row-by-row.
+      if constexpr (requires { { visitor.wants_skip_group() } -> std::convertible_to<bool>; }) {
+         if (group_active && visitor.wants_skip_group()) {
+            skip_pending = true;
+            if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
+               visitor.on_group_skipped(cur_custkey);
+            }
+         }
+      }
+
       if (skip_pending) {
          // Seek to the next custkey's customer record.  RocksDB's Seek
          // positions to the first key >= target; for sparse custkeys we

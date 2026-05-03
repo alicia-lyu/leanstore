@@ -174,12 +174,12 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
 
    long total_num_deletions = 0;
    for (const auto& level_meta : cf_meta.levels) {
-      std::cout << "Level " << level_meta.level << ": " << level_meta.files.size() << " files; ";
+      // Per-level file counts are written to sstables.csv below; stdout
+      // suppressed to keep experiment logs scannable.
       for (const auto& sst_file_meta : level_meta.files) {
          total_num_deletions += sst_file_meta.num_deletions;
       }
    }
-   std::cout << std::endl;
 
    long long live_data_size_bytes = std::stoll(live_data_size);
    long long total_sstables_size_bytes = std::stoll(total_sstables_size);
@@ -197,12 +197,10 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
    if (sstable_csv.tellp() == 0) {
       sstable_csv << "tableid,size (MiB),file count,levels,num keys,total deletions" << std::endl;
    }
-   std::cout << "tableid,size (MiB),file count,levels,num keys,total deletions" << std::endl;
-   std::vector<std::ostream*> out = {&std::cout, &sstable_csv};
-   for (std::ostream* o : out) {
-      *o << name << "," << (double)live_data_size_bytes / 1024.0 / 1024.0 << "," << cf_meta.file_count << "," << cf_meta.levels.size() << ","
-         << num_keys << "," << total_num_deletions << std::endl;
-   }
+   // CSV header + row written to sstables.csv only; stdout suppressed.
+   sstable_csv << name << "," << (double)live_data_size_bytes / 1024.0 / 1024.0 << ","
+               << cf_meta.file_count << "," << cf_meta.levels.size() << ","
+               << num_keys << "," << total_num_deletions << std::endl;
    sstable_csv.close();
 
    default_cf_size = (double)live_data_size_bytes / 1024.0 / 1024.0;

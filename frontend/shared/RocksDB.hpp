@@ -186,8 +186,10 @@ struct RocksDB {
       opts.files_size_error_margin = 0.1;
       tx_db->GetApproximateSizes(opts, cf_handles[0], &range, 1, &size);
       double size_in_mib = static_cast<double>(size) / (1024 * 1024);
-      std::cout << "RocksDB: Approximate size for Record id " << Record::id << " is " << size_in_mib
-                << " MiB (default full size: " << default_full_size << " MiB)" << std::endl;
+      // Per-record-id approximate sizes were noisy (printed once during the
+      // compaction-stats dump and again inside the per-structure get_size()
+      // summary). Suppressed to keep experiment logs scannable.
+      (void)default_full_size;
       return size_in_mib;
    };
 
