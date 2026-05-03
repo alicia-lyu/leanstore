@@ -22,6 +22,9 @@ template <typename Backend>
 using MergedQ3I = ::tpch::MergedStructure<Q3IWorkload<Backend>, q3i_agg_row_t>;
 
 template <typename Backend>
-using HashQ3I   = ::tpch::HashStructure  <Q3IWorkload<Backend>, q3i_agg_row_t>;
+using HashQ3I        = ::tpch::HashStructure       <Q3IWorkload<Backend>, q3i_agg_row_t>;
+
+template <typename Backend>
+using AggregatedQ3I  = ::tpch::AggregatedStructure <Q3IWorkload<Backend>, q3i_agg_row_t>;
 
 }  // namespace tpch::q3i

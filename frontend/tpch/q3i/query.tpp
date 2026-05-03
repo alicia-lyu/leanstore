@@ -904,4 +904,97 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    return static_cast<long>(out.size());
 }
 
+template <typename Backend>
+long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
+{
+   // S5: scan the aCOLI 2-type MI (customer_acoli_t + orders_acoli_t).
+   //
+   // The aCOLI MI pre-bakes two aggregates at load time:
+   //   customer_acoli_t.pre_open_due  = SUM(i_totaldue WHERE i_status='O')
+   //   orders_acoli_t.pre_revenue     = SUM(l_extendedprice*(1-l_discount)
+   //                                        WHERE l_shipdate > DATE_1995_03_15)
+   //
+   // Query logic per customer group:
+   //   1. Check c_mktsegment filter.
+   //   2. Check pre_open_due > threshold.
+   //   3. For each order under that customer: check o_orderdate < orderdate
+   //      AND pre_revenue > 0 (revenue guard; mirrors S1/S3/S4 zero-revenue
+   //      suppression — an order with pre_revenue=0 had no qualifying lineitems).
+   //   4. Emit directly (no accumulators needed — aggregates are pre-built).
+   //
+   // Because there are no invoice or lineitem rows in the aCOLI MI, the scan
+   // cardinality is |customer| + |orders| ≈ 1.15M at SF=1, vs ~8M for COLI.
+   //
+   // Parity caveat: pre_open_due and pre_revenue are baked in with the default
+   // constants (i_status='O', l_shipdate > DATE_1995_03_15).  If params deviate
+   // from these defaults, S5 results will diverge from S1/S3/S4 — see test
+   // harness for the runtime check and [SKIP S5] guard.
+   out.clear();
+
+   // Scan aCOLI MI by custkey order.  The MI's key sort order is:
+   //   customer_acoli_t (Key = custkey)  < orders_acoli_t (Key = custkey,orderkey)
+   // because the simple fold-length of customer (4 bytes) is shorter than the
+   // order fold-length (8 bytes) — standard fold-length discrimination.
+   //
+   // We drive the scan via two typed scans (one per record type) interleaved
+   // by custkey, mirroring how coli_group_walk works but for 2 types only.
+   // Simpler approach: scan all records in order via the merged scanner and
+   // dispatch on record type.
+   auto scanner = coli.acoli_adapter().template getScanner<
+       customer_acoli_t::Key, customer_acoli_t>();
+
+   // Per-customer state.
+   bool    cust_passes     = false;  // mktsegment + threshold gate
+   Numeric cur_open_due    = 0;
+
+   {
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
+      while (auto kv = scanner->next()) {
+         std::visit(
+             [&](auto&& val) {
+                using V = std::decay_t<decltype(val)>;
+                if constexpr (std::is_same_v<V, customer_acoli_t>) {
+                   if (stats) stats->acoli_customers_scanned++;
+                   // mktsegment filter
+                   auto sm  = std::string_view(val.c_mktsegment.data,
+                                               val.c_mktsegment.length);
+                   auto psm = std::string_view(params.mktsegment.data,
+                                               params.mktsegment.length);
+                   cur_open_due = val.pre_open_due;
+                   cust_passes  = (sm == psm) && (cur_open_due > params.threshold);
+                   if (cust_passes && stats) stats->acoli_customers_passing_filter++;
+                } else if constexpr (std::is_same_v<V, orders_acoli_t>) {
+                   if (!cust_passes) return;
+                   if (stats) stats->acoli_orders_scanned++;
+                   // orderdate filter
+                   if (val.o_orderdate >= params.orderdate) return;
+                   // revenue guard: skip orders with no qualifying lineitems
+                   if (val.pre_revenue <= Numeric(0)) return;
+                   // Extract orderkey from the variant key.
+                   const auto* ok = std::get_if<orders_acoli_t::Key>(&kv->first);
+                   if (!ok) return;
+                   if (stats) stats->acoli_orders_emitted++;
+                   out.push_back({ok->orderkey, val.pre_revenue,
+                                  val.o_orderdate, val.o_shippriority, cur_open_due});
+                }
+             },
+             kv->second);
+      }
+   }
+
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
+   }
+   {
+      StageTimer t(stats ? &stats->stage_us_topN : nullptr);
+      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
+         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+         return a.o_orderkey < b.o_orderkey;
+      });
+   }
+   return static_cast<long>(out.size());
+}
+
 }  // namespace tpch::q3i

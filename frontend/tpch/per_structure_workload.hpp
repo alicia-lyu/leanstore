@@ -50,4 +50,14 @@ struct HashStructure {
    double get_size() const { return w.get_size(); }
 };
 
+// AggregatedStructure: for S5 variants that pre-aggregate records into the MI
+// at load time and expose query_by_aggregated at query time.
+template <typename Workload, typename AggRow>
+struct AggregatedStructure {
+   Workload& w;
+   explicit AggregatedStructure(Workload& w) : w(w) {}
+   long query(std::vector<AggRow>& out) { return w.query_by_aggregated(out); }
+   double get_size() const { return w.get_size(); }
+};
+
 }  // namespace tpch

@@ -59,6 +59,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
+   // S5 aCOLI 2-type MI: customer_acoli_t + orders_acoli_t.
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli(rocks_db);
+
    rocks_db.open();  // must be called after all adapters register their CFs
 
    RocksDBLogger logger(rocks_db);
@@ -66,7 +69,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice);
+                                   split_orders, split_lineitem, split_invoice, acoli);
 
    if (!FLAGS_recover) {
       q3i.load();
@@ -107,6 +110,13 @@ int main(int argc, char** argv)
       case 4: {
          tpch::q3i::HashQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_hash_join");
+         helper.run();
+         tx_count = helper.tx_count();
+         break;
+      }
+      case 5: {
+         tpch::AggregatedStructure<tpch::q3i::Q3IWorkload<B>, AggRow> w{q3i};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "acoli_aggregated");
          helper.run();
          tx_count = helper.tx_count();
          break;

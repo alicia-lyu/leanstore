@@ -106,6 +106,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
+   // S5: aCOLI 2-type MI (customer_acoli_t + orders_acoli_t).
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli(rocks_db);
+
    // Defensive wipe: if --ssd_path holds a prior DB, remove it before opening.
    // See file-header comment for why this matters (parity-failure mode caused
    // by stale RocksDB state across re-runs).
@@ -128,7 +131,7 @@ int main(int argc, char** argv)
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice);
+                                   split_orders, split_lineitem, split_invoice, acoli);
 
    // Load base tables ONCE — this is the key fix vs. Phase 2B's per-structure
    // wipe/reload pattern.  All four paths will see the same data.
@@ -140,9 +143,10 @@ int main(int argc, char** argv)
    // FLAGS_storage_structure and would only populate one secondary.
    std::cout << "=== Populating secondaries ===\n";
    tpch::q3i::populate_q3i_view<B>(customer, orders, lineitem, invoice, pipeline_view);  // S2
-   q3i.coli_pipeline().populate_split();    // S1
-   q3i.coli_pipeline().populate_merged();   // S3
+   q3i.coli_pipeline().populate_split();       // S1
+   q3i.coli_pipeline().populate_merged();      // S3
    // S4 needs no secondary.
+   q3i.coli_pipeline().populate_aggregated();  // S5
 
    // ------------------------------------------------------------------
    // Per-secondary cardinality + size sanity check.
@@ -439,10 +443,38 @@ int main(int argc, char** argv)
              << "  order="   << cv.bytes_order   << " (" << pct(cv.bytes_order)   << "%)"
              << "  lineitem="<< cv.bytes_lineitem<< " (" << pct(cv.bytes_lineitem)<< "%)\n";
 
+   // aCOLI (S5) secondary cardinality check.
+   // Expect: customers rows = n_customers, orders rows = n_orders.
+   // Walk the acoli MI by scanning typed.
+   {
+      long n_acoli_c = 0, n_acoli_o = 0;
+      auto acoli_scanner = acoli.template getScanner<
+          tpch::customer_acoli_t::Key, tpch::customer_acoli_t>();
+      while (auto kv = acoli_scanner->next()) {
+         std::visit([&](auto&& val) {
+            using V = std::decay_t<decltype(val)>;
+            if constexpr (std::is_same_v<V, tpch::customer_acoli_t>) ++n_acoli_c;
+            else ++n_acoli_o;
+         }, kv->second);
+      }
+      {
+         bool ok_c = (n_acoli_c == n_customers);
+         stats_ok &= ok_c;
+         check("acoli_customers", ok_c, n_acoli_c, "= " + std::to_string(n_customers));
+      }
+      {
+         bool ok_o = (n_acoli_o == n_orders);
+         stats_ok &= ok_o;
+         check("acoli_orders", ok_o, n_acoli_o, "= " + std::to_string(n_orders));
+      }
+      std::cout << "[size] acoli=" << std::fixed << std::setprecision(3)
+                << acoli.size() << " MiB\n";
+   }
+
    // Run all four paths.
    std::cout << "=== Running queries ===\n";
-   std::vector<tpch::q3i::q3i_agg_row_t> r_base, r_view, r_merged, r_hash;
-   tpch::q3i::Q3IStats st_base, st_view, st_merged, st_hash;
+   std::vector<tpch::q3i::q3i_agg_row_t> r_base, r_view, r_merged, r_hash, r_agg;
+   tpch::q3i::Q3IStats st_base, st_view, st_merged, st_hash, st_agg;
 
    // Per-query wall-clock timing. Preliminary signal for relative path cost
    // before a full q3i_lsm experiment harness exists; mirrors the pattern
@@ -453,21 +485,23 @@ int main(int argc, char** argv)
       auto t1 = std::chrono::high_resolution_clock::now();
       return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
    };
-   q3i.stats = &st_base;   long us_base   = time_us([&] { q3i.query_by_base  (r_base);   });
-   q3i.stats = &st_view;   long us_view   = time_us([&] { q3i.query_by_view  (r_view);   });
-   q3i.stats = &st_merged; long us_merged = time_us([&] { q3i.query_by_merged(r_merged); });
-   q3i.stats = &st_hash;   long us_hash   = time_us([&] { q3i.query_by_hash  (r_hash);   });
+   q3i.stats = &st_base;   long us_base   = time_us([&] { q3i.query_by_base      (r_base);   });
+   q3i.stats = &st_view;   long us_view   = time_us([&] { q3i.query_by_view      (r_view);   });
+   q3i.stats = &st_merged; long us_merged = time_us([&] { q3i.query_by_merged    (r_merged); });
+   q3i.stats = &st_hash;   long us_hash   = time_us([&] { q3i.query_by_hash      (r_hash);   });
+   q3i.stats = &st_agg;    long us_agg    = time_us([&] { q3i.query_by_aggregated(r_agg);    });
    q3i.stats = nullptr;
 
    auto print_timing = [](const char* name, long us) {
-      std::cout << "[time] " << std::left << std::setw(16) << name
+      std::cout << "[time] " << std::left << std::setw(20) << name
                 << std::right << std::setw(10) << us << " us  ("
                 << std::fixed << std::setprecision(3) << (us / 1000.0) << " ms)\n";
    };
-   print_timing("query_by_base",   us_base);
-   print_timing("query_by_view",   us_view);
-   print_timing("query_by_merged", us_merged);
-   print_timing("query_by_hash",   us_hash);
+   print_timing("query_by_base",        us_base);
+   print_timing("query_by_view",        us_view);
+   print_timing("query_by_merged",      us_merged);
+   print_timing("query_by_hash",        us_hash);
+   print_timing("query_by_aggregated",  us_agg);
 
    // Sort each result by o_orderkey ASC for digest stability (rows that tie on
    // revenue would be ordered non-deterministically across paths otherwise).
@@ -479,6 +513,7 @@ int main(int argc, char** argv)
    std::sort(r_view.begin(),   r_view.end(),   by_orderkey);
    std::sort(r_merged.begin(), r_merged.end(), by_orderkey);
    std::sort(r_hash.begin(),   r_hash.end(),   by_orderkey);
+   std::sort(r_agg.begin(),    r_agg.end(),    by_orderkey);
 
    // Compute digests.
    uint64_t d_base   = digest_rows(r_base);
@@ -492,11 +527,14 @@ int main(int argc, char** argv)
                 << " rows=" << std::setw(4) << n
                 << " digest=0x" << std::hex << d << std::dec << "\n";
    };
+   uint64_t d_agg    = digest_rows(r_agg);
+
    std::cout << "\n=== Results ===\n";
    print_digest("S1 (base)",   r_base.size(),   d_base);
    print_digest("S2 (view)",   r_view.size(),   d_view);
    print_digest("S3 (merged)", r_merged.size(), d_merged);
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
+   print_digest("S5 (acoli)",  r_agg.size(),    d_agg);
 
    // Per-stage cardinality from Q3IStats.
    //
@@ -529,6 +567,18 @@ int main(int argc, char** argv)
    card_line("S2 view",   st_view);
    card_line("S3 merged", st_merged);
    card_line("S4 hash",   st_hash);
+   // S5 aCOLI scan counters (different counter names — no base-table scan).
+   std::cout << "[scan] " << std::left << std::setw(11) << "S5 acoli"
+             << std::right
+             << std::setw(10) << st_agg.acoli_customers_scanned
+             << std::setw(10) << st_agg.acoli_orders_scanned
+             << std::setw(11) << "(n/a)"
+             << std::setw(10) << "(n/a)"
+             << std::setw(9)  << st_agg.acoli_orders_emitted
+             << std::setw(9)  << st_agg.aggregator_rows_out
+             << "\n";
+   std::cout << "  [scan] S5 acoli_customers_passing_filter="
+             << st_agg.acoli_customers_passing_filter << "\n";
 
    // Per-stage cardinality: rows passing each filter and rows surviving
    // each join stage. Should be cross-structure consistent at the
@@ -590,6 +640,7 @@ int main(int argc, char** argv)
    time_line("S2 view",   st_view);
    time_line("S3 merged", st_merged);
    time_line("S4 hash",   st_hash);
+   time_line("S5 acoli",  st_agg);
 
    // Cross-structure stage cardinality consistency: S1/S3/S4 should agree
    // on customers passing mktsegment, lineitems passing shipdate, invoices
@@ -729,17 +780,33 @@ int main(int argc, char** argv)
    parity_line("S3 merged", ok_m, d_merged);
    parity_line("S4 hash  ", ok_h, d_hash);
 
-   // Shape check: all four paths must agree on row count and return at
-   // least one row. The exact count is data-dependent (≤ 10 by LIMIT 10;
-   // can be < 10 at small SFs because few orders pass the date / shipdate
-   // / mktsegment filters). What we care about is cross-structure
-   // agreement — divergent counts mean a query-body bug.
+   // S5 parity: only valid when params equal defaults (pre_open_due and
+   // pre_revenue are baked in with default constants at populate_aggregated
+   // time). When params deviate, skip to avoid false failures.
+   bool ok_a = false;
+   {
+      tpch::q3i::Params def = tpch::q3i::Params::defaults();
+      bool params_match = (q3i.params.shipdate  == def.shipdate)
+                       && (q3i.params.orderdate == def.orderdate)
+                       && (q3i.params.threshold == def.threshold);
+      if (!params_match) {
+         std::cout << "[SKIP] S5 acoli  parity skipped — baked-in filter mismatch"
+                      " (params deviate from defaults)\n";
+         ok_a = true;  // not a failure
+      } else {
+         ok_a = (d_agg == ref);
+         parity_line("S5 acoli ", ok_a, d_agg);
+      }
+   }
+
+   // Shape check: all paths must agree on row count, in (0, 10].
    bool shape_ok = true;
    size_t n_ref = r_merged.size();
    for (auto [tag, n] : {std::pair{"S1", r_base.size()},
                          std::pair{"S2", r_view.size()},
                          std::pair{"S3", r_merged.size()},
-                         std::pair{"S4", r_hash.size()}}) {
+                         std::pair{"S4", r_hash.size()},
+                         std::pair{"S5", r_agg.size()}}) {
       bool ok = (n == n_ref) && (n > 0) && (n <= 10);
       if (!ok) shape_ok = false;
       std::cout << (ok ? "[OK]   " : "[FAIL] ") << tag
@@ -747,6 +814,18 @@ int main(int argc, char** argv)
                 << " (expected = " << n_ref << ", in (0, 10])\n";
    }
 
-   bool all_ok = ok_b && ok_v && ok_m && ok_h && shape_ok && stats_ok && card_ok;
+   // S5 scan-efficiency check: acoli scans fewer total records than COLI MI.
+   {
+      long acoli_total = st_agg.acoli_customers_scanned + st_agg.acoli_orders_scanned;
+      long coli_total  = st_merged.mi_records_visited;
+      bool ok = (acoli_total > 0) && (coli_total == 0 || acoli_total < coli_total);
+      std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                << "S5 acoli_total=" << acoli_total
+                << " vs S3 mi_records_visited=" << coli_total
+                << " (expected S5 << S3 when S3 stats wired, or S5 > 0)\n";
+      card_ok &= (acoli_total > 0);
+   }
+
+   bool all_ok = ok_b && ok_v && ok_m && ok_h && ok_a && shape_ok && stats_ok && card_ok;
    return all_ok ? 0 : 1;
 }

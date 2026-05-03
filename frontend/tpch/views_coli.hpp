@@ -505,6 +505,122 @@ static_assert(sizeof(invoice_coli_t) == sizeof(invoice_t),
               "invoice_coli_t must be the same size as invoice_t");
 
 // ---------------------------------------------------------------------------
+// aCOLI (aggregated COLI) record types.
+//
+// These form a separate 2-type MergedAdapter<customer_acoli_t, orders_acoli_t>
+// that pre-bakes per-customer and per-order aggregates into the index at load
+// time, eliminating invoice and lineitem rows entirely.  At query time only
+// customers (cardinality = |customer|) and orders (cardinality = |orders|)
+// need to be scanned — vs. ~8M records for the full COLI MI at SF=1.
+//
+// Pre-aggregated fields baked in at load time (using default constants):
+//   customer_acoli_t.pre_open_due  = SUM(i_totaldue WHERE i_status='O')
+//   orders_acoli_t.pre_revenue     = SUM(l_extendedprice*(1-l_discount)
+//                                        WHERE l_shipdate > DATE_1995_03_15)
+//
+// Key shapes are simple (no COLI-style domain-tag paths needed): the aCOLI MI
+// has only two record types so fold-length discrimination suffices.  No
+// tagged_path or accepts_key override required.
+
+// customer_acoli_t: customerh_t payload + pre_open_due aggregate.
+//   Key: (custkey)  — same prefix shape as customerh_t.
+struct customer_acoli_t {
+   static constexpr int id = 49;
+
+   struct Key {
+      static constexpr int id = 49;
+      Integer custkey;
+      ADD_KEY_TRAITS(&Key::custkey)
+   };
+
+   // Full customerh_t payload (mirrored for cross-query reuse).
+   Varchar<25>  c_name;
+   Varchar<40>  c_address;
+   Integer      c_nationkey;
+   Varchar<15>  c_phone;
+   Numeric      c_acctbal;
+   Varchar<10>  c_mktsegment;
+   Varchar<117> c_comment;
+
+   // Pre-aggregated field baked in at populate_aggregated() time.
+   Numeric pre_open_due;  // SUM(i_totaldue WHERE i_status='O') for this custkey
+
+   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
+   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
+   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+   void print(std::ostream& os) const
+   {
+      os << "customer_acoli(" << c_name << ",open_due=" << pre_open_due << ")";
+   }
+
+   friend std::ostream& operator<<(std::ostream& os, const customer_acoli_t& r)
+   {
+      r.print(os);
+      return os;
+   }
+
+   static customer_acoli_t from_customer(const customerh_t& c, Numeric open_due)
+   {
+      return {c.c_name, c.c_address, c.c_nationkey, c.c_phone,
+              c.c_acctbal, c.c_mktsegment, c.c_comment, open_due};
+   }
+   static Key key_from_base(const customerh_t::Key& k) { return Key{k.c_custkey}; }
+};
+
+// orders_acoli_t: orders_t payload + pre_revenue aggregate.
+//   Key: (custkey, orderkey)  — same prefix shape as orders_coli_t but
+//   without tagged-path encoding (plain two-field fold).
+struct orders_acoli_t {
+   static constexpr int id = 50;
+
+   struct Key {
+      static constexpr int id = 50;
+      Integer custkey;
+      Integer orderkey;
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
+   };
+
+   // orders_t payload fields.
+   Integer     o_custkey;
+   Timestamp   o_orderdate;
+   Integer     o_shippriority;
+   Varchar<1>  o_orderstatus;
+   Numeric     o_totalprice;
+   Varchar<15> o_orderpriority;
+   Varchar<15> o_clerk;
+   Integer     o_comment_len;   // placeholder (comment not needed by Q3I)
+
+   // Pre-aggregated field baked in at populate_aggregated() time.
+   Numeric pre_revenue;  // SUM(l_extendedprice*(1-l_discount) WHERE l_shipdate>DATE_1995_03_15)
+
+   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
+   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
+   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+   void print(std::ostream& os) const
+   {
+      os << "orders_acoli(ck=" << o_custkey << ",rev=" << pre_revenue << ")";
+   }
+
+   friend std::ostream& operator<<(std::ostream& os, const orders_acoli_t& r)
+   {
+      r.print(os);
+      return os;
+   }
+
+   static orders_acoli_t from_order(const orders_t& o, Integer custkey, Numeric revenue)
+   {
+      return {custkey, o.o_orderdate, o.o_shippriority, o.o_orderstatus,
+              o.o_totalprice, o.o_orderpriority, o.o_clerk, 0, revenue};
+   }
+   static Key key_from_order(Integer custkey, const orders_t::Key& ok)
+   {
+      return Key{custkey, ok.o_orderkey};
+   }
+};
+
+// ---------------------------------------------------------------------------
 // Byte-driven variant dispatcher.
 //
 // Reads the trailing idx_id byte (key_bytes[key_len - 1]), switches on it,

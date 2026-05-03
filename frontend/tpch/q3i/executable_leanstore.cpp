@@ -59,6 +59,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem;
    B::Adapter<tpch::invoice_coli_t>  split_invoice;
 
+   // S5 aCOLI 2-type MI.
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli;
+
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
       part              = B::Adapter<part_t>(db, "part");
@@ -76,6 +79,7 @@ int main(int argc, char** argv)
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q3i_orders_sec");
       split_lineitem = B::Adapter<tpch::lineitem_coli_t>(db, "q3i_lineitem_sec");
       split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "q3i_invoice_sec");
+      acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t>(db, "q3i_acoli");
    });
 
    LeanStoreLogger logger(db);
@@ -83,7 +87,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice);
+                                   split_orders, split_lineitem, split_invoice, acoli);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
@@ -125,6 +129,13 @@ int main(int argc, char** argv)
       case 4: {
          tpch::q3i::HashQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "base_hash_join");
+         helper.run();
+         tx_count = helper.tx_count();
+         break;
+      }
+      case 5: {
+         tpch::AggregatedStructure<tpch::q3i::Q3IWorkload<B>, AggRow> w{q3i};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "acoli_aggregated");
          helper.run();
          tx_count = helper.tx_count();
          break;

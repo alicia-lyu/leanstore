@@ -89,6 +89,11 @@ class CustomerOrdersLineitemInvoicePipeline
    typename Backend::template Adapter<lineitem_coli_t>& split_lineitem_ref;
    typename Backend::template Adapter<invoice_coli_t>&  split_invoice_ref;
 
+   // aCOLI (aggregated COLI) 2-type MI: customer_acoli_t + orders_acoli_t.
+   // Invoice and lineitem rows are collapsed into pre_open_due / pre_revenue
+   // fields at load time (populate_aggregated), eliminating them from the MI.
+   typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli_adapter_ref;
+
   public:
    CustomerOrdersLineitemInvoicePipeline(
        typename Backend::template Adapter<customerh_t>&  customer,
@@ -99,7 +104,8 @@ class CustomerOrdersLineitemInvoicePipeline
                                                 lineitem_coli_t, invoice_coli_t>& merged_coli,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
        typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
-       typename Backend::template Adapter<invoice_coli_t>&  split_invoice);
+       typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
+       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli);
 
    // Dual-write replay: scans all four base tables and inserts each record
    // into merged_coli using *_coli_t tagged keys. Lineitem records are rekeyed
@@ -118,10 +124,23 @@ class CustomerOrdersLineitemInvoicePipeline
    // Returns the sum of the three split adapter sizes in MiB.
    double get_split_size() const;
 
+   // Build the aCOLI MI: three passes over base tables.
+   //   Pass A: invoice scan → per-custkey open_due map (i_status='O' fused).
+   //   Pass B: lineitem scan → per-orderkey revenue map (l_shipdate filter fused).
+   //   Pass C: customer + orders scan → insert customer_acoli_t / orders_acoli_t.
+   void populate_aggregated();
+
+   // Returns estimated size of the aCOLI MI in MiB.
+   double get_aggregated_size() const;
+
    // Expose the merged adapter so per-query drivers can call coli_group_walk.
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                             lineitem_coli_t, invoice_coli_t>&
    merged_adapter() { return merged_coli; }
+
+   // Expose the aCOLI 2-type MI for S5 query drivers.
+   typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>&
+   acoli_adapter() { return acoli_adapter_ref; }
 
    // Expose custkey-sorted split adapters so per-query S1 drivers can scan
    // the single-type indexes directly (parallel to merged_adapter() for S3).
