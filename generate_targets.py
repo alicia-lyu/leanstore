@@ -201,6 +201,7 @@ class Experiment:
                     f"--storage_structure={n}",
                     "--micro_perf=true",
                     "--cfstats=true",
+                    "--coli_walker_variant=$(coli_walker_variant)",
                     f"2>{iso_runtime}/structure{n}_stderr.txt",
                     sep=" ",
                 )
@@ -212,6 +213,7 @@ class Experiment:
                     f"--storage_structure={n}",
                     "--micro_perf=true",
                     "--cfstats=true",
+                    "--coli_walker_variant=$(coli_walker_variant)",
                     f"2>{iso_runtime}/structure{n}_stderr.txt\"",
                     f"{iso_runtime}/structure{n}.log",
                     sep=" ",
@@ -353,7 +355,8 @@ class Experiment:
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
             # Diagnostic flags: opt-in via Makefile vars `micro_perf=true cfstats=true`.
             # Default false in the Makefile; A1 sweep enables them per-run.
-            diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats)"
+            # `coli_walker_variant` defaults to baseline; A2c sweep flips to fused_emit.
+            diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant)"
             if IS_MACOS:
                 print(
                     f'\tscript -q {self.runtime_dir}/structure{structure}.log',
