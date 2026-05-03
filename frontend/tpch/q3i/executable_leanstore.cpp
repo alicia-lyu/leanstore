@@ -17,6 +17,7 @@
 #include "leanstore/LeanStore.hpp"
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
+#include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 #include "../backend.hpp"
 #include "../tpch_tables.hpp"
 #include "../tpch_workload.hpp"
@@ -100,7 +101,8 @@ int main(int argc, char** argv)
    tpch.recover_last_ids();
 
    tpch::q3i::Q3IStats stats;
-   q3i.stats = &stats;
+   q3i.stats      = &stats;
+   q3i.micro_perf = FLAGS_micro_perf;
 
    using AggRow = tpch::q3i::q3i_agg_row_t;
    long tx_count = 0;
@@ -185,6 +187,60 @@ int main(int argc, char** argv)
              << "\n  Compare per-query averages, not totals — totals reflect the run window,"
              << "\n  not per-query cost."
              << std::endl;
+
+   // --micro_perf block: LeanStore WorkerCounters totals + chrono-instrumented
+   // scanner_perf::iter_next_ns. Mapped to A1 metrics in PERFORMANCE.md §3 A1
+   // (Linux q3i_btree result). Field semantics:
+   //   tuples_advanced/q  ≈ user_key_comparison_count/q (proxy)
+   //   bytes_read/q       ≈ block_read_byte/q
+   //   hit_rate           ≈ block_cache_hit_rate
+   //   iter_next_cpu/q    ≈ iter_next_cpu_nanos/q (chrono-instrumented)
+   if (FLAGS_micro_perf) {
+      auto per_q_u64 = [&](uint64_t total) -> double {
+         return tx_count > 0 ? static_cast<double>(total) / tx_count : 0.0;
+      };
+      auto ns_to_ms = [](uint64_t ns) -> double { return static_cast<double>(ns) / 1e6; };
+      auto b_to_mib = [](uint64_t b)  -> double { return static_cast<double>(b)  / (1024.0 * 1024.0); };
+
+      const uint64_t hits     = stats.ls_hot_hit + stats.ls_cold_hit;
+      const uint64_t misses   = stats.ls_dt_page_reads;
+      const uint64_t total_acc = hits + misses;
+      const double   hit_rate = total_acc > 0
+                                ? 100.0 * static_cast<double>(hits) / static_cast<double>(total_acc)
+                                : 0.0;
+      const uint64_t bytes_read =
+          stats.ls_dt_page_reads * leanstore::storage::EFFECTIVE_PAGE_SIZE;
+
+      std::cout << std::fixed << std::setprecision(3)
+                << "\n[q3i] leanstore perf-context totals (tx=" << tx_count << "):"
+                << "\n  tuples_advanced (Σ dt_next_tuple) = " << stats.ls_dt_next_tuple
+                << "\n  page_reads     (Σ dt_page_reads)  = " << stats.ls_dt_page_reads
+                << "\n  bytes_read (page_reads*page_size) = " << b_to_mib(bytes_read) << " MiB"
+                << "\n  hot_hit                           = " << stats.ls_hot_hit
+                << "\n  cold_hit                          = " << stats.ls_cold_hit
+                << "\n  iter_next_cpu (chrono)            = " << ns_to_ms(stats.ls_iter_next_ns) << " ms"
+                << "\n  iter_next_calls                   = " << stats.ls_iter_next_calls
+                << "\n[q3i] leanstore perf-context per-query averages (tx=" << tx_count << "):"
+                << "\n  tuples_advanced/q                 = " << std::setprecision(1) << per_q_u64(stats.ls_dt_next_tuple)
+                << "\n  block_cache_hit_rate              = " << hit_rate << "%"
+                << "\n  page_reads/q                      = " << per_q_u64(stats.ls_dt_page_reads)
+                << "\n  bytes_read/q                      = " << std::setprecision(3)
+                                                              << per_q_u64(bytes_read) / 1024.0 << " KiB"
+                << "\n  iter_next_cpu/q                   = " << per_q_u64(stats.ls_iter_next_ns) / 1e3 << " us"
+                << "\n  iter_next_calls/q                 = " << std::setprecision(0) << per_q_u64(stats.ls_iter_next_calls)
+                << std::endl;
+   }
+
+   // --cfstats: LeanStore has no per-CF concept. Emit a one-line note so the
+   // diagnostic column is filled out for cross-backend comparison; H8
+   // (shared-DB cache pollution) tracks the LeanStore-side question.
+   if (FLAGS_cfstats) {
+      std::cout << "\n[q3i] leanstore buffer-pool snapshot (--cfstats):"
+                << "\n  (no per-CF analog on LeanStore; each adapter is a separate B-tree"
+                << "\n   competing for the same buffer pool — see H8 in PERFORMANCE.md)"
+                << std::endl;
+   }
+
    return 0;
 }
 

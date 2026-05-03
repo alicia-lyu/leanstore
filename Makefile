@@ -34,6 +34,13 @@ scale 			    	:= 15
 tentative_skip_bytes	:= 0 # do no tentative skip bytes
 bgw_pct 		  		:= 0 # background write percentage
 
+# Diagnostic flags (Q3I A1 / cross-backend perf attribution).
+# Opt-in: pass `micro_perf=true cfstats=true` on the make command line.
+# When false (the default), the production binaries skip the perf-counter
+# capture path entirely.
+micro_perf  ?= false
+cfstats     ?= false
+
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
 ifeq ($(UNAME),Darwin)

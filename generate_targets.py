@@ -351,6 +351,9 @@ class Experiment:
             print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {self.recover_file} {image_dep}")
             print(f"\tmkdir -p {self.runtime_dir}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
+            # Diagnostic flags: opt-in via Makefile vars `micro_perf=true cfstats=true`.
+            # Default false in the Makefile; A1 sweep enables them per-run.
+            diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats)"
             if IS_MACOS:
                 print(
                     f'\tscript -q {self.runtime_dir}/structure{structure}.log',
@@ -358,6 +361,7 @@ class Experiment:
                     kv_to_str(self.class_flags),
                     kv_to_str(rem_flags),
                     f"--storage_structure={structure}",
+                    diag_flags,
                     f'2>{self.runtime_dir}/structure{structure}_stderr.txt',
                     sep=" "
                 )
@@ -367,6 +371,7 @@ class Experiment:
                     kv_to_str(self.class_flags),
                     kv_to_str(rem_flags),
                     f"--storage_structure={structure}",
+                    diag_flags,
                     f'2>{self.runtime_dir}/structure{structure}_stderr.txt\"',
                     f'{self.runtime_dir}/structure{structure}.log',
                     sep=" "

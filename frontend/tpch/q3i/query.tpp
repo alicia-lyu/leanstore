@@ -19,8 +19,11 @@
 #include "../../shared/merge-join/hash_join.hpp"
 #include "../../shared/scanner_helpers.hpp"
 
-// PerfContextCapture: RocksDB-specific RAII counter accumulator.
-// The header self-stubs on non-RocksDB builds — see perf_context_capture.hpp.
+// Q3IPerfCapture<Backend>: per-query RAII counter accumulator. Resolves
+// to PerfContextCapture (RocksDB PerfContext + IOStatsContext) on the
+// RocksDB backend, and LeanStorePerfContextCapture
+// (WorkerCounters dt_* + scanner_perf::iter_next_ns) on the LeanStore
+// backend. See perf_context_capture.hpp for the mapping.
 #include "perf_context_capture.hpp"
 
 // micro_perf_stats(): returns stats if micro_perf instrumentation is enabled,
@@ -548,7 +551,7 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
    // (OPERATORS.md §6 Filter Pushdown: aggregate-output filter fuses with
    // the SortedAggregate, never a post-walk Filter node).
    out.clear();
-   PerfContextCapture _pc(MICRO_PERF_STATS(*this));
+   Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
    // All remaining Visitor fields have in-class default initializers; only
    // params and out lack defaults so they are named explicitly.
    COLIGroupWalkVisitor v{.params = params, .out = out, .stats = stats};
@@ -596,7 +599,7 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
    // OPERATORS.md §3 op 4 (S1); accumulators reuse the same structs as S3
    // per OPERATORS.md §6.1 comparison-integrity.
    out.clear();
-   PerfContextCapture _pc(MICRO_PERF_STATS(*this));
+   Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
    // --- scanner-wrapper aggregators ---
    // These drive the custkey-sorted COLI split adapters and emit aggregated
@@ -710,7 +713,7 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
    // orderkey, already summing all lineitems).  This keeps S2 fair against
    // S1/S3 which also fuse those filters in the streaming pass.
    out.clear();
-   PerfContextCapture _pc(MICRO_PERF_STATS(*this));
+   Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
    {
       StageTimer t(stats ? &stats->stage_us_scan_filter : nullptr);
@@ -782,7 +785,7 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    // S4 calls the base-table _t overloads of the accumulators (not _coli_t)
    // per OPERATORS.md §6.1 comparison-integrity — same arithmetic as S1/S3.
    out.clear();
-   PerfContextCapture _pc(MICRO_PERF_STATS(*this));
+   Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
    // S4 fuses invoice aggregate, customer filter, order build, and lineitem
    // probe into one conceptual join chain — the same notion as S1/S3 where
@@ -966,7 +969,7 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
    // from these defaults, S5 results will diverge from S1/S3/S4 — see test
    // harness for the runtime check and [SKIP S5] guard.
    out.clear();
-   PerfContextCapture _pc(MICRO_PERF_STATS(*this));
+   Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
    // Scan aCOLI MI by custkey order.  The MI's key sort order is:
    //   customer_acoli_t (Key = custkey)  < orders_acoli_t (Key = custkey,orderkey)

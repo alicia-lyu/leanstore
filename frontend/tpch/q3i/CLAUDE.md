@@ -1,5 +1,33 @@
 # Q3I: Shipping Priority × Customer Outstanding Balance (Invoice-Extended Q3)
 
+## Sibling Docs
+
+Every non-`CLAUDE.md` Markdown in `q3i/` and `q3i/plans/` (the latter
+has no `CLAUDE.md`; indexed here as the nearest ancestor). Read each
+on the trigger described:
+
+- [`PERFORMANCE.md`](PERFORMANCE.md) — read **when investigating Q3I
+  S3 performance** or interpreting the cross-backend (RocksDB-LSM,
+  LeanStore-BTree) measurements at SF=15/40, dram=0.1 GiB. Captures
+  the unexpected finding that S3 (the COLI MI showcase) is the
+  *worst*-performing of the four real paths under disk pressure, and
+  documents hypotheses tested and optimisations tried/reverted.
+- [`plans/family_logical.dot`](plans/family_logical.dot),
+  [`plans/family_s3_physical.dot`](plans/family_s3_physical.dot),
+  [`plans/baseline_s4.dot`](plans/baseline_s4.dot) — operator-graph
+  diagrams; read alongside §Plan Descriptions below.
+- [`plans/phase_2a_refactor.md`](plans/phase_2a_refactor.md) — read
+  **when reconstructing the Phase 2A shared-substrate refactor**
+  (renames, shared helpers, view-schema widening, S3 internal
+  cleanup). Historical; the work is landed.
+- [`plans/phase_2b_baselines.md`](plans/phase_2b_baselines.md) — read
+  **when reconstructing Phase 2B** (S1 / S2 / S4 baseline `query_by_*`
+  bodies introduced one commit per step). Historical; landed.
+- [`plans/phase_2c_harness.md`](plans/phase_2c_harness.md) — read
+  **when reconstructing Phase 2C** (cross-structure parity check, S3
+  `flush_order` zero-revenue fix, S2 `populate_q3i_view` filter fix).
+  Marked complete 2026-05-02.
+
 ## TPC-H Definition (Extended)
 
 ```sql

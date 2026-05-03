@@ -40,7 +40,7 @@ Compact status; full evidence in archive §2.
 | H1 | MI is too large per row | **REFUTED** | `get_size` reporting artefact; content/row 177 vs 150–190 splits |
 | H2 | Iterator overhead on rejected groups | **CONFIRMED, fix reverted on RocksDB; PENDING on LeanStore** | Forward iteration cheaper than physical Seek on RocksDB; B-tree branch unexplored (A3) |
 | H3 | Walker visits entire MI per query | **CONFIRMED uniform** (subsumed by H6) | ~425k records/q at SF=40; but S1/S4 also full-scan their inputs — doesn't explain the S3-vs-S1 gap |
-| H4 | Per-record dispatch overhead | **OPEN, narrowed** | A1 macOS SF=15 refutes tagged-key decode (S3 does *fewer* comparisons than S1). Remaining suspect: scanner payload emit (A2c). |
+| H4 | Per-record dispatch overhead | **OPEN, narrowed; A2c confirmed cross-backend** | A1 macOS + Linux refute tagged-key decode (`tuples_advanced/q` identical between S1 and S3 on LeanStore). Linux SF=15 shows S3 `iter_next_cpu/q` is 1.7× S1's per-call (364 vs 217 ns) — accounts for the entire 25 ms query-time gap. A2c (`fused_emit`) is the live remediation. |
 | H5 | Storage-engine specific (RocksDB block layout) | **REFUTED** | Same ~16% gap on LeanStore at SF=15 |
 | H6 | Low filter selectivity | **CONFIRMED uniform** | All raw paths full-scan; doesn't explain S3-vs-S1 gap; explains S5 win |
 | H7 | SSTWrite during read-only queries | **OPEN, RocksDB-specific** | Read-only workload but histogram inflated; A4 attributes to source |
@@ -108,11 +108,84 @@ Not a code A/B; the data run that picks A2 vs A3 vs A4.
   q3i_btree Linux numbers to compare scanner-emit attribution
   cross-backend.
 
-#### Linux q3i_btree A1 result (pending)
+#### Linux q3i_btree A1 result (2026-05-03, dram=0.1, LeanStore)
 
-User running on Linux. Once landed, look for the same
-user_key_comparison_count asymmetry (refuting A2a) and the same
-or larger iter_next_cpu_nanos gap (confirming A2c).
+LeanStore has no `PerfContext` analog; A1 metrics ported via
+`WorkerCounters::dt_*` arrays + a chrono-instrumented per-`next()`
+accumulator (`tpch::scanner_perf::iter_next_ns_acc`). `user_key_cmp/q`
+is mapped to `tuples_advanced/q` (Σ `dt_next_tuple`), which captures
+the same per-record-cost asymmetry the decision tree reads.
+
+The chrono hook costs ~50ns per `next()` call when `--micro_perf=true`
+— at 160k tuples/q this inflates absolute `iter_next_cpu/q` by ~8 ms/q
+and lowers TX/s by ~25% vs §1 baselines on the cache-resident paths.
+**S3-vs-S1 ratios are robust** (both pay the same per-call overhead);
+absolute numbers should be read as upper bounds.
+
+**SF=15 dram=0.1 (cache-resident, 99.5–100% hit rate):**
+
+| Path | TX/s | tuples_advanced/q | iter_next_cpu/q | bytes_read/q | hit_rate |
+|------|-----:|------------------:|----------------:|-------------:|---------:|
+| S1 base_merge  | 22.96  | 160 041 | 34.78 ms | 153.8 KiB | 99.7% |
+| S2 view        | 285.97 | 22 501  | 2.69 ms  | 0.5 KiB   | 100%  |
+| S3 mi_coli     | 14.56  | 160 038 | 58.28 ms | 242.8 KiB | 99.5% |
+| S4 base_hash   | 20.85  | 160 041 | 38.16 ms | 159.9 KiB | 99.7% |
+| S5 aCOLI       | 216.58 | 24 751  | 3.65 ms  | 1.3 KiB   | 100%  |
+
+**SF=40 dram=0.1 (DRAM-bound on raw paths):**
+
+| Path | TX/s | tuples_advanced/q | iter_next_cpu/q | bytes_read/q | hit_rate |
+|------|-----:|------------------:|----------------:|-------------:|---------:|
+| S1 base_merge  | 0.26   | 426 224 | 3722 ms  | 113.7 MiB | 22.5% |
+| S2 view        | 106.15 | 60 001  | 7.4 ms   | 3.6 KiB   | 99.9% |
+| S3 mi_coli     | 0.26   | 426 221 | 3778 ms  | 114.0 MiB | 21.0% |
+| S4 base_hash   | 0.37   | 426 224 | 2638 ms  | 99.3 MiB  | 26.4% |
+| S5 aCOLI       | 74.37  | 66 001  | 10.97 ms | 9.8 KiB   | 99.9% |
+
+**Findings:**
+
+- **A2a (fast_decode) refuted on Linux** (same direction as macOS).
+  `tuples_advanced/q` is **identical** between S1 and S3 (160 041 vs
+  160 038 at SF=15; 426 224 vs 426 221 at SF=40). The COLI walker
+  and the 4-way custkey-merge advance the same set of records at the
+  data-tree level. Tagged-key decode is not the bottleneck.
+- **A2c (fused_emit) confirmed on Linux at SF=15.**
+  `iter_next_cpu/q` is 58.28 ms on S3 vs 34.78 ms on S1 —
+  **68% gap, ~1.7× per-call cost** (S3 ≈ 364 ns/call vs S1 ≈ 217
+  ns/call after subtracting the ~50 ns chrono-hook tax). Crucially,
+  `iter_next_cpu/q` accounts for ~80% of the S1 per-query wall-clock
+  (35 ms of 43.55 ms); the 23 ms iter_next gap entirely covers the
+  25 ms total query-time gap (S1 = 43.55 ms vs S3 = 68.70 ms). On
+  LeanStore the `MergedScanner::next()` returns
+  `std::variant<customer_coli_t, orders_coli_t, lineitem_coli_t,
+  invoice_coli_t>` per record vs S1's typed `LeanStoreScanner<R>`
+  emitting `std::pair<R::Key, R>` — the variant construction +
+  per-record memcpy of the widest payload is the live differential.
+- **macOS gap = 5%, Linux gap = 68%.** Same direction, much stronger
+  on Linux. Two contributing factors: (a) the chrono hook captures
+  the *whole* per-`next()` body including the variant copy, while
+  RocksDB's PerfContext only times its iterator-internal advance;
+  (b) LeanStore's `LeanStoreMergedScanner::next()` payload emission
+  (the `current()` body that builds two variants via `unfoldKey` +
+  `reinterpret_cast` of the buffer-pool slot) may genuinely be
+  fatter than RocksDB's analog. Either way, A2c is the right next
+  step on both backends.
+- **SF=40 collapses S1/S3/S4 to ~0.26–0.37 TX/s** on the chrono-hooked
+  run (vs §1 baseline 0.34–0.39). The diagnostic adds modest overhead
+  even under DRAM pressure. `bytes_read/q` ≈ 99–114 MiB on the raw
+  paths confirms full-MI scan dominates at this scale; `hit_rate`
+  drops to ~21–26% (vs 100% on macOS at SF=15) — Linux does provide
+  the disk-bound regime macOS couldn't.
+- **H8 stays open but ungapped.** S3 vs S1 hit_rate at SF=40 = 21.0%
+  vs 22.5% — within noise; not a differential-pollution signal.
+  A5's isolated-DB experiment can still confirm/refute the uniform-
+  overhead hypothesis, but it's no longer competing with A2c for
+  next-step priority.
+
+**Decision: A2c remains the priority A-test**, now confirmed on both
+backends. Move forward with `fused_emit` /
+`RocksDBMergedScanner::next()` and `LeanStoreMergedScanner::next()`
+specialisation as the next implementation plan.
 
 ### A2 — Walker dispatch variants (`--coli_walker_variant=...`)
 
@@ -120,13 +193,15 @@ A1 narrowed this: tagged-key decode (A2a) is refuted on macOS;
 scanner emit (A2c) is the live suspect. Variants coexist behind one
 flag for within-process A/B; XOR parity across variants is mandatory.
 
-- **A2c `fused_emit` (PRIORITY)**: specialise
-  `RocksDBMergedScanner::next()` to emit raw `(tag, k_view, v_view)`
-  triple — no `std::variant` construction. Skip variant copy when
-  visitor returns void.
+- **A2c `fused_emit` (PRIORITY, A1-confirmed cross-backend)**:
+  specialise `*MergedScanner::next()` to emit raw
+  `(tag, k_view, v_view)` triple — no `std::variant` construction.
+  Skip variant copy when visitor returns void.
   WHERE: `frontend/shared/adapter-scanner/RocksDBMergedScanner.hpp`
+  + `frontend/shared/adapter-scanner/LeanStoreMergedScanner.hpp`
   + walker call site in `frontend/tpch/coli_pipeline.tpp`.
-  WIN: close the 5–16% iter_next_cpu_nanos gap.
+  WIN: close the 5% (RocksDB macOS cache-resident) / 68%
+  (LeanStore Linux SF=15) iter_next_cpu_nanos gap.
 - **A2b `template_dispatch`**: hand-rolled templated dispatch over a
   tag-byte switch; skip variant construction in the dispatcher.
   Probably subsumed by A2c if the bottleneck is the variant itself.

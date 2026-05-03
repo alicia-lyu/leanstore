@@ -175,6 +175,28 @@ struct Q3IStats {
    uint64_t ioc_read_nanos  = 0;
    uint64_t ioc_open_nanos  = 0;
 
+   // LeanStore mirror of A1 metrics — populated when --micro_perf=true on
+   // the LeanStore backend. Field semantics mapped in PERFORMANCE.md §3 A1
+   // (Linux q3i_btree result table).
+   //   ls_dt_next_tuple    — Σ WorkerCounters::dt_next_tuple per query
+   //                         (tuples advanced; proxy for user_key_cmp/q).
+   //   ls_dt_page_reads    — Σ WorkerCounters::dt_page_reads per query
+   //                         (pages from SSD; × EFFECTIVE_PAGE_SIZE
+   //                         ≈ block_read_byte/q).
+   //   ls_hot_hit          — Σ WorkerCounters::dt_resolve_swip_hot per query
+   //                         (swizzles resolved hot, i.e. page already in pool).
+   //   ls_cold_hit         — Σ WorkerCounters::dt_resolve_swip_cool per query
+   //                         (swizzles resolved cool; not yet evicted).
+   //   ls_iter_next_ns     — chrono-instrumented Σ next() time per query
+   //                         (LeanStore analog of pc_iter_next_cpu_nanos).
+   //   ls_iter_next_calls  — count of next() calls timed (sanity check).
+   uint64_t ls_dt_next_tuple   = 0;
+   uint64_t ls_dt_page_reads   = 0;
+   uint64_t ls_hot_hit         = 0;
+   uint64_t ls_cold_hit        = 0;
+   uint64_t ls_iter_next_ns    = 0;
+   uint64_t ls_iter_next_calls = 0;
+
    void reset() { *this = Q3IStats{}; }
 };
 
