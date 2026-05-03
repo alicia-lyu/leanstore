@@ -494,7 +494,57 @@ S1/S2/S4 are validated against S3.
 
 Use `coli_group_walk<Backend>(coli.merged_adapter(), visitor)` (or
 `col_group_walk` for Track 1). The Visitor struct handles all query
-logic:
+logic.
+
+#### Multi-level active markers (target design)
+
+The walker supports a hierarchical `xxx_active` flag per non-leaf schema
+level. Leaves (invoice, lineitem) have no active marker of their own —
+they are dispatched only when all ancestor active markers are true.
+
+| Level | Active marker | Set by | Resets to `true` when |
+|-------|--------------|--------|-----------------------|
+| custkey group | `customer_active` | `on_customer` return value | next custkey boundary |
+| order | `order_active` | `on_order` return value | next order record within the group |
+
+**Dispatch rules:**
+
+- `on_customer(ck, c) → bool`: fires for every custkey group. Return value
+  sets `customer_active`. If false, `on_invoice` / `on_order` / `on_lineitem`
+  are suppressed for the rest of this group.
+- `on_invoice(k, v) → void`: dispatched when `customer_active`. Leaf — no
+  active marker.
+- `on_order(k, v) → bool`: dispatched when `customer_active`. Return value
+  sets `order_active`. Use case: return false when `o_orderdate` fails or
+  when the custkey threshold fails (at the first order boundary, once all
+  invoices have been accumulated).
+- `on_lineitem(k, v) → void`: dispatched when `customer_active && order_active`.
+  Leaf — no active marker.
+
+**What this replaces:**
+
+| Old mechanism | Replaced by |
+|--------------|-------------|
+| `group_active` (walker state) | `customer_active` |
+| `wants_skip_group()` + `skip_group_pending` | `on_order → false` (threshold fail at first order) |
+| `wants_skip_order()` + `skip_order_pending` | `on_order → false` (date filter fail) |
+
+**Why `wants_skip_group()` is redundant:** once `on_order` supports bool
+returns, `on_order → false` immediately sets `customer_active = false` at
+the dispatch site. The post-dispatch `wants_skip_group()` SFINAE check
+then can't fire (`if (customer_active && ...)` is already false). Both
+paths produce identical walker state; `wants_skip_group()` is dead code
+once the bool-returning `on_order` design lands.
+
+**Walker-internal forward-iterate optimization:** when `order_active`
+becomes false (date filter rejects an order), the walker MAY
+forward-iterate past that order's lineitems without calling `std::visit`
+on each one — skipping the variant-dispatch overhead for the
+rejected-order lineitem tail. This is a walker implementation detail, not
+part of the visitor interface. Controlled by `USE_PHYSICAL_SEEK_SKIP =
+false` (physical Seek was A/B tested at SF=40: physical Seek invalidates
+RocksDB's prefetch buffer, raising SSTRead/TX ~5×; forward iteration
+without physical Seek is competitive and the default).
 
 ```cpp
 struct Q{{N}}GroupWalkVisitor {
@@ -505,9 +555,10 @@ struct Q{{N}}GroupWalkVisitor {
    CustomerOpenDueAccumulator open_due;  // Track 2 only
    LineitemRevenueAccumulator rev;
 
-   // Per-group gates
-   bool group_ok = false;       // mktsegment/region gate
-   bool threshold_ok = false;   // Track 2: set after invoices processed
+   // Per-custkey gate (customer_active in the multi-level design).
+   bool mktsegment_ok = false;
+   // Track 2: set on first on_order once invoices are accumulated.
+   bool threshold_ok = false;
 
    // Per-order register
    bool have_open_order = false;
@@ -517,17 +568,15 @@ struct Q{{N}}GroupWalkVisitor {
 
    void flush_order() {
       if (!have_open_order) return;
-      if (rev.revenue <= Numeric(0)) { have_open_order = false; rev.reset(); return; }
-      // Track 2: also check threshold_ok here
-      out.push_back({cur_orderkey, rev.revenue, ...});
       have_open_order = false;
+      if (rev.revenue <= Numeric(0)) { rev.reset(); return; }
+      out.push_back({cur_orderkey, rev.revenue, ...});
       rev.reset();
    }
 
    bool on_customer(Integer ck, const customer_coli_t& c) {
-      // Gate: mktsegment, nationkey, etc.
-      group_ok = /* check filter */;
-      return group_ok;
+      mktsegment_ok = /* check filter */;
+      return mktsegment_ok;
    }
 
    void on_invoice(const invoice_coli_t::Key&, const invoice_coli_t& i) {
@@ -535,36 +584,38 @@ struct Q{{N}}GroupWalkVisitor {
       open_due.consume_invoice(i);
    }
 
-   void on_order(const orders_coli_t::Key& k, const orders_coli_t& o) {
+   // bool return: false suppresses on_lineitem for this order AND — on the
+   // first call per custkey — skips all further orders via customer_active.
+   bool on_order(const orders_coli_t::Key& k, const orders_coli_t& o) {
       flush_order();
-      // Track 2: on FIRST order, evaluate threshold (invoices are done)
-      if (!threshold_ok && open_due.value <= params.threshold) {
-         // Short-circuit: skip all orders+lineitems for this customer
-         return;
+      if (!threshold_ok) {
+         // First order: invoices fully accumulated; evaluate threshold now.
+         threshold_ok = (open_due.value > params.threshold);
+         if (!threshold_ok) return false;  // kills customer_active → skip rest of group
       }
-      threshold_ok = true;  // only evaluate once per group
-      if (o.o_orderdate >= params.orderdate) return;  // filter
-      have_open_order = true;
-      cur_orderkey = k.orderkey;
-      cur_orderdate = o.o_orderdate;
+      if (o.o_orderdate >= params.orderdate) return false;  // skips this order's lineitems
+      have_open_order  = true;
+      cur_orderkey     = k.orderkey;
+      cur_orderdate    = o.o_orderdate;
       cur_shippriority = o.o_shippriority;
+      return true;
    }
 
    void on_lineitem(const lineitem_coli_t::Key&, const lineitem_coli_t& l) {
-      if (!have_open_order) return;
       rev.consume(l, params);
    }
 
    void on_group_end(Integer ck) {
-      flush_order();
-      group_ok = false;
-      threshold_ok = false;  // Track 2
-      open_due.reset();      // Track 2
+      if (threshold_ok) flush_order();
+      mktsegment_ok = false;
+      threshold_ok  = false;  // Track 2
+      open_due.reset();       // Track 2
    }
 };
 ```
 
 Then call:
+
 ```cpp
 out.clear();
 Q{{N}}GroupWalkVisitor v{params, out, ...};
@@ -572,6 +623,34 @@ coli_group_walk<Backend>(coli.merged_adapter(), v);
 apply_topN(out, {{K}}, {{comparator}});
 return static_cast<long>(out.size());
 ```
+
+#### Stage attribution and timing
+
+`StageTimer` RAII helper (defined in `q3i/query.tpp`):
+
+```cpp
+{ StageTimer t(stats ? &stats->stage_us_join : nullptr); /* work */ }
+```
+
+Wraps a `long*` accumulator, starts `high_resolution_clock` on
+construction, adds elapsed µs on destruction. Pass `nullptr` for
+stat-disabled paths.
+
+**Attribution policy** (important for cross-structure comparison):
+
+- S1/S3/S4: scanner-wrapper aggregators and join drivers fuse
+  scan + filter + aggregate into the join chain; all attributed to
+  `stage_us_join`. Zeros in `stage_us_scan_filter` /
+  `stage_us_aggregator` are honest — those stages don't exist as
+  separate operators in these paths.
+- S2: `stage_us_scan_filter` covers the view scan + per-row filters.
+  `stage_us_aggregator` and `stage_us_join` are zero (pre-materialised).
+- **Compare per-query averages** (`stage_us / tx_count`), NOT raw
+  totals — raw totals accumulate proportionally to TX/s across the 15s
+  window, which differs across structures.
+
+`TpchExecutableHelper` exposes `tx_count()` after `run()`. Print
+per-query averages alongside totals in the cardinality/timing block.
 
 > **PITFALL — Zero-revenue orders emitted** (commit `4dc93ec6`):
 > `flush_order` must suppress orders where `revenue <= 0`. This happens
@@ -656,6 +735,12 @@ Filters are pushed into fetch lambdas on the scanner-wrappers (e.g.
 ---
 
 ### §7.3 — S2: Pipeline View Scan
+
+> **S3 chain-join counters suppressed**: `join1_output_rows`,
+> `join2_output_rows`, `join3_output_rows` are S1/S4 abstractions for 3
+> sequential binary joins. S3 is a single fused walk — suppress these
+> counters (leave at zero) and render `–` in output tables. This is not
+> a cardinality bug; it means "not applicable to a fused walk".
 
 The simplest body. Scan `pipeline_view`, apply parameterised filters
 per-row, emit, `apply_topN`:
@@ -793,6 +878,14 @@ Same structure, `#ifndef ROCKSDB_ONLY` guarded. Uses `LeanStoreBackend`.
 ---
 
 ## §10 — Phase 7: Test Harness
+
+> **SSTWrite baseline-subtract**: `RocksDB::SST_WRITE_MICROS` histogram
+> accumulates over DB lifetime, including post-load compaction. For
+> read-only query experiments this inflates the reported SSTWrite(µs)/TX.
+> Fix: call `RocksDBLogger::capture_baseline()` once before `helper.run()`
+> starts. Each snapshot then reports `(current – baseline)`.
+
+
 
 File: `tests/q{N}/test_query_q{N}_rocksdb.cpp`
 
@@ -988,6 +1081,8 @@ documented.
 | 15 | `load()` populating only one secondary | `47405bec` | 3 of 4 structures read empty adapters; fantasy throughput | Populate ALL secondaries unconditionally in `load()` |
 | 16 | Hardcoded row-count assertion | `c077236f` | False test failures when data yields fewer than LIMIT rows | Assert cross-structure agreement + range `(0, K]` instead |
 | 17 | No secondary cardinality check in test | `739ebf63` | Empty secondaries produce 0-row "fast" queries silently | Verify each secondary has nonzero rows after `populate_*` |
+| 18 | Physical Seek in skip path | `8d10782b` | SSTRead/TX rises 5× — prefetch buffer invalidated by Seek | Set `USE_PHYSICAL_SEEK_SKIP = false`; forward iterate instead |
+| 19 | `wants_skip_group()` alongside `bool on_order` | (post-`128f6d44`) | Dead code — `on_order → false` already clears `customer_active`; `wants_skip_group()` guard can never fire after that | Use `on_order → false` directly; remove `wants_skip_group()` when cleaning up |
 
 ---
 

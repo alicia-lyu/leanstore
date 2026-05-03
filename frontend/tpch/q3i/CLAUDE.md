@@ -261,6 +261,34 @@ mkdir -p test_data_q3i test_csv_q3i
 
 ---
 
+## Performance Notes
+
+### S3 slower than S1/S4 at small SF (cache-resident data)
+
+`populate_merged()` inserts ALL customers unconditionally (Pass 0 scans
+the full `customerh_t` table), so the COLI MI contains the same customer
+set as the base table. The `on_customer` hook fires for every custkey
+group in the MI — the per-query customer scan is identical to S1/S4.
+
+However, at SF=1–15 the total `customers_scanned` accumulated over a 15s
+production run is **lower** for S3 than S1/S4. This is a TX-count effect,
+not a per-query effect: S3's tagged-key overhead (per-record SFINAE
+dispatch, wider composite keys) makes each query marginally slower than
+S1/S4 when data fits in cache, so S3 completes fewer queries in the same
+15s window and accumulates proportionally fewer total scans.
+
+The merged-index I/O advantage materialises at larger SF where the
+secondary structures no longer fit in cache. This is consistent with
+Q12's SF=40 finding (S3 ~+7% vs S4) and motivates the memory-pressure
+experiments in `TPCH_experiments.md`.
+
+**Implication for production stats**: when comparing `customers_scanned`
+totals across structures in a 15s run, always normalise by `tx_count`
+(use per-query averages). Raw totals reflect TX/s differences, not
+per-query scan cost.
+
+---
+
 ## Implementation Phases
 
 ### Phase 1 — Minimal end-to-end: merged path only (S3)
