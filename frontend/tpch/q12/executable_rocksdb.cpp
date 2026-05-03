@@ -63,7 +63,8 @@ int main(int argc, char** argv)
    B::Adapter<tpch::invoice_coli_t>  coli_invoice_sec(rocks_db);
 
    // S5 aCOLI MI: required by the COLI pipeline ctor (added with Q3I S5).
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> coli_acoli(rocks_db);
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                    tpch::lineitem_acoli_t> coli_acoli(rocks_db);
 
    rocks_db.open();  // must be called after all adapters register their CFs
 

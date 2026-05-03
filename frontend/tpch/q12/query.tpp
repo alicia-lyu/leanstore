@@ -39,6 +39,52 @@ inline Params Params::defaults()
 }
 
 // ---------------------------------------------------------------------------
+// Q12Workload::set_params_for_iter — rotate through TPC-H §2.4.12 substitution
+// params so each TX iteration uses a distinct (shipmode pair, year) combination.
+// A static table covers all 5 valid years and enough distinct shipmode pairs to
+// surface any secondary that baked the shipmode or date filter at load time.
+
+template <typename Backend>
+void Q12Workload<Backend>::set_params_for_iter(long iter)
+{
+   // TPC-H §2.4.12 substitution-parameter domains:
+   //   SHIPMODE1/2: distinct values from the 7-element shipmode set.
+   //   DATE:        January 1 of a year in [1993, 1997].
+   //
+   // Year boundary constants (days since 1970-01-01):
+   //   1993-01-01 = 8401   (8766 - 365)
+   //   1994-01-01 = 8766   (defined in tpch_tables.hpp)
+   //   1995-01-01 = 9131   (defined in tpch_tables.hpp)
+   //   1996-01-01 = 9496   (9131 + 365)
+   //   1997-01-01 = 9862   (9496 + 366, 1996 is a leap year)
+   static constexpr Timestamp DATE_1993_01_01 = 8401;
+   static constexpr Timestamp DATE_1996_01_01 = 9496;
+   static constexpr Timestamp DATE_1997_01_01 = 9862;
+
+   struct Entry {
+      const char* sm1;
+      const char* sm2;
+      Timestamp   lo;   // receiptdate_lo (inclusive)
+      Timestamp   hi;   // receiptdate_hi (exclusive, = lo + 1 year)
+   };
+   // 7 entries: one per year in [1993,1997] plus two extra covering different
+   // shipmode pairs so filter-baked secondaries diverge within a single run.
+   static constexpr Entry TABLE[] = {
+       {"MAIL",    "SHIP",    DATE_1993_01_01, DATE_1994_01_01},  // validation pair, 1993
+       {"MAIL",    "SHIP",    DATE_1994_01_01, DATE_1995_01_01},  // validation pair, 1994 (default)
+       {"MAIL",    "SHIP",    DATE_1995_01_01, DATE_1996_01_01},  // validation pair, 1995
+       {"MAIL",    "SHIP",    DATE_1996_01_01, DATE_1997_01_01},  // validation pair, 1996
+       {"AIR",     "RAIL",    DATE_1994_01_01, DATE_1995_01_01},  // different shipmodes, 1994
+       {"TRUCK",   "FOB",     DATE_1995_01_01, DATE_1996_01_01},  // different shipmodes, 1995
+       {"REG AIR", "SHIP",    DATE_1993_01_01, DATE_1994_01_01},  // different shipmodes, 1993
+   };
+   static constexpr long N = static_cast<long>(sizeof(TABLE) / sizeof(TABLE[0]));
+
+   const Entry& e = TABLE[iter % N];
+   params = {Varchar<10>(e.sm1), Varchar<10>(e.sm2), e.lo, e.hi};
+}
+
+// ---------------------------------------------------------------------------
 // q12_agg_row_t::print — tab-separated: shipmode, high_line_count, low_line_count.
 
 inline void q12_agg_row_t::print(std::ostream& os) const

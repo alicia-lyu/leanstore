@@ -61,7 +61,8 @@ int main(int argc, char** argv)
    B::Adapter<tpch::invoice_coli_t>  coli_invoice_sec;
 
    // S5 aCOLI MI: required by the COLI pipeline ctor (added with Q3I S5).
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> coli_acoli;
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                    tpch::lineitem_acoli_t> coli_acoli;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -81,8 +82,8 @@ int main(int argc, char** argv)
       coli_orders_sec   = B::Adapter<tpch::orders_coli_t>(db, "coli_orders_sec");
       coli_lineitem_sec = B::Adapter<tpch::lineitem_coli_t>(db, "coli_lineitem_sec");
       coli_invoice_sec  = B::Adapter<tpch::invoice_coli_t>(db, "coli_invoice_sec");
-      coli_acoli        = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t>(
-                              db, "coli_acoli");
+      coli_acoli        = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                                           tpch::lineitem_acoli_t>(db, "coli_acoli");
    });
 
    LeanStoreLogger logger(db);
