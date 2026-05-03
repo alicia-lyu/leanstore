@@ -31,10 +31,38 @@ see H6.)
 
 **LeanStore-Btree (Linux / dram=0.1) — same ~15% gap, storage-engine-independent:**
 
-| Scale | S1 base_merge | S2 view | S3 mi_coli      | S4 hash |
-|-------|---------------|---------|-----------------|---------|
-| SF=15 | 30.36         | 437.17  | 25.41 (~16% gap)| —       |
-| SF=40 | 0.3926        | 163.33  | 0.3667          | 0.3762  |
+| Scale | S1 base_merge | S2 view | S3 mi_coli      | S4 hash | S5 aCOLI |
+|-------|---------------|---------|-----------------|---------|----------|
+| SF=15 | 30.36         | 437.17  | 25.41 (~16% gap)| 28.38   | 265.63   |
+| SF=40 | 0.3926        | 163.33  | 0.3667          | 0.3397  | 89.67    |
+
+S5 on LeanStore SF=15 reproduces the RocksDB pattern: ~10× ahead of the
+raw paths (S1/S3/S4 ≈ 25–30 TX/s) but ~38% behind S2 (265.63 vs 437.17).
+S5 worker cycles/TX = 7.44 M vs S4's 75.5 M — the aCOLI scan does
+~10× less per-query work, matching the TX/s ratio.
+
+**At SF=40 the picture sharpens dramatically.** With raw paths
+collapsed to ~0.34–0.39 TX/s by DRAM-spilling page faults, S5 holds
+89.67 TX/s — **~260× ahead of the raw paths** and ~55% behind S2
+(163.33). S5 worker cycles/TX = 27.6 M (vs S4's 622 M, a ~22×
+reduction in per-query CPU work) and `R MiB/TX = 2.97e-05` vs S4's
+`6.67e-03` (~225× less I/O traffic).
+
+**aCOLI footprint anomaly (open).** aCOLI carries only the two
+record types `customer_acoli_t` + `orders_acoli_t` — at SF=40 that
+is ~6k customers + ~240k orders ≈ 246k records, vs COLI's full
+C+O+L+I ≈ 1.69M records. So aCOLI's cardinality is **~14% of
+COLI's**, and the footprint should track that fraction (~38 MiB
+expected vs COLI's 269 MiB). Reported sizes: 141.16 MiB on
+LeanStore SF=40, 136.62 MiB on RocksDB SF=40 — both ~4× larger
+than expected, ~52% of COLI rather than ~14%. Cross-backend
+reproduction rules out an LSM-specific quirk. Candidate causes:
+(a) Varchar fields stored at declared max length inflate per-row
+size beyond my estimate; (b) per-tree / per-CF fixed metadata is
+substantial for the smaller aCOLI tree; (c)
+`get_aggregated_size()` sums beyond the aCOLI tree's own range.
+Tracked as Phase 6 in
+`.claude/plans/q3i-perf-investigation-followups.md`.
 
 (SF=40 collapses S1/S3/S4 to ~0.4 TX/s — data spills out of the 0.1 GiB
 DRAM budget; bottleneck is page-fault traffic, not the join algorithm.
@@ -402,6 +430,8 @@ trivially zero and not useful either way.
 | `16e98eb6`   | S5 aCOLI MI                               | SF=1                                                     | 486 records vs S3's 10918 (22× scan reduction); 5-way digest match |
 | 2026-05-02   | LeanStore-Btree run on Linux              | SF=15 / SF=40 dram=0.1                                   | Same ~15% S3-vs-S1 gap as RocksDB → H5 REFUTED. `W MiB/TX = 0` on B-tree → SSTWrite anomaly is RocksDB-specific (compaction). |
 | 2026-05-03   | S5 aCOLI MI on RocksDB                    | SF=40 dram=0.1                                           | S5=123.17 TX/s — beats S1/S3/S4 (~0.4 TX/s, DRAM-spilling) by ~300×, behind S2 (198.3) by ~38%. Reported size 136.62 MiB suspiciously close to base alone (~130 MiB) — aCOLI MI delta ≈ 6 MiB; potential `get_aggregated_size()` measurement bug, not yet root-caused. |
+| 2026-05-03   | S5 aCOLI MI + S4 hash on LeanStore        | SF=15 dram=0.1                                           | S5=265.63 TX/s (worker cycles 7.44 M) reproduces the RocksDB pattern; ~10× ahead of S1/S3/S4 raw paths, ~38% behind S2 (437.17). S4=28.38 TX/s slots between S1 (30.36) and S3 (25.41) — completes the SF=15 raw-path picture. aCOLI footprint 52.95 MiB vs base 48.90 MiB (~4 MiB delta) matches the RocksDB size anomaly — likely `get_aggregated_size()` measures the wrong CF / range on both backends. |
+| 2026-05-03   | S5 aCOLI MI + S4 hash on LeanStore        | SF=40 dram=0.1                                           | S5=89.67 TX/s (worker cycles 27.6 M, R MiB/TX 2.97e-05). S4=0.3397 TX/s (worker cycles 622 M, R MiB/TX 6.67e-03) — DRAM-spilling, 6 queries in 17.7 s. **S5 holds ~260× lead over raw paths under disk pressure**, ~22× fewer cycles/TX and ~225× less I/O than S4; ~55% behind S2 (163.33). aCOLI footprint 141.16 MiB vs S4 base 130.43 MiB (~11 MiB delta) — same anomaly pattern at SF=40 LeanStore. |
 
 ---
 
