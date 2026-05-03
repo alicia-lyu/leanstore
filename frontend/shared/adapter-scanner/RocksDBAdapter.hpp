@@ -116,5 +116,12 @@ struct RocksDBAdapter : public Adapter<Record> {
 
    std::unique_ptr<RocksDBScanner<Record>> getScanner() { return std::make_unique<RocksDBScanner<Record>>(cf_handle, map); }
 
+   // Returns RocksDB::GetApproximateSizes for this Record's key-prefix
+   // range in the SHARED default CF. NOT directly comparable to
+   // RocksDBMergedAdapter::size(): excludes per-CF SST metadata (footer,
+   // bloom filters, index blocks, properties), and is allowed a 10%
+   // approximation error (`files_size_error_margin = 0.1`).
+   // For like-for-like content comparison, walk the iterator and sum
+   // `key.size() + value.size()` per row instead.
    double size() { return map.get_size<Record>(); }
 };

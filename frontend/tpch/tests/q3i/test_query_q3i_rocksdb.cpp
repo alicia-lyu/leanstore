@@ -157,6 +157,49 @@ int main(int argc, char** argv)
    // regression that mis-populates a secondary fails this test instead of
    // silently producing a 0-row "win".
 
+   // Truthful per-adapter content size (no per-CF metadata included).
+   //
+   // The adapter's `size()` method is NOT directly comparable across split
+   // and merged variants:
+   //   - RocksDBAdapter::size() (split / base / view) calls
+   //     `GetApproximateSizes` on a key-prefix range in the SHARED default
+   //     CF. This excludes per-CF SST footers, bloom filters, index blocks,
+   //     and properties — and is allowed a 10% error margin.
+   //   - RocksDBMergedAdapter::size() (merged_coli) returns the WHOLE-CF
+   //     live data size, which includes every byte in the CF including
+   //     fixed-cost metadata. The merged CF has only its own data so the
+   //     fixed metadata fraction is large at small SF.
+   //
+   // For a like-for-like comparison, walk each adapter's iterator and sum
+   // `key.size() + value.size()` per row. This is the actual encoded
+   // payload — what one logically thinks of as "the row".
+   auto raw_bytes_in_cf = [&](ColumnFamilyHandle* cf, int prefix_id_or_neg)
+       -> std::pair<long, long> {
+      long rows = 0, bytes = 0;
+      auto* it = rocks_db.tx_db->NewIterator(rocks_db.iterator_ro, cf);
+      if (prefix_id_or_neg >= 0) {
+         u8 p = static_cast<u8>(prefix_id_or_neg);
+         std::string buf(1, static_cast<char>(p));
+         it->Seek(rocksdb::Slice(buf.data(), 1));
+         while (it->Valid()) {
+            const u8* k = reinterpret_cast<const u8*>(it->key().data());
+            if (k[0] != p) break;
+            rows++;
+            bytes += static_cast<long>(it->key().size() + it->value().size());
+            it->Next();
+         }
+      } else {
+         it->SeekToFirst();
+         while (it->Valid()) {
+            rows++;
+            bytes += static_cast<long>(it->key().size() + it->value().size());
+            it->Next();
+         }
+      }
+      delete it;
+      return {rows, bytes};
+   };
+
    auto count_typed = [](auto& adapter, auto record_tag) -> long {
       using R = decltype(record_tag);
       long n = 0;
@@ -319,7 +362,44 @@ int main(int argc, char** argv)
              << "  split_orders="   << bpr(split_orders.size(),   n_split_o)
              << "  split_lineitem=" << bpr(split_lineitem.size(), n_split_l)
              << "  split_invoice="  << bpr(split_invoice.size(),  n_split_i)
-             << "  merged_coli="    << bpr(merged_coli.size(),    n_merged_total) << "\n";
+             << "  merged_coli="    << bpr(merged_coli.size(),    n_merged_total) << "\n"
+             << "          (RocksDB-reported size / row count; not directly\n"
+             << "          comparable across CFs because per-CF SST metadata\n"
+             << "          inflates merged_coli at small SF — see below)\n";
+
+   // Truthful content bytes (raw key+value sizes summed across the iterator).
+   // For split adapters and the pipeline view we filter the default CF by
+   // the record-id prefix (their first byte). For merged_coli we walk the
+   // entire dedicated CF.
+   auto rb_view  = raw_bytes_in_cf(rocks_db.cf_handles[0], tpch::q3i::q3i_pipeline_view_t::id);
+   auto rb_so    = raw_bytes_in_cf(rocks_db.cf_handles[0], tpch::orders_coli_t::id);
+   auto rb_sl    = raw_bytes_in_cf(rocks_db.cf_handles[0], tpch::lineitem_coli_t::id);
+   auto rb_si    = raw_bytes_in_cf(rocks_db.cf_handles[0], tpch::invoice_coli_t::id);
+   auto rb_merge = raw_bytes_in_cf(merged_coli.cf_handle, -1);
+
+   auto cpr = [](long bytes, long rows) {
+      return rows > 0 ? static_cast<double>(bytes) / static_cast<double>(rows) : 0.0;
+   };
+   std::cout << "[content/row] pipeline_view=" << std::fixed << std::setprecision(1)
+             << cpr(rb_view.second,  rb_view.first)
+             << "  split_orders="   << cpr(rb_so.second,    rb_so.first)
+             << "  split_lineitem=" << cpr(rb_sl.second,    rb_sl.first)
+             << "  split_invoice="  << cpr(rb_si.second,    rb_si.first)
+             << "  merged_coli="    << cpr(rb_merge.second, rb_merge.first) << "\n"
+             << "          (key.size() + value.size() summed per row from the\n"
+             << "          underlying iterator — like-for-like across adapters)\n";
+
+   // Per-CF metadata overhead = RocksDB-reported size − actual content bytes.
+   auto mb = [](long b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
+   double merged_reported_mib = merged_coli.size();
+   double merged_content_mib  = mb(rb_merge.second);
+   double overhead_pct = merged_reported_mib > 0
+       ? 100.0 * (merged_reported_mib - merged_content_mib) / merged_reported_mib
+       : 0.0;
+   std::cout << "[overhead] merged_coli reported=" << std::fixed << std::setprecision(3)
+             << merged_reported_mib << " MiB  content=" << merged_content_mib
+             << " MiB  metadata=" << (merged_reported_mib - merged_content_mib)
+             << " MiB (" << std::setprecision(1) << overhead_pct << "%)\n";
 
    // Per-customer-group MI distribution. Min/max/mean of orders/customer,
    // invoices/customer, and lineitems/order. Sanity-checks the data shape
@@ -565,13 +645,25 @@ int main(int argc, char** argv)
    // tiebreaker ordering. This block compares the by-orderkey-sorted top-K
    // pointwise across S1/S2/S3/S4.
    {
+      // Float tolerance: revenue and cust_open_due are Numeric (float-based)
+      // and accumulation order differs slightly between paths (S4 hash-map
+      // iteration vs S1/S3 sorted-stream order). Sub-ulp diffs print as
+      // identical and the XOR digest's `* 1e6` cast smooths them over;
+      // strict `==` would false-positive on these. Tolerance of 1e-3 is
+      // well below the 6-decimal print precision and the XOR-digest
+      // resolution.
       auto rows_eq = [](const tpch::q3i::q3i_agg_row_t& a,
                         const tpch::q3i::q3i_agg_row_t& b) {
+         constexpr double kTol = 1e-3;
+         auto close = [](double x, double y, double tol) {
+            double d = x - y;
+            return (d < 0 ? -d : d) <= tol;
+         };
          return a.o_orderkey      == b.o_orderkey
-             && a.revenue         == b.revenue
+             && close(static_cast<double>(a.revenue), static_cast<double>(b.revenue), kTol)
              && a.o_orderdate     == b.o_orderdate
              && a.o_shippriority  == b.o_shippriority
-             && a.cust_open_due   == b.cust_open_due;
+             && close(static_cast<double>(a.cust_open_due), static_cast<double>(b.cust_open_due), kTol);
       };
       bool topK_ok = true;
       // Use S3 (merged) as the oracle. r_merged is already sorted by orderkey.
@@ -585,9 +677,19 @@ int main(int argc, char** argv)
          for (size_t i = 0; i < v.size(); ++i) {
             if (!rows_eq(v[i], r_merged[i])) {
                topK_ok = false;
-               std::cout << "[FAIL] " << tag << " topK row " << i
-                         << " differs from S3 (orderkey "
-                         << v[i].o_orderkey << " vs " << r_merged[i].o_orderkey << ")\n";
+               const auto& a = v[i];
+               const auto& b = r_merged[i];
+               std::cout << "[FAIL] " << tag << " topK row " << i << " differs:\n"
+                         << "       got: orderkey=" << a.o_orderkey
+                         << " revenue=" << a.revenue
+                         << " orderdate=" << a.o_orderdate
+                         << " shippri=" << a.o_shippriority
+                         << " open_due=" << a.cust_open_due << "\n"
+                         << "       S3 : orderkey=" << b.o_orderkey
+                         << " revenue=" << b.revenue
+                         << " orderdate=" << b.o_orderdate
+                         << " shippri=" << b.o_shippriority
+                         << " open_due=" << b.cust_open_due << "\n";
             }
          }
       };
