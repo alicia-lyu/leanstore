@@ -17,6 +17,7 @@
 
 #include <gflags/gflags.h>
 #include <algorithm>
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -123,11 +124,30 @@ int main(int argc, char** argv)
    std::vector<tpch::q3i::q3i_agg_row_t> r_base, r_view, r_merged, r_hash;
    tpch::q3i::Q3IStats st_base, st_view, st_merged, st_hash;
 
-   q3i.stats = &st_base;   q3i.query_by_base  (r_base);
-   q3i.stats = &st_view;   q3i.query_by_view  (r_view);
-   q3i.stats = &st_merged; q3i.query_by_merged(r_merged);
-   q3i.stats = &st_hash;   q3i.query_by_hash  (r_hash);
+   // Per-query wall-clock timing. Preliminary signal for relative path cost
+   // before a full q3i_lsm experiment harness exists; mirrors the pattern
+   // used in tests/q12/test_query_q12_rocksdb.cpp.
+   auto time_us = [](auto&& fn) {
+      auto t0 = std::chrono::high_resolution_clock::now();
+      fn();
+      auto t1 = std::chrono::high_resolution_clock::now();
+      return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+   };
+   q3i.stats = &st_base;   long us_base   = time_us([&] { q3i.query_by_base  (r_base);   });
+   q3i.stats = &st_view;   long us_view   = time_us([&] { q3i.query_by_view  (r_view);   });
+   q3i.stats = &st_merged; long us_merged = time_us([&] { q3i.query_by_merged(r_merged); });
+   q3i.stats = &st_hash;   long us_hash   = time_us([&] { q3i.query_by_hash  (r_hash);   });
    q3i.stats = nullptr;
+
+   auto print_timing = [](const char* name, long us) {
+      std::cout << "[time] " << std::left << std::setw(16) << name
+                << std::right << std::setw(10) << us << " us  ("
+                << std::fixed << std::setprecision(3) << (us / 1000.0) << " ms)\n";
+   };
+   print_timing("query_by_base",   us_base);
+   print_timing("query_by_view",   us_view);
+   print_timing("query_by_merged", us_merged);
+   print_timing("query_by_hash",   us_hash);
 
    // Sort each result by o_orderkey ASC for digest stability (rows that tie on
    // revenue would be ordered non-deterministically across paths otherwise).
