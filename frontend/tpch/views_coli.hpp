@@ -507,20 +507,26 @@ static_assert(sizeof(invoice_coli_t) == sizeof(invoice_t),
 // ---------------------------------------------------------------------------
 // aCOLI (aggregated COLI) record types.
 //
-// These form a separate 2-type MergedAdapter<customer_acoli_t, orders_acoli_t>
-// that pre-bakes per-customer and per-order aggregates into the index at load
-// time, eliminating invoice and lineitem rows entirely.  At query time only
-// customers (cardinality = |customer|) and orders (cardinality = |orders|)
-// need to be scanned — vs. ~8M records for the full COLI MI at SF=1.
+// These form a 3-type MergedAdapter<customer_acoli_t, orders_acoli_t,
+// lineitem_acoli_t> that pre-bakes the per-customer invoice sub-aggregate
+// into customer_acoli_t and stores unaggregated lineitems in lineitem_acoli_t.
+// Invoice rows are collapsed to the pre_open_due scalar (parameter-independent:
+// i_status='O' is hardcoded by the TPC-H Q3I spec).  Lineitem revenue is
+// computed at query time so S5 remains reusable across all DATE param sets.
 //
-// Pre-aggregated fields baked in at load time (using default constants):
+// Schema (2026-05-03 redesign — see plans/q3i-s5-rebuild-store-lineitems.md):
 //   customer_acoli_t.pre_open_due  = SUM(i_totaldue WHERE i_status='O')
-//   orders_acoli_t.pre_revenue     = SUM(l_extendedprice*(1-l_discount)
-//                                        WHERE l_shipdate > DATE_1995_03_15)
+//   orders_acoli_t  — no pre-aggregated revenue; orders_t payload only.
+//   lineitem_acoli_t — full lineitem_t payload for per-query revenue computation.
 //
-// Key shapes are simple (no COLI-style domain-tag paths needed): the aCOLI MI
-// has only two record types so fold-length discrimination suffices.  No
-// tagged_path or accepts_key override required.
+// Key fold lengths (used for fold-length discrimination — no tagged keys needed):
+//   customer_acoli_t::Key  (custkey)                 → 4 bytes
+//   orders_acoli_t::Key    (custkey, orderkey)        → 8 bytes
+//   lineitem_acoli_t::Key  (custkey, orderkey, lineno)→ 12 bytes
+// All three are distinct so the simple fold-length heuristic suffices.
+//
+// Byte-lex order within a custkey group:
+//   customer_acoli_t → (orders_acoli_t → lineitem_acoli_t*)+ ...
 
 // customer_acoli_t: customerh_t payload + pre_open_due aggregate.
 //   Key: (custkey)  — same prefix shape as customerh_t.
@@ -568,9 +574,13 @@ struct customer_acoli_t {
    static Key key_from_base(const customerh_t::Key& k) { return Key{k.c_custkey}; }
 };
 
-// orders_acoli_t: orders_t payload + pre_revenue aggregate.
-//   Key: (custkey, orderkey)  — same prefix shape as orders_coli_t but
-//   without tagged-path encoding (plain two-field fold).
+// orders_acoli_t: orders_t payload only.
+//   Key: (custkey, orderkey) — plain two-field fold; no tagged-path needed.
+//
+// pre_revenue REMOVED (2026-05-03): it was parameterised by l_shipdate and
+// broke correctness for any DATE param other than the validation value.
+// Lineitems are now stored in lineitem_acoli_t (sibling under this
+// orders_acoli_t in the merged adapter); revenue is recomputed at query time.
 struct orders_acoli_t {
    static constexpr int id = 50;
 
@@ -581,7 +591,7 @@ struct orders_acoli_t {
       ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
    };
 
-   // orders_t payload fields.
+   // Full orders_t payload (mirrored for cross-query reuse).
    Integer     o_custkey;
    Timestamp   o_orderdate;
    Integer     o_shippriority;
@@ -591,16 +601,13 @@ struct orders_acoli_t {
    Varchar<15> o_clerk;
    Integer     o_comment_len;   // placeholder (comment not needed by Q3I)
 
-   // Pre-aggregated field baked in at populate_aggregated() time.
-   Numeric pre_revenue;  // SUM(l_extendedprice*(1-l_discount) WHERE l_shipdate>DATE_1995_03_15)
-
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
    static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
 
    void print(std::ostream& os) const
    {
-      os << "orders_acoli(ck=" << o_custkey << ",rev=" << pre_revenue << ")";
+      os << "orders_acoli(ck=" << o_custkey << ",date=" << o_orderdate << ")";
    }
 
    friend std::ostream& operator<<(std::ostream& os, const orders_acoli_t& r)
@@ -609,10 +616,10 @@ struct orders_acoli_t {
       return os;
    }
 
-   static orders_acoli_t from_order(const orders_t& o, Integer custkey, Numeric revenue)
+   static orders_acoli_t from_order(const orders_t& o, Integer custkey)
    {
       return {custkey, o.o_orderdate, o.o_shippriority, o.o_orderstatus,
-              o.o_totalprice, o.o_orderpriority, o.o_clerk, 0, revenue};
+              o.o_totalprice, o.o_orderpriority, o.o_clerk, 0};
    }
    static Key key_from_order(Integer custkey, const orders_t::Key& ok)
    {
@@ -620,76 +627,42 @@ struct orders_acoli_t {
    }
 };
 
-// ---------------------------------------------------------------------------
-// G4: Q3I-projected aCOLI record types.
+// lineitem_acoli_t: full lineitem_t payload mirror keyed by
+//   (custkey, orderkey, linenumber).
+//   id=53 (ids 51/52 were the now-retired projected aCOLI pair).
 //
-// Same shape as customer_acoli_t / orders_acoli_t but carrying ONLY the
-// fields Q3I::query_by_aggregated reads. Lets us A/B-2 the upper bound
-// of project-pushdown into the aggregated MI (frontend/tpch/CLAUDE.md
-// "No project pushdown" section). Toggled at populate / query time by
-// FLAGS_acoli_projected; production target wiring deferred until A/B-2
-// shows a clear win.
+// Fold length: 12 bytes — distinct from customer_acoli_t (4) and
+// orders_acoli_t (8), so fold-length discrimination works without tagged keys.
 //
-// Q3I-only field set:
-//   customer_acoli_q3i_t: c_mktsegment + pre_open_due
-//   orders_acoli_q3i_t:   o_orderdate, o_shippriority + pre_revenue
-//                         (custkey + orderkey are in the Key, not the payload)
-//
-// Estimated row-size shrinkage: ~280 B → ~30 B (customer); ~160 B → ~30 B
-// (orders). Aggregate ~62% smaller at SF=1.
-//
-// The user-facing tradeoff: this projection is Q3I-specific. Q5I or Q10I
-// would each need their own projection (or a templated projection schema
-// — deferred). That's why the new types live alongside the full-payload
-// variants rather than replacing them.
-
-struct customer_acoli_q3i_t {
-   static constexpr int id = 51;
+// Full payload (no project pushdown) keeps this reusable across future queries
+// per frontend/tpch/CLAUDE.md §No project pushdown.
+struct lineitem_acoli_t {
+   static constexpr int id = 53;
 
    struct Key {
-      static constexpr int id = 51;
-      Integer custkey;
-      ADD_KEY_TRAITS(&Key::custkey)
-   };
-
-   Varchar<10> c_mktsegment;
-   Numeric     pre_open_due;
-
-   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
-   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
-
-   void print(std::ostream& os) const
-   {
-      os << "customer_acoli_q3i(seg=" << c_mktsegment << ",open_due=" << pre_open_due << ")";
-   }
-
-   friend std::ostream& operator<<(std::ostream& os, const customer_acoli_q3i_t& r)
-   {
-      r.print(os);
-      return os;
-   }
-
-   static customer_acoli_q3i_t from_customer(const customerh_t& c, Numeric open_due)
-   {
-      return {c.c_mktsegment, open_due};
-   }
-   static Key key_from_base(const customerh_t::Key& k) { return Key{k.c_custkey}; }
-};
-
-struct orders_acoli_q3i_t {
-   static constexpr int id = 52;
-
-   struct Key {
-      static constexpr int id = 52;
+      static constexpr int id = 53;
       Integer custkey;
       Integer orderkey;
-      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
+      Integer linenumber;
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
    };
 
-   Timestamp o_orderdate;
-   Integer   o_shippriority;
-   Numeric   pre_revenue;
+   // Full lineitem_t payload (mirrored for cross-query reuse and parity digest).
+   Integer    l_partkey;
+   Integer    l_suppkey;
+   Timestamp  l_shipdate;
+   Timestamp  l_commitdate;
+   Timestamp  l_receiptdate;
+   Numeric    l_quantity;
+   Numeric    l_extendedprice;
+   Numeric    l_discount;
+   Numeric    l_tax;
+   Varchar<1> l_returnflag;
+   Varchar<1> l_linestatus;
+   Varchar<1> l_shipinstruct;
+   Varchar<10> l_shipmode;
+   Integer    l_comment_len;
+   Integer    l_invoicekey;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -697,24 +670,33 @@ struct orders_acoli_q3i_t {
 
    void print(std::ostream& os) const
    {
-      os << "orders_acoli_q3i(rev=" << pre_revenue << ")";
+      os << "lineitem_acoli(ep=" << l_extendedprice << ",disc=" << l_discount
+         << ",ship=" << l_shipdate << ")";
    }
 
-   friend std::ostream& operator<<(std::ostream& os, const orders_acoli_q3i_t& r)
+   friend std::ostream& operator<<(std::ostream& os, const lineitem_acoli_t& r)
    {
       r.print(os);
       return os;
    }
 
-   static orders_acoli_q3i_t from_order(const orders_t& o, Numeric revenue)
+   static lineitem_acoli_t from_base(const lineitem_t& l)
    {
-      return {o.o_orderdate, o.o_shippriority, revenue};
+      return {l.l_partkey, l.l_suppkey, l.l_shipdate, l.l_commitdate,
+              l.l_receiptdate, l.l_quantity, l.l_extendedprice, l.l_discount,
+              l.l_tax, l.l_returnflag, l.l_linestatus, l.l_shipinstruct,
+              l.l_shipmode, 0, l.l_invoicekey};
    }
-   static Key key_from_order(Integer custkey, const orders_t::Key& ok)
+   static Key key_from_base(Integer custkey, const lineitem_t::Key& lk)
    {
-      return Key{custkey, ok.o_orderkey};
+      return Key{custkey, lk.l_orderkey, lk.l_linenumber};
    }
 };
+
+// Note: customer_acoli_q3i_t (id=51) and orders_acoli_q3i_t (id=52) —
+// the Q3I-projected aCOLI pair — were retired 2026-05-03.  They embedded
+// pre_revenue (parameterised by l_shipdate) and were never wired into
+// production targets.  The ids 51/52 are reserved; do not reuse them.
 
 // ---------------------------------------------------------------------------
 // Byte-driven variant dispatcher.

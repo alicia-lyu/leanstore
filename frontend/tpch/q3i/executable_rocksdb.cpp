@@ -62,11 +62,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
-   // S5 aCOLI 2-type MI: customer_acoli_t + orders_acoli_t.
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli(rocks_db);
-   // G4/G5: Q3I-projected aCOLI variant (loaded only when --acoli_projected=true).
-   B::MergedAdapter<tpch::customer_acoli_q3i_t, tpch::orders_acoli_q3i_t>
-       acoli_proj(rocks_db);
+   // S5 aCOLI 3-type MI: customer_acoli_t + orders_acoli_t + lineitem_acoli_t.
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                    tpch::lineitem_acoli_t> acoli(rocks_db);
 
    rocks_db.open();  // must be called after all adapters register their CFs
 
@@ -82,7 +80,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice, acoli, acoli_proj);
+                                   split_orders, split_lineitem, split_invoice, acoli);
 
    if (!FLAGS_recover) {
       q3i.load();

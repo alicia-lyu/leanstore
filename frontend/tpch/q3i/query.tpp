@@ -33,7 +33,6 @@
 
 DECLARE_string(coli_walker_variant);
 DECLARE_int32(use_seek_skip);
-DECLARE_bool(acoli_projected);
 
 namespace tpch::q3i
 {
@@ -1106,54 +1105,64 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
 {
-   // S5: scan the aCOLI 2-type MI (customer_acoli_t + orders_acoli_t).
+   // S5: scan the aCOLI 3-type MI
+   //     (customer_acoli_t + orders_acoli_t + lineitem_acoli_t).
    //
-   // The aCOLI MI pre-bakes two aggregates at load time:
-   //   customer_acoli_t.pre_open_due  = SUM(i_totaldue WHERE i_status='O')
-   //   orders_acoli_t.pre_revenue     = SUM(l_extendedprice*(1-l_discount)
-   //                                        WHERE l_shipdate > DATE_1995_03_15)
+   // Schema redesign (2026-05-03): the MI now stores unaggregated lineitems
+   // (lineitem_acoli_t) instead of a pre-baked pre_revenue on orders_acoli_t.
+   // Revenue is accumulated per orderkey at query time using
+   // LineitemRevenueAccumulator — the same accumulator as S1/S3 per
+   // OPERATORS.md §6.1 comparison-integrity.  pre_open_due on customer_acoli_t
+   // is still baked (parameter-independent: i_status='O' is hardcoded by spec).
    //
-   // Query logic per customer group:
-   //   1. Check c_mktsegment filter.
-   //   2. Check pre_open_due > threshold.
-   //   3. For each order under that customer: check o_orderdate < orderdate
-   //      AND pre_revenue > 0 (revenue guard; mirrors S1/S3/S4 zero-revenue
-   //      suppression — an order with pre_revenue=0 had no qualifying lineitems).
-   //   4. Emit directly (no accumulators needed — aggregates are pre-built).
+   // Byte-lex sort order within a custkey group:
+   //   customer_acoli_t (fold=4) → orders_acoli_t (fold=8) → lineitem_acoli_t (fold=12)
    //
-   // Because there are no invoice or lineitem rows in the aCOLI MI, the scan
-   // cardinality is |customer| + |orders| ≈ 1.15M at SF=1, vs ~8M for COLI.
-   //
-   // Parity caveat: pre_open_due and pre_revenue are baked in with the default
-   // constants (i_status='O', l_shipdate > DATE_1995_03_15).  If params deviate
-   // from these defaults, S5 results will diverge from S1/S3/S4 — see test
-   // harness for the runtime check and [SKIP S5] guard.
+   // Walk logic per custkey group:
+   //   on_customer: check mktsegment + threshold; gate further processing.
+   //   on_order:    check o_orderdate < params.orderdate; open per-order accumulator.
+   //   on_lineitem: apply l_shipdate > params.shipdate; accumulate revenue.
+   //   order-transition flush: emit q3i_agg_row_t when revenue > 0.
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
-   // Scan aCOLI MI by custkey order.  The MI's key sort order is:
-   //   customer_acoli_t (Key = custkey)  < orders_acoli_t (Key = custkey,orderkey)
-   // because the simple fold-length of customer (4 bytes) is shorter than the
-   // order fold-length (8 bytes) — standard fold-length discrimination.
-   //
-   // We drive the scan via two typed scans (one per record type) interleaved
-   // by custkey, mirroring how coli_group_walk works but for 2 types only.
-   // G5: branch on FLAGS_acoli_projected. Visitor logic is identical
-   // structurally — only the record types differ — so we factor it
-   // into a templated lambda parameterised by (CustT, OrdT).
-   auto run_walk = [&](auto& mi, auto cust_tag, auto ord_tag) {
-      using CustT = decltype(cust_tag);
-      using OrdT  = decltype(ord_tag);
-      auto scanner = mi.template getScanner<typename CustT::Key, CustT>();
+   {
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
 
-      bool    cust_passes  = false;
-      Numeric cur_open_due = 0;
+      auto& mi      = coli.acoli_adapter();
+      auto  scanner = mi.template getScanner<customer_acoli_t::Key, customer_acoli_t>();
+
+      // Per-group state.
+      bool    cust_passes   = false;
+      Numeric cur_open_due  = 0;
+
+      // Per-order state.
+      bool      order_open      = false;
+      Integer   cur_orderkey    = -1;
+      Timestamp cur_orderdate   = 0;
+      Integer   cur_shippriority = 0;
+      LineitemRevenueAccumulator rev;
+
+      // Emit the currently-open order if it has positive revenue.
+      auto flush_order = [&]() {
+         if (!order_open) return;
+         order_open = false;
+         if (rev.revenue > Numeric(0)) {
+            if (stats) stats->acoli_orders_emitted++;
+            out.push_back({cur_orderkey, rev.revenue,
+                           cur_orderdate, cur_shippriority, cur_open_due});
+         }
+         rev.reset();
+      };
 
       while (auto kv = scanner->next()) {
          std::visit(
              [&](auto&& val) {
                 using V = std::decay_t<decltype(val)>;
-                if constexpr (std::is_same_v<V, CustT>) {
+
+                if constexpr (std::is_same_v<V, customer_acoli_t>) {
+                   // New custkey group: flush any open order from the previous group.
+                   flush_order();
                    if (stats) stats->acoli_customers_scanned++;
                    auto sm  = std::string_view(val.c_mktsegment.data,
                                                val.c_mktsegment.length);
@@ -1162,31 +1171,39 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
                    cur_open_due = val.pre_open_due;
                    cust_passes  = (sm == psm) && (cur_open_due > params.threshold);
                    if (cust_passes && stats) stats->acoli_customers_passing_filter++;
-                } else if constexpr (std::is_same_v<V, OrdT>) {
+
+                } else if constexpr (std::is_same_v<V, orders_acoli_t>) {
                    if (!cust_passes) return;
+                   // Order transition: flush the previous order before opening a new one.
+                   flush_order();
                    if (stats) stats->acoli_orders_scanned++;
                    if (val.o_orderdate >= params.orderdate) return;
-                   if (val.pre_revenue <= Numeric(0)) return;
-                   const auto* ok = std::get_if<typename OrdT::Key>(&kv->first);
+                   // Open a new per-order accumulator.
+                   const auto* ok = std::get_if<orders_acoli_t::Key>(&kv->first);
                    if (!ok) return;
-                   if (stats) stats->acoli_orders_emitted++;
-                   out.push_back({ok->orderkey, val.pre_revenue,
-                                  val.o_orderdate, val.o_shippriority, cur_open_due});
+                   order_open      = true;
+                   cur_orderkey    = ok->orderkey;
+                   cur_orderdate   = val.o_orderdate;
+                   cur_shippriority = val.o_shippriority;
+
+                } else if constexpr (std::is_same_v<V, lineitem_acoli_t>) {
+                   if (!cust_passes || !order_open) return;
+                   if (stats) stats->acoli_lineitems_scanned++;
+                   // Reuse LineitemRevenueAccumulator via a lineitem_t proxy
+                   // so the arithmetic is identical to S1/S3 (OPERATORS.md §6.1).
+                   lineitem_t proxy;
+                   proxy.l_shipdate      = val.l_shipdate;
+                   proxy.l_extendedprice = val.l_extendedprice;
+                   proxy.l_discount      = val.l_discount;
+                   if (rev.consume(proxy, params)) {
+                      if (stats) stats->acoli_lineitems_passing++;
+                   }
                 }
              },
              kv->second);
       }
-   };
-
-   {
-      StageTimer t(stats ? &stats->stage_us_join : nullptr);
-      if (FLAGS_acoli_projected) {
-         run_walk(coli.acoli_proj_adapter(),
-                  customer_acoli_q3i_t{}, orders_acoli_q3i_t{});
-      } else {
-         run_walk(coli.acoli_adapter(),
-                  customer_acoli_t{}, orders_acoli_t{});
-      }
+      // Flush the final open order.
+      flush_order();
    }
 
    if (stats) {

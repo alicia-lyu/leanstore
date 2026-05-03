@@ -310,6 +310,8 @@ current `pre_revenue` is unsound for any SEGMENT/DATE param set
 other than the validation pair. Phase 0 flags this as a Q3I
 audit; Q3 itself defers S5 design until that audit lands.
 
+USER RESPONSE: This bug prompted a question---in Q3I, does the parameters change across queries in the executables at all, or is the same used again and again? The realistic workload should be the former.
+
 ### S2 view granularity
 
 Post-aggregate (one row per qualifying order, much smaller) vs
@@ -335,10 +337,14 @@ invoice)? If yes, future Q3 → Q3I migration becomes free; if no,
 COL is independent and may diverge. Recommend strict-subset
 naming/encoding with a TODO in the file header.
 
+USER RESPONSE: Yes, but not for migration from Q3 to Q3I, but for DRY, and if Q3 and Q3I needs the same change, we don't need to apply it twice.
+
 ### Q3I refactor (later, out of scope)
 
 Once COL pipeline exists, can Q3I's COLI be defined as
 `COL + invoice` extension? Worth flagging but no decision in Phase 0.
+
+USER RESPONSE: I am not sure I completely understand this point. But we use the composition principle, not inheritance. So as long as Q3 and Q3I share as many components as possible, we don't need to reframe one as the other's extension
 
 ---
 

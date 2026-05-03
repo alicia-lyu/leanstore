@@ -102,10 +102,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem;
    B::Adapter<tpch::invoice_coli_t>  split_invoice;
 
-   // S5: aCOLI 2-type MI.
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli;
-   // G4/G5: Q3I-projected aCOLI variant.
-   B::MergedAdapter<tpch::customer_acoli_q3i_t, tpch::orders_acoli_q3i_t> acoli_proj;
+   // S5: aCOLI 3-type MI (customer_acoli_t + orders_acoli_t + lineitem_acoli_t).
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                    tpch::lineitem_acoli_t> acoli;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -125,10 +124,8 @@ int main(int argc, char** argv)
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q3i_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_coli_t>(db, "q3i_split_lineitem");
       split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "q3i_split_invoice");
-      acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t>(
-                          db, "q3i_acoli");
-      acoli_proj     = B::MergedAdapter<tpch::customer_acoli_q3i_t, tpch::orders_acoli_q3i_t>(
-                          db, "q3i_acoli_proj");
+      acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                                        tpch::lineitem_acoli_t>(db, "q3i_acoli");
    });
 
    LeanStoreLogger logger(db);
@@ -137,7 +134,7 @@ int main(int argc, char** argv)
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice, acoli, acoli_proj);
+                                   split_orders, split_lineitem, split_invoice, acoli);
 
    // Load base tables once (matches RocksDB harness rationale: TPC-H RNG
    // advances each tpch.load() call, so re-loading produces different data;
@@ -275,10 +272,12 @@ int main(int argc, char** argv)
              << " invoices=" << n_invoices_ref << "\n";
 
    bool stats_ok = true;
+   // Pipeline view: one row per (custkey, orderkey, linenumber) after schema
+   // redesign 2026-05-03. Cardinality = |lineitem| (no shipdate filter at load).
    {
-      bool ok = (n_view > 0) && (n_view <= n_orders_b);
+      bool ok = (n_view == n_lineitems_ref);
       stats_ok &= ok;
-      check("pipeline_view", ok, n_view, "(0, " + std::to_string(n_orders_b) + "]");
+      check("pipeline_view", ok, n_view, "= " + std::to_string(n_lineitems_ref));
    }
    {
       bool ok = (n_split_o == n_orders_b);
@@ -473,11 +472,14 @@ int main(int argc, char** argv)
              << std::right
              << std::setw(10) << st_agg.acoli_customers_scanned
              << std::setw(10) << st_agg.acoli_orders_scanned
-             << std::setw(11) << "(n/a)"
+             << std::setw(11) << st_agg.acoli_lineitems_scanned
              << std::setw(10) << "(n/a)"
              << std::setw(9)  << st_agg.acoli_orders_emitted
              << std::setw(9)  << st_agg.aggregator_rows_out
              << "\n";
+   std::cout << "  [scan] S5 acoli_customers_passing_filter="
+             << st_agg.acoli_customers_passing_filter
+             << " acoli_lineitems_passing=" << st_agg.acoli_lineitems_passing << "\n";
 
    {
       auto cross_check = [&](const char* label, long s1, long s3, long s4) {
@@ -584,23 +586,13 @@ int main(int argc, char** argv)
    parity_line("S3 merged", ok_m, d_merged);
    parity_line("S4 hash  ", ok_h, d_hash);
 
-   // S5 parity is meaningful only when params equal defaults (pre_open_due
-   // and pre_revenue are baked at populate_aggregated time).
-   bool ok_a = false;
-   {
-      tpch::q3i::Params def = tpch::q3i::Params::defaults();
-      bool params_match = (q3i.params.shipdate  == def.shipdate)
-                       && (q3i.params.orderdate == def.orderdate)
-                       && (q3i.params.threshold == def.threshold);
-      if (!params_match) {
-         std::cout << "[SKIP] S5 acoli  parity skipped — baked-in filter mismatch"
-                      " (params deviate from defaults)\n";
-         ok_a = true;
-      } else {
-         ok_a = (d_agg == ref);
-         parity_line("S5 acoli ", ok_a, d_agg);
-      }
-   }
+   // S5 parity: unconditionally checked — pre_open_due is the only baked
+   // field (i_status='O' is hardcoded by spec, parameter-independent).
+   // Revenue is computed at query time from lineitem_acoli_t rows, so S5
+   // is correct for any DATE / THRESHOLD param set.  [SKIP S5] guard removed
+   // 2026-05-03 after schema redesign (plans/q3i-s5-rebuild-store-lineitems.md).
+   bool ok_a = (d_agg == ref);
+   parity_line("S5 acoli ", ok_a, d_agg);
 
    // Shape: all paths agree on row count, in (0, 10].
    bool shape_ok = true;
@@ -617,16 +609,23 @@ int main(int argc, char** argv)
                 << " (expected = " << n_ref << ", in (0, 10])\n";
    }
 
-   // S5 scan-efficiency check: acoli scans fewer total records than COLI MI.
+   // S5 scan-efficiency check: acoli_total must be > 0. The 3-type aCOLI
+   // stores customer + order + lineitem rows, so its total is close to
+   // COLI MI minus invoice rows (the only collapsed table).
    {
-      long acoli_total = st_agg.acoli_customers_scanned + st_agg.acoli_orders_scanned;
+      long acoli_total = st_agg.acoli_customers_scanned
+                       + st_agg.acoli_orders_scanned
+                       + st_agg.acoli_lineitems_scanned;
       long coli_total  = st_merged.mi_records_visited;
-      bool ok = (acoli_total > 0) && (coli_total == 0 || acoli_total < coli_total);
+      bool ok = (acoli_total > 0);
       std::cout << (ok ? "[OK]   " : "[FAIL] ")
                 << "S5 acoli_total=" << acoli_total
+                << " (c=" << st_agg.acoli_customers_scanned
+                << " o=" << st_agg.acoli_orders_scanned
+                << " l=" << st_agg.acoli_lineitems_scanned << ")"
                 << " vs S3 mi_records_visited=" << coli_total
-                << " (expected S5 << S3 when S3 stats wired, or S5 > 0)\n";
-      card_ok &= (acoli_total > 0);
+                << " (expected S5 > 0; aCOLI ≈ COLI − invoice rows)\n";
+      card_ok &= ok;
    }
 
    bool all_ok = ok_b && ok_v && ok_m && ok_h && ok_a && shape_ok && stats_ok && card_ok;
