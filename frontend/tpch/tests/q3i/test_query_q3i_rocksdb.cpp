@@ -388,16 +388,22 @@ int main(int argc, char** argv)
    parity_line("S3 merged", ok_m, d_merged);
    parity_line("S4 hash  ", ok_h, d_hash);
 
-   // Shape check: all four must return 10 rows at SF=1.
+   // Shape check: all four paths must agree on row count and return at
+   // least one row. The exact count is data-dependent (≤ 10 by LIMIT 10;
+   // can be < 10 at small SFs because few orders pass the date / shipdate
+   // / mktsegment filters). What we care about is cross-structure
+   // agreement — divergent counts mean a query-body bug.
    bool shape_ok = true;
+   size_t n_ref = r_merged.size();
    for (auto [tag, n] : {std::pair{"S1", r_base.size()},
                          std::pair{"S2", r_view.size()},
                          std::pair{"S3", r_merged.size()},
                          std::pair{"S4", r_hash.size()}}) {
-      bool ok = (n == 10);
+      bool ok = (n == n_ref) && (n > 0) && (n <= 10);
       if (!ok) shape_ok = false;
       std::cout << (ok ? "[OK]   " : "[FAIL] ") << tag
-                << " row_count=" << n << " (expected 10)\n";
+                << " row_count=" << n
+                << " (expected = " << n_ref << ", in (0, 10])\n";
    }
 
    bool all_ok = ok_b && ok_v && ok_m && ok_h && shape_ok && stats_ok && card_ok;
