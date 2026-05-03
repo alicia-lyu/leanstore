@@ -60,6 +60,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> coli_lineitem_sec;
    B::Adapter<tpch::invoice_coli_t>  coli_invoice_sec;
 
+   // S5 aCOLI MI: required by the COLI pipeline ctor (added with Q3I S5).
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> coli_acoli;
+
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
       part          = B::Adapter<part_t>(db, "part");
@@ -78,6 +81,8 @@ int main(int argc, char** argv)
       coli_orders_sec   = B::Adapter<tpch::orders_coli_t>(db, "coli_orders_sec");
       coli_lineitem_sec = B::Adapter<tpch::lineitem_coli_t>(db, "coli_lineitem_sec");
       coli_invoice_sec  = B::Adapter<tpch::invoice_coli_t>(db, "coli_invoice_sec");
+      coli_acoli        = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t>(
+                              db, "coli_acoli");
    });
 
    LeanStoreLogger logger(db);
@@ -86,7 +91,7 @@ int main(int argc, char** argv)
    tpch::q12::Q12Workload<B> q12(tpch, orders, lineitem, pipeline_view, merged_ol);
    tpch::CustomerOrdersLineitemInvoicePipeline<B> coli_pipeline(
        customer, orders, lineitem, invoice, merged_coli,
-       coli_orders_sec, coli_lineitem_sec, coli_invoice_sec);
+       coli_orders_sec, coli_lineitem_sec, coli_invoice_sec, coli_acoli);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {

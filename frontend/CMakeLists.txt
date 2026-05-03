@@ -288,6 +288,9 @@ else()
     add_executable(test_query_q3i_lsm tpch/tests/q3i/test_query_q3i_rocksdb.cpp)
     target_link_libraries(test_query_q3i_lsm PUBLIC RocksDBLogger Threads::Threads)
 
+    add_executable(test_query_q3i_btree tpch/tests/q3i/test_query_q3i_leanstore.cpp)
+    target_link_libraries(test_query_q3i_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
     add_executable(q12_btree tpch/q12/executable_leanstore.cpp)
     target_link_libraries(q12_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 

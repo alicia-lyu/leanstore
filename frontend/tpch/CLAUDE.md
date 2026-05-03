@@ -263,6 +263,7 @@ point. Run from the repo root.
 | `test_query_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_query_q12_rocksdb.cpp` |
 | `test_query_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_query_q12_leanstore.cpp` |
 | `test_query_q3i_lsm` | `q3i/` | RocksDB (mac+Linux) | `tests/q3i/test_query_q3i_rocksdb.cpp` |
+| `test_query_q3i_btree` | `q3i/` | LeanStore (Linux only) | `tests/q3i/test_query_q3i_leanstore.cpp` |
 | Q3/Q9 tests | `q3/`, `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests

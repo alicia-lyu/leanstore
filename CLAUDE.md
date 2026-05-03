@@ -70,6 +70,10 @@ The fork also includes an experimental workload ("geo") that benchmarks differen
 sudo apt-get install cmake clang libtbb2-dev libaio-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev librocksdb-dev libwiredtiger-dev liburing-dev
 ```
 
+For full Linux bring-up on a fresh node (perf_event_paranoid sysctl,
+SSD partition + mount, smoke-test commands), see
+[`LINUX_SETUP.md`](./LINUX_SETUP.md).
+
 ### Prerequisites (macOS ARM — RocksDB-only build)
 ```
 brew install cmake rocksdb gflags snappy lz4 zstd
