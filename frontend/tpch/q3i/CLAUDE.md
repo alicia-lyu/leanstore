@@ -296,16 +296,16 @@ mkdir -p test_data_q3i test_csv_q3i
 
 ## Performance Notes
 
-A2c (`--coli_walker_variant=fused_emit`) closed the per-record dispatch
-gap at SF=15 — S3 now matches/beats S1 on both backends in the
-cache-resident regime. A2c is neutral at SF=40 disk-bound; whether any
-`(dram, SF)` operating point flips S3 positive against S1/S4 is the
-remaining open question, tracked in
-[`PERFORMANCE.md`](PERFORMANCE.md). Historical evidence trails:
+Two remediations have landed: A2c (`--coli_walker_variant=fused_emit`)
+closed the per-record dispatch gap at SF=15 across both backends; A3
+(Backend-trait customer-level Seek-skip) lifts LeanStore S3 +356% at
+SF=15 and +116× at SF=40 disk-bound. **S3 on LeanStore now beats S1/S4
+in both regimes.** RocksDB SF=40 disk-bound is the remaining open
+question (A6 dram sweep). Active worklist:
+[`PERFORMANCE.md`](PERFORMANCE.md). Historical evidence:
 [`archive/PERFORMANCE-2026-05-03b.md`](archive/PERFORMANCE-2026-05-03b.md)
-(A1 + A5 + A2c cross-backend) and
-[`archive/PERFORMANCE-2026-05-03.md`](archive/PERFORMANCE-2026-05-03.md)
-(pre-A1 hypothesis history).
+and
+[`archive/PERFORMANCE-2026-05-03.md`](archive/PERFORMANCE-2026-05-03.md).
 
 ---
 

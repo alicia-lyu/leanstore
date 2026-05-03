@@ -685,6 +685,7 @@ Q3I is a §3.1.2 sibling-aggregate showcase, not a true 4-way M:N join — see
 [q3i/CLAUDE.md §Cardinality structure](q3i/CLAUDE.md#cardinality-structure-not-a-true-4-way-mn).
 
 Q3I S3 perf investigation tracked in
-[q3i/PERFORMANCE.md](q3i/PERFORMANCE.md). Post-A2c (`fused_emit`):
-S3 matches/beats S1 cache-resident; SF=40 disk-bound still ties — the
-open question is whether any `(dram, SF)` cell flips S3 positive (A6).
+[q3i/PERFORMANCE.md](q3i/PERFORMANCE.md). Post-A2c + A3: S3 on
+LeanStore beats S1/S4 in both cache-resident and disk-bound regimes
+(+356% SF=15, +116× SF=40). RocksDB SF=40 disk-bound is the remaining
+open question (A6 dram sweep).
