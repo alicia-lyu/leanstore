@@ -72,6 +72,12 @@ int main(int argc, char** argv)
    }
    tpch.recover_last_ids();
 
+   // Plumb per-query stats so the post-experiment summary can report
+   // stage cardinalities and per-stage wall-clock. Counters accumulate
+   // across all queries in the 15s window; divide by count for per-query.
+   tpch::q3i::Q3IStats stats;
+   q3i.stats = &stats;
+
    using AggRow = tpch::q3i::q3i_agg_row_t;
    switch (FLAGS_storage_structure) {
       case 1: {
@@ -102,5 +108,32 @@ int main(int argc, char** argv)
          std::cerr << "Invalid storage_structure: " << FLAGS_storage_structure << std::endl;
          return 1;
    }
+
+   // Print accumulated Q3I stats. Helper.run() ran N queries over 15s; the
+   // counters here are summed across those N. We don't know N here without
+   // re-deriving from logger output, so print the totals; consumers can
+   // divide by the TX count from the Summary line.
+   std::cout << "\n[q3i] cardinality totals across all queries:"
+             << "\n  customers_scanned       = " << stats.customers_scanned
+             << "\n  customers_passing_filter= " << stats.customers_passing_filter
+             << "\n  orders_scanned          = " << stats.orders_scanned
+             << "\n  orders_passing_filter   = " << stats.orders_passing_filter
+             << "\n  lineitems_scanned       = " << stats.lineitems_scanned
+             << "\n  lineitems_passing_filter= " << stats.lineitems_passing_filter
+             << "\n  invoices_scanned        = " << stats.invoices_scanned
+             << "\n  invoices_passing_filter = " << stats.invoices_passing_filter
+             << "\n  join1_output_rows       = " << stats.join1_output_rows
+             << "\n  join2_output_rows       = " << stats.join2_output_rows
+             << "\n  join3_output_rows       = " << stats.join3_output_rows
+             << "\n  topN_candidates         = " << stats.topN_candidates
+             << "\n  aggregator_rows_out     = " << stats.aggregator_rows_out
+             << "\n  mi_records_visited      = " << stats.mi_records_visited
+             << "\n  mi_groups_skipped       = " << stats.mi_groups_skipped
+             << "\n[q3i] per-stage wall-clock totals (us):"
+             << "\n  scan_filter             = " << stats.stage_us_scan_filter
+             << "\n  aggregator              = " << stats.stage_us_aggregator
+             << "\n  join                    = " << stats.stage_us_join
+             << "\n  topN                    = " << stats.stage_us_topN
+             << std::endl;
    return 0;
 }
