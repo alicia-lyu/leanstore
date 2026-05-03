@@ -528,6 +528,9 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 ## What's Needed to Fully Implement Q12/Q3/Q9
 
+- **Q3I**: production `q3i_lsm` / `q3i_btree` executables wired into
+  `frontend/CMakeLists.txt` and `generate_targets.py`. Builds clean on
+  macOS; full Phase 3 done.
 - **Q12**: `query_by_*` bodies, predicates, F1 admission filter
   (`PremergedJoin` admit callback plumbed through `query_by_merged`),
   and `Q12Stats` cardinality counters all implemented and tested.

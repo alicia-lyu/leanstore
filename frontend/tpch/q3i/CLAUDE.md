@@ -194,27 +194,22 @@ revenue DESC + truncate to 10).
 | `per_structure_workload.hpp` | Complete — alias-only (`BaseQ3I`, `ViewQ3I`, `MergedQ3I`, `HashQ3I`) |
 | `load.tpp` | Complete — ctor, `load()`, `get_size()`, `populate_q3i_view` free function |
 | `query.tpp` | Complete — all four `query_by_*` bodies, accumulators, `COLIGroupWalkVisitor`, predicates, `print()` |
-| `executable_rocksdb.cpp` | Skeleton — `main()` returns 0 (Phase 3) |
-| `executable_leanstore.cpp` | Skeleton — `main()` returns 0 (`#ifndef ROCKSDB_ONLY`) (Phase 3) |
+| `executable_rocksdb.cpp` | Complete — full `main()`, dispatches all four storage structures via `TpchExecutableHelper` |
+| `executable_leanstore.cpp` | Complete — same as above for LeanStore backend (`#ifndef ROCKSDB_ONLY`) |
 | `CLAUDE.md` | This file |
 
 ---
 
 ## CMake Targets
 
-`test_query_q3i_lsm` is wired in `frontend/CMakeLists.txt` (macOS + Linux).
+Wired in `frontend/CMakeLists.txt`:
 
-Production targets `q3i_lsm` / `q3i_btree` are Phase 3 deliverables (TODO):
+- `test_query_q3i_lsm` — cross-structure parity test (macOS + Linux).
+- `q3i_lsm` — production RocksDB executable (macOS + Linux).
+- `q3i_btree` — production LeanStore executable (Linux only).
 
-```cmake
-# macOS (ROCKSDB_ONLY) section:
-add_executable(q3i_lsm tpch/q3i/executable_rocksdb.cpp)
-# ...
-
-# Linux section:
-add_executable(q3i_btree tpch/q3i/executable_leanstore.cpp)
-add_executable(q3i_lsm   tpch/q3i/executable_rocksdb.cpp)
-```
+`generate_targets.py` registers `q3i_lsm` / `q3i_btree` for Makefile
+experiment integration; rerun it to regenerate `targets.mk` after edits.
 
 ---
 
@@ -357,35 +352,63 @@ binary entirely.
   The prior single-key `revenue DESC` comparator left `std::partial_sort`
   tie-breaking dependent on input order, which differs across paths (S2 scans
   view by `(custkey, orderkey)`, S4 iterates an `unordered_map`). On data
-  states with revenue ties at the boundary (reproducible on Linux at SF=1 with
-  ~8520 lineitems), this produced three distinct digests. The fix is purely in
-  the comparator — no query logic changed.
+  states with revenue ties at the boundary, this produced three distinct
+  digests. The fix is purely in the comparator — no query logic changed.
+- **Defensive `--ssd_path` wipe in harness (post-Phase-2C):** the harness
+  now `remove_all`s `FLAGS_ssd_path` before `rocks_db.open()`. Reusing a
+  populated dir across re-runs caused `tpch.load()` to write new records on
+  top of the prior DB (RocksDB does not cleanly overwrite), growing the
+  lineitem count across consecutive SF=1 runs (e.g. 6051 → 7765 → 10017).
+  The four query paths then read four subtly inconsistent loaded states,
+  producing four distinct digests that look like query-body bugs but are
+  actually a stale-fixture artefact. The wipe makes the harness re-runnable
+  in place per its documented usage. The earlier "8520 lineitems on Linux"
+  data-state hypothesis was retroactively invalidated — that run was on
+  macOS with an accumulated DB, not a Linux RNG state.
 
 **Exit criterion satisfied**: `test_query_q3i_lsm` at SF=1, SF=2, and SF=5
 reports `[OK]` parity across S1/S2/S3/S4, 10 rows each (all four digests
 identical within a run; value is seed-dependent across runs), exit 0.
+Re-running the harness in place (no manual wipe between invocations) also
+reports `[OK]` parity, because the harness now wipes its own ssd_path.
 
 ---
 
 ### Phase 3 — Production targets + experiment integration
 
-**Goal**: standalone `q3i_lsm` / `q3i_btree` executables wired into the
-existing experiment Makefile flow.
+**Status (2026-05-02): complete.**
 
-**Deliverables**:
+**Landed:**
 
 - `frontend/CMakeLists.txt` — `q3i_lsm` (macOS + Linux) and `q3i_btree`
   (Linux only), mirroring `q12_lsm` / `q12_btree`.
-- `generate_targets.py` — `q3i_lsm` / `q3i_btree` entries (`exec_names`,
-  `STRUCTURE_OPTIONS`, `DIFF_DIRS`); regenerate `targets.mk`.
-- `tests/test_load_q3i_rocksdb.cpp` (optional) — load S3 only and report
-  COLI distribution stats. Skip if `test_load_coli_lsm` already covers
-  the relevant invariants.
-- `frontend/tpch/CLAUDE.md §Tests` and `§Layout` index entries.
+- `generate_targets.py` — `q3i_lsm` / `q3i_btree` added to `exec_names`,
+  `DIFF_DIRS`, and `STRUCTURE_OPTIONS`; `targets.mk` regenerated and
+  `.vscode/launch.json` refreshed.
+- `q3i/executable_{rocksdb,leanstore}.cpp` already had full `main()`
+  bodies from Phase 1; verified they dispatch all four storage
+  structures via `TpchExecutableHelper`.
+- `Q3IWorkload::load()` already dispatches on `FLAGS_storage_structure`
+  (S1 → `populate_split`, S2 → `populate_q3i_view`, S3 →
+  `populate_merged`, S4 → base only) so production loads exactly one
+  secondary per structure.
 
-**Exit criterion**: `make q3i_lsm scale=1` runs end-to-end across all four
-structures and emits CSV metrics; `make q3i_lsm_3 dram=0.1` runs S3 in
-isolation for memory-pressure experiments.
+**Skipped**: `tests/test_load_q3i_rocksdb.cpp` — `test_load_coli_lsm`
+covers the relevant invariants and `test_query_q3i_lsm` cross-checks
+all four structures.
+
+**Run examples**:
+
+```bash
+# macOS smoke build
+make -C build/frontend q3i_lsm -j$(sysctl -n hw.ncpu)
+
+# Full experiment sweep (all four structures)
+make q3i_lsm scale=1
+
+# S3 in isolation for memory-pressure experiments
+make q3i_lsm_3 dram=0.1
+```
 
 ---
 

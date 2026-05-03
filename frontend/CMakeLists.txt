@@ -213,6 +213,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- q3i_lsm executable (RocksDB) ---
+    add_executable(q3i_lsm tpch/q3i/executable_rocksdb.cpp)
+    target_compile_definitions(q3i_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(q3i_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(q3i_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
 else()
     # =========================================================================
     # Linux build: full leanstore + RocksDB (original behavior)
@@ -278,5 +293,11 @@ else()
 
     add_executable(q12_lsm tpch/q12/executable_rocksdb.cpp)
     target_link_libraries(q12_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(q3i_btree tpch/q3i/executable_leanstore.cpp)
+    target_link_libraries(q3i_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(q3i_lsm tpch/q3i/executable_rocksdb.cpp)
+    target_link_libraries(q3i_lsm PUBLIC RocksDBLogger Threads::Threads)
 
 endif()
