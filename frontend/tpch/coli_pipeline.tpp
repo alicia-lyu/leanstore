@@ -554,8 +554,13 @@ void coli_group_walk(
          // lineitems per order) and the tree descent cost likely
          // outweighs forward-iterating past a handful of records.
          skip_pending = false;
-         constexpr bool USE_PHYSICAL_SEEK_SKIP = false;
-         if constexpr (USE_PHYSICAL_SEEK_SKIP) {
+         // Customer-level seek-skip ONLY (not order-level). Gated by the
+         // Backend trait so RocksDB stays on forward iteration (Seek
+         // invalidates its prefetch buffer; archived A/B 2026-05-02)
+         // while LeanStore takes the Seek branch (B-tree descent is
+         // O(log N) page touches with no prefetch buffer to lose). See
+         // q3i/PERFORMANCE.md §3 A3 and backend.hpp.
+         if constexpr (Backend::USE_PHYSICAL_SEEK_SKIP) {
             typename customer_coli_t::Key next_key{cur_custkey + 1};
             scanner->template seek<customer_coli_t>(next_key);
             if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
@@ -787,8 +792,9 @@ void coli_group_walk_fused_emit(
 
       if (skip_pending) {
          skip_pending = false;
-         constexpr bool USE_PHYSICAL_SEEK_SKIP = false;
-         if constexpr (USE_PHYSICAL_SEEK_SKIP) {
+         // Customer-level seek-skip ONLY (not order-level). Backend-trait
+         // gated; see baseline walker comment above and q3i/PERFORMANCE.md §3 A3.
+         if constexpr (Backend::USE_PHYSICAL_SEEK_SKIP) {
             typename customer_coli_t::Key next_key{cur_custkey + 1};
             scanner->template seek<customer_coli_t>(next_key);
             if constexpr (requires { visitor.on_group_end(cur_custkey); }) {

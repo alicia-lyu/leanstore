@@ -39,6 +39,17 @@ namespace tpch
 // RocksDB backend
 
 struct RocksDBBackend {
+   // COLI walker: skip rejected customer groups via physical Seek to the
+   // next custkey rather than forward iteration. RocksDB pays a steep
+   // tax here — Seek invalidates the iterator's prefetch buffer (1–2
+   // SST blocks lookahead), regressing SF=40 disk-bound by ~5×. See
+   // q3i/PERFORMANCE.md §H2 and the archived A/B in
+   // archive/PERFORMANCE-2026-05-03.md.
+   //
+   // Order-level skip stays as forward iteration on BOTH backends —
+   // small order groups (~4 lineitems) don't pay back a tree descent.
+   static constexpr bool USE_PHYSICAL_SEEK_SKIP = false;
+
    // Single-type adapter and scanner.
    template <typename T>
    using Adapter = RocksDBAdapter<T>;
@@ -61,6 +72,14 @@ struct RocksDBBackend {
 
 #ifndef ROCKSDB_ONLY
 struct LeanStoreBackend {
+   // B-tree Seek is an O(log N) tree descent with no prefetch buffer to
+   // invalidate (unlike RocksDB). Forward iteration through a rejected
+   // custkey group can touch 10–50 records spread across separate leaf
+   // pages, so a Seek to the next customer should win. (A3.) Order-level
+   // skip remains forward-iteration on both backends — order groups are
+   // too small for the descent cost to pay back.
+   static constexpr bool USE_PHYSICAL_SEEK_SKIP = true;
+
    template <typename T>
    using Adapter = LeanStoreAdapter<T>;
 

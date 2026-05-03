@@ -302,6 +302,58 @@ int main(int argc, char** argv)
              << "  merged_coli=" << merged_coli.size() << " MiB"
              << "  acoli=" << acoli.size() << " MiB\n";
 
+   // ------------------------------------------------------------------
+   // A7: LeanStore content-walk (leaf-fill diagnostic).
+   //
+   // RocksDB harness has had this since 50fd2052; LeanStore lacked it
+   // because there's no per-CF concept here. The size() above is
+   // estimatePages() * EFFECTIVE_PAGE_SIZE — a page-occupancy estimate.
+   // The content walk sums key+value bytes per record to give a
+   // like-for-like content number; their ratio is the leaf-fill rate.
+   //
+   // Healthy B-tree fill ratio is ~0.5–0.7 (split-on-full pages average
+   // ~70% utilisation). A ratio far below 0.5 implies (a) measurement
+   // bug in size(), (b) extreme internal fragmentation, or (c) heavy
+   // internal-node overhead at small SF.
+   {
+      std::pair<long, long> cw_view, cw_so, cw_sl, cw_si, cw_merge, cw_acoli;
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+         cw_view  = pipeline_view.content_bytes_walk();
+         cw_so    = split_orders.content_bytes_walk();
+         cw_sl    = split_lineitem.content_bytes_walk();
+         cw_si    = split_invoice.content_bytes_walk();
+         cw_merge = merged_coli.content_bytes_walk();
+         cw_acoli = acoli.content_bytes_walk();
+         leanstore::cr::Worker::my().commitTX();
+      });
+
+      auto mb  = [](long b) { return static_cast<double>(b) / (1024.0 * 1024.0); };
+      auto cpr = [](long bytes, long rows) {
+         return rows > 0 ? static_cast<double>(bytes) / static_cast<double>(rows) : 0.0;
+      };
+      auto fill = [](double content_mib, double reported_mib) {
+         return reported_mib > 0 ? content_mib / reported_mib : 0.0;
+      };
+
+      auto print_walk = [&](const char* tag, long bytes, long rows, double reported_mib) {
+         double content_mib = mb(bytes);
+         std::cout << "[content/row] " << std::left << std::setw(15) << tag
+                   << " " << std::fixed << std::setprecision(1) << cpr(bytes, rows)
+                   << "  rows=" << rows << "\n"
+                   << "[fill]        " << std::left << std::setw(15) << tag
+                   << " content=" << std::fixed << std::setprecision(3) << content_mib << " MiB"
+                   << "  reported=" << reported_mib << " MiB"
+                   << "  ratio=" << std::setprecision(3) << fill(content_mib, reported_mib) << "\n";
+      };
+      print_walk("pipeline_view", cw_view.first,  cw_view.second,  pipeline_view.size());
+      print_walk("split_orders",  cw_so.first,    cw_so.second,    split_orders.size());
+      print_walk("split_lineitem",cw_sl.first,    cw_sl.second,    split_lineitem.size());
+      print_walk("split_invoice", cw_si.first,    cw_si.second,    split_invoice.size());
+      print_walk("merged_coli",   cw_merge.first, cw_merge.second, merged_coli.size());
+      print_walk("acoli",         cw_acoli.first, cw_acoli.second, acoli.size());
+   }
+
    std::cout << "\n=== merged_coli per-group distribution ===\n";
    auto dist_line = [](const char* label, long min_v, long max_v, long sum_v, long n) {
       double mean = (n > 0) ? (double)sum_v / (double)n : 0.0;
