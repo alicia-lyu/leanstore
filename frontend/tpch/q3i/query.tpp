@@ -32,6 +32,7 @@
 #define MICRO_PERF_STATS(wl) ((wl).micro_perf ? (wl).stats : nullptr)
 
 DECLARE_string(coli_walker_variant);
+DECLARE_int32(use_seek_skip);
 
 namespace tpch::q3i
 {
@@ -397,6 +398,29 @@ class CustomerOpenDueAggregator
       if (!lookahead_) exhausted_ = true;
    }
 
+   // Forward-only seek to the first invoice with custkey >= K. Discards any
+   // partial-group accumulation and pending emission for keys < K. Used by
+   // S1's customer-skip wrapper (G1) to bypass invoices for custkeys the
+   // customer-side mktsegment filter rejected. Returns true if the scanner
+   // was actually advanced (i.e. K is strictly ahead of the current cursor).
+   bool seek_to_custkey(Integer K)
+   {
+      // Already past K — nothing to skip. cur_custkey_ tracks the group
+      // currently being accumulated; if it's >= K we're already there.
+      if (cur_custkey_ >= K) return false;
+      if (lookahead_ && lookahead_->first.custkey >= K) return false;
+      // Discard mid-group state: any partial accumulation for a custkey
+      // < K is dropped (BMJ has already advanced past it on the customer side).
+      pending_ = std::nullopt;
+      acc_.reset();
+      cur_custkey_ = -1;
+      typename invoice_coli_t::Key seek_key{K, 0};
+      scanner_->seek(seek_key);
+      lookahead_ = scanner_->next();
+      if (!lookahead_) exhausted_ = true;
+      return true;
+   }
+
    std::optional<std::pair<cust_open_due_t::Key, cust_open_due_t>> next()
    {
       // Drain any pending emission first.
@@ -486,6 +510,24 @@ class LineitemRevenueAggregator
    {
       lookahead_ = scanner_->next();
       if (!lookahead_) exhausted_ = true;
+   }
+
+   // Forward-only seek to the first lineitem with custkey >= K. Drops any
+   // partial-group accumulation for custkeys < K. See
+   // CustomerOpenDueAggregator::seek_to_custkey for the rationale (G1 S1).
+   bool seek_to_custkey(Integer K)
+   {
+      if (cur_custkey_ >= K) return false;
+      if (lookahead_ && lookahead_->first.custkey >= K) return false;
+      pending_ = std::nullopt;
+      acc_.reset();
+      cur_custkey_  = -1;
+      cur_orderkey_ = -1;
+      typename lineitem_coli_t::Key seek_key{K, 0, 0, 0};
+      scanner_->seek(seek_key);
+      lookahead_ = scanner_->next();
+      if (!lookahead_) exhausted_ = true;
+      return true;
    }
 
    std::optional<std::pair<lineitem_agg_t::Key, lineitem_agg_t>> next()
@@ -620,6 +662,30 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
    auto cust_scan_ptr = customer.getScanner();
    auto ord_scan_ptr  = coli.split_orders().getScanner();
 
+   // G1 customer-level Seek-skip on the invoice aggregator only.
+   //
+   // Trait-gated by Backend::USE_PHYSICAL_SEEK_SKIP, runtime-overridden by
+   // --use_seek_skip. See q3i/PERFORMANCE.md §3 A/B-1.
+   //
+   // Why only agg_inv: BMJ#1's right side (cust_open_due) is 1:1 per
+   // custkey — exactly one open_due per customer. By the time bmj1's
+   // refill_current_key advances next_left via fetch_cust, the previous
+   // customer's open_due has been emplaced and the next agg_inv.next()
+   // is what we want to align with the new customer.
+   //
+   // Why NOT ord_scan / agg_lin: BMJ#2/#3 right sides are 1:N (multiple
+   // orders / lineitems per custkey). When fetch_cust is called from
+   // inside bmj1's refill, bmj2's cached next_right may point at one of
+   // many K_prev orders that haven't been emplaced yet — seeking ahead
+   // would skip the rest. The S3 COLI walker avoids this because it has
+   // a single scanner with no intermediate caching layer. Mirroring the
+   // S3 trick on a 3-BMJ chain would require either (a) a buffered
+   // OrdersByCustkey wrapper or (b) intrusive BMJ changes; both are
+   // bigger refactors deferred until A/B-1 measures the agg_inv-only win.
+   const bool seek_skip =
+       FLAGS_use_seek_skip < 0 ? Backend::USE_PHYSICAL_SEEK_SKIP
+                               : (FLAGS_use_seek_skip != 0);
+
    // Fetch customer rows passing the mktsegment filter.
    auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
       while (auto kv = cust_scan_ptr->next()) {
@@ -629,6 +695,10 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
          auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
          if (sm == psm) {
             if (stats) stats->customers_passing_filter++;
+            if (seek_skip) {
+               const Integer K = kv->first.c_custkey;
+               if (agg_inv.seek_to_custkey(K) && stats) stats->bj_groups_skipped++;
+            }
             return kv;
          }
       }
@@ -890,6 +960,22 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          if (stats) stats->join2_output_rows++;  // each surviving (custkey,orderkey)
       }
 
+      // G2: build a sorted vector of surviving orderkeys for orderkey-
+      // level Seek-skip on the lineitem probe. The orders-build phase
+      // populates ord_map keyed by surviving orderkeys; HashJoin's
+      // probe-miss path otherwise iterates one lineitem at a time
+      // through every orderkey. Trait-gated via use_seek_skip; counter
+      // increments per skip event. See q3i/PERFORMANCE.md §3 A/B-1.
+      const bool seek_skip =
+          FLAGS_use_seek_skip < 0 ? Backend::USE_PHYSICAL_SEEK_SKIP
+                                  : (FLAGS_use_seek_skip != 0);
+      std::vector<Integer> surviving_orderkeys;
+      if (seek_skip) {
+         surviving_orderkeys.reserve(ord_map.size());
+         for (const auto& [ok, _] : ord_map) surviving_orderkeys.push_back(ok);
+         std::sort(surviving_orderkeys.begin(), surviving_orderkeys.end());
+      }
+
       // Probe lineitem against orders map; accumulate revenue per orderkey.
       {
          LineitemRevenueAccumulator acc;
@@ -897,7 +983,21 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
             if (stats) stats->lineitems_scanned++;
             const lineitem_t& l = kv->second;
             auto it = ord_map.find(kv->first.l_orderkey);
-            if (it == ord_map.end()) continue;
+            if (it == ord_map.end()) {
+               if (seek_skip) {
+                  // Lineitem's orderkey missed ord_map. Find the next
+                  // surviving orderkey > current and seek the lineitem
+                  // scanner there. Orderkeys-sorted-vector binary search.
+                  auto sit = std::upper_bound(
+                      surviving_orderkeys.begin(),
+                      surviving_orderkeys.end(),
+                      kv->first.l_orderkey);
+                  if (sit == surviving_orderkeys.end()) break;  // no more
+                  if (stats) stats->hj_groups_skipped++;
+                  lin_scan->seek(lineitem_t::Key{*sit, Integer(0)});
+               }
+               continue;
+            }
             if (!acc.consume(l, params)) continue;  // shipdate filter fused in consume
             if (stats) {
                stats->lineitems_passing_filter++;
