@@ -33,6 +33,7 @@
 
 DECLARE_string(coli_walker_variant);
 DECLARE_int32(use_seek_skip);
+DECLARE_bool(acoli_projected);
 
 namespace tpch::q3i
 {
@@ -1087,24 +1088,23 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
    //
    // We drive the scan via two typed scans (one per record type) interleaved
    // by custkey, mirroring how coli_group_walk works but for 2 types only.
-   // Simpler approach: scan all records in order via the merged scanner and
-   // dispatch on record type.
-   auto scanner = coli.acoli_adapter().template getScanner<
-       customer_acoli_t::Key, customer_acoli_t>();
+   // G5: branch on FLAGS_acoli_projected. Visitor logic is identical
+   // structurally — only the record types differ — so we factor it
+   // into a templated lambda parameterised by (CustT, OrdT).
+   auto run_walk = [&](auto& mi, auto cust_tag, auto ord_tag) {
+      using CustT = decltype(cust_tag);
+      using OrdT  = decltype(ord_tag);
+      auto scanner = mi.template getScanner<typename CustT::Key, CustT>();
 
-   // Per-customer state.
-   bool    cust_passes     = false;  // mktsegment + threshold gate
-   Numeric cur_open_due    = 0;
+      bool    cust_passes  = false;
+      Numeric cur_open_due = 0;
 
-   {
-      StageTimer t(stats ? &stats->stage_us_join : nullptr);
       while (auto kv = scanner->next()) {
          std::visit(
              [&](auto&& val) {
                 using V = std::decay_t<decltype(val)>;
-                if constexpr (std::is_same_v<V, customer_acoli_t>) {
+                if constexpr (std::is_same_v<V, CustT>) {
                    if (stats) stats->acoli_customers_scanned++;
-                   // mktsegment filter
                    auto sm  = std::string_view(val.c_mktsegment.data,
                                                val.c_mktsegment.length);
                    auto psm = std::string_view(params.mktsegment.data,
@@ -1112,15 +1112,12 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
                    cur_open_due = val.pre_open_due;
                    cust_passes  = (sm == psm) && (cur_open_due > params.threshold);
                    if (cust_passes && stats) stats->acoli_customers_passing_filter++;
-                } else if constexpr (std::is_same_v<V, orders_acoli_t>) {
+                } else if constexpr (std::is_same_v<V, OrdT>) {
                    if (!cust_passes) return;
                    if (stats) stats->acoli_orders_scanned++;
-                   // orderdate filter
                    if (val.o_orderdate >= params.orderdate) return;
-                   // revenue guard: skip orders with no qualifying lineitems
                    if (val.pre_revenue <= Numeric(0)) return;
-                   // Extract orderkey from the variant key.
-                   const auto* ok = std::get_if<orders_acoli_t::Key>(&kv->first);
+                   const auto* ok = std::get_if<typename OrdT::Key>(&kv->first);
                    if (!ok) return;
                    if (stats) stats->acoli_orders_emitted++;
                    out.push_back({ok->orderkey, val.pre_revenue,
@@ -1128,6 +1125,17 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
                 }
              },
              kv->second);
+      }
+   };
+
+   {
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
+      if (FLAGS_acoli_projected) {
+         run_walk(coli.acoli_proj_adapter(),
+                  customer_acoli_q3i_t{}, orders_acoli_q3i_t{});
+      } else {
+         run_walk(coli.acoli_adapter(),
+                  customer_acoli_t{}, orders_acoli_t{});
       }
    }
 

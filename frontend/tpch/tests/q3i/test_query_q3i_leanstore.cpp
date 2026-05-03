@@ -104,6 +104,8 @@ int main(int argc, char** argv)
 
    // S5: aCOLI 2-type MI.
    B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli;
+   // G4/G5: Q3I-projected aCOLI variant.
+   B::MergedAdapter<tpch::customer_acoli_q3i_t, tpch::orders_acoli_q3i_t> acoli_proj;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -125,6 +127,8 @@ int main(int argc, char** argv)
       split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "q3i_split_invoice");
       acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t>(
                           db, "q3i_acoli");
+      acoli_proj     = B::MergedAdapter<tpch::customer_acoli_q3i_t, tpch::orders_acoli_q3i_t>(
+                          db, "q3i_acoli_proj");
    });
 
    LeanStoreLogger logger(db);
@@ -133,7 +137,7 @@ int main(int argc, char** argv)
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice, acoli);
+                                   split_orders, split_lineitem, split_invoice, acoli, acoli_proj);
 
    // Load base tables once (matches RocksDB harness rationale: TPC-H RNG
    // advances each tpch.load() call, so re-loading produces different data;

@@ -14,6 +14,8 @@
 // Defined in tpch_flags.hpp; declared here to avoid an include-order
 // dependency on the per-executable TPCH_DEFINE_FLAGS pattern.
 DECLARE_int32(use_seek_skip);
+// G5: project-pushdown A/B-2 — populate / query the Q3I-projected aCOLI.
+DECLARE_bool(acoli_projected);
 
 namespace tpch
 {
@@ -33,7 +35,9 @@ CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePip
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
     typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
     typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli)
+    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli,
+    typename Backend::template MergedAdapter<customer_acoli_q3i_t,
+                                             orders_acoli_q3i_t>& acoli_proj)
     : customer(customer),
       orders(orders),
       lineitem(lineitem),
@@ -42,7 +46,8 @@ CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePip
       split_orders_ref(split_orders),
       split_lineitem_ref(split_lineitem),
       split_invoice_ref(split_invoice),
-      acoli_adapter_ref(acoli)
+      acoli_adapter_ref(acoli),
+      acoli_proj_adapter_ref(acoli_proj)
 {
 }
 
@@ -268,15 +273,23 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_aggregated()
       }
    }
 
-   // --- Pass C: scan customers + orders; insert into acoli_adapter_ref ---
+   // --- Pass C: scan customers + orders; insert into either the full-payload
+   // acoli MI or the Q3I-projected variant, gated by FLAGS_acoli_projected.
+   const bool projected = FLAGS_acoli_projected;
    {
       auto cust_scan = customer.getScanner();
       while (auto kv = cust_scan->next()) {
          Integer custkey = kv->first.c_custkey;
          Numeric open_due = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
-         customer_acoli_t::Key ak{custkey};
-         acoli_adapter_ref.template insert<customer_acoli_t>(
-             ak, customer_acoli_t::from_customer(kv->second, open_due));
+         if (projected) {
+            customer_acoli_q3i_t::Key ak{custkey};
+            acoli_proj_adapter_ref.template insert<customer_acoli_q3i_t>(
+                ak, customer_acoli_q3i_t::from_customer(kv->second, open_due));
+         } else {
+            customer_acoli_t::Key ak{custkey};
+            acoli_adapter_ref.template insert<customer_acoli_t>(
+                ak, customer_acoli_t::from_customer(kv->second, open_due));
+         }
       }
    }
    {
@@ -287,9 +300,15 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_aggregated()
          Integer custkey = ov.o_custkey;
          OKKey pk{custkey, ok.o_orderkey};
          Numeric revenue = revenue_map.count(pk) ? revenue_map.at(pk) : Numeric(0);
-         orders_acoli_t::Key ak = orders_acoli_t::key_from_order(custkey, ok);
-         acoli_adapter_ref.template insert<orders_acoli_t>(
-             ak, orders_acoli_t::from_order(ov, custkey, revenue));
+         if (projected) {
+            orders_acoli_q3i_t::Key ak = orders_acoli_q3i_t::key_from_order(custkey, ok);
+            acoli_proj_adapter_ref.template insert<orders_acoli_q3i_t>(
+                ak, orders_acoli_q3i_t::from_order(ov, revenue));
+         } else {
+            orders_acoli_t::Key ak = orders_acoli_t::key_from_order(custkey, ok);
+            acoli_adapter_ref.template insert<orders_acoli_t>(
+                ak, orders_acoli_t::from_order(ov, custkey, revenue));
+         }
       }
    }
 }
@@ -301,6 +320,12 @@ template <typename Backend>
 double CustomerOrdersLineitemInvoicePipeline<Backend>::get_aggregated_size() const
 {
    return acoli_adapter_ref.size();
+}
+
+template <typename Backend>
+double CustomerOrdersLineitemInvoicePipeline<Backend>::get_aggregated_proj_size() const
+{
+   return acoli_proj_adapter_ref.size();
 }
 
 }  // namespace tpch

@@ -47,6 +47,8 @@ cfstats     ?= false
 coli_walker_variant ?= fused_emit
 # A3-Linux re-A/B: -1=use Backend trait (default), 0=force off, 1=force on.
 use_seek_skip ?= -1
+# G5 A/B-2: aCOLI Q3I-projected variant. false=full-payload (default), true=projected.
+acoli_projected ?= false
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid

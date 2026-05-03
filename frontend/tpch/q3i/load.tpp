@@ -17,6 +17,7 @@
 DECLARE_int32(storage_structure);
 DECLARE_int32(load_only_structure);
 DECLARE_string(coli_walker_variant);
+DECLARE_bool(acoli_projected);
 
 namespace tpch::q3i
 {
@@ -128,14 +129,16 @@ Q3IWorkload<Backend>::Q3IWorkload(
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
     typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
     typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli)
+    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli,
+    typename Backend::template MergedAdapter<customer_acoli_q3i_t,
+                                             orders_acoli_q3i_t>& acoli_proj)
     : tpch(tpch),
       customer(customer),
       orders(orders),
       lineitem(lineitem),
       invoice(invoice),
       coli(customer, orders, lineitem, invoice, merged_coli,
-           split_orders, split_lineitem, split_invoice, acoli),
+           split_orders, split_lineitem, split_invoice, acoli, acoli_proj),
       pipeline_view(pipeline_view),
       params(Params::defaults())
 {
@@ -182,7 +185,9 @@ double Q3IWorkload<Backend>::get_size() const
       case 2: return base + pipeline_view.size();
       case 3: return base + coli.get_merged_size();
       case 4: return base;
-      case 5: return base + coli.get_aggregated_size();
+      case 5: return base + (FLAGS_acoli_projected
+                              ? coli.get_aggregated_proj_size()
+                              : coli.get_aggregated_size());
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }

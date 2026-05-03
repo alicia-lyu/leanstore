@@ -142,6 +142,66 @@ fair against S3 — each path uses the best available physical-skip
 strategy for its operator graph. The merged-index pitch is no
 longer artificially inflated by S3's exclusive access to skip-skip.
 
+**Why S4's lift dominates S1's** (e.g. LeanStore SF=40: +2580% vs +27%).
+The S4 HJ chain folds *every* upstream filter (mktsegment, threshold,
+orderdate) into a single `ord_map`. A lineitem probe-miss therefore
+indicates the parent customer **or** parent order failed at least one
+filter, and the seek skips the entire customer's lineitem run when
+the most-selective upstream gate (mktsegment, ~80% drop) excluded it.
+S1's BMJ chain gates customers at BMJ#1 already, so by the time the
+analogous skip-site is reached the easy customer-level wins are
+captured upstream — only the residual `agg_inv` stream benefits.
+Concretely at SF=15: S4 lineitems_scanned/q drops 90108 → 12153
+(87% reduction, ≈ mktsegment selectivity × order-date selectivity);
+S1 only saves on the much smaller invoice stream.
+
+### A/B-2 — DONE: aCOLI Q3I-projected variant (G4+G5)
+
+**WHAT**: the S5 aCOLI MI carries full base-record payloads
+(`customer_acoli_t` ~280 B/row, `orders_acoli_t` ~140 B/row) even
+though Q3I only reads `c_mktsegment + pre_open_due` from customer
+and `o_orderkey + o_orderdate + o_shippriority + pre_revenue` from
+orders. G4 introduced `customer_acoli_q3i_t` (id=51) and
+`orders_acoli_q3i_t` (id=52) carrying only those Q3I-projected
+fields. G5 wires a `--acoli_projected` flag that selects the
+projected MI at load time and the projected scan path at query
+time.
+
+**Parity (SF=1)**: with `--acoli_projected=true` all five paths
+produce digest `0x3ee193001f24dd15`; with `=false` all five produce
+`0x69bf112dce52fc8a`. Cross-structure XOR check passes both ways.
+
+Iso TX/s, dram=0.1, fused_emit, post-A3 defaults:
+
+| Cell                  | full   | projected | TX/s lift | size full → proj |
+|-----------------------|-------:|----------:|----------:|-----------------:|
+| **S5 LeanStore SF=15**| 218.09 | 23129.68  | **106×**  | 52.66 → 48.91 MiB (−7%) |
+| **S5 LeanStore SF=40**| 72.15  | 20261.76  | **281×**  | 140.86 → 130.52 MiB (−7%) |
+| **S5 RocksDB SF=15**  | 21.93  | 92506.07  | **4218×** | 17.88 → 16.33 MiB (−9%) |
+| **S5 RocksDB SF=40**  | 8.25   | 88676.38  | **10747×**| 47.56 → 43.58 MiB (−8%) |
+
+**Decision**: defer flipping the default. Two reasons. First, the TX/s
+magnitudes (4000–10000× on RocksDB) are larger than the size shrink (~8%)
+plausibly justifies, suggesting the projected path is doing meaningfully
+less work than the full-payload path beyond a flat scan-cost reduction —
+this needs a `[card]` and `[scan]` instrumented re-run to attribute the
+gap (record-count drop? per-record dispatch difference? variant
+construction cost?). Second, the user's guidance ("the requirement may
+change in another query") flags projected aCOLI as showcase-specific:
+Q5I/Q10I would each need their own projection schemas, and a permanent
+default would couple the aCOLI MI to one query's column set.
+
+**Followup**: instrument the SF=15 LeanStore cell with `[scan]` /
+`[card]` printout to verify projected and full traverse the same
+record counts; if so, the lift is genuine cache-line savings on
+narrower payloads, and a paper-figure section comparing the
+pre-aggregation spectrum (raw COLI / aCOLI-full / aCOLI-projected
+/ pipeline-view) becomes worthwhile.
+
+**Production wiring**: deferred until the followup above resolves
+the magnitude question. The flag is plumbed through `q3i_lsm` /
+`q3i_btree` and Makefile (`make q3i_*_iso_5 acoli_projected=true`).
+
 ### A6 — Memory-pressure sweep with all post-A3 defaults
 
 Now that A3 is confirmed on both backends, the open question is
