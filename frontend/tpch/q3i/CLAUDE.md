@@ -297,10 +297,11 @@ mkdir -p test_data_q3i test_csv_q3i
 ## Performance Notes
 
 S3 has been the slowest of the four real paths in production (SF=40 /
-dram=0.1 GiB on RocksDB) — the opposite of the paper's pitch. The full
-investigation (hypotheses, A/B findings, reverted optimisations,
-SSTWrite anomaly, LeanStore comparison run) lives in
-[`PERFORMANCE.md`](PERFORMANCE.md).
+dram=0.1 GiB on RocksDB) — the opposite of the paper's pitch.
+Forward-looking worklist (next-step A/B tests, hypothesis status
+table) lives in [`PERFORMANCE.md`](PERFORMANCE.md). Historical
+hypothesis evidence trails and reverted optimisations are preserved
+in [`archive/PERFORMANCE-2026-05-03.md`](archive/PERFORMANCE-2026-05-03.md).
 
 ---
 
