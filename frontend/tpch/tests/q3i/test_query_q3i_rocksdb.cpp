@@ -143,6 +143,114 @@ int main(int argc, char** argv)
    q3i.coli_pipeline().populate_merged();   // S3
    // S4 needs no secondary.
 
+   // ------------------------------------------------------------------
+   // Per-secondary cardinality + size sanity check.
+   //
+   // Existence rationale: at SF=15, dram=0.1 the production Makefile flow
+   // produced fantasy throughput (S2/S3 ≈ 250k TX/s, 0.00 ms/query) because
+   // Q3IWorkload::load() only populates the secondary selected by
+   // FLAGS_storage_structure at load time; subsequent --recover runs with a
+   // different --storage_structure scanned an EMPTY adapter. The harness
+   // itself doesn't hit this bug (we explicitly populate all three above),
+   // but adding row-count + size [OK]/[FAIL] checks here means a future
+   // regression that mis-populates a secondary fails this test instead of
+   // silently producing a 0-row "win".
+
+   auto count_typed = [](auto& adapter, auto record_tag) -> long {
+      using R = decltype(record_tag);
+      long n = 0;
+      typename R::Key start{};
+      adapter.scan(start, [&](const typename R::Key&, const R&) {
+         ++n;
+         return true;
+      }, []{});
+      return n;
+   };
+
+   long n_view     = count_typed(pipeline_view,  tpch::q3i::q3i_pipeline_view_t{});
+   long n_split_o  = count_typed(split_orders,   tpch::orders_coli_t{});
+   long n_split_l  = count_typed(split_lineitem, tpch::lineitem_coli_t{});
+   long n_split_i  = count_typed(split_invoice,  tpch::invoice_coli_t{});
+
+   // Walk merged_coli once via a counting Visitor.
+   struct CountVisitor {
+      long customers = 0, invoices = 0, orders = 0, lineitems = 0, groups = 0;
+      bool on_customer(Integer, const tpch::customer_coli_t&) { ++customers; return true; }
+      void on_invoice (const tpch::invoice_coli_t::Key&,  const tpch::invoice_coli_t&)  { ++invoices; }
+      void on_order   (const tpch::orders_coli_t::Key&,   const tpch::orders_coli_t&)   { ++orders; }
+      void on_lineitem(const tpch::lineitem_coli_t::Key&, const tpch::lineitem_coli_t&) { ++lineitems; }
+      void on_group_end(Integer) { ++groups; }
+   } cv;
+   tpch::coli_group_walk<B>(merged_coli, cv);
+   long n_merged_total = cv.customers + cv.invoices + cv.orders + cv.lineitems;
+
+   // Expected base-table cardinalities. Don't use tpch.last_*_id —
+   // those are SPARSE max keys (e.g. last_order_id at SF=1 is 5988
+   // while the loader actually wrote only 1500 orders, because
+   // orderkey_from_index strides by ~4). Count the base adapters
+   // directly so the ground truth matches what populate_split copies.
+   long n_customers     = count_typed(customer, customerh_t{});
+   long n_orders        = count_typed(orders,   orders_t{});
+   long n_lineitems_ref = count_typed(lineitem, lineitem_t{});
+   long n_invoices_ref  = count_typed(invoice,  invoice_t{});
+
+   auto check = [](const char* label, bool ok, long got, const std::string& expected) {
+      std::cout << (ok ? "[OK]   " : "[FAIL] ") << std::left << std::setw(22) << label
+                << " rows=" << std::setw(8) << got
+                << " (expected " << expected << ")\n";
+   };
+
+   std::cout << "\n=== Secondary cardinality / size ===\n";
+   std::cout << "[base] customers=" << n_customers
+             << " orders=" << n_orders
+             << " lineitems=" << n_lineitems_ref
+             << " invoices=" << n_invoices_ref << "\n";
+
+   bool stats_ok = true;
+
+   // Pipeline view: one row per (custkey, orderkey) after l_shipdate filter
+   // and per-order revenue collapse. Bound: (0, |orders|]. Hard-fail on 0.
+   {
+      bool ok = (n_view > 0) && (n_view <= n_orders);
+      stats_ok &= ok;
+      check("pipeline_view", ok, n_view,
+            "(0, " + std::to_string(n_orders) + "]");
+   }
+   // Split adapters: 1:1 retag of base tables.
+   {
+      bool ok = (n_split_o == n_orders);
+      stats_ok &= ok;
+      check("split_orders", ok, n_split_o, "= " + std::to_string(n_orders));
+   }
+   {
+      bool ok = (n_split_l > 0);  // no exact base count; trust > 0
+      stats_ok &= ok;
+      check("split_lineitem", ok, n_split_l, "> 0");
+   }
+   {
+      bool ok = (n_split_i > 0);
+      stats_ok &= ok;
+      check("split_invoice", ok, n_split_i, "> 0");
+   }
+   // Merged COLI: sum of all four record types.
+   {
+      long expected = n_customers + n_orders + n_lineitems_ref + n_invoices_ref;
+      bool ok = (n_merged_total == expected);
+      stats_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ") << std::left << std::setw(22) << "merged_coli"
+                << " rows=" << std::setw(8) << n_merged_total
+                << " (c=" << cv.customers << " i=" << cv.invoices
+                << " o=" << cv.orders << " l=" << cv.lineitems
+                << " groups=" << cv.groups
+                << ", expected " << expected << ")\n";
+   }
+
+   std::cout << "[size] pipeline_view=" << std::fixed << std::setprecision(3) << pipeline_view.size() << " MiB"
+             << "  split_orders=" << split_orders.size() << " MiB"
+             << "  split_lineitem=" << split_lineitem.size() << " MiB"
+             << "  split_invoice=" << split_invoice.size() << " MiB"
+             << "  merged_coli=" << merged_coli.size() << " MiB\n";
+
    // Run all four paths.
    std::cout << "=== Running queries ===\n";
    std::vector<tpch::q3i::q3i_agg_row_t> r_base, r_view, r_merged, r_hash;
@@ -202,6 +310,54 @@ int main(int argc, char** argv)
    print_digest("S3 (merged)", r_merged.size(), d_merged);
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
+   // Per-stage cardinality from Q3IStats.
+   //
+   // Existence rationale: even if the secondary-cardinality block above
+   // passes, an empty-secondary regression could still slip past if a
+   // future schema lets `populate_*` write a non-empty but mis-shaped
+   // adapter. join_callbacks > 0 on every path is the second line of
+   // defence — zero callbacks means the query never saw a row.
+   std::cout << "\n=== Per-path cardinality (Q3IStats) ===\n";
+   std::cout << "[card] " << std::left << std::setw(11) << "path"
+             << std::right << std::setw(10) << "cust"
+             << std::setw(10) << "orders"
+             << std::setw(11) << "lineitems"
+             << std::setw(10) << "invoices"
+             << std::setw(9)  << "joins"
+             << std::setw(9)  << "agg"
+             << "\n";
+   auto card_line = [](const char* name, const tpch::q3i::Q3IStats& s) {
+      std::cout << "[card] " << std::left << std::setw(11) << name
+                << std::right << std::setw(10) << s.customers_scanned
+                << std::setw(10) << s.orders_scanned
+                << std::setw(11) << s.lineitems_scanned
+                << std::setw(10) << s.invoices_scanned
+                << std::setw(9)  << s.join_callbacks
+                << std::setw(9)  << s.aggregator_rows_out
+                << "\n";
+   };
+   card_line("S1 base",   st_base);
+   card_line("S2 view",   st_view);
+   card_line("S3 merged", st_merged);
+   card_line("S4 hash",   st_hash);
+
+   bool card_ok = true;
+   auto check_joins = [&](const char* tag, long joins) {
+      bool ok = joins > 0;
+      card_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ") << tag
+                << " join_callbacks=" << joins << " (expected > 0)\n";
+   };
+   check_joins("S1 base  ", st_base.join_callbacks);
+   check_joins("S2 view  ", st_view.join_callbacks);
+   // S3 merged: query_by_merged does not currently increment Q3IStats
+   // counters (the COLIGroupWalkVisitor doesn't thread stats through).
+   // Empty-secondary regressions for S3 are caught by the merged_coli
+   // row count check above. Wiring stats into the merged path is a TODO.
+   std::cout << "[--]   S3 merged join_callbacks=" << st_merged.join_callbacks
+             << " (stats not wired through Visitor; see merged_coli rows)\n";
+   check_joins("S4 hash  ", st_hash.join_callbacks);
+
    // Print top-10 of S3 (merged oracle) sorted by revenue DESC for inspection.
    auto r_merged_top = r_merged;
    std::sort(r_merged_top.begin(), r_merged_top.end(),
@@ -244,6 +400,6 @@ int main(int argc, char** argv)
                 << " row_count=" << n << " (expected 10)\n";
    }
 
-   bool all_ok = ok_b && ok_v && ok_m && ok_h && shape_ok;
+   bool all_ok = ok_b && ok_v && ok_m && ok_h && shape_ok && stats_ok && card_ok;
    return all_ok ? 0 : 1;
 }
