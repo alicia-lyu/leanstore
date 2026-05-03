@@ -1,253 +1,383 @@
-# Q3: Shipping Priority Query
+# Q3: Shipping Priority
+
+## Sibling Docs
+
+Every non-`CLAUDE.md` Markdown in `q3/` and `q3/plans/` (the latter
+has no `CLAUDE.md`; indexed here as the nearest ancestor). Read each
+on the trigger described:
+
+- [`plans/family_logical.dot`](plans/family_logical.dot) — **shared
+  logical plan for S1, S2, S3** (to be refreshed in Phase 0.5; the
+  current file targets the stale OL pipeline).
+- [`plans/family_s3_physical.dot`](plans/family_s3_physical.dot) —
+  **S3 physical specialisation**, COL pipeline (Phase 0.5).
+- [`plans/baseline_s4.dot`](plans/baseline_s4.dot) — **S4 baseline**
+  (Phase 0.5).
+- [`plans/phase_2{a,b,c}.md`](plans/) — historical Q3 phase plans;
+  marked stale because they predate the COL-pipeline pivot.
+
+Read [`../q3i/CLAUDE.md`](../q3i/CLAUDE.md) for the canonical
+template — Q3 mirrors Q3I structure minus the invoice sibling.
 
 ## TPC-H Definition (Section 2.4.3)
 
-The Shipping Priority Query retrieves the 10 unshipped orders with the highest revenue, for orders placed by customers in a given market segment before a given date. Revenue is `SUM(l_extendedprice * (1 - l_discount))`.
-
-## SQL
-
 ```sql
-SELECT l_orderkey,
-       SUM(l_extendedprice * (1 - l_discount)) AS revenue,
-       o_orderdate,
-       o_shippriority
-FROM customer, orders, lineitem
-WHERE c_mktsegment = '[SEGMENT]'
-  AND c_custkey = o_custkey
-  AND l_orderkey = o_orderkey
-  AND o_orderdate < DATE '[DATE]'
-  AND l_shipdate > DATE '[DATE]'
+SELECT  l_orderkey,
+        SUM(l_extendedprice * (1 - l_discount)) AS revenue,
+        o_orderdate,
+        o_shippriority
+FROM    customer, orders, lineitem
+WHERE   c_mktsegment = ':1'
+  AND   c_custkey    = o_custkey
+  AND   l_orderkey   = o_orderkey
+  AND   o_orderdate  < ':d'
+  AND   l_shipdate   > ':d'
 GROUP BY l_orderkey, o_orderdate, o_shippriority
 ORDER BY revenue DESC, o_orderdate
 LIMIT 10;
 ```
 
-## Substitution Parameters
+This is the canonical TPC-H Q3, **unextended**. Q3I extends Q3 with
+an invoice sibling sub-aggregate (`cust_open_due`); Q3 here is the
+no-extension baseline of the COL family.
+
+### Substitution Parameters
 
 | Parameter | Domain | Description |
 |-----------|--------|-------------|
-| SEGMENT | AUTOMOBILE, BUILDING, FURNITURE, HOUSEHOLD, MACHINERY | Market segment filter on CUSTOMER |
-| DATE | Day in [1995-03-01, 1995-03-31] | Cutoff for both o_orderdate and l_shipdate |
+| `:1` | AUTOMOBILE, BUILDING, FURNITURE, HOUSEHOLD, MACHINERY | Customer market segment filter |
+| `:d` | Day in [1995-03-01, 1995-03-31] | Order-date upper bound / ship-date lower bound (same date drives both filters) |
 
 **Validation values**: SEGMENT = BUILDING, DATE = 1995-03-15.
 
-**Approved query variants**: None in Appendix B.
+**Approved query variants**: none in Appendix B.
 
-**Selectivity notes**: Each segment covers ~20% of customers. The DATE parameter controls two filters simultaneously: `o_orderdate < DATE` (orders placed before) and `l_shipdate > DATE` (items not yet shipped). For the validation date (1995-03-15), roughly half of orders and lineitems pass their respective filter.
-
-## Tables and Join Graph
-
-```
-CUSTOMER --[c_custkey = o_custkey]--> ORDERS --[o_orderkey = l_orderkey]--> LINEITEM
-```
-
-3 tables, 2 joins. The ORDERS-LINEITEM join is the heavy one (LINEITEM is the largest TPC-H table).
-
-## Merged Index
-
-### Structure 3: MI(ORDERS, LINEITEM) by orderkey
-
-- ORDERS key: `(o_orderkey)` — 1 record per order
-- LINEITEM key: `(l_orderkey, l_linenumber)` — N records per order
-- Natural prefix hierarchy: LINEITEM extends the ORDERS key
-
-The MI covers the ORDERS-LINEITEM join. CUSTOMER is joined at query time via merge join on `o_custkey = c_custkey`.
-
-### Alternative: MI(CUSTOMER, ORDERS, LINEITEM) by custkey
-
-An alternative merged index interleaves all three tables by `custkey`:
-
-- CUSTOMER key: `(c_custkey)` — 1 record per customer
-- ORDERS key: `(o_custkey, o_orderkey)` — extend ORDERS with custkey (functionally dependent on orderkey)
-- LINEITEM key: `(l_custkey, l_orderkey, l_linenumber)` — extend LINEITEM with custkey (same FD)
-
-Since `o_custkey` is functionally determined by `o_orderkey`, each ORDERS and LINEITEM record can be augmented with the custkey at load time. This creates a 3-level prefix hierarchy:
-
-```
-custkey -> CUSTOMER record
-custkey, orderkey -> ORDERS record
-custkey, orderkey, linenumber -> LINEITEM record
-```
-
-A single PremergedJoin scan over this MI produces the full 3-way join result without a separate CUSTOMER merge join. The trade-off is a larger MI (3 tables vs. 2) and wider keys (custkey prepended to every ORDERS and LINEITEM record).
-
-This variant is documented for consideration but has no DOT plan files. If implemented, it would replace both the PremergedJoin and the CUSTOMER merge join in structure 3's plan.
-
-## Column Index Mappings
-
-### Standalone Table Scans (for structure 1 filters)
-
-**LINEITEM** (16 cols): l_orderkey=$0, l_linenumber=$1, l_partkey=$2, l_suppkey=$3, l_quantity=$4, l_extendedprice=$5, l_discount=$6, l_tax=$7, l_returnflag=$8, l_linestatus=$9, l_shipdate=$10, l_commitdate=$11, l_receiptdate=$12, l_shipinstruct=$13, l_shipmode=$14, l_comment=$15
-
-**ORDERS** (9 cols): o_orderkey=$0, o_custkey=$1, o_orderstatus=$2, o_totalprice=$3, o_orderdate=$4, o_orderpriority=$5, o_clerk=$6, o_shippriority=$7, o_comment=$8
-
-**CUSTOMER** (8 cols): c_custkey=$0, c_name=$1, c_address=$2, c_nationkey=$3, c_phone=$4, c_acctbal=$5, c_mktsegment=$6, c_comment=$7
-
-### Concatenated ORDERS||LINEITEM (for structure 3 PremergedJoin output, 25 cols)
-
-ORDERS $0-$8, then LINEITEM $9-$24. Key columns:
-
-- o_orderkey=$0, o_custkey=$1, o_orderdate=$4, o_shippriority=$7
-- l_extendedprice=$14, l_discount=$15, l_shipdate=$19
-
-### Concatenated CUSTOMER||ORDERS||LINEITEM (for structure 2_4 post-hash-join, 33 cols)
-
-CUSTOMER $0-$7, ORDERS $8-$16, LINEITEM $17-$32. Key columns:
-
-- c_mktsegment=$6, o_orderkey=$8, o_orderdate=$12, o_shippriority=$15
-- l_orderkey=$17, l_extendedprice=$22, l_discount=$23, l_shipdate=$27
-
-## Plan Descriptions
-
-> **Implementation note**: While the logical plans below show MergeJoin for the
-> CUSTOMER join, the implementation uses **HashJoin** for all outside-pipeline
-> joins. See `OPERATORS.md §7` for justification. The plans are preserved as-is
-> to match Calcite's output; the physical deviation is documented there.
-
-### Structure 1: Traditional Indexes + Merge Join
-
-Filters pushed down to immediately after table scans (matching the paper's plan shape):
-
-```
-LINEITEM scan -> Filter(l_shipdate > DATE) -> Project(l_orderkey, revenue)
-  -> Sort(l_orderkey) -> SortedAggregate(group by l_orderkey, SUM revenue)
-  -> MergeJoin(l_orderkey = o_orderkey) with:
-ORDERS scan -> Filter(o_orderdate < DATE) -> Sort(o_orderkey)
-  -> Sort(o_custkey) -> MergeJoin(o_custkey = c_custkey) with:
-CUSTOMER scan -> Filter(c_mktsegment = SEGMENT) -> Sort(c_custkey)
-  -> Project(l_orderkey, revenue, o_orderdate, o_shippriority)
-  -> Sort(revenue DESC, o_orderdate ASC) -> Limit 10
-```
-
-The LINEITEM aggregate before the ORDERS join is valid because `o_orderdate` and `o_shippriority` are functionally dependent on `l_orderkey` (each order has one orderdate and one shippriority). Aggregating first reduces the number of rows entering the merge join.
-
-### Structure 2 & 4: Hash Join (Default Calcite Plan)
-
-All three tables hash-joined, then filtered, projected, aggregated:
-
-```
-CUSTOMER HashJoin ORDERS on c_custkey=o_custkey
-  -> HashJoin LINEITEM on o_orderkey=l_orderkey
-  -> Filter(c_mktsegment=SEGMENT AND o_orderdate < DATE AND l_shipdate > DATE)
-  -> Project(l_orderkey, revenue, o_orderdate, o_shippriority)
-  -> Aggregate(group by l_orderkey, o_orderdate, o_shippriority; SUM revenue)
-  -> Sort(revenue DESC, o_orderdate ASC) -> Limit 10
-```
-
-Structure 2 materializes the full output; structure 4 executes at query time with clustered indexes.
-
-### Structure 3: Merged Index + PremergedJoin
-
-PremergedJoin replaces ORDERS+LINEITEM scans and their merge join. Filters applied after PremergedJoin using concatenated ORDERS||LINEITEM indices:
-
-```
-PremergedJoin(MI_ORDERS_LINEITEM)
-  -> Filter(o_orderdate < DATE [$4] AND l_shipdate > DATE [$19])
-  -> Project(l_orderkey=$0, revenue=*($14,-(1,$15)), o_custkey=$1, o_orderdate=$4, o_shippriority=$7)
-  -> SortedAggregate(group by l_orderkey, o_custkey, o_orderdate, o_shippriority; SUM revenue)
-  -> Sort(o_custkey) -> MergeJoin(o_custkey = c_custkey) with:
-CUSTOMER scan -> Filter(c_mktsegment = SEGMENT) -> Sort(c_custkey)
-  -> Project(l_orderkey, revenue, o_orderdate, o_shippriority)
-  -> Sort(revenue DESC, o_orderdate ASC) -> Limit 10
-```
-
-The aggregate preserves o_custkey, o_orderdate, o_shippriority as group-by columns (functionally dependent on l_orderkey) so they survive for the CUSTOMER join and final projection.
-
-## Execution Style: Monolithic vs Cascade
-
-### Record Types Required
-
-The merge-join infrastructure (`frontend/shared/merge-join/`) requires typed join results. `JoinState`, `BinaryMergeJoin`, `HashJoin`, and `PremergedJoin` are all templated on a `JR` (join result) type that must provide `JR::Key(Rs::Key...)` and `JR(Rs...)` constructors. The generic `joined_t<TID, JK, fold_pks, Ts...>` template from `frontend/shared/view_templates.hpp` satisfies these requirements without per-query type definitions.
-
-**Required types for Q3:**
-
-- **Base tables**: `orders_t`, `lineitem_t`, `customerh_t` — in `tpch_tables.hpp`
-- **Join result**: `joined_t<TID, Integer, false, orders_t, lineitem_t>` — used by PremergedJoin (structure 3) and BinaryMergeJoin/HashJoin (structures 1, 4)
-- **MI records**: Same `orders_t`, `lineitem_t` in `MI_ORDERS_LINEITEM` (structure 3)
-- **Intermediate pipeline view** (structure 2): Stores the ORDERS ⋈ LINEITEM join output (same pipeline the MI interleaves) — can reuse `joined_t` or define a `q3_pipeline_view_t` with a key suited to the downstream access pattern
-
-### What "Monolithic" Means in Practice
-
-The join result type (`joined_t`) is unavoidable. But everything *after* the join — filter, project, aggregate, CUSTOMER HashJoin, ORDER BY, LIMIT — can be fused into a single function using local variables rather than additional typed iterators:
-
-```
-// Structure 3 sketch (PremergedJoin + CUSTOMER HashJoin)
-void q3_query_structure3(MergedAdapter& mi, Adapter<customerh_t>& cust) {
-    // Phase 1: PremergedJoin produces joined_t<orders_t, lineitem_t>
-    // Immediately filter, project, aggregate into a local map
-    std::map<Integer, std::tuple<Numeric, Integer, Integer, Integer>> agg;
-    //  key=l_orderkey, value=(revenue, o_custkey, o_orderdate, o_shippriority)
-    premerged_join(mi, [&](const joined_t& row) {
-        auto& o = std::get<orders_t>(row.payloads);
-        auto& l = std::get<lineitem_t>(row.payloads);
-        if (o.o_orderdate >= DATE) return;
-        if (l.l_shipdate <= DATE) return;
-        Numeric rev = l.l_extendedprice * (1 - l.l_discount);
-        auto& [sum, custkey, odate, shippr] = agg[row.key.jk];
-        sum += rev; custkey = o.o_custkey; odate = o.o_orderdate; shippr = o.o_shippriority;
-    });
-
-    // Phase 2: HashJoin with filtered CUSTOMER (build hash table, probe with aggregated rows)
-    // Phase 3: Sort by (revenue DESC, o_orderdate ASC), take top 10
-}
-```
-
-### Feasibility Assessment
-
-**Works well for Q3** because:
-
-1. The PremergedJoin callback fuses filter + project + aggregate — no separate operator stages needed
-2. The CUSTOMER HashJoin happens after aggregation (far fewer rows), so the hash table is small
-3. Only 3 tables, 2 joins — the function stays readable
-
-**Trade-offs**:
-
-- **Pro**: No per-query intermediate types beyond the generic `joined_t` instantiation
-- **Pro**: Column access is field-based (`o.o_orderdate`) rather than positional (`$4`)
-- **Con**: The CUSTOMER HashJoin uses shared `HashJoin` from `frontend/shared/merge-join/hash_join.hpp`
-- **Con**: Harder to reuse across queries — each query gets its own bespoke function
+**Selectivity notes**: each segment covers ~20% of customers. At the
+validation date roughly half of orders pass `o_orderdate < DATE` and
+roughly half of lineitems pass `l_shipdate > DATE`.
 
 ---
 
-## Implementation Status
+## Motivation
 
-**Shared infrastructure completed** (2026-04-29):
+Q3 is the **no-sibling-aggregate baseline of the COL family** — the
+3-table pure-hierarchical analogue to Q3I. Where Q3I demonstrates
+§3.1.2 (sibling sub-aggregate via invoice) layered on top of §3.1.3
+(hierarchical join), Q3 isolates the §3.1.3 hierarchical-prefix
+benefit so that Q3I's incremental gains can be attributed cleanly.
 
-- `views_ol.hpp`: fully implemented — `ol_sort_key_t`, `joined_ol_t`,
-  `SKBuilder<ol_sort_key_t>`. Unit-tested (12 tests in `test_views_ol.cpp`).
-- Shared merge-join infra: `PremergedJoin` decoupled from record types via
-  `jk_from_variants` and `SKBuilder::to_key<R>`.
-- `OrdersLineitemPipeline` trimmed (2026-04-29): only `populate_merged` and
-  `get_merged_size` remain. All operator drivers and view loading are per-query
-  and belong in `query.tpp` / `load.tpp`.
+- **Why a custkey-keyed COL MI?** With ORDERS extended by `custkey`
+  (FD on `orderkey`) and LINEITEM extended by `custkey` (same FD
+  chain), the natural prefix hierarchy becomes
+  `custkey ⊃ orderkey ⊃ linenumber`. A 3-table merged index keyed by
+  this hierarchy co-locates customer, orders, and lineitem records
+  per custkey. A single `PremergedJoin` pass produces the full
+  3-way join — **no separate CUSTOMER merge join**, unlike the
+  legacy Q3 plan that treated MI as `MI(ORDERS, LINEITEM)` and
+  joined CUSTOMER at query time.
 
-**Q3-specific method bodies** remain TODO stubs (`load.tpp` + `query.tpp`).
-`populate_merged` and `get_merged_size` are ready in the pipeline; per-query
-files own everything else.
+- **Comparison story**: at high SF the COL MI's per-custkey
+  locality should beat both the BMJ chain (S1) and the hash-join
+  baseline (S4), with the gap reflecting purely the hierarchical
+  scan benefit (no sibling-aggregate confound).
 
-`q3/per_structure_workload.hpp` is now **alias-only** (2026-04-30): all
-forwarder bodies live in `frontend/tpch/per_structure_workload.hpp`.
+---
 
-Stubbed methods:
+## Cardinality structure
 
-- `Q3Workload<Backend>::Q3Workload(...)` — wire gflags into `params`.
-- `Q3Workload<Backend>::load()` — dispatches to per-query `populate_view` /
-  `ol.populate_merged`. **TODO debt**: `load.tpp` references `ol.populate_view`
-  and `ol.get_view_size`, which were removed from the pipeline; fix before
-  implementing load bodies.
-- `Q3Workload<Backend>::get_size() const` — dispatches to per-query view size /
-  `ol.get_merged_size`.
-- `Q3Workload<Backend>::query_by_base(out)` — see §Plan Descriptions, Structure 1;
-  §Execution Style: Monolithic vs Cascade.
-- `Q3Workload<Backend>::query_by_view(out)` — see §Plan Descriptions, Structure 2 & 4.
-- `Q3Workload<Backend>::query_by_merged(out)` — see §Plan Descriptions, Structure 3;
-  §Execution Style: Monolithic vs Cascade (monolithic post-join sketch).
-- `Q3Workload<Backend>::query_by_hash(out)` — see §Plan Descriptions, Structure 2 & 4
-  (hash join variant).
-- `BaseQ3<Backend>::query / get_size` and the View/Merged/Hash siblings —
-  forwarders to the right `Q3Workload` method.
-- `q3_predicate_orders`, `q3_predicate_lineitem`, `q3_predicate_joined` —
-  see §Plan Descriptions for filter conditions.
+Unlike Q3I, **Q3 is a genuine 3-way M:N join** with no shortcut from
+sibling decomposition:
 
-Cross-cutting per-query refactor (operator drivers, view loading, build wiring):
-see `frontend/tpch/CLAUDE.md`.
+- CUSTOMER × ORDERS: 1:N on `c_custkey = o_custkey`
+  (~10 orders per customer at SF=1).
+- ORDERS × LINEITEM: 1:N on `o_orderkey = l_orderkey`
+  (~4 lineitems per order).
+- Total join cardinality: ~1.5M customers × 10 × 4 ≈ 60M rows
+  at SF=1, before filters.
+
+The MI benefit is hierarchical-prefix scan locality, not branch
+elimination. Per-customer, per-order, and per-lineitem filters all
+fire inside the walker; nothing is reduced to a scalar before the
+join (contrast Q3I's `cust_open_due`).
+
+This is the §3.1.3 hierarchical-M:N showcase that Q3I explicitly
+disclaims; the joinN counters that are blank for Q3I S3 should be
+populated and meaningful for Q3 S3.
+
+---
+
+## Storage Structure Options
+
+| # | Strategy | Secondary structure | Join strategy |
+|---|----------|--------------------|-|
+| 1 | Traditional indexes + binary merge join | Custkey-sorted secondary indexes on ORDERS (`(custkey, orderkey)`) and LINEITEM (`(custkey, orderkey, linenumber)`) | BMJ chain: customer ⋈ orders\_sec ⋈ lineitem\_sec on the custkey-extended prefix |
+| 2 | Intermediate pipeline view | `q3_pipeline_view_t` (post-filter, post-aggregate; one row per (orderkey, orderdate, shippriority)) | View scan + mktsegment filter + sort/limit |
+| 3 | MI[COL] only | `MergedAdapter<customer_col_t, orders_col_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys | `col_group_walk[_fused_emit]` over the COL MI; CUSTOMER hierarchy co-located, no separate join |
+| 4 | Traditional indexes + hash join | None | `Scan(customer)` → `Filter(mktsegment)` → `HashJoin(⋈orders)` → `Filter(orderdate)` → `HashJoin(⋈lineitem)` → `Filter(shipdate)` → SortedAggregate → TopN |
+
+**S5 deliberately omitted.** See `§Open Questions` — Q3 has no
+parameter-independent aggregate to bake (lineitem revenue is
+filtered by `l_shipdate > $DATE`, which IS parameterised), so an
+aCOL MI with pre-aggregated columns would either be unsound or
+collapse to S3. Q3I's `pre_revenue` shares this dependence (the
+existing `views_coli.hpp` definition bakes `l_shipdate >
+DATE_1995_03_15` literally) and needs an audit; that work is
+tracked in `§Open Questions` and is out of scope for Q3 Phase 0.
+
+---
+
+## Plan Descriptions
+
+Three DOT files in [`plans/`](plans/) document the operator graphs
+(refreshed in Phase 0.5 — the current files reference the stale OL
+pipeline and are kept only for diff context):
+
+- `plans/family_logical.dot` — shared logical plan for S1, S2, S3.
+  All three agree on filter placement, aggregate shape, and TopN
+  outside the pipeline; only the inside-pipeline physical operator
+  differs (the comparison axis).
+- `plans/family_s3_physical.dot` — S3 physical specialisation. A
+  single `col_group_walk[_fused_emit]` over the 3-table COL
+  MergedAdapter subsumes the per-table filters, the SortedAggregate
+  on revenue, and the 2-way join.
+- `plans/baseline_s4.dot` — S4 baseline. A HashJoin chain over base
+  tables with `mktsegment` pushed down immediately after the
+  CUSTOMER scan (before the hash build).
+
+### Filter pushdown principle (applied across all four plans)
+
+See the canonical rule in [Filter Pushdown](../OPERATORS.md#filter-pushdown).
+The Q3-specific application:
+
+Every parameterised filter is pushed as far down the operator
+graph as possible, **stopping only at secondary structures** so
+they remain reusable across param sets (predicate hoisting). For
+Q3 this means:
+
+- The COL MI, the COL custkey-sorted secondaries, and the
+  `q3_pipeline_view_t` are all loaded **without** applying
+  mktsegment, orderdate, or shipdate filters. A new param set
+  triggers a new query, not a new load.
+- Single-table filters (`c_mktsegment`, `o_orderdate`,
+  `l_shipdate`) fuse with their TableScan at query time.
+- For S4 specifically, the mktsegment predicate is applied
+  **immediately after the CUSTOMER scan, before the hash build**,
+  so the hash table only contains qualifying customers.
+- For merged-index physical execution (S3), every filter applies
+  **during** the group walk, at the Visitor's `on_*` hook for that
+  record type. There is no post-walk Filter node.
+
+### How the four approaches differ
+
+**S3 (MI[COL] + COLGroupWalk)** is the tightest expression of the
+plan. The COL tagged-key encoding co-locates customer, orders, and
+lineitem records by `custkey` in byte-lex order
+(`customer → (orders → lineitem*)+`), and the walker streams
+through them in a single forward pass. The mktsegment gate at
+`on_customer` skips the entire group; per-table date filters are
+inline `if` checks at `on_order` / `on_lineitem`; revenue
+accumulates per-orderkey inside the visitor. No buffering, no
+hashmaps, no separate aggregate pass.
+
+**S1 (custkey-sorted secondaries + BMJ chain)** runs the same
+logical plan as S3 over three separate custkey-sorted streams
+(CUSTOMER + two secondary indexes on ORDERS and LINEITEM). The
+secondary keys (`(custkey, orderkey)` for orders,
+`(custkey, orderkey, linenumber)` for lineitem) place both inputs
+in the order required by the BMJ chain. Implemented as a 3-way
+streaming merge that dispatches to the **same Visitor** as S3.
+The accumulators are reused verbatim. S1 differs from S3 only in
+I/O pattern: three trees instead of one, three scanner-advance
+calls per group instead of one. This makes the S1-vs-S3 comparison
+apples-to-apples per OPERATORS.md §6.1 — same logical plan, same
+accumulator code, same filter pushdown, only the physical scan
+substrate differs.
+
+**S2 (materialised pipeline view)** caches the post-aggregate
+output of the family logical plan as a `q3_pipeline_view_t` table
+at load time. The view is loaded with the per-table date filters
+fused (since at view-load time those filter values must be picked)
+but **without** the mktsegment filter (predicate hoisting), so it
+is reusable across SEGMENT param sets at fixed DATE. Query time is
+then a sequential view scan with the mktsegment filter applied
+per row, then sort + limit. **Open question (§9)**: should the
+view be loaded fully unfiltered (date filters applied at query
+time) so it is reusable across both SEGMENT and DATE? This is the
+same dilemma S5 surfaces — defer until Phase 2 design.
+
+**S4 (HashJoin chain baseline)** uses the standard plan because
+nothing is custkey-sorted. Mktsegment fuses with the CUSTOMER
+scan immediately, before the hash build; orderdate fuses with
+ORDERS pre-build; shipdate fuses with LINEITEM pre-build. Probe
+output flows into a SortedAggregate by `(orderkey, orderdate,
+shippriority)`, then sort by `(revenue DESC, orderdate ASC)` +
+LIMIT 10. S4 measures the no-merged-index baseline that the
+family is compared against.
+
+### Comparison axis summary
+
+| Approach | Inside-pipeline physical | Filters resolved by |
+|----------|--------------------------|---------------------|
+| S1 (merge family) | 3-way custkey BMJ chain over secondaries | Visitor `on_*` hooks (same code as S3) |
+| S2 (merge family) | sequential view scan | Date filters baked into view at load; mktsegment per-row at query time |
+| S3 (merge family) | `col_group_walk` over MI[COL] | Visitor `on_*` hooks (same code as S1) |
+| S4 (baseline) | HashJoin chain | TableScan-time filters (mktsegment, orderdate, shipdate) all pushed below the corresponding hash build/probe |
+
+All four agree on what's outside the pipeline: `apply_top10` (sort
+by `(revenue DESC, orderdate ASC)` + truncate to 10).
+
+---
+
+## Required Record Types
+
+These types do not exist yet — they will be created in the
+`views_col.hpp` + COL-pipeline infrastructure task that gates Q3
+Phase 0.5. Names mirror the COLI analogs:
+
+- `customer_col_t` — tagged record, sentinel id (TBD; analog to
+  `customer_coli_t`'s id=21), Key `(c_custkey)`. Payload =
+  `customerh_t` fields needed by Q3 (at minimum `c_custkey`,
+  `c_mktsegment`).
+- `orders_col_t` — tagged record, Key `(custkey, orderkey)`. FD:
+  `orderkey → custkey`. Payload = `orders_t` fields needed by Q3
+  (at minimum `o_custkey`, `o_orderkey`, `o_orderdate`,
+  `o_shippriority`).
+- `lineitem_col_t` — tagged record, Key
+  `(custkey, orderkey, linenumber)`. FD: same chain. Payload =
+  `lineitem_t` fields needed by Q3 (`l_orderkey`, `l_linenumber`,
+  `l_extendedprice`, `l_discount`, `l_shipdate`).
+
+For S1 (split secondaries):
+
+- `orders_sec_t` — un-tagged secondary, Key `(custkey, orderkey)`.
+- `lineitem_sec_t` — un-tagged secondary, Key
+  `(custkey, orderkey, linenumber)`.
+
+For S2 (pipeline view):
+
+- `q3_pipeline_view_t` — Key `(orderkey, orderdate, shippriority)`,
+  payload `(custkey, sum_revenue)`. One row per qualifying order
+  group.
+
+Final output:
+
+- `q3_agg_row_t` — Key `(orderkey, orderdate, shippriority)`,
+  payload `revenue` (already declared in current `q3/views.hpp`;
+  preserve).
+
+**Sentinel ordering note**: in Q3I the COLI sentinels are
+`customer=1 < invoice=2 < orders=3 < lineitem=4` so invoice
+finalises before O×L within a custkey group. Q3 has no invoice
+sibling, so the natural order is `customer=1 < orders=2 <
+lineitem=3` (keep the invoice slot reserved at id=2 if we want
+COL to be a strict subset of COLI — discuss in §Open Questions).
+
+---
+
+## Open Questions
+
+These resolve before Phase 0.5. Each is an explicit design
+checkpoint, not an implementation detail.
+
+### S5 viability — drop or rebuild
+
+The lineitem revenue field is parameterised by
+`l_shipdate > $DATE`. In Q3I, `views_coli.hpp` defines:
+
+```cpp
+// orders_acoli_t.pre_revenue =
+//   SUM(l_extendedprice*(1-l_discount) WHERE l_shipdate>DATE_1995_03_15)
+```
+
+So Q3I S5 is **already shipdate-locked** to the validation value
+— it is not reusable across DATE param sets. Q3 inherits the same
+constraint. Resolutions:
+
+1. **Drop S5 from Q3** (current plan default). aCOL collapses to
+   COL because Q3 has no parameter-independent aggregate to bake.
+2. **Build S5 with unaggregated lineitems**, applying the
+   shipdate filter and SUM at read time over the per-customer
+   lineitem set. This is what the user pushed back on — store
+   lineitems as-is, do not pre-aggregate when the aggregate
+   depends on a parameterised filter.
+
+If we adopt (2) for Q3, **the same fix applies to Q3I S5**: its
+current `pre_revenue` is unsound for any SEGMENT/DATE param set
+other than the validation pair. Phase 0 flags this as a Q3I
+audit; Q3 itself defers S5 design until that audit lands.
+
+### S2 view granularity
+
+Post-aggregate (one row per qualifying order, much smaller) vs
+post-join (one row per qualifying lineitem, parallels Q3I S2 which
+chose post-join). Q3I's choice was driven by needing per-lineitem
+shipdate visibility for the `cust_open_due` threshold gate; Q3 has
+no such constraint, so post-aggregate may be the simpler choice.
+Decide before Phase 2.
+
+### COL pipeline naming
+
+Confirm `col_pipeline.{hpp,tpp}` and
+`CustomerOrdersLineitemPipeline<Backend>` as the analog to
+`coli_pipeline` / `COLIPipeline`. Names propagate into the walker
+(`col_group_walk[_fused_emit]`) and load helpers
+(`populate_merged`, `populate_split`).
+
+### COL as a strict subset of COLI
+
+Should `customer_col_t` reuse `customer_coli_t`'s sentinel id and
+Key shape (so the COL MI is byte-compatible with a COLI MI minus
+invoice)? If yes, future Q3 → Q3I migration becomes free; if no,
+COL is independent and may diverge. Recommend strict-subset
+naming/encoding with a TODO in the file header.
+
+### Q3I refactor (later, out of scope)
+
+Once COL pipeline exists, can Q3I's COLI be defined as
+`COL + invoice` extension? Worth flagging but no decision in Phase 0.
+
+---
+
+## Implementation Phases (preview — full detail in Phase 0.5 plan)
+
+- **Phase 0** (this doc) — design.
+- **Pre-Phase-0.5 dependency**: build COL pipeline infrastructure
+  (`views_col.hpp` + `col_pipeline.{hpp,tpp}`). This is a
+  **separate task** that must land before Q3 Phase 0.5 can begin.
+  Cleanest delivery: build COL infra and Q3 skeleton in the same
+  PR family.
+- **Phase 0.5** — skeleton commit. Replace OL-pipeline references
+  in `q3/views.hpp`, `workload.hpp`, `load.tpp`, `query.tpp`,
+  `per_structure_workload.hpp` with COL types. Refresh DOT files.
+  No real `query_by_*` bodies yet — stubs only.
+- **Phase 1** — minimal end-to-end S3 (`query_by_merged`) +
+  `test_query_q3_lsm` digest seed.
+- **Phase 2** — S1, S2, S4 baselines + cross-structure parity.
+- **Phase 3** — production `q3_lsm` / `q3_btree` executables,
+  CMake targets, `generate_targets.py` entries.
+- **Phase 4** — defer pending S5 viability decision (§Open Q).
+
+Mirror Q3I's [Implementation Phases](../q3i/CLAUDE.md#implementation-phases)
+for full structure once Phase 0.5 starts.
+
+---
+
+## Stale skeleton — to be replaced in Phase 0.5
+
+The current `q3/` skeleton predates the COL-pipeline pivot. It
+will be rewritten, not merely patched, in Phase 0.5:
+
+- `q3/views.hpp` includes `views_ol.hpp` and aliases
+  `q3_pipeline_view_t = ::tpch::joined_ol_t`. Both lines go away.
+- `q3/workload.hpp` composes `OrdersLineitemPipeline<Backend> ol`.
+  Replace with `CustomerOrdersLineitemPipeline<Backend> col`.
+- `q3/load.tpp` references `ol.populate_view` /
+  `ol.get_view_size` (already noted as TODO debt in
+  `frontend/tpch/CLAUDE.md`). Both go away.
+- `q3/query.tpp` predicate signatures take `joined_ol_t` —
+  replace with the COL join-result type or with the visitor
+  hook signatures from `col_group_walk`.
+- `q3/plans/*.dot` — refresh to reflect COL pipeline.
+
+Cross-cutting refactor (operator drivers, view loading, build
+wiring): see [`frontend/tpch/CLAUDE.md`](../CLAUDE.md).
