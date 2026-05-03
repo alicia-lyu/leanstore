@@ -8,10 +8,10 @@ on the trigger described:
 
 - [`PERFORMANCE.md`](PERFORMANCE.md) — read **when investigating Q3I
   S3 performance** or interpreting the cross-backend (RocksDB-LSM,
-  LeanStore-BTree) measurements at SF=15/40, dram=0.1 GiB. Captures
-  the unexpected finding that S3 (the COLI MI showcase) is the
-  *worst*-performing of the four real paths under disk pressure, and
-  documents hypotheses tested and optimisations tried/reverted.
+  LeanStore-BTree) measurements at SF=15/40, dram=0.1 GiB. Active
+  worklist post-A2c: S3 now matches S1 cache-resident; the open
+  question is whether any disk-pressure operating point flips S3
+  positive (A6). Historical evidence in `archive/`.
 - [`plans/family_logical.dot`](plans/family_logical.dot),
   [`plans/family_s3_physical.dot`](plans/family_s3_physical.dot),
   [`plans/baseline_s4.dot`](plans/baseline_s4.dot) — operator-graph
@@ -296,12 +296,16 @@ mkdir -p test_data_q3i test_csv_q3i
 
 ## Performance Notes
 
-S3 has been the slowest of the four real paths in production (SF=40 /
-dram=0.1 GiB on RocksDB) — the opposite of the paper's pitch.
-Forward-looking worklist (next-step A/B tests, hypothesis status
-table) lives in [`PERFORMANCE.md`](PERFORMANCE.md). Historical
-hypothesis evidence trails and reverted optimisations are preserved
-in [`archive/PERFORMANCE-2026-05-03.md`](archive/PERFORMANCE-2026-05-03.md).
+A2c (`--coli_walker_variant=fused_emit`) closed the per-record dispatch
+gap at SF=15 — S3 now matches/beats S1 on both backends in the
+cache-resident regime. A2c is neutral at SF=40 disk-bound; whether any
+`(dram, SF)` operating point flips S3 positive against S1/S4 is the
+remaining open question, tracked in
+[`PERFORMANCE.md`](PERFORMANCE.md). Historical evidence trails:
+[`archive/PERFORMANCE-2026-05-03b.md`](archive/PERFORMANCE-2026-05-03b.md)
+(A1 + A5 + A2c cross-backend) and
+[`archive/PERFORMANCE-2026-05-03.md`](archive/PERFORMANCE-2026-05-03.md)
+(pre-A1 hypothesis history).
 
 ---
 
