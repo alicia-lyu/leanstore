@@ -163,6 +163,11 @@ struct LineitemRevenueAccumulator {
 struct COLIGroupWalkVisitor {
    const Params& params;
    std::vector<q3i_agg_row_t>& out;
+   Q3IStats* stats = nullptr;  // optional — bumped by walker hooks below
+
+   // Walker hooks — coli_group_walk dispatches to these via SFINAE.
+   void on_record_visited() { if (stats) stats->mi_records_visited++; }
+   void on_group_skipped(Integer /*ck*/) { if (stats) stats->mi_groups_skipped++; }
 
    // Inside-pipeline accumulators (factored — S1 reuses these in Phase 2).
    CustomerOpenDueAccumulator open_due;
@@ -462,8 +467,13 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
    out.clear();
    // All remaining Visitor fields have in-class default initializers; only
    // params and out lack defaults so they are named explicitly.
-   COLIGroupWalkVisitor v{.params = params, .out = out};
+   COLIGroupWalkVisitor v{.params = params, .out = out, .stats = stats};
    coli_group_walk<Backend>(coli.merged_adapter(), v);
+   // Mirror the aggregator_rows_out semantics from the other paths so the
+   // [card] table reports a non-zero `agg` column for S3.
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+   }
    // Apply top-10 ordered by revenue DESC outside the pipeline
    // (OPERATORS.md §3 op 8–9).  o_orderdate ASC, then o_orderkey ASC as
    // tiebreakers keep partial_sort deterministic across paths whose input

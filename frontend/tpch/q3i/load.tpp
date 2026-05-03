@@ -159,13 +159,19 @@ void Q3IWorkload<Backend>::load()
 template <typename Backend>
 double Q3IWorkload<Backend>::get_size() const
 {
+   // Always include base + active secondary so all four structures are
+   // comparable in the CSV size column. Earlier dispatch returned only
+   // the secondary for S2/S3, only base for S4, and base+secondary for S1
+   // — the inconsistent definition made S2 look unrealistically small
+   // (1.25 MiB at SF=40) and made S1/S4 vs S2/S3 unfit for direct
+   // comparison.
    double base = customer.size() + orders.size()
                + lineitem.size() + invoice.size();
    switch (FLAGS_storage_structure) {
       case 1: return base + coli.get_split_size();
+      case 2: return base + pipeline_view.size();
+      case 3: return base + coli.get_merged_size();
       case 4: return base;
-      case 2: return pipeline_view.size();
-      case 3: return coli.get_merged_size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }

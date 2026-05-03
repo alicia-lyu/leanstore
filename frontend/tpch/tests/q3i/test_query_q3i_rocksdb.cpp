@@ -350,13 +350,23 @@ int main(int argc, char** argv)
    };
    check_joins("S1 base  ", st_base.join_callbacks);
    check_joins("S2 view  ", st_view.join_callbacks);
-   // S3 merged: query_by_merged does not currently increment Q3IStats
-   // counters (the COLIGroupWalkVisitor doesn't thread stats through).
-   // Empty-secondary regressions for S3 are caught by the merged_coli
-   // row count check above. Wiring stats into the merged path is a TODO.
-   std::cout << "[--]   S3 merged join_callbacks=" << st_merged.join_callbacks
-             << " (stats not wired through Visitor; see merged_coli rows)\n";
+   // S3 merged: per-record join_callbacks aren't tracked through the
+   // COLIGroupWalkVisitor (would require an extra hook). Use
+   // mi_records_visited / aggregator_rows_out as the proxy.
+   std::cout << "[--]   S3 merged mi_records_visited=" << st_merged.mi_records_visited
+             << " mi_groups_skipped="  << st_merged.mi_groups_skipped
+             << " agg_rows="           << st_merged.aggregator_rows_out << "\n";
    check_joins("S4 hash  ", st_hash.join_callbacks);
+
+   // S3 walk-efficiency invariant: at least one group should be skipped
+   // (mktsegment selectivity ≈ 20%, so ~80% of customers fail). If zero,
+   // the physical-skip optimisation regressed.
+   {
+      bool ok = st_merged.mi_groups_skipped > 0;
+      card_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ") << "S3 mi_groups_skipped"
+                << "=" << st_merged.mi_groups_skipped << " (expected > 0)\n";
+   }
 
    // Print top-10 of S3 (merged oracle) sorted by revenue DESC for inspection.
    auto r_merged_top = r_merged;

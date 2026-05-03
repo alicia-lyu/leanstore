@@ -95,6 +95,15 @@ struct Q3IStats {
    long join_callbacks      = 0;
    long aggregator_rows_out = 0;
 
+   // S3 (mi_coli_walk) — bytes-of-work proxy. `mi_records_visited` counts
+   // every kv emitted by the merged scanner during a walk; `mi_groups_skipped`
+   // counts custkey groups whose customer record failed the mktsegment gate
+   // and thus triggered a physical custkey-skip in coli_group_walk.
+   // mi_records_visited / |MI rows| ≈ 1.0 means the walker reads the whole MI;
+   // a healthy ratio is closer to mktsegment selectivity (~0.2 for BUILDING).
+   long mi_records_visited = 0;
+   long mi_groups_skipped  = 0;
+
    void reset() { *this = Q3IStats{}; }
 };
 

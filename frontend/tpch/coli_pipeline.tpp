@@ -216,8 +216,14 @@ void coli_group_walk(
 
    Integer cur_custkey = -1;
    bool    group_active = true;  // false after on_customer returned false
+   bool    skip_pending = false; // set when we want to seek past current group
 
    while (auto kv = scanner->next()) {
+      // Optional bytes-of-work counter hook for instrumentation.
+      if constexpr (requires { visitor.on_record_visited(); }) {
+         visitor.on_record_visited();
+      }
+
       // Extract the custkey for this row from whichever variant arm it is.
       Integer row_custkey = std::visit(
           [](const auto& k) -> Integer { return k.custkey; }, kv->first);
@@ -240,6 +246,19 @@ void coli_group_walk(
                                  { visitor.on_customer(row_custkey, val) } -> std::same_as<bool>;
                               }) {
                    group_active = visitor.on_customer(row_custkey, val);
+                   if (!group_active) {
+                      // Physical skip: don't iterate the rest of this custkey's
+                      // invoices/orders/lineitems. The customer ALWAYS sorts
+                      // first within its group (tag=1 customer < 2 invoice <
+                      // 3 orders < 4 lineitem), so seeking to the customer
+                      // record at custkey+1 lands at the next group's first
+                      // row (or past-end). Saves up to ~98% of iterator cost
+                      // on filter-rejected groups.
+                      skip_pending = true;
+                      if constexpr (requires { visitor.on_group_skipped(row_custkey); }) {
+                         visitor.on_group_skipped(row_custkey);
+                      }
+                   }
                 }
              } else if (group_active) {
                 if constexpr (std::is_same_v<V, invoice_coli_t>) {
@@ -261,6 +280,24 @@ void coli_group_walk(
              }
           },
           kv->second);
+
+      if (skip_pending) {
+         // Seek to the next custkey's customer record.  RocksDB's Seek
+         // positions to the first key >= target; for sparse custkeys we
+         // land on the next live customer.
+         skip_pending = false;
+         typename customer_coli_t::Key next_key{cur_custkey + 1};
+         scanner->template seek<customer_coli_t>(next_key);
+         // Fire on_group_end for the skipped group so per-group state in
+         // the visitor is reset consistently with the natural-transition
+         // path. Then reset cur_custkey so the next iteration's transition
+         // detector doesn't fire it again.
+         if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
+            visitor.on_group_end(cur_custkey);
+         }
+         cur_custkey  = -1;
+         group_active = true;
+      }
    }
 
    // Flush the final group.

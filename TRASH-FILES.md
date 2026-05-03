@@ -44,3 +44,4 @@ test_csv_q3i - moved to TRASH/test_csv_q3i_prestep4 - stale q3i CSV/log paired w
 test_query_q3i_phase1_rocksdb.cpp - moved to TRASH/ - temporary Phase 1 harness retired after Phase 2C parity gate passed; replaced by test_query_q3i_lsm
 test_data_q3i - moved to TRASH/test_data_q3i_stale - stale Q3I RocksDB data before S3 bug investigation
 test_csv_q3i - moved to TRASH/test_csv_q3i_stale - stale Q3I CSV/log dir before S3 bug investigation
+.git/index.lock - moved to TRASH/git-index.lock - stale git lock blocking commit
