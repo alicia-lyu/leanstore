@@ -40,6 +40,9 @@ bgw_pct 		  		:= 0 # background write percentage
 # capture path entirely.
 micro_perf  ?= false
 cfstats     ?= false
+# A2c walker A/B: 'baseline' (std::variant + visitor) or 'fused_emit'
+# (tag-byte switch + raw slices, no variant construction).
+coli_walker_variant ?= baseline
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid

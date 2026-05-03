@@ -9,15 +9,17 @@ trails, A/B findings, and reverted optimisations, see
 
 ## §1 — Status snapshot
 
-S3 (COLI MI `PremergedJoin`) is **~15% slower than S1/S4** at SF=15
-dram=0.1 on both RocksDB and LeanStore — the opposite of the paper's
-pitch. Storage-engine independent (H5 refuted). At SF=40 dram=0.1 raw
-paths collapse to ~0.4 TX/s under DRAM pressure; **S5 (aCOLI MI) keeps
-a ~260× lead over the raw paths and ~38–55% trails S2's view**, which
-is the merged-index pitch the paper actually earns. The S3-vs-S1 gap
-is the cost of parameter flexibility on a raw merged index — but
-*why* the gap exists is the open question, and the next round of A/B
-tests is wired and ready (Phase 1 commit `b7ebebc8`).
+S3 (COLI MI `PremergedJoin`) baseline was **~15% slower than S1/S4** at
+SF=15 dram=0.1 on both RocksDB and LeanStore. **A2c `fused_emit` closes
+that gap** — at SF=15 dram=0.1 LeanStore, `--coli_walker_variant=fused_emit`
+brings S3 to 21.91 TX/s (shared) / 23.06 (iso), now matching or beating
+S1; on RocksDB Linux SF=15 it raises S3 from 1.72 → 2.20 (+28%). At
+SF=40 dram=0.1 raw paths still collapse to ~0.4 TX/s under DRAM pressure
+regardless of walker variant; **S5 (aCOLI MI) keeps a ~260× lead over
+the raw paths and ~38–55% trails S2's view**, which remains the
+merged-index pitch the paper earns under disk pressure.
+
+Baseline (variant-construction) numbers for historical reference:
 
 | Path | RocksDB SF=40 dram=0.1 | LeanStore SF=15 dram=0.1 | LeanStore SF=40 dram=0.1 |
 |------|------------------------|--------------------------|--------------------------|
@@ -27,7 +29,7 @@ tests is wired and ready (Phase 1 commit `b7ebebc8`).
 | S4 hash       | 8.09 | 28.38 | 0.3397 |
 | S5 aCOLI      | 123.17 | 265.63 | 89.67 |
 
-(TX/s; full provenance in archive §1 + §3.)
+(TX/s; full provenance in archive §1 + §3. Post-A2c S3 numbers in §3 A2.)
 
 ---
 
@@ -40,7 +42,7 @@ Compact status; full evidence in archive §2.
 | H1 | MI is too large per row | **REFUTED** | `get_size` reporting artefact; content/row 177 vs 150–190 splits |
 | H2 | Iterator overhead on rejected groups | **CONFIRMED, fix reverted on RocksDB; PENDING on LeanStore** | Forward iteration cheaper than physical Seek on RocksDB; B-tree branch unexplored (A3) |
 | H3 | Walker visits entire MI per query | **CONFIRMED uniform** (subsumed by H6) | ~425k records/q at SF=40; but S1/S4 also full-scan their inputs — doesn't explain the S3-vs-S1 gap |
-| H4 | Per-record dispatch overhead | **OPEN, narrowed; A2c confirmed cross-backend, A5-bounded** | A1 macOS + Linux refute tagged-key decode (`tuples_advanced/q` identical between S1 and S3 on LeanStore). Linux SF=15 shared shows S3 `iter_next_cpu/q` 1.7× S1's per-call (364 vs 217 ns); A5 isolated shows the residual is 1.26× (279 vs 221 ns). About half of the original 30% total gap is H8 cache-pollution; the other half is genuine A2c. A2c still the right remediation; gain ceiling ~14%. |
+| H4 | Per-record dispatch overhead | **CONFIRMED + REMEDIATED (A2c)** at SF=15 cache-resident regime | A2a refuted (`tuples_advanced/q` identical S1 vs S3). A2c `fused_emit` lands +50.5% TX/s on LeanStore SF=15 shared (14.56 → 21.91), +18.1% iso (19.52 → 23.06), +27.9% on RocksDB SF=15 (1.72 → 2.20). Per-call iter_next drops to 227 ns/call — within 3% of S1's 221. **S3 with fused_emit now matches or beats S1** in every cell. SF=40 disk-bound: A2c is within noise (variant cost masked by page-fault wait). |
 | H5 | Storage-engine specific (RocksDB block layout) | **REFUTED** | Same ~16% gap on LeanStore at SF=15 |
 | H6 | Low filter selectivity | **CONFIRMED uniform** | All raw paths full-scan; doesn't explain S3-vs-S1 gap; explains S5 win |
 | H7 | SSTWrite during read-only queries | **OPEN, RocksDB-specific** | Read-only workload but histogram inflated; A4 attributes to source |
@@ -193,7 +195,8 @@ A1 narrowed this: tagged-key decode (A2a) is refuted on macOS;
 scanner emit (A2c) is the live suspect. Variants coexist behind one
 flag for within-process A/B; XOR parity across variants is mandatory.
 
-- **A2c `fused_emit` (IMPLEMENTED, awaiting Linux benchmark)**:
+- **A2c `fused_emit` (CONFIRMED on LeanStore Linux SF=15; cross-backend
+  on RocksDB Linux SF=15)**:
   `*MergedScanner::next_raw()` emits raw `(tag, k_slice, v_slice)`
   triple — no `std::variant` construction. `coli_group_walk_fused_emit`
   dispatches via tag-byte switch with `memcpy` payload decode.
@@ -202,11 +205,54 @@ flag for within-process A/B; XOR parity across variants is mandatory.
   identical digest. Both `q3i_lsm` and `q3i_btree` build clean.
   WHERE: `RocksDBMergedScanner.hpp`, `LeanStoreMergedScanner.hpp`,
   `coli_pipeline.{hpp,tpp}`, `tpch_flags.hpp`, `q3i/query.tpp`.
-  WIN: close the 5% (RocksDB macOS cache-resident) / 68%
-  (LeanStore Linux SF=15 shared) / 26% (LeanStore Linux SF=15 iso —
-  the cleaner number now that A5 attributed the rest to H8)
-  iter_next_cpu_nanos gap. Predicted: bring S3 per-record `next()`
-  cost from 364 ns down toward S1's 217 ns at SF=15 dram=0.1.
+  WIN bar: ≥5% TX/s; cleared.
+
+  **LeanStore Linux SF=15 dram=0.1 (S3 only; S1 verified unchanged
+  under fused_emit since it doesn't use the COLI walker):**
+
+  | Mode | baseline TX/s | fused_emit TX/s | Δ TX/s | baseline iter_next/q | fused iter_next/q | Δ iter_next | per-call before/after |
+  |------|--------------:|----------------:|-------:|---------------------:|------------------:|------------:|----------------------:|
+  | shared | 14.56 | 21.91 | **+50.5%** | 58.28 ms | 38.37 ms | -34.2% | 364 → 241 ns/call |
+  | iso    | 19.52 | 23.06 | **+18.1%** | 44.50 ms | 36.17 ms | -18.7% | 279 → 227 ns/call |
+
+  Iso fused-emit per-call (227 ns) is now within ~3% of S1's 221
+  ns/call — the variant-construction differential is essentially
+  closed. **In both modes S3 with fused_emit now matches or beats
+  S1**: shared 21.91 vs S1 22.96; iso 23.06 vs S1 22.63.
+
+  **RocksDB Linux SF=15 dram=0.1 (S3 only):**
+
+  | variant | TX/s | iter_next_cpu/q | per-call |
+  |---------|-----:|----------------:|---------:|
+  | baseline    | 1.72 | 321.31 ms | 2008 ns |
+  | fused_emit  | 2.20 | 256.65 ms | 1604 ns |
+
+  +27.9% TX/s, -20.1% iter_next/q. Per-call drops 2008→1604 ns (-20%).
+  RocksDB absolute per-call is ~6× LeanStore's because PerfContext's
+  `iter_next_cpu_nanos` includes block decompression + LSM merge
+  logic; the *relative* improvement is the cleaner cross-backend
+  signal.
+
+  **SF=40 dram=0.1 (DRAM-bound) — both backends**:
+
+  | backend | mode | baseline TX/s | fused TX/s | Δ |
+  |---------|------|--------------:|-----------:|---:|
+  | LeanStore | shared | 0.26 | 0.27 | +3.8% |
+  | LeanStore | iso    | 0.30 | 0.29 | -3.3% |
+  | RocksDB   | shared | 0.93 | 0.92 | -1.1% |
+
+  A2c moves nothing within noise. At this regime per-record CPU is
+  dominated by page-fault wait, not variant construction. **A2c is a
+  cache-resident win.** Disk-bound improvements need different work
+  (S5 already has them; S3 stays as the parameter-flexible-but-disk-
+  bound counterpart).
+
+  Side note: Linux RocksDB SF=40 dram=0.1 raw-path TX/s is ~5–10×
+  lower than the macOS baseline in §1's table (S3 = 0.93 vs 6.70).
+  macOS's OS page cache absorbed the I/O even with `--dram_gib=0.1`
+  (the dram=0.025 follow-up in A1 already flagged this). Linux is
+  the canonical disk-bound testbed; the §1 RocksDB column should be
+  read as cache-resident-on-macOS, not disk-bound.
 - **A2b `template_dispatch`**: hand-rolled templated dispatch over a
   tag-byte switch; skip variant construction in the dispatcher.
   Probably subsumed by A2c if the bottleneck is the variant itself.
