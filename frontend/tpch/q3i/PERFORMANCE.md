@@ -40,11 +40,11 @@ Compact status; full evidence in archive §2.
 | H1 | MI is too large per row | **REFUTED** | `get_size` reporting artefact; content/row 177 vs 150–190 splits |
 | H2 | Iterator overhead on rejected groups | **CONFIRMED, fix reverted on RocksDB; PENDING on LeanStore** | Forward iteration cheaper than physical Seek on RocksDB; B-tree branch unexplored (A3) |
 | H3 | Walker visits entire MI per query | **CONFIRMED uniform** (subsumed by H6) | ~425k records/q at SF=40; but S1/S4 also full-scan their inputs — doesn't explain the S3-vs-S1 gap |
-| H4 | Per-record dispatch overhead | **OPEN, narrowed; A2c confirmed cross-backend** | A1 macOS + Linux refute tagged-key decode (`tuples_advanced/q` identical between S1 and S3 on LeanStore). Linux SF=15 shows S3 `iter_next_cpu/q` is 1.7× S1's per-call (364 vs 217 ns) — accounts for the entire 25 ms query-time gap. A2c (`fused_emit`) is the live remediation. |
+| H4 | Per-record dispatch overhead | **OPEN, narrowed; A2c confirmed cross-backend, A5-bounded** | A1 macOS + Linux refute tagged-key decode (`tuples_advanced/q` identical between S1 and S3 on LeanStore). Linux SF=15 shared shows S3 `iter_next_cpu/q` 1.7× S1's per-call (364 vs 217 ns); A5 isolated shows the residual is 1.26× (279 vs 221 ns). About half of the original 30% total gap is H8 cache-pollution; the other half is genuine A2c. A2c still the right remediation; gain ceiling ~14%. |
 | H5 | Storage-engine specific (RocksDB block layout) | **REFUTED** | Same ~16% gap on LeanStore at SF=15 |
 | H6 | Low filter selectivity | **CONFIRMED uniform** | All raw paths full-scan; doesn't explain S3-vs-S1 gap; explains S5 win |
 | H7 | SSTWrite during read-only queries | **OPEN, RocksDB-specific** | Read-only workload but histogram inflated; A4 attributes to source |
-| H8 | Shared-DB cache pollution | **OPEN** (macOS inconclusive, Linux pending) | A5 macOS narrows gap by 3.6% but mostly via S1 slowdown — likely OS-cache freshness artefact, not real H8 evidence. Linux still authoritative. |
+| H8 | Shared-DB cache pollution | **CONFIRMED differential at SF=15; symmetric at SF=40 (LeanStore Linux)** | A5 Linux SF=15: S3 isolated +34% TX/s vs shared; S1/S4/S5 unchanged; S3-vs-S1 gap collapses 36.6% → 13.7% — pollution is asymmetric in the cache-resident regime because S3's COLI MI is closest to evicting itself under the shared 0.1 GiB pool. SF=40: both S1 and S3 each scan ~112 MiB > cache, so iso gives a uniform ~15% boost and the gap stays ~0% — under disk pressure pollution is symmetric. Implication: SF=15 §1 numbers are partly a shared-DB artefact; SF=40 numbers are clean. |
 | —  | aCOLI size anomaly | **CLOSED (RocksDB)** | Was a `RocksDB::get_size` stale-cache bug; fixed in `50fd2052`. LeanStore inflation tracked as A7. |
 
 ---
@@ -199,12 +199,14 @@ flag for within-process A/B; XOR parity across variants is mandatory.
   dispatches via tag-byte switch with `memcpy` payload decode.
   Gated by `--coli_walker_variant={baseline,fused_emit}` (default
   `baseline`). XOR parity verified at SF=1: both variants produce
-  identical digest `0xc5d04de075f9ea5f`. Both `q3i_lsm` and
-  `q3i_btree` build clean. Linux SF=15 dram=0.1 benchmark pending —
-  **predicted to close the 147 ns/record × 160k records/q ≈ 24 ms/q
-  gap** (iter_next_cpu_nanos S3 364 vs S1 217 ns from A1).
+  identical digest. Both `q3i_lsm` and `q3i_btree` build clean.
   WHERE: `RocksDBMergedScanner.hpp`, `LeanStoreMergedScanner.hpp`,
   `coli_pipeline.{hpp,tpp}`, `tpch_flags.hpp`, `q3i/query.tpp`.
+  WIN: close the 5% (RocksDB macOS cache-resident) / 68%
+  (LeanStore Linux SF=15 shared) / 26% (LeanStore Linux SF=15 iso —
+  the cleaner number now that A5 attributed the rest to H8)
+  iter_next_cpu_nanos gap. Predicted: bring S3 per-record `next()`
+  cost from 364 ns down toward S1's 217 ns at SF=15 dram=0.1.
 - **A2b `template_dispatch`**: hand-rolled templated dispatch over a
   tag-byte switch; skip variant construction in the dispatcher.
   Probably subsumed by A2c if the bottleneck is the variant itself.
@@ -282,6 +284,82 @@ SF/dram is not the disk-bound regime A5 needs. Linux remains the
 canonical answer; H8 status stays OPEN. Implementation landed in
 commit `200ee0ae` (`--load_only_structure` flag +
 `q3i_{lsm,btree}_iso_N` make targets).
+
+#### Linux A5 result (2026-05-03, SF=15 dram=0.1, LeanStore)
+
+Same `--micro_perf=true --cfstats=true` as A1; shared-DB row reproduces
+the §3 A1 Linux table exactly. Isolated row from `q3i_btree_iso_N`
+targets — each one loads only structure N's secondaries on a fresh
+`--ssd_path`.
+
+| Path | shared TX/s | iso TX/s | Δ TX/s | shared iter_next/q | iso iter_next/q | Δ iter_next |
+|------|------------:|---------:|-------:|-------------------:|----------------:|------------:|
+| S1 base_merge | 22.96  | 22.63  |  -1.4% | 34.78 ms | 35.41 ms |  +1.8% |
+| S2 view       | 285.97 | 285.86 |  -0.04%| 2.69 ms  | 2.69 ms  |  +0.0% |
+| S3 mi_coli    | 14.56  | 19.52  | **+34.1%** | 58.28 ms | 44.50 ms | **-23.6%** |
+| S4 base_hash  | 20.85  | 21.61  |  +3.6% | 38.16 ms | 36.69 ms |  -3.9% |
+| S5 aCOLI      | 216.58 | 222.36 |  +2.7% | 3.65 ms  | 3.54 ms  |  -3.0% |
+
+S3-vs-S1 gap: shared 36.6% → iso 13.7%. **Gap CLOSED by more than
+half**, and the close came from S3 *speeding up* (14.56 → 19.52
+TX/s) while S1 was unchanged within noise. This is the
+H8-predicted asymmetry that macOS couldn't surface.
+
+**Findings:**
+
+- **H8 is differential, not uniform.** Shared-DB pollution
+  disproportionately hurts S3 — its COLI MI footprint (~100 MiB at
+  SF=15) is the largest single consumer of the shared 0.1 GiB buffer
+  pool, so when S1's split indexes (~50 MiB) and S5's aCOLI MI
+  (~53 MiB) are also pinned, S3's working set is the one that gets
+  evicted first. S1 / S4 / S5 footprints are smaller and less
+  affected.
+- **A2c attribution from A1 is partially overstated.** A1 Linux said
+  "the 23 ms iter_next gap entirely covers the 25 ms total query-
+  time gap." With S3 isolated, the iter_next/q drops 23.6% (58.28 →
+  44.50 ms) — which is itself ~14 ms of the original gap. Of the
+  ~30% total Linux S3-vs-S1 gap (with chrono tax), roughly half is
+  H8 cache-pollution and half is genuine A2c per-call overhead.
+  Both A2c and A5 are real, both deserve their own follow-up plan.
+- **S3 in isolation still loses to S1 by 13.7%.** Consistent with
+  the macOS picture (5% in isolation; the residual is genuine A2c
+  even after pollution is removed). A2c remains the right next
+  implementation step; the gain ceiling drops from ~30% to ~14%.
+- **S2 / S5 unaffected.** Their footprints are small and
+  cache-resident even in shared mode; they don't compete for buffer
+  pool with anyone.
+**SF=40 dram=0.1 (DRAM-bound on raw paths):**
+
+| Path | shared TX/s | iso TX/s | Δ TX/s | shared bytes_read/q | iso bytes_read/q |
+|------|------------:|---------:|-------:|--------------------:|-----------------:|
+| S1 base_merge | 0.26   | 0.30   | +15.4% | 113.7 MiB | 112.1 MiB |
+| S2 view       | 106.15 | 107.12 |  +0.9% | 3.6 KiB   | 3.5 KiB   |
+| S3 mi_coli    | 0.26   | 0.30   | +15.4% | 114.0 MiB | 112.6 MiB |
+| S4 base_hash  | 0.37   | 0.32   | -13.5% | 99.3 MiB  | 100.1 MiB |
+| S5 aCOLI      | 74.37  | 76.78  |  +3.2% | 9.8 KiB   | 9.5 KiB   |
+
+**SF=40 finding: H8 is symmetric under disk pressure.** S3-vs-S1 gap
+stays ~0% (both at 0.30 TX/s in iso, 0.26 shared) — at this
+SF/dram both paths DRAM-thrash on their own ~112 MiB working sets,
+each well above the 0.1 GiB block cache. Removing other structures'
+metadata gives a uniform ~15% boost to S1 and S3 (and noise on S4),
+but does **not** reproduce the asymmetric gap-closure seen at SF=15.
+
+**Combined SF=15 + SF=40 reading**: H8 differential pollution is a
+**cache-resident-regime phenomenon**. When the working set fits
+(SF=15: ~50–100 MiB structures vs 100 MiB block cache → S3 just
+barely fits when alone but gets evicted under shared), removing
+other structures lets S3 stay resident and the gap closes. When the
+working set already exceeds the cache (SF=40: each structure
+~112 MiB), every path pays page-fault traffic uniformly and removing
+other structures helps everyone equally.
+
+This means: for the paper's reviewer-facing pitch (S3 vs S1/S4 at
+disk pressure), shared-DB cache pollution is **not** what's holding
+S3 back at SF=40 — A6's disk-pressure conclusion stands. But for the
+SF=15 / dram=0.1 numbers in §1, the S3-vs-S1 gap is **partly an
+artefact of shared-DB benchmarking** and should be reported with the
+isolated-DB numbers as the cleaner comparison.
 
 ### A6 — RocksDB memory-pressure sweep
 
