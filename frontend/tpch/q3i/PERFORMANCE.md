@@ -17,13 +17,27 @@ The narrow customer-scan TX-count effect previously documented in
 At **SF=40 / dram=0.1 GiB on RocksDB-LSM**, S3 is the slowest real path.
 This is the opposite of the paper's pitch.
 
+**RocksDB-LSM (macOS / SF=40 dram=0.1):**
+
 | Configuration                       | S1 base_merge | S2 view | S3 mi_coli       | S4 hash |
 |-------------------------------------|---------------|---------|------------------|---------|
 | baseline (pre-skip; before 1dec2358) | 8.04          | 198.3   | 6.95             | ~8      |
 | with physical custkey-Seek skip     | 7.87          | 198.3   | 4.42 (regression)| 8.24    |
 | seek-skip disabled (current default)| 7.73          | 198.3   | 6.70 (~15% gap)  | 8.09    |
 
-Numbers in TX/s; see `1dec2358` and `8d10782b` for capture context.
+**LeanStore-Btree (Linux / dram=0.1) — same ~15% gap, storage-engine-independent:**
+
+| Scale | S1 base_merge | S2 view | S3 mi_coli      | S4 hash |
+|-------|---------------|---------|-----------------|---------|
+| SF=15 | 30.36         | 437.17  | 25.41 (~16% gap)| —       |
+| SF=40 | 0.3926        | 163.33  | 0.3667          | 0.3762  |
+
+(SF=40 collapses S1/S3/S4 to ~0.4 TX/s — data spills out of the 0.1 GiB
+DRAM budget; bottleneck is page-fault traffic, not the join algorithm.
+S2's small materialised view still fits.)
+
+Numbers in TX/s; see `1dec2358`, `8d10782b` for RocksDB and the
+LeanStore run captured 2026-05-02 for B-tree.
 
 S2's lead is expected — the materialised view absorbs the inside-pipeline
 cost at load time. The real comparison axis is **S3 vs S1 / S4**: structures
@@ -113,26 +127,16 @@ to S1/S4 at SF=40).
 Not microbenchmarked yet. Worth measuring with `perf record` or replacing
 `std::visit` with a templated dispatch behind a constexpr flag for A/B.
 
-### H5 — Storage-engine specific: RocksDB block layout / prefetch → OPEN, ACTIVE
+### H5 — Storage-engine specific: RocksDB block layout / prefetch → REFUTED
 
-The COLI MI lives in its own RocksDB column family. SST block layout
-within that CF interleaves all four record types per custkey, which is the
-intended co-location — but it also means **block-cache eviction patterns
-differ from S1's narrower split CFs**. Whether this hurts S3 specifically,
-or is neutral, is testable.
+LeanStore-Btree run (Linux, 2026-05-02) shows the **same ~15% S3-vs-S1
+gap at SF=15** (S1=30.36, S3=25.41 TX/s) and S3 still loses at SF=40
+(S3=0.3667, S1=0.3926). The gap is storage-engine-independent — not a
+RocksDB block-cache or prefetch artefact.
 
-**Active investigation**: rerun S1–S5 at SF=40 / dram=0.1 GiB on the
-**LeanStore B-tree backend** (Linux). Predictions to record before the
-results land:
-
-- If S3 wins on B-tree but loses on RocksDB → fault is LSM block layout
-  on a 4-record CF. Mitigations: separate CF per record type with shared
-  comparator, different SST block size, `BlockBasedTableOptions` tweaks.
-- If S3 still loses on B-tree → fault is in the COLI walk pattern itself
-  (H3 + H4 — full-MI scan with low filter selectivity). Mitigation: S5
-  aCOLI variant or projection pushdown to shrink the per-record cost.
-- If S3 wins on both at higher SF → all current measurements are inside
-  some cache-effect band that doesn't reflect the asymptotic behaviour.
+This eliminates LSM-specific mitigations from the candidate fix list and
+redirects investigation to H3 + H4 (the COLI walk pattern itself: full-MI
+scan with low filter selectivity, plus per-record dispatch overhead).
 
 ### H7 — Significant SSTWrite during read-only queries → OPEN
 
@@ -172,6 +176,14 @@ it does mean the "SSTWrite/TX" column is currently not informative for
 distinguishing structures. Until ruled out, **focus on SSTRead/TX and
 TX/s** for cross-structure comparison.
 
+**Update (2026-05-02 LeanStore run):** LeanStore-Btree reports
+`W MiB/TX = 0` across S1–S4 at both SF=15 and SF=40. The write traffic
+is therefore an LSM-engine artefact — almost certainly background
+compaction triggered during the measurement window — not a workload
+property. This narrows H7's likely root cause to compaction-side effects
+on RocksDB; the remaining work is to attribute the writes precisely so
+the SSTWrite column becomes informative for RocksDB experiments.
+
 ### H6 — Filter selectivity makes per-query "useful work" tiny → OPEN
 
 Default Q3I params: c_mktsegment='BUILDING' (~20% of customers),
@@ -209,18 +221,19 @@ identical scans.
 | `d54ad10d`   | Order-group skip + S4 timer collapse      | SF=1                                                     | Orders 1500→375; lineitems 6008→828; stage attribution unified |
 | `128f6d44`   | bool `on_xxx` hooks + SSTWrite baseline   | SF=1 / SF=40                                             | Logger captures baseline before `helper.run()`, but **SSTWrite/TX did not drop materially** — writes are happening during the measurement window, not before. See H7. |
 | `16e98eb6`   | S5 aCOLI MI                               | SF=1                                                     | 486 records vs S3's 10918 (22× scan reduction); 5-way digest match |
+| 2026-05-02   | LeanStore-Btree run on Linux              | SF=15 / SF=40 dram=0.1                                   | Same ~15% S3-vs-S1 gap as RocksDB → H5 REFUTED. `W MiB/TX = 0` on B-tree → SSTWrite anomaly is RocksDB-specific (compaction). |
 
 ---
 
 ## §4 — Future directions (priority order)
 
-### 1. LeanStore-on-Linux run (active)
+### 1. LeanStore-on-Linux run — DONE (2026-05-02)
 
-Rerun S1–S5 at SF=40 / dram=0.1 GiB on the B-tree backend.
-Capture `Q3IStats` and the per-stage timing block. Pre-register
-expectations under H5 above.
-
-Expected output: a row in §1's table for B-tree at SF=40 dram=0.1.
+Result: same ~15% S3-vs-S1 gap on B-tree (SF=15: S1=30.36, S3=25.41).
+H5 refuted — bottleneck is not LSM-specific. SF=40 collapses S1/S3/S4 to
+~0.4 TX/s (DRAM-bound page-fault thrashing); only S2's small view stays
+above water (163 TX/s). S5 not yet captured on LeanStore — useful
+follow-up.
 
 ### 2. Memory-pressure sweep on RocksDB
 
