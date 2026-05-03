@@ -8,6 +8,8 @@
 // work. Cases 1/2/4 load and run but query_by_* bodies return 0 (Phase 2).
 
 #include <gflags/gflags.h>
+#include <iomanip>
+#include <iostream>
 
 #include "../../shared/RocksDB.hpp"
 #include "../../shared/adapter-scanner/RocksDBAdapter.hpp"
@@ -79,29 +81,34 @@ int main(int argc, char** argv)
    q3i.stats = &stats;
 
    using AggRow = tpch::q3i::q3i_agg_row_t;
+   long tx_count = 0;
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q3i::BaseQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_merge_join");
          helper.run();
+         tx_count = helper.tx_count();
          break;
       }
       case 2: {
          tpch::q3i::ViewQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "pipeline_view");
          helper.run();
+         tx_count = helper.tx_count();
          break;
       }
       case 3: {
          tpch::q3i::MergedQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "mi_coli_walk");
          helper.run();
+         tx_count = helper.tx_count();
          break;
       }
       case 4: {
          tpch::q3i::HashQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_hash_join");
          helper.run();
+         tx_count = helper.tx_count();
          break;
       }
       default:
@@ -109,11 +116,16 @@ int main(int argc, char** argv)
          return 1;
    }
 
-   // Print accumulated Q3I stats. Helper.run() ran N queries over 15s; the
-   // counters here are summed across those N. We don't know N here without
-   // re-deriving from logger output, so print the totals; consumers can
-   // divide by the TX count from the Summary line.
-   std::cout << "\n[q3i] cardinality totals across all queries:"
+   // Print accumulated Q3I stats and per-query averages.
+   // Counters are totals across all tx_count queries in the run window;
+   // per-query averages normalise for the different TX/s across structures.
+   auto per_q = [&](long total) -> double {
+      return tx_count > 0 ? static_cast<double>(total) / tx_count : 0.0;
+   };
+   long total_stage_us = stats.stage_us_scan_filter + stats.stage_us_aggregator
+                       + stats.stage_us_join + stats.stage_us_topN;
+
+   std::cout << "\n[q3i] cardinality totals across all queries (tx=" << tx_count << "):"
              << "\n  customers_scanned       = " << stats.customers_scanned
              << "\n  customers_passing_filter= " << stats.customers_passing_filter
              << "\n  orders_scanned          = " << stats.orders_scanned
@@ -129,11 +141,23 @@ int main(int argc, char** argv)
              << "\n  aggregator_rows_out     = " << stats.aggregator_rows_out
              << "\n  mi_records_visited      = " << stats.mi_records_visited
              << "\n  mi_groups_skipped       = " << stats.mi_groups_skipped
-             << "\n[q3i] per-stage wall-clock totals (us):"
+             << "\n[q3i] per-stage wall-clock totals (us) | total_us=" << total_stage_us << ":"
              << "\n  scan_filter             = " << stats.stage_us_scan_filter
              << "\n  aggregator              = " << stats.stage_us_aggregator
              << "\n  join                    = " << stats.stage_us_join
              << "\n  topN                    = " << stats.stage_us_topN
+             << "\n[q3i] per-stage wall-clock per-query (us/query):"
+             << "\n  scan_filter             = " << std::fixed << std::setprecision(1) << per_q(stats.stage_us_scan_filter)
+             << "\n  aggregator              = " << per_q(stats.stage_us_aggregator)
+             << "\n  join                    = " << per_q(stats.stage_us_join)
+             << "\n  topN                    = " << per_q(stats.stage_us_topN)
+             << "\n  total                   = " << per_q(total_stage_us)
+             << "\n[q3i] stage attribution:"
+             << "\n  S1/S3/S4 fuse scan + filter + aggregate into the join chain and attribute"
+             << "\n  that work to stage_us_join. S2 has no query-time aggregator (pre-materialised"
+             << "\n  view); its stage_us_scan_filter covers the view scan + per-row filters."
+             << "\n  Compare per-query averages, not totals — totals reflect the run window,"
+             << "\n  not per-query cost."
              << std::endl;
    return 0;
 }

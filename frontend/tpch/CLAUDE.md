@@ -636,3 +636,6 @@ The following are explicitly deferred and not part of this skeleton:
 record** of which TPC-H queries are natural COLI MI extension candidates and
 which are not — including the rationale for each decision. Read it before
 proposing new `q{N}i/` directories.
+
+Q3I is a §3.1.2 sibling-aggregate showcase, not a true 4-way M:N join — see
+[q3i/CLAUDE.md §Cardinality structure](q3i/CLAUDE.md#cardinality-structure-not-a-true-4-way-mn).

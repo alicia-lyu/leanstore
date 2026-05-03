@@ -123,5 +123,7 @@ struct RocksDBAdapter : public Adapter<Record> {
    // approximation error (`files_size_error_margin = 0.1`).
    // For like-for-like content comparison, walk the iterator and sum
    // `key.size() + value.size()` per row instead.
+   // Reporting-only; not invoked during query execution, so the
+   // cross-adapter asymmetry does not affect the perf comparison.
    double size() { return map.get_size<Record>(); }
 };

@@ -545,15 +545,21 @@ int main(int argc, char** argv)
              << std::setw(8)  << "j3"
              << std::setw(7)  << "topN"
              << "\n";
-   auto stage_line = [](const char* name, const tpch::q3i::Q3IStats& s) {
+   // Render join1/2/3 as "–" when zero: for S3 (fused walk) these chain-join
+   // counters are intentionally not incremented — zero means "not applicable",
+   // not "zero matching rows". See q3i/CLAUDE.md §Cardinality structure.
+   auto join_col = [](long v) -> std::string {
+      return (v == 0) ? std::string("–") : std::to_string(v);
+   };
+   auto stage_line = [&join_col](const char* name, const tpch::q3i::Q3IStats& s) {
       std::cout << "[stage] " << std::left << std::setw(10) << name
                 << std::right << std::setw(9)  << s.customers_passing_filter
                 << std::setw(9)  << s.orders_passing_filter
                 << std::setw(10) << s.lineitems_passing_filter
                 << std::setw(9)  << s.invoices_passing_filter
-                << std::setw(8)  << s.join1_output_rows
-                << std::setw(8)  << s.join2_output_rows
-                << std::setw(8)  << s.join3_output_rows
+                << std::setw(8)  << join_col(s.join1_output_rows)
+                << std::setw(8)  << join_col(s.join2_output_rows)
+                << std::setw(8)  << join_col(s.join3_output_rows)
                 << std::setw(7)  << s.topN_candidates
                 << "\n";
    };
@@ -561,6 +567,8 @@ int main(int argc, char** argv)
    stage_line("S2 view",   st_view);
    stage_line("S3 merged", st_merged);
    stage_line("S4 hash",   st_hash);
+   std::cout << "  [stage] joinN columns blank for S3 (single fused walk;"
+             << " see q3i/CLAUDE.md §Cardinality structure)\n";
 
    // Per-stage wall-clock breakdown (microseconds).
    std::cout << "\n=== Per-path stage wall-clock (us) ===\n";

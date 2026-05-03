@@ -174,6 +174,8 @@ struct LineitemRevenueAccumulator {
 //   • The Visitor collects all qualifying rows into `out`; apply_topN is
 //     called by query_by_merged after the walk to enforce ORDER BY revenue
 //     DESC LIMIT 10 (OPERATORS.md §3 op 8–9).
+//   • (invoice→customer is 1:1 after the sub-aggregate; this is not a
+//     4-way M:N — see q3i/CLAUDE.md §Cardinality structure.)
 
 struct COLIGroupWalkVisitor {
    const Params& params;
@@ -193,6 +195,18 @@ struct COLIGroupWalkVisitor {
    bool wants_skip_group() {
       bool s = skip_group_pending;
       skip_group_pending = false;  // one-shot — consumed by walker
+      return s;
+   }
+
+   // Visitor-driven order skip: set true to request walker to forward-iterate
+   // past the current order's lineitems without dispatching on_lineitem. Used
+   // when on_order rejects the orderdate filter — the lineitems under that
+   // order are all doomed, so skipping them avoids per-row dispatch cost
+   // (≈75% of lineitems at default params with a 1995-03-15 cutoff).
+   bool skip_order_pending = false;
+   bool wants_skip_order() {
+      bool s = skip_order_pending;
+      skip_order_pending = false;  // one-shot — consumed by walker
       return s;
    }
 
@@ -221,10 +235,9 @@ struct COLIGroupWalkVisitor {
       // passed the shipdate filter (revenue > 0). Orders whose lineitems all
       // fail the shipdate predicate have no matching rows in the SQL result.
       if (rev.revenue > Numeric(0)) {
-         if (stats) {
-            stats->join2_output_rows++;  // surviving (custkey,orderkey)
-            stats->join3_output_rows++;  // post-aggregate emit
-         }
+         // join2/join3_output_rows are S1/S4 chain-join abstractions; S3 is a
+         // single fused walk — those counters stay at zero for S3. See
+         // q3i/CLAUDE.md §Cardinality structure.
          out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
                         cur_shippriority, open_due.value});
       }
@@ -270,10 +283,18 @@ struct COLIGroupWalkVisitor {
       } else {
          flush_order();  // close previous order before opening a new one
       }
-      if (o.o_orderdate >= params.orderdate) return;  // single-table date filter
+      if (o.o_orderdate >= params.orderdate) {
+         // Date filter failed: skip this order's lineitems without dispatch.
+         // The walker will forward-iterate past them when wants_skip_order()
+         // fires. have_open_order stays false so flush_order() is a no-op.
+         skip_order_pending = true;
+         have_open_order    = false;
+         return;
+      }
       if (stats) {
          stats->orders_passing_filter++;
-         stats->join1_output_rows++;  // post mktsegment+threshold+orderdate
+         // join1_output_rows is a S1/S4 chain-join counter; S3 is a fused
+         // walk so this counter stays at zero — see §Cardinality structure.
       }
       have_open_order  = true;
       cur_orderkey     = k.orderkey;
@@ -750,49 +771,19 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    // per OPERATORS.md §6.1 comparison-integrity — same arithmetic as S1/S3.
    out.clear();
 
+   // S4 fuses invoice aggregate, customer filter, order build, and lineitem
+   // probe into one conceptual join chain — the same notion as S1/S3 where
+   // scan + filter + aggregate all run inside the merge/walk driver and are
+   // attributed to stage_us_join. A single outer StageTimer wraps the whole
+   // HJ chain so S1/S3/S4 all report stage_us_join + stage_us_topN, making
+   // the per-stage wall-clock directly comparable across structures.
+   // (stage_us_scan_filter and stage_us_aggregator stay at zero for S4.)
+
    // --- Step a: invoice hash-aggregate with threshold filter ---
    // Reuses CustomerOpenDueAccumulator's consume_invoice(invoice_t) overload.
    std::unordered_map<Integer, Numeric> open_due_map;
-   {
-      StageTimer t(stats ? &stats->stage_us_aggregator : nullptr);
-      CustomerOpenDueAccumulator acc;
-      auto inv_scan = invoice.getScanner();
-      while (auto kv = inv_scan->next()) {
-         if (stats) stats->invoices_scanned++;
-         const invoice_t& inv = kv->second;
-         // consume_invoice fuses the i_status='O' filter.
-         Numeric before = acc.value;
-         acc.consume_invoice(inv);
-         if (acc.value != before) {
-            if (stats) stats->invoices_passing_filter++;
-            open_due_map[inv.i_custkey] = open_due_map[inv.i_custkey] + (acc.value - before);
-         }
-         acc.reset();
-      }
-      // Apply threshold filter: drop custkeys that don't qualify.
-      for (auto it = open_due_map.begin(); it != open_due_map.end(); ) {
-         if (it->second <= params.threshold) it = open_due_map.erase(it);
-         else ++it;
-      }
-   }
-
    // --- Step b: customer mktsegment filter map ---
    std::unordered_map<Integer, bool> cust_ok;  // true = passes mktsegment filter
-   {
-      StageTimer t(stats ? &stats->stage_us_scan_filter : nullptr);
-      auto cust_scan = customer.getScanner();
-      while (auto kv = cust_scan->next()) {
-         if (stats) stats->customers_scanned++;
-         const customerh_t& c = kv->second;
-         auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
-         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-         if (sm == psm) {
-            cust_ok[kv->first.c_custkey] = true;
-            if (stats) stats->customers_passing_filter++;
-         }
-      }
-   }
-
    // --- Post-join aggregate by orderkey ---
    std::unordered_map<Integer, q3i_agg_row_t> per_order;
 
@@ -800,16 +791,58 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    auto ord_scan = orders.getScanner();
    auto lin_scan = lineitem.getScanner();
 
-   // Build orders map filtered by date, custkey membership in open_due_map,
-   // and mktsegment filter.
    struct OrderSlot {
       Integer custkey;
       Timestamp orderdate;
       Integer shippriority;
    };
    std::unordered_map<Integer, OrderSlot> ord_map;
+
    {
+      // One outer timer covers the entire HJ chain: invoice aggregate,
+      // customer filter, order build, and lineitem probe.
       StageTimer t(stats ? &stats->stage_us_join : nullptr);
+
+      // Step a: invoice hash-aggregate.
+      {
+         CustomerOpenDueAccumulator acc;
+         auto inv_scan = invoice.getScanner();
+         while (auto kv = inv_scan->next()) {
+            if (stats) stats->invoices_scanned++;
+            const invoice_t& inv = kv->second;
+            // consume_invoice fuses the i_status='O' filter.
+            Numeric before = acc.value;
+            acc.consume_invoice(inv);
+            if (acc.value != before) {
+               if (stats) stats->invoices_passing_filter++;
+               open_due_map[inv.i_custkey] = open_due_map[inv.i_custkey] + (acc.value - before);
+            }
+            acc.reset();
+         }
+         // Apply threshold filter: drop custkeys that don't qualify.
+         for (auto it = open_due_map.begin(); it != open_due_map.end(); ) {
+            if (it->second <= params.threshold) it = open_due_map.erase(it);
+            else ++it;
+         }
+      }
+
+      // Step b: customer mktsegment filter map.
+      {
+         auto cust_scan = customer.getScanner();
+         while (auto kv = cust_scan->next()) {
+            if (stats) stats->customers_scanned++;
+            const customerh_t& c = kv->second;
+            auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
+            auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+            if (sm == psm) {
+               cust_ok[kv->first.c_custkey] = true;
+               if (stats) stats->customers_passing_filter++;
+            }
+         }
+      }
+
+      // Build orders map filtered by date, custkey membership in open_due_map,
+      // and mktsegment filter.
       while (auto kv = ord_scan->next()) {
          if (stats) stats->orders_scanned++;
          const orders_t& o = kv->second;
@@ -821,37 +854,36 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          ord_map[kv->first.o_orderkey] = {o.o_custkey, o.o_orderdate, o.o_shippriority};
          if (stats) stats->join2_output_rows++;  // each surviving (custkey,orderkey)
       }
-   }
 
-   // Probe lineitem against orders map; accumulate revenue per orderkey.
-   {
-      StageTimer t(stats ? &stats->stage_us_join : nullptr);
-      LineitemRevenueAccumulator acc;
-      while (auto kv = lin_scan->next()) {
-         if (stats) stats->lineitems_scanned++;
-         const lineitem_t& l = kv->second;
-         auto it = ord_map.find(kv->first.l_orderkey);
-         if (it == ord_map.end()) continue;
-         if (!acc.consume(l, params)) continue;  // shipdate filter fused in consume
-         if (stats) {
-            stats->lineitems_passing_filter++;
-            stats->join_callbacks++;
-            stats->join3_output_rows++;
+      // Probe lineitem against orders map; accumulate revenue per orderkey.
+      {
+         LineitemRevenueAccumulator acc;
+         while (auto kv = lin_scan->next()) {
+            if (stats) stats->lineitems_scanned++;
+            const lineitem_t& l = kv->second;
+            auto it = ord_map.find(kv->first.l_orderkey);
+            if (it == ord_map.end()) continue;
+            if (!acc.consume(l, params)) continue;  // shipdate filter fused in consume
+            if (stats) {
+               stats->lineitems_passing_filter++;
+               stats->join_callbacks++;
+               stats->join3_output_rows++;
+            }
+            const OrderSlot& slot = it->second;
+            Integer orderkey = kv->first.l_orderkey;
+            auto& row = per_order[orderkey];
+            if (row.o_orderkey == Integer(0)) {
+               // First lineitem for this order: populate order fields.
+               row.o_orderkey     = orderkey;
+               row.o_orderdate    = slot.orderdate;
+               row.o_shippriority = slot.shippriority;
+               row.cust_open_due  = open_due_map.at(slot.custkey);
+            }
+            row.revenue += acc.revenue;
+            acc.reset();
          }
-         const OrderSlot& slot = it->second;
-         Integer orderkey = kv->first.l_orderkey;
-         auto& row = per_order[orderkey];
-         if (row.o_orderkey == Integer(0)) {
-            // First lineitem for this order: populate order fields.
-            row.o_orderkey     = orderkey;
-            row.o_orderdate    = slot.orderdate;
-            row.o_shippriority = slot.shippriority;
-            row.cust_open_due  = open_due_map.at(slot.custkey);
-         }
-         row.revenue += acc.revenue;
-         acc.reset();
       }
-   }
+   }  // end StageTimer: entire HJ chain attributed to stage_us_join
 
    for (auto& [_, row] : per_order) {
       if (row.revenue > Numeric(0)) out.push_back(row);

@@ -61,6 +61,35 @@ Q3I is the **COLI MI showcase** for combining §3.1.3 hierarchical join with a
 
 ---
 
+## Cardinality structure: not a true 4-way M:N
+
+Despite the SQL appearing to join four tables, Q3I is **not** a genuine 4-way
+many-to-many join. INVOICE is reduced to a per-custkey scalar
+(`cust_open_due = SUM(i_totaldue) WHERE i_status='O'`) by the inline derived
+table *before* any join with ORDERS or LINEITEM. `c_custkey = oi.i_custkey`
+then attaches that scalar to CUSTOMER as a sibling of the C-O-L hierarchy.
+
+- INVOICE × {C, O, L}: 1:1 after the sub-aggregate; `i_invoicekey` and
+  `l_invoicekey` are not consulted by Q3I.
+- CUSTOMER × ORDERS: 1:N on `c_custkey = o_custkey`.
+- ORDERS × LINEITEM: 1:N on `o_orderkey = l_orderkey`.
+
+The COLI MI exploits this asymmetry: invoice records sit *alongside* the C-O-L
+hierarchy under each custkey (sibling sub-aggregate, §3.1.2), and the walker
+finalises `cust_open_due` at the invoice→orders boundary inside each custkey
+group. The `lineitem_t.l_invoicekey` payload is reserved for future workloads
+that *do* join lineitem with its invoice.
+
+**Implication for benchmarking**: Q3I demonstrates §3.1.2 (sibling
+sub-aggregate) cleanly, but is not a §3.1.3 hierarchical-M:N showcase. A
+stronger §3.1.3 query — where all four record types contribute many-to-many
+rows — is a separate follow-up.
+
+This is also why the `joinN_output_rows` counters are blank for S3: there is
+no 3-stage join chain, just one fused walk.
+
+---
+
 ## Storage Structure Options
 
 | # | Strategy | Secondary structure | Join strategy |

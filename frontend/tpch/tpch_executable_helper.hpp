@@ -23,6 +23,7 @@ struct TpchExecutableHelper {
    PerStructureWrapper wrapper;
    TPCHWorkload<AdapterType>& tpch;
    std::string structure_name;
+   long last_count = 0;  // TX count from the most recent tput_tx() call
 
    TpchExecutableHelper(RocksDB& rocks_db, PerStructureWrapper wrapper,
                         TPCHWorkload<AdapterType>& tpch, std::string name)
@@ -52,6 +53,10 @@ struct TpchExecutableHelper {
       tpch.prepare();
       tput_tx("query");
    }
+
+   // Returns the number of queries executed in the most recent run() call.
+   // Used by per-query executables to compute per-query stage averages.
+   long tx_count() const { return last_count; }
 
    void tput_tx(const std::string& tx_name)
    {
@@ -92,6 +97,7 @@ struct TpchExecutableHelper {
       auto end = std::chrono::high_resolution_clock::now();
       long duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = static_cast<double>(count.load()) / duration * 1e6;
+      last_count = count.load();
       tpch.logger.log(tput, count.load(), tx_name, structure_name, wrapper.get_size());
 
       double avg_latency_ms = (tput > 0) ? 1000.0 / tput : 0.0;

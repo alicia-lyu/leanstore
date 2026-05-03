@@ -55,7 +55,30 @@ bool q3i_predicate_joined(const joined_ol_t& j, const Params& p);
 bool q3i_predicate_invoice(const invoice_t& i);
 
 // ---------------------------------------------------------------------------
-// Optional per-query intermediate cardinality counters.
+// Optional per-query intermediate cardinality counters and per-stage timers.
+//
+// Per-path stage attribution policy (affects stage_us_* interpretation):
+//
+//   S1 (merge)  — scan + filter + aggregate all run inside the 3-BMJ chain
+//                 and inside the scanner-wrapper aggregators. All attributed
+//                 to stage_us_join. stage_us_scan_filter and
+//                 stage_us_aggregator are zero.
+//   S2 (view)   — no query-time aggregator (pre-materialised). Query is a
+//                 sequential view scan with per-row filters. Attributed to
+//                 stage_us_scan_filter. stage_us_join and stage_us_aggregator
+//                 are zero.
+//   S3 (merged) — single fused walk; everything attributed to stage_us_join.
+//                 stage_us_scan_filter and stage_us_aggregator are zero.
+//                 join1/2/3_output_rows are also zero (S1/S4 chain-join
+//                 abstraction; not applicable to a fused walk).
+//   S4 (hash)   — entire HJ chain (invoice aggregate, customer filter, order
+//                 build, lineitem probe) attributed to stage_us_join to match
+//                 S1/S3. stage_us_scan_filter and stage_us_aggregator are zero.
+//
+// When comparing per-stage costs across structures, always use per-query
+// averages (total / tx_count), not raw totals — totals reflect different
+// TX/s rates over the same wall-clock window. See §Stage attribution in
+// executable_{rocksdb,leanstore}.cpp.
 //
 // Coverage gaps (see test_query_q3i_lsm `[card]` table). Per-path counter
 // fidelity differs by operator shape:
