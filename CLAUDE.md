@@ -63,6 +63,36 @@ The first Calcite-planned query being manually coded as a proof-of-concept, tran
 
 The fork also includes an experimental workload ("geo") that benchmarks different indexing strategies (traditional indexes, materialized views, merged indexes) for multi-table joins over a geographic hierarchy (Nation → States → County → City → Customer) using both B-tree (LeanStore native) and LSM-tree (RocksDB) storage backends.
 
+## Repo Markdown Index
+
+Every non-`CLAUDE.md` Markdown file at this level (or in `archive/`,
+which has no `CLAUDE.md`). Each entry includes when to read it.
+
+- [`LINUX_SETUP.md`](./LINUX_SETUP.md) — read when bringing up a fresh
+  Linux node (perf_event_paranoid sysctl, NVMe partitioning + ext4
+  mount, smoke-test commands). Authoritative; reproduce per-machine.
+- [`TPCH_experiments.md`](./TPCH_experiments.md) — read for the TPC-H
+  experiment matrix: query status, storage-structure conventions,
+  memory-pressure design, reviewer-concern mapping. Use this before
+  drilling into a per-query `frontend/tpch/<q>/CLAUDE.md`.
+- [`TRASH-FILES.md`](./TRASH-FILES.md) — audit trail of files moved to
+  `TRASH/`. Read only when an agent encounters a referenced file that
+  no longer exists / has been renamed and needs to confirm intent.
+- `archive/` (no `CLAUDE.md` at that level — referenced from here):
+  - [`archive/README.md`](./archive/README.md) — original geo benchmark
+    schema and data-generation spec. Read when reconstructing the
+    pre-TPC-H geo workload, otherwise skip.
+  - [`archive/DOCKER_MEMORY.md`](./archive/DOCKER_MEMORY.md) — docker
+    container session notes. Read when working on the Docker image or
+    paper-submission packaging, otherwise skip.
+  - [`archive/SESSION_PROGRESS.md`](./archive/SESSION_PROGRESS.md) —
+    historical TPC-H Tier-1 progress snapshot. Superseded by per-query
+    CLAUDE.md status sections; read only when reconstructing
+    historical context.
+  - [`archive/UPSTREAM_README.md`](./archive/UPSTREAM_README.md) —
+    upstream LeanStore README. Read when investigating upstream
+    behaviour or contributing back.
+
 ## Build Commands
 
 ### Prerequisites (Ubuntu 22.04 — full build)

@@ -3,6 +3,32 @@
 Top-level reference for the Q12 / Q3 / Q9 skeleton implementation under
 `frontend/tpch/`. Read this before touching any per-query directory.
 
+## Sibling Docs
+
+Every non-`CLAUDE.md` Markdown file at this level. Read each on the
+trigger described:
+
+- [`OPERATORS.md`](OPERATORS.md) — read **before filling in any
+  `query_by_*` body**: monolithic-vs-cascade translation rules from
+  Calcite operators to C++, primitive instantiations, comparison-axis
+  contract.
+- [`PLAYBOOK.md`](PLAYBOOK.md) — read **when implementing a new TPC-H
+  query end-to-end** across all four storage structures (uses Q3I as
+  the canonical reference template).
+- [`INVOICE_EXTENSION_CANDIDATES.md`](INVOICE_EXTENSION_CANDIDATES.md)
+  — read **before proposing a new `q{N}i/` invoice-extended query**:
+  authoritative record of which TPC-H queries are natural COLI MI
+  candidates and which are not, with rationale.
+- [`MULTI_TABLE_MI_ANALYSIS.md`](MULTI_TABLE_MI_ANALYSIS.md) — read
+  **when picking which pipeline a new MI should target**: argues for
+  >2-table MIs over the 2-table OL pipeline, framed against the
+  paper's "combinatorial advantage" claim.
+
+For supplemental cross-cutting context, the top-level
+[`TPCH_experiments.md`](../../TPCH_experiments.md) owns the experiment
+matrix (memory-pressure design, reviewer-concern mapping) and indexes
+per-query CLAUDE.md docs.
+
 ## Layout
 
 Shared files (used by all three queries):
