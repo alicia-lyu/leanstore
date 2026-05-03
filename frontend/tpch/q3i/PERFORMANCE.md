@@ -48,21 +48,34 @@ collapsed to ~0.34–0.39 TX/s by DRAM-spilling page faults, S5 holds
 reduction in per-query CPU work) and `R MiB/TX = 2.97e-05` vs S4's
 `6.67e-03` (~225× less I/O traffic).
 
-**aCOLI footprint anomaly (open).** aCOLI carries only the two
-record types `customer_acoli_t` + `orders_acoli_t` — at SF=40 that
-is ~6k customers + ~240k orders ≈ 246k records, vs COLI's full
-C+O+L+I ≈ 1.69M records. So aCOLI's cardinality is **~14% of
-COLI's**, and the footprint should track that fraction (~38 MiB
-expected vs COLI's 269 MiB). Reported sizes: 141.16 MiB on
-LeanStore SF=40, 136.62 MiB on RocksDB SF=40 — both ~4× larger
-than expected, ~52% of COLI rather than ~14%. Cross-backend
-reproduction rules out an LSM-specific quirk. Candidate causes:
-(a) Varchar fields stored at declared max length inflate per-row
-size beyond my estimate; (b) per-tree / per-CF fixed metadata is
-substantial for the smaller aCOLI tree; (c)
-`get_aggregated_size()` sums beyond the aCOLI tree's own range.
-Tracked as Phase 6 in
-`.claude/plans/q3i-perf-investigation-followups.md`.
+**aCOLI footprint anomaly (RocksDB side: ROOT-CAUSED & FIXED, commit
+`50fd2052`).** Was: at SF=40 RocksDB reported aCOLI = 136.62 MiB,
+suspiciously close to COLI = 269 MiB (~52% rather than the ~14%
+that cardinality predicted). Root cause: `RocksDB::get_size(cf, ...)`
+cached the first caller's result in a single `default_cf_size`
+field and returned it for **every** subsequent CF — so any binary
+holding two `MergedAdapter`s (e.g. COLI + aCOLI) reported byte-for-
+byte identical sizes. SF=1 reproduction with the new
+`[content/row]` + `[overhead]` walk in
+`tests/q3i/test_query_q3i_rocksdb.cpp` showed aCOLI content =
+0.162 MiB but reported = 2.341 MiB (93% "metadata") — pointing at
+a measurement-API bug rather than real footprint. Fix: per-CF
+cache (`std::unordered_map<ColumnFamilyHandle*, double>`).
+Verified at SF=1 post-fix: aCOLI = 0.100 MiB,
+merged_coli = 1.120 MiB, parity unchanged. SF=40 RocksDB re-run
+pending; expected to drop the reported aCOLI by ~3-4×.
+
+**LeanStore side: still open.** LeanStore's `MergedAdapter::size()`
+goes through `btree->estimatePages() * EFFECTIVE_PAGE_SIZE`
+(unrelated code path, no caching). At SF=15 aCOLI reports
+52.95 MiB and at SF=40 it reports 141.16 MiB — both still
+inflated relative to the ~14% cardinality expectation. Likely
+B-tree page-utilisation (50-70% fill factor counts every page
+including half-full leaves) but not yet quantified. Outstanding
+work: add `[content/row]` walk to the LeanStore harness
+(`test_load_coli_btree` / `test_query_q3i_btree`) so the inflation
+is traceable to leaf-fill ratio rather than another measurement
+bug.
 
 (SF=40 collapses S1/S3/S4 to ~0.4 TX/s — data spills out of the 0.1 GiB
 DRAM budget; bottleneck is page-fault traffic, not the join algorithm.
@@ -432,6 +445,7 @@ trivially zero and not useful either way.
 | 2026-05-03   | S5 aCOLI MI on RocksDB                    | SF=40 dram=0.1                                           | S5=123.17 TX/s — beats S1/S3/S4 (~0.4 TX/s, DRAM-spilling) by ~300×, behind S2 (198.3) by ~38%. Reported size 136.62 MiB suspiciously close to base alone (~130 MiB) — aCOLI MI delta ≈ 6 MiB; potential `get_aggregated_size()` measurement bug, not yet root-caused. |
 | 2026-05-03   | S5 aCOLI MI + S4 hash on LeanStore        | SF=15 dram=0.1                                           | S5=265.63 TX/s (worker cycles 7.44 M) reproduces the RocksDB pattern; ~10× ahead of S1/S3/S4 raw paths, ~38% behind S2 (437.17). S4=28.38 TX/s slots between S1 (30.36) and S3 (25.41) — completes the SF=15 raw-path picture. aCOLI footprint 52.95 MiB vs base 48.90 MiB (~4 MiB delta) matches the RocksDB size anomaly — likely `get_aggregated_size()` measures the wrong CF / range on both backends. |
 | 2026-05-03   | S5 aCOLI MI + S4 hash on LeanStore        | SF=40 dram=0.1                                           | S5=89.67 TX/s (worker cycles 27.6 M, R MiB/TX 2.97e-05). S4=0.3397 TX/s (worker cycles 622 M, R MiB/TX 6.67e-03) — DRAM-spilling, 6 queries in 17.7 s. **S5 holds ~260× lead over raw paths under disk pressure**, ~22× fewer cycles/TX and ~225× less I/O than S4; ~55% behind S2 (163.33). aCOLI footprint 141.16 MiB vs S4 base 130.43 MiB (~11 MiB delta) — same anomaly pattern at SF=40 LeanStore. |
+| 2026-05-03   | aCOLI size anomaly root-caused on RocksDB | SF=1 (`test_query_q3i_lsm`)                              | Bug: `RocksDB::get_size(cf,...)` cached one global result and returned it for every CF. With two MergedAdapters (COLI + aCOLI) both reported byte-for-byte identical sizes. Phase 6 [content/row] walk surfaced it (aCOLI content 0.162 MiB vs reported 2.341 MiB → 93% "metadata"). Fix `50fd2052` keys cache per-CF. Post-fix SF=1: aCOLI = 0.100 MiB, merged_coli = 1.120 MiB. Parity unchanged across all 5 paths. |
 
 ---
 
