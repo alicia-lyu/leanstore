@@ -467,8 +467,33 @@ int main(int argc, char** argv)
          stats_ok &= ok_o;
          check("acoli_orders", ok_o, n_acoli_o, "= " + std::to_string(n_orders));
       }
+      // Phase 6: aCOLI size content-walk diagnostic. PERFORMANCE.md flags
+      // a cross-backend anomaly where reported aCOLI size is ~52% of COLI's
+      // despite C+O cardinality being only ~14% of C+O+L+I. Walk the
+      // dedicated aCOLI CF directly to get truthful key+value bytes — this
+      // bypasses any RocksDB API quirk and shows whether the inflation is
+      // (a) wide rows (Varchar fields stored at declared max length),
+      // (b) per-CF SST metadata, or (c) a measurement-API issue.
+      auto rb_acoli = raw_bytes_in_cf(acoli.cf_handle, -1);
+      double acoli_reported_mib = acoli.size();
+      double acoli_content_mib  = static_cast<double>(rb_acoli.second) / (1024.0 * 1024.0);
+      double acoli_overhead_pct = acoli_reported_mib > 0
+          ? 100.0 * (acoli_reported_mib - acoli_content_mib) / acoli_reported_mib
+          : 0.0;
+      auto cpr2 = [](long bytes, long rows) {
+         return rows > 0 ? static_cast<double>(bytes) / static_cast<double>(rows) : 0.0;
+      };
       std::cout << "[size] acoli=" << std::fixed << std::setprecision(3)
-                << acoli.size() << " MiB\n";
+                << acoli_reported_mib << " MiB"
+                << "  (rows=" << rb_acoli.first
+                << "  c=" << n_acoli_c << " o=" << n_acoli_o << ")\n"
+                << "[content/row] acoli=" << std::fixed << std::setprecision(1)
+                << cpr2(rb_acoli.second, rb_acoli.first)
+                << "          (key.size() + value.size() summed per row)\n"
+                << "[overhead] acoli reported=" << std::fixed << std::setprecision(3)
+                << acoli_reported_mib << " MiB  content=" << acoli_content_mib
+                << " MiB  metadata=" << (acoli_reported_mib - acoli_content_mib)
+                << " MiB (" << std::setprecision(1) << acoli_overhead_pct << "%)\n";
    }
 
    // Run all four paths.
