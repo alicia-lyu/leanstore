@@ -182,9 +182,53 @@ not against the implementer's evolving mental model.
    surface any asymmetry that affects what the merged-index pitch
    is actually claiming. This is the single most important
    anti-overclaiming safeguard.
+
+   **Three distinct framings (pick one):**
+
+   1. **Pure hierarchical (linear chain)**: every table in the join
+      chain contributes many-to-many rows along a strict prefix
+      hierarchy (e.g., `custkey ⊃ orderkey ⊃ linenumber` for Q3:
+      customer × orders × lineitem). The MI benefit is hierarchical-
+      prefix scan locality, full stop. **Do not** describe the schema
+      as "M:N with no sibling shortcut" — there is no sibling.
+   2. **Hierarchical + sibling sub-aggregate**: a sibling table
+      (Q3I's INVOICE) is reduced to a per-key scalar before the main
+      join — the §3.1.2 sibling sub-aggregate pattern. The "not-a-
+      true-N-way-M:N" caveat applies here: only the chain is genuinely
+      M:N; the sibling collapses to a scalar attachment.
+   3. **Genuine tree (sibling-with-children)**: the sibling is itself
+      a sub-hierarchy (e.g., invoice × invoiceitem) and contributes
+      M:N rows that are NOT pre-aggregated. The MI co-locates the
+      full tree under the root key; both branches stream
+      independently inside the walker. This is the strongest §3.1.3
+      showcase — every record in the MI participates in the join
+      output, no scalar reductions, no asymmetry to disclaim. None
+      of Q3 / Q3I / Q12 is this shape; it would belong to a future
+      query that joins multiple branches of a customer's data
+      structure (e.g., orders AND invoices AND their line/payment
+      children) without collapsing any branch to an aggregate.
+
+   Cross-reference the chosen framing in §Motivation. Confusing
+   the framings undersells (1)/(3) or overclaims (2). Importing
+   (2)'s "no sibling shortcut" wording into (1) is the specific
+   mistake the Q3 Phase 0 audit caught (anti-pattern #27 in §13).
+
 5. **Storage Structure Options** — the 4–5 row table (S1 / S2 / S3 /
    S4 / [S5]) listing for each: strategy, secondary structure, join
-   strategy.
+   strategy, and **Params baked in** (required column — value is
+   "none" or a reference to the spec-hardcoded constant, e.g.
+   `i_status='O'` per TPC-H Q3I §3.2.3).
+
+   **Soundness rule**: a secondary may bake aggregates **only** when
+   every predicate in the aggregate's filter expression is a constant
+   hardcoded by the TPC-H spec for this query (e.g.
+   `i_status='O'` for Q3I's `cust_open_due`). Aggregates derived from
+   parameterised predicates (`l_shipdate > $DATE`,
+   `c_mktsegment = $SEGMENT`, etc.) **must not** be baked. Storing
+   the unaggregated source rows and recomputing at query time is the
+   only sound choice. Anti-pattern #10 / #24 (§13) for the historical
+   bug.
+
 6. **Plan Descriptions (query shapes)** — operator graphs for each
    storage structure. Either inline DOT diagrams or `plans/*.dot`
    files referenced from the doc. **Each shape names the explicit
@@ -196,9 +240,31 @@ not against the implementer's evolving mental model.
    filters fuse with which TableScan, which fuse with aggregators,
    which fuse with Visitor hooks. The doc is the source of truth;
    if `query.tpp` does something else, that's a review comment.
+
+   - **No parameterised filter may be baked into any secondary.** The
+     COL MI, COL custkey-sorted secondaries, and `q{N}_pipeline_view_t`
+     are all loaded **without** applying SEGMENT / DATE / THRESHOLD /
+     any other parameter. This is non-negotiable: a baked param ties
+     the secondary to its load-time value and the test harness's
+     `[SKIP]` guard becomes the only thing that hides the
+     wrong-answer bug. (Q3I S2/S5 audit, 2026-05-03.)
+
 8. **Required Record Types** — `q{N}_pipeline_view_t`,
    `q{N}_agg_row_t`, intermediate join types (if S1 uses BMJ chain).
    Just the shape and key — full bodies land in Phase 1.
+
+   **Composition with sibling queries**. If this query has a sibling
+   in the same family (Q3 / Q3I, hypothetical Q5 / Q5I, etc.), aim
+   for the new record types to be a strict subset / projection of the
+   sibling's types so a single `views_*.hpp` definition serves both.
+   Concretely: `customer_col_t` ≡ `customer_coli_t` minus invoice-aware
+   sentinel ordering; `LineitemRevenueAccumulator` is reused verbatim
+   across both queries' walkers. Where types must diverge (Q3I-only
+   `CustomerOpenDueAccumulator`), they live in Q3I-only files. The
+   relationship is **composition**, not "Q3I extends Q3" — the goal
+   is DRY (a fix in one place doesn't have to be applied twice), not
+   inheritance.
+
 9. **Open questions** — whatever wasn't pinned down. Better to log
    them up front than discover mid-Phase-4.
 
@@ -242,6 +308,15 @@ implementation so subsequent phases edit named places.
 - `query.tpp`: `Params::defaults()` real body; predicates declared
   but bodies optional; four `query_by_*` are stubs; `print()`
   declared with `// TODO`.
+- **Param cycling hook**: `Q{N}Workload<Backend>` must declare
+  `void set_params_for_iter(long iter)` and the per-structure
+  wrappers (`BaseQ{N}` etc.) forward to it. The body — even if
+  stubbed to `params = Params::defaults()` initially — keeps the
+  wrapper concept uniform so the test harness and
+  `TpchExecutableHelper::tput_tx` can call
+  `wrapper.set_params_for_iter(count)` before each query. The
+  non-stub body lands in Phase 5 (workload.hpp). See Q12 / Q3I
+  reference implementations.
 - `executable_{rocksdb,leanstore}.cpp`: full `main()` mirroring Q3I
   — the executable should run end-to-end, load data, and "execute"
   each storage structure (returning empty results) without crashing.
@@ -385,6 +460,21 @@ struct Params {
    static Params defaults();
 };
 ```
+
+A `Q{N}Workload<Backend>` exposes both `Params::defaults()` (the
+validation values, used by tests / digest seeding) and
+`set_params_for_iter(long iter)` which deterministically rotates
+through a static table of valid SUBSTITUTION-PARAMETER tuples per
+the TPC-H spec for this query. The table covers, at minimum,
+every distinct domain value listed in §Substitution parameters of
+the design doc (e.g. all 5 SEGMENTs × 5 DATEs for Q3I). `params =
+table[iter % table.size()]`. The test harness pins `params =
+Params::defaults()` for parity checks; production executables go
+through `set_params_for_iter`.
+
+**Why required**: a fixed-param production loop hid the Q3I
+`pre_revenue` bug for weeks. Per-query rotation surfaces baked-in-
+param secondaries within a 10-second `helper.run()`.
 
 ### Predicates
 
@@ -930,85 +1020,105 @@ Filters are pushed into fetch lambdas on the scanner-wrappers (e.g.
 > counters (leave at zero) and render `–` in output tables. This is not
 > a cardinality bug; it means "not applicable to a fused walk".
 
-The simplest body. Scan `pipeline_view`, apply parameterised filters
-per-row, emit, `apply_topN`:
+**Post-audit shape** (Q3I commit `db60d49b`; Q3 design follows the same
+pattern):
+
+- View row granularity is **per-lineitem**, keyed by
+  `(custkey, orderkey, linenumber)`. NOT per-orderkey with
+  pre-aggregated revenue.
+- View payload carries the unaggregated lineitem fields plus FD-attached
+  order/customer columns.
+- `populate_q{N}_view` does NOT apply mktsegment, orderdate, shipdate, or
+  any parameterised filter. It does NOT pre-aggregate.
+- `query_by_view` applies all filters live, runs a per-orderkey
+  `LineitemRevenueAccumulator` over qualifying lineitems, then emits.
 
 ```cpp
 template <typename Backend>
 long Q{{N}}Workload<Backend>::query_by_view(std::vector<q{{N}}_agg_row_t>& out)
 {
    out.clear();
+   LineitemRevenueAccumulator acc;
    auto scanner = pipeline_view.getScanner();
    while (auto kv = scanner->next()) {
       const auto& row = kv->second;
       if (row.c_mktsegment != params.mktsegment) continue;   // parameterised
       if (row.o_orderdate >= params.orderdate) continue;       // parameterised
+      if (!q{{N}}_predicate_lineitem(row.line(), params)) continue;
       // Track 2: if (row.cust_open_due <= params.threshold) continue;
-      if (row.revenue <= Numeric(0)) continue;                 // zero-revenue guard
-      out.push_back({kv->first.orderkey, row.revenue, ...});
+      acc.accumulate(kv->first.orderkey, row);
    }
+   acc.flush(out);
    apply_topN(out, {{K}}, {{comparator}});
    return static_cast<long>(out.size());
 }
 ```
 
-> **PITFALL — S2 missing zero-revenue guard** (commit `8fdcdda1`):
-> `query_by_view` must suppress rows where `revenue <= 0`, just like
-> `flush_order` in S3. Orders whose lineitems all failed the baked-in
-> `l_shipdate` filter at view-load time have `revenue == 0` in the view.
-> S1/S3/S4 naturally exclude these (the accumulator produces no output),
-> but S2 sees them as pre-existing view rows.
-> **Symptom**: S2 returns more rows than the other three paths; digests diverge.
+> **Why per-lineitem, not per-orderkey**: a per-orderkey view with
+> pre-aggregated revenue must bake the shipdate filter at load time. Any
+> param other than the load-time value produces wrong answers. The
+> per-lineitem shape defers all parameterised filters to query time,
+> matching the shape of S1/S3/S4. (Q3I S2/S5 audit, 2026-05-03 —
+> anti-pattern #24 in §13.)
 
 ---
 
 ### §7.4 — S5: aCOLI MI (Pre-Aggregated Variant)
 
-**When to use**: the query has simple per-custkey and per-order aggregates
-(e.g. `SUM(i_totaldue)`, `SUM(l_extendedprice*(1-l_discount))`) whose filter
-predicates are constant or invariant across the param sets you care about, AND
-the COLI MI scan is cache-bound at target scale factors (i.e. S3 is paying
-per-record dispatch overhead for data that fits in cache).
+**When to use**: the query has per-custkey aggregates whose filter predicates
+are constants hardcoded by the TPC-H spec (e.g. `i_status='O'` for Q3I's
+`cust_open_due`), AND the COLI MI scan is cache-bound at target scale factors
+(i.e. S3 is paying per-record dispatch overhead for data that fits in cache).
 
-**When NOT to use**: when the aggregate filter parameter changes between
-production runs (e.g. a different `shipdate` cutoff per experiment). Baking
-in a date constant defeats reuse — S5 results diverge from S1–S4 for any
-non-default params, and the test harness emits `[SKIP S5 — baked-in filter
-mismatch]` rather than failing.
+**When NOT to use**: when the aggregate filter is parameterised (e.g.
+`l_shipdate > $DATE`, `c_mktsegment = $SEGMENT`). Parameterised aggregates
+must NOT be baked — store the unaggregated source rows and recompute at query
+time. The `[SKIP S5 — baked-in filter mismatch]` guard is not an acceptable
+workaround; it masks a soundness bug. (Q3I S2/S5 audit, 2026-05-03 —
+anti-pattern #24 / #26 in §13.)
 
-**Pattern** (Q3I S5, reference implementation):
+**Post-audit pattern** (Q3I commits `8ac423dd`, `b9ef4947`; reference
+implementation in `coli_pipeline.tpp::populate_aggregated` and
+`q3i/query.tpp::query_by_aggregated`):
 
-- Define `customer_acoli_t` (id=N) and `orders_acoli_t` (id=N+1) in
-  `views_coli.hpp`. Each carries the base record payload plus one or more
-  pre-aggregated `Numeric` included columns.
-- `populate_aggregated()` in `coli_pipeline.tpp`: multi-pass algorithm —
-  Pass A builds per-custkey aggregate map (invoice scan, constant filter
-  fused), Pass B builds per-(custkey,orderkey) aggregate map (lineitem scan,
-  constant filter fused), Pass C inserts `customer_acoli_t` and
-  `orders_acoli_t` records into a `MergedAdapter<customer_acoli_t,
-  orders_acoli_t>`.
-- `query_by_aggregated` in `q{N}/query.tpp`: scan the 2-type aCOLI MI,
-  apply parameterised filters (mktsegment, threshold, orderdate) per-row
-  as direct field comparisons — no accumulators needed.
+- aCOLI is a **3-type** `MergedAdapter<customer_acoli_t, orders_acoli_t,
+  lineitem_acoli_t>`. Lineitems are stored unaggregated so that
+  parameterised filters (shipdate, mktsegment) are applied at query time.
+- Pre-aggregated columns are permitted **only** when the aggregate filter is
+  a TPC-H-spec hardcoded constant. Example: `customer_acoli_t.pre_open_due`
+  from `i_status='O'` in Q3I. The removed `orders_acoli_t.pre_revenue`
+  (dropped 2026-05-03) is the canonical counter-example.
+- `populate_aggregated()` is two passes: Pass A scans invoices and builds
+  a per-custkey aggregate map for spec-constant aggregates; Pass B scans
+  customer/orders/lineitem base adapters and inserts all three record types
+  into the aCOLI `MergedAdapter`.
+- `query_by_aggregated` walks the 3-type adapter using the same
+  `LineitemRevenueAccumulator` as S1/S3 — re-enforcing OPERATORS.md §6.1
+  comparison-integrity. Pre-aggregated spec-constant columns (e.g.
+  `pre_open_due`) are read directly; parameterised aggregates are recomputed.
+- The `[SKIP S5 — baked-in filter mismatch]` parity guard is **retired**.
+  S5 must produce byte-identical XOR digests to S1/S3/S4 across all param
+  sets.
 
 **Spectrum position** (cross-reference `q3i/CLAUDE.md §Phase 4`):
 
 ```
 S1/S3 (raw co-location, full recompute each query)
-  → S5 (aCOLI: pre-aggregated, no per-query accumulation, reusable across
-         mktsegment/threshold/orderdate param sets)
-    → S2 (fully pre-computed view, only parameterised filters at query time)
+  → S5 (aCOLI: spec-constant aggregates pre-stored; parameterised filters
+         and revenue recomputed from unaggregated lineitems at query time)
+    → S2 (per-lineitem view; only parameterised filters at query time)
 ```
 
 S5 sits between S3 and S2 on the pre-computation spectrum: smaller scan
-footprint than S3 (no invoice/lineitem rows in the MI), more param-reuse
-than S2 (parameterised filters not baked in). At SF=1 Q3I: 486 aCOLI
-records scanned vs 10918 COLI records (22× reduction) and ~1.5M view rows.
+footprint than S3 (no invoice rows in the MI — 486 aCOLI records vs 10918
+COLI records at SF=1 Q3I, a 22× reduction), fully sound across all param
+sets (no baked-in date or segment filter).
 
 **Paper angle**: S5 is the concrete "MI-as-aggregate-store" example for
 reviewer R2-D1 (MULTI_TABLE_MI_ANALYSIS.md §6 / INVOICE_EXTENSION_CANDIDATES.md).
-It demonstrates that merged indexes can store not just raw records but
-pre-computed included columns — a point distinct from raw co-location.
+It demonstrates that merged indexes can store pre-computed spec-constant
+included columns alongside raw records — a point distinct from raw
+co-location.
 
 ---
 
@@ -1211,6 +1321,17 @@ int main(int argc, char** argv) {
 > fail by construction.
 > **Symptom**: four distinct digests despite correct query logic; lineitem
 > counts differ across structures in diagnostic output.
+
+### Off-default param verification
+
+The harness's parity check (XOR digest agreement across S1–S5) must run
+at **at least one param set other than `Params::defaults()`** before
+declaring success. The simplest implementation: after the default-param
+parity round, call `q{{N}}.set_params_for_iter(1)` (one tick into the
+rotation table), re-run all `query_by_*` paths, and re-check digest
+agreement. Without this, a baked-in-param secondary will pass the harness
+silently. (Q3I S5 was hidden this way until the 2026-05-03 audit —
+anti-pattern #25 / #26 in §13.)
 > **Fix**: load ONCE, populate ALL secondaries up front, run all four
 > paths against the same in-memory state.
 
@@ -1409,7 +1530,7 @@ documented.
 | 7 | Missing `accepts_key` for tagged types | `3ce2bf38` | `toType()` falls back to fold-length heuristic, misclassifying records | Explicit `static bool accepts_key(...)` on all `_coli_t` / `_col_t` types |
 | 8 | Duplicate record type `id` | — | Silent data corruption: one type's records overwrite another's | `grep 'static constexpr int id'` before allocating |
 | 9 | Zero-revenue orders in `flush_order` | `4dc93ec6` | S3 emits orders without matching lineitems; row count too high | Guard `revenue <= 0` at top of `flush_order` |
-| 10 | View missing baked-in filter | `4dc93ec6` | S2 includes unfiltered rows; digest diverges from S1/S3/S4 | Apply constant filters in `populate_q{N}_view` |
+| 10 | ~~View missing baked-in filter~~ (RETIRED — see #24) | `4dc93ec6` reversed by `db60d49b` (Q3I) | Originally diagnosed as "S2 includes unfiltered rows; digest diverges". The actual root cause was that the view was the wrong shape (per-orderkey + pre-aggregated revenue); making the view per-lineitem + unaggregated dissolves the symptom. | Per-lineitem view, no filter baking; see #24 |
 | 11 | S2 missing zero-revenue guard | `8fdcdda1` | S2 emits zero-revenue view rows other paths suppress | Add `revenue <= 0` check in `query_by_view` |
 | 12 | `reinterpret_cast` on RocksDB values | `d8980426` | Alignment UB on platforms with unaligned value buffers | Use `memcpy` into a stack local instead |
 | 13 | Load order: lineitems before orders | `6edcf2ca` | `order_dates` map empty during lineitem generation; dates default to 0 | Load order: customer → orders → lineitem |
@@ -1423,6 +1544,10 @@ documented.
 | 21 | Custom walker calling `MergedScanner::next()` for performance-critical paths | A2c (`6402ba97`) | Per-record `std::variant` construction (memcpy of widest-payload + dispatch tag setup) — 18–50% TX/s tax at SF=15 cache-resident on LeanStore; +28% on RocksDB | Use `scanner->next_raw()` returning `(tag_byte, key_slice, value_slice)`; dispatch via tag-byte switch + `memcpy` into the typed buffer the visitor needs |
 | 22 | Reusing shared DB image for cross-structure perf comparison | A5 (`200ee0ae`) | Differential cache pollution at cache-resident SFs: structures with the largest secondary footprints are evicted disproportionately. Q3I SF=15 LeanStore: shared S3-vs-S1 gap = 36.6% but isolated gap = 13.7% — most of the gap was a benchmarking artefact | Use `--load_only_structure=N` + per-structure iso make targets (`q{N}_lsm_iso_M`); compare iso numbers, not shared |
 | 23 | Skipping `--micro_perf` / `--cfstats` plumbing during bring-up | `b7ebebc8` | When perf surprises surface (and they will — H1, H4, H8 all did), no instrumentation means a round-trip to add it before any test can be run | Wire both flags into the executable scaffold; ~30 lines using `perf_context_capture.hpp` (RocksDB) + `scanner_perf_hook.hpp` (LeanStore) |
+| 24 | Baking a parameterised filter into a secondary | Q3I S2/S5 audit (2026-05-03; commits `db60d49b`, `8ac423dd`) | Wrong answers for any param other than the validation value; surfaced (or hidden) by `[SKIP]` parity guards rather than fixed | Store unaggregated source rows in the secondary; apply parameterised filters live in `query_by_*`. Aggregates may bake **only** spec-hardcoded constants |
+| 25 | Pinning `Params::defaults()` across the entire `helper.run()` loop | (post-2026-05-03 fix in commits `f3573b0f`, `dbcce8d8`, `b9ef4947`) | Bugs that depend on a particular param value (e.g. shipdate-baked aggregate) survive long benchmark runs without ever firing | `wrapper.set_params_for_iter(count)` before each `wrapper.query(out)`; per-query rotation through a deterministic param table covering all SUBSTITUTION-PARAMETER domain values |
+| 26 | `[SKIP X]` parity guards in the cross-structure test harness | Q3I S5 (`tests/q3i/test_query_q3i_leanstore.cpp` guard retired by `8ac423dd`) | A storage variant that diverges at non-default params is excused as "baked-in filter mismatch", masking unsoundness | A `[SKIP]` is a structural-soundness alarm. Treat it as a fix-blocker, not a documented exception. If the variant cannot match parity at all params, the variant's design is wrong — rebuild it (don't bypass the check) |
+| 27 | Reusing one cardinality framing across pure-hierarchical and sibling-aggregate queries | Q3 Phase 0 design draft (commit `dad7ccce` reverted by `d50cc33a`) | "3-way M:N with no sibling shortcut" framing imported into a query that has no sibling at all — undersells the hierarchical-prefix story and confuses reviewers | Use the typology in §3.5 §4: pure hierarchical, hierarchical + sibling sub-aggregate, OR genuine tree. Never import (2)'s "no sibling shortcut" wording into (1) or (3) |
 
 ---
 
@@ -1446,6 +1571,9 @@ Run after completing all phases:
 - [ ] Re-run in place (without manual wipe) — still `[OK]` (harness wipes its own `ssd_path`)
 - [ ] `make -C build/frontend q{N}_lsm -j$(nproc)` — production executable builds
 - [ ] `make q{N}_lsm scale=1` — runs all four structures, emits CSV metrics
+- [ ] `test_query_q{N}_lsm` re-runs all `query_by_*` paths after
+  `set_params_for_iter(1)`; XOR digests still agree across all structures
+  (off-default param verification — anti-pattern #25 / #26 guard).
 
 ---
 
