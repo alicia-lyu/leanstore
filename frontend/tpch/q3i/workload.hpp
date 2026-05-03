@@ -56,6 +56,36 @@ bool q3i_predicate_invoice(const invoice_t& i);
 
 // ---------------------------------------------------------------------------
 // Optional per-query intermediate cardinality counters.
+//
+// Coverage gaps (see test_query_q3i_lsm `[card]` table). Per-path counter
+// fidelity differs by operator shape:
+//
+//   S1 base   — `customers_scanned`, `orders_scanned` are bumped, but
+//               `lineitems_scanned` / `invoices_scanned` stay at 0.
+//               Reason: lineitems and invoices are consumed inside the
+//               scanner-wrapper aggregators (CustomerOpenDueAggregator,
+//               LineitemRevenueAggregator) which currently do NOT
+//               increment the per-record counters — only the BMJ chain's
+//               aggregate-output stages do.
+//   S2 view   — all four base counters stay at 0 by design (S2 scans the
+//               pipeline view, not base tables).
+//   S3 merged — every counter stays at 0. `query_by_merged` runs a
+//               `COLIGroupWalkVisitor` that does not have a `Q3IStats*`
+//               threaded through. The merged_coli secondary cardinality
+//               check in the test harness is what guards S3 against
+//               empty-secondary regressions.
+//   S4 hash   — full coverage; all four base scans bump their counters.
+//
+// TODO (richer cardinality reporting, deferred):
+//   1. Bump `lineitems_scanned` / `invoices_scanned` from inside the
+//      scanner-wrapper aggregators in query.tpp so S1's stat row shows
+//      the real per-record cost.
+//   2. Plumb `Q3IStats*` into `COLIGroupWalkVisitor` (q3i/query.tpp) so
+//      `query_by_merged` reports cust/orders/lineitems/invoices/joins
+//      like the other paths. With this in, the test harness's
+//      "S3 merged join_callbacks=0 (stats not wired through Visitor)"
+//      relax can be removed and S3 can join the regular check_joins
+//      gate.
 
 struct Q3IStats {
    long customers_scanned   = 0;
