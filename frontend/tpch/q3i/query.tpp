@@ -590,6 +590,11 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
       // Threshold filter on cust_open_due (parameterised — applied at query time).
       if (row.cust_open_due <= params.threshold) continue;
 
+      // Revenue guard: suppress orders whose lineitems all failed the shipdate
+      // filter baked in at view-load time. SQL requires at least one matching
+      // lineitem; revenue=0 means none qualified (same suppression as S1/S3/S4).
+      if (row.revenue <= Numeric(0)) continue;
+
       if (stats) stats->join_callbacks++;
       Integer orderkey = kv->first.orderkey;
       out.push_back({orderkey, row.revenue, row.o_orderdate,

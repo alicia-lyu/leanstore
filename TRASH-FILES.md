@@ -42,3 +42,5 @@ test_csv_q3i - moved to TRASH/test_csv_q3i_1777692050 - stale q3i CSV/log dir fr
 test_data_q3i - moved to TRASH/test_data_q3i_prestep4 - stale q3i data loaded before Phase 2A Step 4 (threshold_ok + apply_topN)
 test_csv_q3i - moved to TRASH/test_csv_q3i_prestep4 - stale q3i CSV/log paired with above
 test_query_q3i_phase1_rocksdb.cpp - moved to TRASH/ - temporary Phase 1 harness retired after Phase 2C parity gate passed; replaced by test_query_q3i_lsm
+test_data_q3i - moved to TRASH/test_data_q3i_stale - stale Q3I RocksDB data before S3 bug investigation
+test_csv_q3i - moved to TRASH/test_csv_q3i_stale - stale Q3I CSV/log dir before S3 bug investigation
