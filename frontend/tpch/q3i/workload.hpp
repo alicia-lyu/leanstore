@@ -140,7 +140,9 @@ struct Q3IStats {
    // secondary scanners after a customer-side gate rejection. Trait-gated
    // by Backend::USE_PHYSICAL_SEEK_SKIP, runtime-overridden by
    // FLAGS_use_seek_skip. See q3i/PERFORMANCE.md §3 A/B-1.
-   long bj_groups_skipped = 0;  // S1 BMJ chain
+   long bj_groups_skipped = 0;  // S1 BMJ chain — agg_inv (G1 sync skip)
+   long bj_ord_skips      = 0;  // S1 BMJ#2 right — ord_scan (G6 deferred)
+   long bj_lin_skips      = 0;  // S1 BMJ#3 right — agg_lin (G6 deferred)
    long hj_groups_skipped = 0;  // S4 HJ chain
 
    // Stage cardinalities (uniform across S1/S2/S3/S4 — let us compare
