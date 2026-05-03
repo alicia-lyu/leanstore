@@ -465,9 +465,13 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
    COLIGroupWalkVisitor v{.params = params, .out = out};
    coli_group_walk<Backend>(coli.merged_adapter(), v);
    // Apply top-10 ordered by revenue DESC outside the pipeline
-   // (OPERATORS.md §3 op 8–9).
+   // (OPERATORS.md §3 op 8–9).  o_orderdate ASC, then o_orderkey ASC as
+   // tiebreakers keep partial_sort deterministic across paths whose input
+   // ordering differs (view scan vs. hash-map iteration vs. merged scan).
    apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      return a.revenue > b.revenue;
+      if (a.revenue    != b.revenue)    return a.revenue    > b.revenue;
+      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+      return a.o_orderkey < b.o_orderkey;
    });
    return static_cast<long>(out.size());
 }
@@ -557,7 +561,9 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
 
    if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
    apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      return a.revenue > b.revenue;
+      if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
+      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+      return a.o_orderkey < b.o_orderkey;
    });
    return static_cast<long>(out.size());
 }
@@ -603,7 +609,9 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
 
    if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
    apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      return a.revenue > b.revenue;
+      if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
+      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+      return a.o_orderkey < b.o_orderkey;
    });
    return static_cast<long>(out.size());
 }
@@ -724,7 +732,9 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
 
    if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
    apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      return a.revenue > b.revenue;
+      if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
+      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+      return a.o_orderkey < b.o_orderkey;
    });
    return static_cast<long>(out.size());
 }
