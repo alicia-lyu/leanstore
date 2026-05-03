@@ -352,9 +352,18 @@ binary entirely.
   `l_shipdate` filter; `query_by_view` intentionally does not re-apply it
   ("baked in at load time"). Filter now applied in the view loader.
 
-**Exit criterion satisfied**: `test_query_q3i_lsm` at SF=1 reports
-`[OK]` parity across S1/S2/S3/S4, 10 rows each (all four digests identical
-within a run; value is seed-dependent across runs), exit 0.
+- **Top-10 tiebreaker fix (post-Phase-2C):** all four `apply_topN` calls now
+  use `revenue DESC, o_orderdate ASC, o_orderkey ASC` as the comparator.
+  The prior single-key `revenue DESC` comparator left `std::partial_sort`
+  tie-breaking dependent on input order, which differs across paths (S2 scans
+  view by `(custkey, orderkey)`, S4 iterates an `unordered_map`). On data
+  states with revenue ties at the boundary (reproducible on Linux at SF=1 with
+  ~8520 lineitems), this produced three distinct digests. The fix is purely in
+  the comparator — no query logic changed.
+
+**Exit criterion satisfied**: `test_query_q3i_lsm` at SF=1, SF=2, and SF=5
+reports `[OK]` parity across S1/S2/S3/S4, 10 rows each (all four digests
+identical within a run; value is seed-dependent across runs), exit 0.
 
 ---
 
