@@ -22,6 +22,12 @@ Before starting, read (in order):
    rationale, open questions.
 4. `MULTI_TABLE_MI_ANALYSIS.md §6` — dual-track rationale (COL vs COLI).
 5. `INVOICE_EXTENSION_CANDIDATES.md` — per-query analysis.
+6. `q3i/PERFORMANCE.md` — performance investigation worklist format
+   (forward-looking hypotheses + A-tests + archive cycle). Read if
+   you expect to instrument the new query.
+7. `q3i/archive/PERFORMANCE-2026-05-03b.md` — example evidence trail
+   (A1 + A5 + A2c + A3); skim to see how a hypothesis is prosecuted
+   end-to-end.
 
 ### Phase dependency graph
 
@@ -496,6 +502,27 @@ Use `coli_group_walk<Backend>(coli.merged_adapter(), visitor)` (or
 `col_group_walk` for Track 1). The Visitor struct handles all query
 logic.
 
+#### Walker variants (`--coli_walker_variant`)
+
+Two walkers expose the same Visitor interface and produce
+**byte-identical XOR digests**:
+
+- `coli_group_walk` (baseline) — drives `MergedScanner::next()` which
+  returns `std::variant<customer_coli_t, orders_coli_t,
+  lineitem_coli_t, invoice_coli_t>` and dispatches via `std::visit`.
+- `coli_group_walk_fused_emit` (A2c, commit `6402ba97`) — drives
+  `MergedScanner::next_raw()` which returns
+  `(tag_byte, key_slice, value_slice)` with no variant construction;
+  dispatches via tag-byte switch + `memcpy` into the typed buffer the
+  visitor needs. Closes per-record dispatch overhead at SF=15
+  cache-resident (~3% of S1's per-call cost; +18-50% TX/s on
+  LeanStore SF=15, +28% on RocksDB SF=15).
+
+Production binaries dispatch via `--coli_walker_variant={baseline,
+fused_emit}` (default `baseline`). Plumbed through `tpch_flags.hpp`
+and `generate_targets.py`. **Do not write a new walker that uses
+`next()` instead of `next_raw()`** — see Anti-Pattern #21.
+
 #### Multi-level active markers (target design)
 
 The walker supports a hierarchical `xxx_active` flag per non-leaf schema
@@ -536,15 +563,36 @@ then can't fire (`if (customer_active && ...)` is already false). Both
 paths produce identical walker state; `wants_skip_group()` is dead code
 once the bool-returning `on_order` design lands.
 
-**Walker-internal forward-iterate optimization:** when `order_active`
-becomes false (date filter rejects an order), the walker MAY
-forward-iterate past that order's lineitems without calling `std::visit`
-on each one — skipping the variant-dispatch overhead for the
-rejected-order lineitem tail. This is a walker implementation detail, not
-part of the visitor interface. Controlled by `USE_PHYSICAL_SEEK_SKIP =
-false` (physical Seek was A/B tested at SF=40: physical Seek invalidates
-RocksDB's prefetch buffer, raising SSTRead/TX ~5×; forward iteration
-without physical Seek is competitive and the default).
+**Customer-level Seek-skip is Backend-gated** (A3, commit `83870b48`):
+when `customer_active` becomes false (mktsegment fails, or threshold
+fails on first `on_order`), the walker can either forward-iterate
+past every record in the rejected custkey group OR physically Seek
+to the next custkey boundary. Each backend picks the cheaper path
+via a static constexpr trait in `frontend/tpch/backend.hpp`:
+
+```cpp
+struct RocksDBBackend  { static constexpr bool USE_PHYSICAL_SEEK_SKIP = false; };
+struct LeanStoreBackend { static constexpr bool USE_PHYSICAL_SEEK_SKIP = true;  };
+```
+
+- **RocksDB=false**: physical Seek invalidates the SST prefetch
+  buffer, raising SSTRead/TX ~5× at SF=40 disk-bound. Forward
+  iteration is competitive because co-located records share SST
+  blocks.
+- **LeanStore=true**: B-tree Seek is `O(log N)` page touches against
+  mostly-cached internal nodes — no prefetch buffer to lose. Lifts
+  LeanStore SF=15 S3 +356% and SF=40 disk-bound +116× over the
+  forward-iter baseline.
+
+**Customer-level only** — order-level skip remains forward iteration
+on both backends because order groups (~4 lineitems) are too small
+to amortise a tree descent.
+
+**Order-level rejection** still suppresses `on_lineitem` dispatch
+within that order via `order_active=false`; the walker may also
+forward-iterate past those lineitems without `std::visit`/dispatch
+overhead. Walker implementation detail; not part of the visitor
+interface.
 
 ```cpp
 struct Q{{N}}GroupWalkVisitor {
@@ -1051,6 +1099,85 @@ int main(int argc, char** argv) {
 
 ---
 
+## §10.5 — Performance instrumentation (standard machinery)
+
+Four flags + two header-level utilities are inherited for free if the
+new query's executable is wired the same way as Q3I's. Each was
+introduced during a Q3I performance investigation; new queries should
+plumb them all from day one rather than back-fill when a perf surprise
+surfaces (and it will — H1, H4, H8 all surfaced this way; see
+Anti-Pattern #23).
+
+### `--micro_perf=true`
+
+Per-query scanner-internal timing.
+
+- **RocksDB**: `frontend/tpch/q3i/perf_context_capture.hpp` snapshots
+  `rocksdb::PerfContext` (e.g. `user_key_comparison_count`,
+  `iter_next_cpu_nanos`) and `IOStatsContext` (`bytes_read`) before
+  and after each query; emits per-TX averages.
+- **LeanStore**: B-tree has no PerfContext analog. The chrono hook in
+  `frontend/shared/adapter-scanner/scanner_perf_hook.hpp`
+  (`tpch::scanner_perf::iter_next_ns_acc`) accumulates wall-clock
+  per `MergedScanner::next()` call. The hook costs ~50 ns/call;
+  read absolute numbers as upper bounds, ratios as robust.
+
+### `--cfstats=true` (RocksDB only)
+
+Pre/post `helper.run()` per-CF stats diff via the shared
+`RocksDBLogger`. Useful for block-cache hit rate, SST read/write
+attribution.
+
+> **`SST_WRITE_MICROS` baseline-subtract**: the histogram
+> accumulates over DB lifetime including post-load compaction. For
+> read-only query experiments this inflates the reported
+> SSTWrite(µs)/TX. Call `RocksDBLogger::capture_baseline()` once
+> before `helper.run()`; each snapshot then reports
+> `(current – baseline)`.
+
+### `--load_only_structure=N`
+
+Populate only the secondary needed for `--storage_structure=N` at
+load time. Used by isolated-DB experiments (Q3I A5) to remove
+cross-structure cache pollution. Default `-1` = load all.
+
+`generate_targets.py::run_isolated_experiment` emits per-structure
+make targets `q{N}_lsm_iso_M` and `q{N}_btree_iso_M` (`M` = storage
+structure). Register your query the same way and the iso targets
+appear automatically.
+
+### `--coli_walker_variant={baseline,fused_emit}`
+
+Walker dispatch choice — see §7.1 above.
+
+---
+
+## §10.6 — Size diagnostics: content-walk pattern
+
+`50fd2052` (RocksDB per-CF size cache fix) and `83870b48` (LeanStore
+`content_bytes_walk`) together establish the
+`[content/row]` + `[overhead]` + `[fill]` reporting convention. New
+queries adding a custom secondary should follow it — the alternative
+(reasoning from `get_size()` MiB alone) cost the entire H1 cycle to
+root-cause when a stale-cache bug misreported one CF's size.
+
+- **RocksDB**: typed scan summing `key_bytes + value_bytes` per row;
+  divide by `get_size()` to get content-vs-overhead split. Healthy
+  tagged-record overhead ~5–25% (per-CF SST metadata + bloom filter
+  + index blocks); shrinks at higher SF.
+- **LeanStore**: call
+  `LeanStoreMergedAdapter::content_bytes_walk()` (drives
+  `next_raw()`, no variant construction) or
+  `LeanStoreAdapter::content_bytes_walk()` (typed scan summing
+  `maxFoldLength + sizeof(Record)`). Compare to
+  `estimatePages × page_size` for fill ratio. Healthy ratio
+  ~0.5–0.7; far below 0.5 implies a measurement bug or extreme
+  fragmentation. See `frontend/shared/adapter-scanner/
+  LeanStoreMergedAdapter.hpp` and `LeanStoreAdapter.hpp` for the
+  exact signatures.
+
+---
+
 ## §11 — Phase 8: CMake + Makefile Targets
 
 ### `frontend/CMakeLists.txt`
@@ -1131,8 +1258,12 @@ documented.
 | 15 | `load()` populating only one secondary | `47405bec` | 3 of 4 structures read empty adapters; fantasy throughput | Populate ALL secondaries unconditionally in `load()` |
 | 16 | Hardcoded row-count assertion | `c077236f` | False test failures when data yields fewer than LIMIT rows | Assert cross-structure agreement + range `(0, K]` instead |
 | 17 | No secondary cardinality check in test | `739ebf63` | Empty secondaries produce 0-row "fast" queries silently | Verify each secondary has nonzero rows after `populate_*` |
-| 18 | Physical Seek in skip path | `8d10782b` | SSTRead/TX rises 5× — prefetch buffer invalidated by Seek | Set `USE_PHYSICAL_SEEK_SKIP = false`; forward iterate instead |
+| 18 | Physical Seek in skip path on RocksDB | `8d10782b` | SSTRead/TX rises 5× — prefetch buffer invalidated by Seek | Backend-trait gate: `RocksDBBackend::USE_PHYSICAL_SEEK_SKIP = false` (see #20) |
 | 19 | `wants_skip_group()` alongside `bool on_order` | (post-`128f6d44`) | Dead code — `on_order → false` already clears `customer_active`; `wants_skip_group()` guard can never fire after that | Use `on_order → false` directly; remove `wants_skip_group()` when cleaning up |
+| 20 | File-local `USE_PHYSICAL_SEEK_SKIP` constexpr instead of Backend trait | `83870b48` | Setting works for one backend, regresses the other (RocksDB Seek invalidates the SST prefetch buffer; LeanStore B-tree benefits from Seek) | Read `Backend::USE_PHYSICAL_SEEK_SKIP` from `frontend/tpch/backend.hpp` in the walker |
+| 21 | Custom walker calling `MergedScanner::next()` for performance-critical paths | A2c (`6402ba97`) | Per-record `std::variant` construction (memcpy of widest-payload + dispatch tag setup) — 18–50% TX/s tax at SF=15 cache-resident on LeanStore; +28% on RocksDB | Use `scanner->next_raw()` returning `(tag_byte, key_slice, value_slice)`; dispatch via tag-byte switch + `memcpy` into the typed buffer the visitor needs |
+| 22 | Reusing shared DB image for cross-structure perf comparison | A5 (`200ee0ae`) | Differential cache pollution at cache-resident SFs: structures with the largest secondary footprints are evicted disproportionately. Q3I SF=15 LeanStore: shared S3-vs-S1 gap = 36.6% but isolated gap = 13.7% — most of the gap was a benchmarking artefact | Use `--load_only_structure=N` + per-structure iso make targets (`q{N}_lsm_iso_M`); compare iso numbers, not shared |
+| 23 | Skipping `--micro_perf` / `--cfstats` plumbing during bring-up | `b7ebebc8` | When perf surprises surface (and they will — H1, H4, H8 all did), no instrumentation means a round-trip to add it before any test can be run | Wire both flags into the executable scaffold; ~30 lines using `perf_context_capture.hpp` (RocksDB) + `scanner_perf_hook.hpp` (LeanStore) |
 
 ---
 
@@ -1156,3 +1287,65 @@ Run after completing all phases:
 - [ ] Re-run in place (without manual wipe) — still `[OK]` (harness wipes its own `ssd_path`)
 - [ ] `make -C build/frontend q{N}_lsm -j$(nproc)` — production executable builds
 - [ ] `make q{N}_lsm scale=1` — runs all four structures, emits CSV metrics
+
+---
+
+## §15 — Performance investigation cycle (when bring-up wraps)
+
+Once Phases 1–9 land and parity is green, the next surface — and the
+playbook's remit ends here — is the **per-query performance
+investigation**. Q3I is the canonical example. The convention:
+
+### Worklist + archive
+
+- `q{N}/PERFORMANCE.md` is the **active worklist**: hypothesis ledger
+  (§2) + open A-tests (§3) + reviewer-relevance summary. Forward-
+  looking only; ~150 lines max.
+- `q{N}/archive/PERFORMANCE-YYYY-MM-DD[-letter].md` snapshots the
+  active doc when it grows past ~150 lines or when a major round of
+  evidence lands. The `-b`, `-c` letter suffix disambiguates multiple
+  archives on the same day. Archived docs gain a one-line header
+  `> Archived YYYY-MM-DD — superseded by ../PERFORMANCE.md`.
+
+### Hypothesis ledger format
+
+§2 of `PERFORMANCE.md` is a single table with one row per hypothesis
+(`H1`, `H2`, …):
+
+| ID | Hypothesis | Status | One-line takeaway |
+
+Status values: `OPEN`, `CONFIRMED`, `REFUTED`,
+`CONFIRMED + REMEDIATED at <regime> (<commit>)`. Full evidence
+trails live in the archive; the ledger only carries the verdict and
+the takeaway sentence.
+
+### A-test format
+
+§3 entries name a **mechanism**, a **prediction** the mechanism
+makes, and the **remediation** if confirmed:
+
+```text
+### A{n} — short title
+
+Mechanism. Why this could be the bottleneck (≤2 sentences).
+
+- WHAT: the variant being measured / changed.
+- WHERE: file paths + flag names.
+- MEASURE: which Q{N}Stats fields / PerfContext counters.
+- WIN: the specific signal that confirms; the fallback if refuted.
+```
+
+Keep each entry ≤30 lines. If an A-test grows beyond that, it gets
+its own follow-up plan file in `.claude/plans/`.
+
+### Discipline
+
+- Active investigations only. Sweeps (e.g. dram ∈ {0.05, 0.1, 0.5,
+  1.0, full}) are **confirmation runs after a hypothesis-driven
+  test**, not the test itself. A worklist that reads "sweep until
+  something works" is a doc-keeping pattern, not an investigation.
+- Each completed A-test promotes the matching H-row in §2 with a
+  commit SHA pointer — so the ledger stays the source of truth.
+- Refuted candidates (e.g. Q3I H9 per-record-width tax, H10
+  compression-masking-locality) get recorded in §3 so they aren't
+  re-investigated.
