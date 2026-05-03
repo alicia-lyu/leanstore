@@ -657,3 +657,7 @@ proposing new `q{N}i/` directories.
 
 Q3I is a §3.1.2 sibling-aggregate showcase, not a true 4-way M:N join — see
 [q3i/CLAUDE.md §Cardinality structure](q3i/CLAUDE.md#cardinality-structure-not-a-true-4-way-mn).
+
+Q3I S3 perf investigation (S3 is currently the slowest path on RocksDB at
+SF=40 dram=0.1 — counter to the paper's pitch) is tracked in
+[q3i/PERFORMANCE.md](q3i/PERFORMANCE.md).
