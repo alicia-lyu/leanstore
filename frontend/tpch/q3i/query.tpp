@@ -10,11 +10,9 @@
 #pragma once
 
 #include <chrono>
-#include <iostream>
 #include <ostream>
 #include <string_view>
 #include <unordered_map>
-#include <variant>
 
 #include "../operators.hpp"
 #include "../../shared/merge-join/binary_merge_join.hpp"
@@ -35,7 +33,6 @@
 
 DECLARE_string(coli_walker_variant);
 DECLARE_int32(use_seek_skip);
-DECLARE_bool(acoli_projected);
 
 namespace tpch::q3i
 {
@@ -68,12 +65,65 @@ inline Params Params::defaults()
 }
 
 // ---------------------------------------------------------------------------
+// Q3IWorkload::set_params_for_iter — rotate through TPC-H §2.4.3 / Q3I
+// substitution params so each TX iteration exercises a distinct
+// (segment, date) combination.  threshold is always 0 (spec validation
+// default; non-zero thresholds shrink the result set and would make
+// cross-structure cardinality comparison noisier without adding signal).
+//
+// SEGMENT domain: {"AUTOMOBILE","BUILDING","FURNITURE","HOUSEHOLD","MACHINERY"}
+// DATE domain:    March 15 of each year in [1993, 1997] (same date drives
+//                 both the o_orderdate upper bound and the l_shipdate lower
+//                 bound per §2.4.3).
+//
+// Date constants (days since 1970-01-01):
+//   DATE_1995_03_15 = 9204  (defined in tpch_tables.hpp)
+//   1993-03-15 = 9204 - 2*365     = 8474  (1994 and 1995 are not leap years)
+//   1994-03-15 = 9204 - 365       = 8839
+//   1996-03-15 = 9204 + 366       = 9570  (1996 is a leap year)
+//   1997-03-15 = 9204 + 366 + 365 = 9935
+
+template <typename Backend>
+void Q3IWorkload<Backend>::set_params_for_iter(long iter)
+{
+   static constexpr Timestamp DATE_1993_03_15 = DATE_1995_03_15 - 365 - 365;
+   static constexpr Timestamp DATE_1994_03_15 = DATE_1995_03_15 - 365;
+   static constexpr Timestamp DATE_1996_03_15 = DATE_1995_03_15 + 366;  // 1996 leap year
+   static constexpr Timestamp DATE_1997_03_15 = DATE_1995_03_15 + 366 + 365;
+
+   struct Entry {
+      const char* segment;
+      Timestamp   date;
+   };
+   // 10 entries: all 5 segments × the two most discriminating years
+   // (1993 vs 1997) plus the validation year (1995) in the middle, and
+   // 1994/1996 flanking — covers the full DATE domain in 10 iterations.
+   static constexpr Entry TABLE[] = {
+       {"BUILDING",    DATE_1995_03_15},  // validation defaults
+       {"AUTOMOBILE",  DATE_1994_03_15},
+       {"FURNITURE",   DATE_1993_03_15},
+       {"HOUSEHOLD",   DATE_1996_03_15},
+       {"MACHINERY",   DATE_1997_03_15},
+       {"AUTOMOBILE",  DATE_1995_03_15},
+       {"BUILDING",    DATE_1993_03_15},
+       {"FURNITURE",   DATE_1997_03_15},
+       {"HOUSEHOLD",   DATE_1994_03_15},
+       {"MACHINERY",   DATE_1996_03_15},
+   };
+   static constexpr long N = static_cast<long>(sizeof(TABLE) / sizeof(TABLE[0]));
+
+   const Entry& e = TABLE[iter % N];
+   params = {Varchar<10>(e.segment), e.date, e.date, Numeric(0)};
+}
+
+// ---------------------------------------------------------------------------
 // Print helpers for new view / intermediate row types.
 
 inline void q3i_pipeline_view_t::print(std::ostream& os) const
 {
-   os << "view(" << revenue << "," << cust_open_due << "," << o_orderdate
-      << "," << o_shippriority << ")\n";
+   os << "view(ep=" << l_extendedprice << ",disc=" << l_discount
+      << ",ship=" << l_shipdate << ",open_due=" << cust_open_due
+      << ",date=" << o_orderdate << ",shippri=" << o_shippriority << ")\n";
 }
 
 inline void cust_open_due_t::print(std::ostream& os) const
@@ -804,47 +854,96 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
 {
    // S2: sequential scan of the materialised q3i_pipeline_view_t.
    //
-   // The view is unfiltered on parameterised predicates (predicate hoisting —
-   // OPERATORS.md §4 / §6).  Apply mktsegment and threshold per-row here;
-   // o_orderdate and l_shipdate are baked into revenue at view-load time so
-   // they are NOT re-applied (the view stores pre-aggregated revenue per
-   // orderkey, already summing all lineitems).  This keeps S2 fair against
-   // S1/S3 which also fuse those filters in the streaming pass.
+   // Schema redesign (2026-05-03): the view now stores one row per
+   // (custkey, orderkey, linenumber) carrying unaggregated lineitem fields.
+   // Revenue is accumulated per orderkey at query time, with the shipdate
+   // filter applied live.  This makes S2 reusable across all DATE param sets
+   // (the original per-orderkey schema baked l_shipdate > DATE_1995_03_15 at
+   // load time, breaking correctness for any other DATE value).
+   //
+   // Scan order: (custkey, orderkey, linenumber) ascending.  Within a
+   // (custkey, orderkey) group the parameterised filters (mktsegment,
+   // threshold, orderdate) are identical for every row, so we check them once
+   // when we first see a new orderkey.  Per-lineitem we apply l_shipdate.
+   // At each orderkey boundary we emit the per-orderkey agg row if it has
+   // any qualifying lineitems (revenue > 0).
+   //
+   // OPERATORS.md §4 / §6: all parameterised filters applied at query time;
+   // none baked into the view at load time.
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
+
+   // Per-orderkey accumulator state — tracks the currently-open order group.
+   Integer   cur_orderkey    = -1;
+   Timestamp cur_orderdate   = 0;
+   Integer   cur_shippriority = 0;
+   Numeric   cur_open_due    = 0;
+   bool      cur_order_ok    = false;  // passes mktsegment + threshold + orderdate
+   LineitemRevenueAccumulator rev;
+
+   // Emit the currently-open order group if it produced any revenue.
+   auto flush_order = [&]() {
+      if (!cur_order_ok || cur_orderkey < 0) return;
+      if (rev.revenue <= Numeric(0)) { rev.reset(); return; }
+      if (stats) {
+         stats->join_callbacks++;
+         stats->join3_output_rows++;
+      }
+      out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
+                     cur_shippriority, cur_open_due});
+      rev.reset();
+   };
 
    {
       StageTimer t(stats ? &stats->stage_us_scan_filter : nullptr);
       auto vs = pipeline_view.getScanner();
       while (auto kv = vs->next()) {
-         const q3i_pipeline_view_t& row = kv->second;
+         const q3i_pipeline_view_t::Key& k   = kv->first;
+         const q3i_pipeline_view_t&      row = kv->second;
 
-         // Mktsegment filter (parameterised — applied at query time).
-         auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
-         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-         if (sm != psm) continue;
-         if (stats) stats->customers_passing_filter++;
+         // Orderkey transition: flush the previous group and re-evaluate
+         // per-order gates for the new (custkey, orderkey).
+         if (k.orderkey != cur_orderkey) {
+            flush_order();
+            cur_orderkey     = k.orderkey;
+            cur_orderdate    = row.o_orderdate;
+            cur_shippriority = row.o_shippriority;
+            cur_open_due     = row.cust_open_due;
+            cur_order_ok     = false;
 
-         // o_orderdate filter: only orders before params.orderdate.
-         if (row.o_orderdate >= params.orderdate) continue;
-         if (stats) stats->orders_passing_filter++;
+            // Mktsegment filter.
+            auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
+            auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+            if (sm != psm) continue;
 
-         // Threshold filter on cust_open_due (parameterised — applied at query time).
-         if (row.cust_open_due <= params.threshold) continue;
+            // Threshold filter.
+            if (row.cust_open_due <= params.threshold) continue;
 
-         // Revenue guard: suppress orders whose lineitems all failed the shipdate
-         // filter baked in at view-load time. SQL requires at least one matching
-         // lineitem; revenue=0 means none qualified (same suppression as S1/S3/S4).
-         if (row.revenue <= Numeric(0)) continue;
-
-         if (stats) {
-            stats->join_callbacks++;
-            stats->join3_output_rows++;
+            // Orderdate filter.
+            if (row.o_orderdate >= params.orderdate) {
+               if (stats) stats->customers_passing_filter++;
+               continue;
+            }
+            if (stats) {
+               stats->customers_passing_filter++;
+               stats->orders_passing_filter++;
+            }
+            cur_order_ok = true;
          }
-         Integer orderkey = kv->first.orderkey;
-         out.push_back({orderkey, row.revenue, row.o_orderdate,
-                        row.o_shippriority, row.cust_open_due});
+
+         if (!cur_order_ok) continue;
+
+         // Per-lineitem: apply shipdate filter and accumulate revenue.
+         // LineitemRevenueAccumulator::consume(lineitem_t, params) checks
+         // l_shipdate > params.shipdate — reusing the same accumulator as S1/S3
+         // for OPERATORS.md §6.1 comparison-integrity.
+         lineitem_t proxy;
+         proxy.l_shipdate      = row.l_shipdate;
+         proxy.l_extendedprice = row.l_extendedprice;
+         proxy.l_discount      = row.l_discount;
+         rev.consume(proxy, params);
       }
+      flush_order();
    }
 
    if (stats) {
@@ -1074,74 +1173,64 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
 {
-   // G7: one-shot sizeof diagnostic. Prints once per process so the
-   // A/B-2 lift can be attributed to variant width vs. record count.
-   // The MergedAdapter scanner's std::visit dispatch constructs a
-   // variant<R1, R2> per emitted record; variant width = max(sizeof(Ri))
-   // + small tag, so a 7.5× narrower variant means 7.5× fewer cache
-   // lines per record dispatched.
-   static bool sizeof_printed = false;
-   if (!sizeof_printed) {
-      sizeof_printed = true;
-      std::cerr << "[acoli sizeof] full: cust=" << sizeof(customer_acoli_t)
-                << " ord=" << sizeof(orders_acoli_t)
-                << " variant=" << sizeof(std::variant<customer_acoli_t,
-                                                       orders_acoli_t>)
-                << " | proj: cust=" << sizeof(customer_acoli_q3i_t)
-                << " ord=" << sizeof(orders_acoli_q3i_t)
-                << " variant=" << sizeof(std::variant<customer_acoli_q3i_t,
-                                                       orders_acoli_q3i_t>)
-                << "\n";
-   }
-
-   // S5: scan the aCOLI 2-type MI (customer_acoli_t + orders_acoli_t).
+   // S5: scan the aCOLI 3-type MI
+   //     (customer_acoli_t + orders_acoli_t + lineitem_acoli_t).
    //
-   // The aCOLI MI pre-bakes two aggregates at load time:
-   //   customer_acoli_t.pre_open_due  = SUM(i_totaldue WHERE i_status='O')
-   //   orders_acoli_t.pre_revenue     = SUM(l_extendedprice*(1-l_discount)
-   //                                        WHERE l_shipdate > DATE_1995_03_15)
+   // Schema redesign (2026-05-03): the MI now stores unaggregated lineitems
+   // (lineitem_acoli_t) instead of a pre-baked pre_revenue on orders_acoli_t.
+   // Revenue is accumulated per orderkey at query time using
+   // LineitemRevenueAccumulator — the same accumulator as S1/S3 per
+   // OPERATORS.md §6.1 comparison-integrity.  pre_open_due on customer_acoli_t
+   // is still baked (parameter-independent: i_status='O' is hardcoded by spec).
    //
-   // Query logic per customer group:
-   //   1. Check c_mktsegment filter.
-   //   2. Check pre_open_due > threshold.
-   //   3. For each order under that customer: check o_orderdate < orderdate
-   //      AND pre_revenue > 0 (revenue guard; mirrors S1/S3/S4 zero-revenue
-   //      suppression — an order with pre_revenue=0 had no qualifying lineitems).
-   //   4. Emit directly (no accumulators needed — aggregates are pre-built).
+   // Byte-lex sort order within a custkey group:
+   //   customer_acoli_t (fold=4) → orders_acoli_t (fold=8) → lineitem_acoli_t (fold=12)
    //
-   // Because there are no invoice or lineitem rows in the aCOLI MI, the scan
-   // cardinality is |customer| + |orders| ≈ 1.15M at SF=1, vs ~8M for COLI.
-   //
-   // Parity caveat: pre_open_due and pre_revenue are baked in with the default
-   // constants (i_status='O', l_shipdate > DATE_1995_03_15).  If params deviate
-   // from these defaults, S5 results will diverge from S1/S3/S4 — see test
-   // harness for the runtime check and [SKIP S5] guard.
+   // Walk logic per custkey group:
+   //   on_customer: check mktsegment + threshold; gate further processing.
+   //   on_order:    check o_orderdate < params.orderdate; open per-order accumulator.
+   //   on_lineitem: apply l_shipdate > params.shipdate; accumulate revenue.
+   //   order-transition flush: emit q3i_agg_row_t when revenue > 0.
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
-   // Scan aCOLI MI by custkey order.  The MI's key sort order is:
-   //   customer_acoli_t (Key = custkey)  < orders_acoli_t (Key = custkey,orderkey)
-   // because the simple fold-length of customer (4 bytes) is shorter than the
-   // order fold-length (8 bytes) — standard fold-length discrimination.
-   //
-   // We drive the scan via two typed scans (one per record type) interleaved
-   // by custkey, mirroring how coli_group_walk works but for 2 types only.
-   // G5: branch on FLAGS_acoli_projected. Visitor logic is identical
-   // structurally — only the record types differ — so we factor it
-   // into a templated lambda parameterised by (CustT, OrdT).
-   auto run_walk = [&](auto& mi, auto cust_tag, auto ord_tag) {
-      using CustT = decltype(cust_tag);
-      using OrdT  = decltype(ord_tag);
-      auto scanner = mi.template getScanner<typename CustT::Key, CustT>();
+   {
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
 
-      bool    cust_passes  = false;
-      Numeric cur_open_due = 0;
+      auto& mi      = coli.acoli_adapter();
+      auto  scanner = mi.template getScanner<customer_acoli_t::Key, customer_acoli_t>();
+
+      // Per-group state.
+      bool    cust_passes   = false;
+      Numeric cur_open_due  = 0;
+
+      // Per-order state.
+      bool      order_open      = false;
+      Integer   cur_orderkey    = -1;
+      Timestamp cur_orderdate   = 0;
+      Integer   cur_shippriority = 0;
+      LineitemRevenueAccumulator rev;
+
+      // Emit the currently-open order if it has positive revenue.
+      auto flush_order = [&]() {
+         if (!order_open) return;
+         order_open = false;
+         if (rev.revenue > Numeric(0)) {
+            if (stats) stats->acoli_orders_emitted++;
+            out.push_back({cur_orderkey, rev.revenue,
+                           cur_orderdate, cur_shippriority, cur_open_due});
+         }
+         rev.reset();
+      };
 
       while (auto kv = scanner->next()) {
          std::visit(
              [&](auto&& val) {
                 using V = std::decay_t<decltype(val)>;
-                if constexpr (std::is_same_v<V, CustT>) {
+
+                if constexpr (std::is_same_v<V, customer_acoli_t>) {
+                   // New custkey group: flush any open order from the previous group.
+                   flush_order();
                    if (stats) stats->acoli_customers_scanned++;
                    auto sm  = std::string_view(val.c_mktsegment.data,
                                                val.c_mktsegment.length);
@@ -1150,31 +1239,39 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
                    cur_open_due = val.pre_open_due;
                    cust_passes  = (sm == psm) && (cur_open_due > params.threshold);
                    if (cust_passes && stats) stats->acoli_customers_passing_filter++;
-                } else if constexpr (std::is_same_v<V, OrdT>) {
+
+                } else if constexpr (std::is_same_v<V, orders_acoli_t>) {
                    if (!cust_passes) return;
+                   // Order transition: flush the previous order before opening a new one.
+                   flush_order();
                    if (stats) stats->acoli_orders_scanned++;
                    if (val.o_orderdate >= params.orderdate) return;
-                   if (val.pre_revenue <= Numeric(0)) return;
-                   const auto* ok = std::get_if<typename OrdT::Key>(&kv->first);
+                   // Open a new per-order accumulator.
+                   const auto* ok = std::get_if<orders_acoli_t::Key>(&kv->first);
                    if (!ok) return;
-                   if (stats) stats->acoli_orders_emitted++;
-                   out.push_back({ok->orderkey, val.pre_revenue,
-                                  val.o_orderdate, val.o_shippriority, cur_open_due});
+                   order_open      = true;
+                   cur_orderkey    = ok->orderkey;
+                   cur_orderdate   = val.o_orderdate;
+                   cur_shippriority = val.o_shippriority;
+
+                } else if constexpr (std::is_same_v<V, lineitem_acoli_t>) {
+                   if (!cust_passes || !order_open) return;
+                   if (stats) stats->acoli_lineitems_scanned++;
+                   // Reuse LineitemRevenueAccumulator via a lineitem_t proxy
+                   // so the arithmetic is identical to S1/S3 (OPERATORS.md §6.1).
+                   lineitem_t proxy;
+                   proxy.l_shipdate      = val.l_shipdate;
+                   proxy.l_extendedprice = val.l_extendedprice;
+                   proxy.l_discount      = val.l_discount;
+                   if (rev.consume(proxy, params)) {
+                      if (stats) stats->acoli_lineitems_passing++;
+                   }
                 }
              },
              kv->second);
       }
-   };
-
-   {
-      StageTimer t(stats ? &stats->stage_us_join : nullptr);
-      if (FLAGS_acoli_projected) {
-         run_walk(coli.acoli_proj_adapter(),
-                  customer_acoli_q3i_t{}, orders_acoli_q3i_t{});
-      } else {
-         run_walk(coli.acoli_adapter(),
-                  customer_acoli_t{}, orders_acoli_t{});
-      }
+      // Flush the final open order.
+      flush_order();
    }
 
    if (stats) {

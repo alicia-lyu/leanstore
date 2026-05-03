@@ -1,26 +1,73 @@
+// Q3 S3 physical plan — substitutes the family logical plan with a
+// single COLGroupWalk over the 3-table COL MergedAdapter.
+//
+// Why one operator replaces seven: the COL MI co-locates CUSTOMER,
+// ORDERS, and LINEITEM by custkey using Calcite-style tagged keys.
+// Within a custkey group, byte-lex order is:
+//
+//     customer → (orders → lineitem*)+
+//
+// (sentinel ordering customer=1 < orders=2 < lineitem=3). This means
+// a single forward streaming pass — no buffering, no hashmaps — can:
+//
+//   1. Apply the c_mktsegment gate at the customer record (suppresses
+//      the rest of the group when the gate fails)
+//   2. Apply o_orderdate < DATE at on_order; if the order fails, no
+//      lineitems for that orderkey are admitted
+//   3. Apply l_shipdate > DATE at on_lineitem; failing lineitems are
+//      simply not added to the per-orderkey revenue accumulator
+//   4. Per-orderkey SortedAggregate is realised by flush_order at each
+//      orderkey transition (and at on_group_end)
+//
+// Q3 has NO sibling sub-aggregate — invoice/threshold machinery from
+// Q3I is absent. This is the pure §3.1.3 hierarchical-prefix showcase.
+//
+// FILTER PUSHDOWN STATUS: every filter from family_logical.dot is fused
+// into the walker. None applies post-join. The walker emits already
+// mktsegment-passed q3_agg_row_t rows; outside the walker we only
+// sort and truncate.
+//
+// C++ implementation map (q3/query.tpp::query_by_merged):
+//
+//   col_group_walk<Backend>(merged_col, Visitor{...})
+//
+//     Visitor::on_customer  → c_mktsegment gate (returns false to
+//                             suppress on_order / on_lineitem); this
+//                             realises the FILTER on CUSTOMER.
+//     Visitor::on_order     → flush_order(); start new orderkey register
+//                             only if q3_predicate_orders passes
+//                             (o_orderdate < DATE)
+//     Visitor::on_lineitem  → q3_predicate_lineitem (l_shipdate > DATE)
+//                             + LineitemRevenueAccumulator::consume
+//     Visitor::on_group_end → final flush_order(); reset accumulators
+//
+//     flush_order()         → emits q3_agg_row_t (orderkey, revenue,
+//                             orderdate, shippriority) unconditionally
+//                             once the order survives o_orderdate. No
+//                             threshold gate (Q3 has no sibling
+//                             aggregate).
+//
+// PremergedJoin / BinaryMergeJoin are NOT instantiated here — the COL
+// merged adapter's tagged-key encoding makes the Visitor pattern strictly
+// more expressive (3-way custkey grouping with 1 sub-aggregate + 3
+// fused filters). This is the operator-level expression of the §3.1.3
+// hierarchical pattern, isolated from the §3.1.2 sibling overlay.
+
 digraph {
   rankdir=BT;
-  n0 [label="EnumerableLimit(fetch=[10])"];
-  n1 [label="EnumerableSort(sort0=[$1], sort1=[$2], dir0=[DESC], dir1=[ASC])"];
-  n2 [label="EnumerableProject(L_ORDERKEY=[$0], L_REVENUE=[$4], O_ORDERDATE=[$2], O_SHIPPRIORITY=[$3])"];
-  n3 [label="EnumerableMergeJoin(condition=[=($1, $5)], joinType=[inner])"];
-  n4 [label="EnumerableSort(sort0=[$1], dir0=[ASC])"];
-  n5 [label="EnumerableSortedAggregate(group=[{0, 2, 3, 4}], L_REVENUE=[SUM($1)])"];
-  n6 [label="EnumerableProject(L_ORDERKEY=[$0], $f1=[*($14, -(1, $15))], O_CUSTKEY=[$1], O_ORDERDATE=[$4], O_SHIPPRIORITY=[$7])"];
-  n7 [label="EnumerableFilter(condition=[AND(<(CAST($4):DATE, 1995-03-15), >(CAST($19):DATE, 1995-03-15))])"];
-  n8 [label="EnumerablePremergedJoin(mi=[[TPCH, MI_ORDERS_LINEITEM]], condition=[=($0, $9)], joinType=[inner])"];
-  n8 -> n7 [label="0"];
-  n7 -> n6 [label="0"];
-  n6 -> n5 [label="0"];
-  n5 -> n4 [label="0"];
-  n4 -> n3 [label="0"];
-  n9 [label="EnumerableSort(sort0=[$0], dir0=[ASC])"];
-  n10 [label="EnumerableFilter(condition=[=(CAST($6):VARCHAR, 'BUILDING')])"];
-  n11 [label="EnumerableTableScan(table=[[TPCH, CUSTOMER]])"];
-  n11 -> n10 [label="0"];
-  n10 -> n9 [label="0"];
-  n9 -> n3 [label="1"];
-  n3 -> n2 [label="0"];
-  n2 -> n1 [label="0"];
-  n1 -> n0 [label="0"];
+
+  mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
+      shape=box3d, style=filled, fillcolor="#E8F0FE"];
+
+  walk [label="COLGroupWalk(Visitor)\nsubsumes:\n  • all 3 per-table filters (fused at on_*)\n  • CUSTOMER ⋈ ORDERS ⋈ LINEITEM\n  • per-ORDERKEY SortedAggregate (lineitem)\n  • Project → q3_agg_row_t",
+         shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  sort  [label="Sort(revenue DESC, orderdate ASC)\n[apply_top10 partial_sort]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+  limit [label="Limit 10\n[apply_top10 resize]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  mi    -> walk;
+  walk  -> sort;
+  sort  -> limit;
 }

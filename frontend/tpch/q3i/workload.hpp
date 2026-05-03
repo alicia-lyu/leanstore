@@ -118,11 +118,13 @@ struct Q3IStats {
    long join_callbacks      = 0;
    long aggregator_rows_out = 0;
 
-   // S5 (aCOLI) counters — aCOLI MI has only customer + order rows.
+   // S5 (aCOLI) counters — 3-type MI: customer + order + lineitem rows.
    long acoli_customers_scanned        = 0;
    long acoli_customers_passing_filter = 0;
    long acoli_orders_scanned           = 0;
    long acoli_orders_emitted           = 0;
+   long acoli_lineitems_scanned        = 0;  // lineitem rows visited in aCOLI walk
+   long acoli_lineitems_passing        = 0;  // passed l_shipdate filter
 
    // S3 (mi_coli_walk) — bytes-of-work proxy. `mi_records_visited` counts
    // every kv emitted by the merged scanner during a walk; `mi_groups_skipped`
@@ -253,9 +255,16 @@ class Q3IWorkload
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
        typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
        typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli,
-       typename Backend::template MergedAdapter<customer_acoli_q3i_t,
-                                                orders_acoli_q3i_t>& acoli_proj);
+       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+                                                lineitem_acoli_t>& acoli);
+
+   // ------------------------------------------------------------------
+   // Param cycling: rotate through a static substitution-parameter table
+   // so each TX iteration exercises a distinct (segment, date) combination.
+   // Called by the per-structure wrapper's tput_tx before every query TX.
+   // ------------------------------------------------------------------
+
+   void set_params_for_iter(long iter);
 
    // ------------------------------------------------------------------
    // Queries — one per storage structure.

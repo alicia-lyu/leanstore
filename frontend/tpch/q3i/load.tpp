@@ -17,31 +17,30 @@
 DECLARE_int32(storage_structure);
 DECLARE_int32(load_only_structure);
 DECLARE_string(coli_walker_variant);
-DECLARE_bool(acoli_projected);
 
 namespace tpch::q3i
 {
 
 // ---------------------------------------------------------------------------
-// View loading: materialise per-(custkey, orderkey) aggregates into the view.
+// View loading: materialise per-(custkey, orderkey, linenumber) rows into
+// the view.
 //
 // The view is UNFILTERED on parameterised predicates (mktsegment, threshold,
 // orderdate, shipdate) — predicate hoisting per OPERATORS.md §4 so it stays
 // reusable across param sets.  Per-table filters (i_status='O') ARE applied
 // because they are constant, not parameterised.
 //
+// Schema redesign (2026-05-03): one row per lineitem (not per orderkey).
+// The shipdate filter is NOT applied here; query_by_view applies it live at
+// query time.  This makes S2 reusable across all DATE param sets.
+//
 // Algorithm:
 //   1. Scan invoice base table; accumulate cust_open_due per custkey in a
-//      hash map (i_status='O' filter fused here — constant, not parameterised).
+//      hash map (i_status='O' fused — constant, not parameterised).
 //   2. Scan customer base table; populate c_mktsegment per custkey map.
 //   3. Two-pointer merge over orders + lineitem base scanners (both sorted by
-//      orderkey); for each (order, lineitem) pair compute revenue and emit one
-//      q3i_pipeline_view_t row per (custkey, orderkey).  Lineitems within an
-//      order are collapsed into a single revenue sum (same SortedAggregate as
-//      the S3 inside-pipeline operator) so the view has one row per orderkey.
-//
-// This mirrors populate_q12_view's two-pointer merge pattern (Q12 load.tpp)
-// extended with the per-custkey invoice and customer lookups.
+//      orderkey); emit one q3i_pipeline_view_t row per (custkey, orderkey,
+//      linenumber) carrying unaggregated lineitem fields for query-time revenue.
 
 template <typename Backend>
 static void populate_q3i_view(
@@ -72,43 +71,39 @@ static void populate_q3i_view(
    }
 
    // Step 3: two-pointer merge over orders (sorted by orderkey) and lineitem
-   // (sorted by (orderkey, linenumber)).  Accumulate lineitem revenue per
-   // orderkey and emit one q3i_pipeline_view_t row per (custkey, orderkey).
-   //
-   // We need custkey for the view key.  orders_t carries o_custkey in payload.
+   // (sorted by (orderkey, linenumber)).  Emit one view row per lineitem —
+   // no shipdate filter here; query_by_view applies it live at query time.
    auto ord_scan = orders.getScanner();
    auto lin_scan = lineitem.getScanner();
 
-   std::optional<std::pair<orders_t::Key, orders_t>>     cur_ord   = ord_scan->next();
-   std::optional<std::pair<lineitem_t::Key, lineitem_t>> cur_lin   = lin_scan->next();
+   std::optional<std::pair<orders_t::Key, orders_t>>     cur_ord = ord_scan->next();
+   std::optional<std::pair<lineitem_t::Key, lineitem_t>> cur_lin = lin_scan->next();
 
    while (cur_ord) {
-      const orders_t&     o        = cur_ord->second;
-      Integer             orderkey = cur_ord->first.o_orderkey;
-      Integer             custkey  = o.o_custkey;
+      const orders_t& o        = cur_ord->second;
+      Integer         orderkey = cur_ord->first.o_orderkey;
+      Integer         custkey  = o.o_custkey;
 
-      // Accumulate revenue for qualifying lineitems (shipdate filter baked in
-      // at load time using the default param value DATE_1995_03_15, consistent
-      // with query_by_view which does NOT re-apply the shipdate predicate).
-      // orderdate is stored in the view row and re-checked at query time.
-      Numeric revenue = 0;
+      Numeric     open_due   = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
+      Varchar<10> mktseg     = mktseg_map.count(custkey)   ? mktseg_map.at(custkey)   : Varchar<10>{};
+
+      // Emit one view row per lineitem under this order.
       while (cur_lin && cur_lin->first.l_orderkey == orderkey) {
          const lineitem_t& l = cur_lin->second;
-         if (l.l_shipdate > DATE_1995_03_15)
-            revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
+
+         q3i_pipeline_view_t::Key vk{custkey, orderkey, cur_lin->first.l_linenumber};
+         q3i_pipeline_view_t      vv;
+         vv.l_extendedprice = l.l_extendedprice;
+         vv.l_discount      = l.l_discount;
+         vv.l_shipdate      = l.l_shipdate;
+         vv.cust_open_due   = open_due;
+         vv.c_mktsegment    = mktseg;
+         vv.o_orderdate     = o.o_orderdate;
+         vv.o_shippriority  = o.o_shippriority;
+         pipeline_view.insert(vk, vv);
+
          cur_lin = lin_scan->next();
       }
-
-      // Emit one view row per (custkey, orderkey) — unfiltered on params
-      // except for the constant l_shipdate default baked into revenue above.
-      q3i_pipeline_view_t::Key vk{custkey, orderkey};
-      q3i_pipeline_view_t      vv;
-      vv.revenue        = revenue;
-      vv.cust_open_due  = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
-      vv.c_mktsegment   = mktseg_map.count(custkey)   ? mktseg_map.at(custkey)   : Varchar<10>{};
-      vv.o_orderdate    = o.o_orderdate;
-      vv.o_shippriority = o.o_shippriority;
-      pipeline_view.insert(vk, vv);
 
       cur_ord = ord_scan->next();
    }
@@ -129,16 +124,15 @@ Q3IWorkload<Backend>::Q3IWorkload(
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
     typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
     typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli,
-    typename Backend::template MergedAdapter<customer_acoli_q3i_t,
-                                             orders_acoli_q3i_t>& acoli_proj)
+    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+                                             lineitem_acoli_t>& acoli)
     : tpch(tpch),
       customer(customer),
       orders(orders),
       lineitem(lineitem),
       invoice(invoice),
       coli(customer, orders, lineitem, invoice, merged_coli,
-           split_orders, split_lineitem, split_invoice, acoli, acoli_proj),
+           split_orders, split_lineitem, split_invoice, acoli),
       pipeline_view(pipeline_view),
       params(Params::defaults())
 {
@@ -185,9 +179,7 @@ double Q3IWorkload<Backend>::get_size() const
       case 2: return base + pipeline_view.size();
       case 3: return base + coli.get_merged_size();
       case 4: return base;
-      case 5: return base + (FLAGS_acoli_projected
-                              ? coli.get_aggregated_proj_size()
-                              : coli.get_aggregated_size());
+      case 5: return base + coli.get_aggregated_size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }

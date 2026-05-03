@@ -106,10 +106,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
-   // S5: aCOLI 2-type MI (customer_acoli_t + orders_acoli_t).
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli(rocks_db);
-   // G4/G5: Q3I-projected aCOLI variant (declared but not populated by default).
-   B::MergedAdapter<tpch::customer_acoli_q3i_t, tpch::orders_acoli_q3i_t> acoli_proj(rocks_db);
+   // S5: aCOLI 3-type MI (customer_acoli_t + orders_acoli_t + lineitem_acoli_t).
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                    tpch::lineitem_acoli_t> acoli(rocks_db);
 
    // Defensive wipe: if --ssd_path holds a prior DB, remove it before opening.
    // See file-header comment for why this matters (parity-failure mode caused
@@ -133,7 +132,7 @@ int main(int argc, char** argv)
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice, acoli, acoli_proj);
+                                   split_orders, split_lineitem, split_invoice, acoli);
 
    // Load base tables ONCE — this is the key fix vs. Phase 2B's per-structure
    // wipe/reload pattern.  All four paths will see the same data.
@@ -312,13 +311,13 @@ int main(int argc, char** argv)
 
    bool stats_ok = true;
 
-   // Pipeline view: one row per (custkey, orderkey) after l_shipdate filter
-   // and per-order revenue collapse. Bound: (0, |orders|]. Hard-fail on 0.
+   // Pipeline view: one row per (custkey, orderkey, linenumber) — cardinality
+   // equals |lineitem| (no shipdate filter at load time; all lineitems stored).
    {
-      bool ok = (n_view > 0) && (n_view <= n_orders);
+      bool ok = (n_view == n_lineitems_ref);
       stats_ok &= ok;
       check("pipeline_view", ok, n_view,
-            "(0, " + std::to_string(n_orders) + "]");
+            "= " + std::to_string(n_lineitems_ref));
    }
    // Split adapters: 1:1 retag of base tables.
    {
@@ -446,17 +445,18 @@ int main(int argc, char** argv)
              << "  lineitem="<< cv.bytes_lineitem<< " (" << pct(cv.bytes_lineitem)<< "%)\n";
 
    // aCOLI (S5) secondary cardinality check.
-   // Expect: customers rows = n_customers, orders rows = n_orders.
-   // Walk the acoli MI by scanning typed.
+   // 3-type MI: expect customer rows = n_customers, order rows = n_orders,
+   // lineitem rows = n_lineitems_ref.
    {
-      long n_acoli_c = 0, n_acoli_o = 0;
+      long n_acoli_c = 0, n_acoli_o = 0, n_acoli_l = 0;
       auto acoli_scanner = acoli.template getScanner<
           tpch::customer_acoli_t::Key, tpch::customer_acoli_t>();
       while (auto kv = acoli_scanner->next()) {
          std::visit([&](auto&& val) {
             using V = std::decay_t<decltype(val)>;
-            if constexpr (std::is_same_v<V, tpch::customer_acoli_t>) ++n_acoli_c;
-            else ++n_acoli_o;
+            if constexpr (std::is_same_v<V, tpch::customer_acoli_t>)  ++n_acoli_c;
+            else if constexpr (std::is_same_v<V, tpch::orders_acoli_t>) ++n_acoli_o;
+            else ++n_acoli_l;
          }, kv->second);
       }
       {
@@ -468,6 +468,11 @@ int main(int argc, char** argv)
          bool ok_o = (n_acoli_o == n_orders);
          stats_ok &= ok_o;
          check("acoli_orders", ok_o, n_acoli_o, "= " + std::to_string(n_orders));
+      }
+      {
+         bool ok_l = (n_acoli_l == n_lineitems_ref);
+         stats_ok &= ok_l;
+         check("acoli_lineitems", ok_l, n_acoli_l, "= " + std::to_string(n_lineitems_ref));
       }
       // Phase 6: aCOLI size content-walk diagnostic. PERFORMANCE.md flags
       // a cross-backend anomaly where reported aCOLI size is ~52% of COLI's
@@ -488,7 +493,8 @@ int main(int argc, char** argv)
       std::cout << "[size] acoli=" << std::fixed << std::setprecision(3)
                 << acoli_reported_mib << " MiB"
                 << "  (rows=" << rb_acoli.first
-                << "  c=" << n_acoli_c << " o=" << n_acoli_o << ")\n"
+                << "  c=" << n_acoli_c << " o=" << n_acoli_o
+                << " l=" << n_acoli_l << ")\n"
                 << "[content/row] acoli=" << std::fixed << std::setprecision(1)
                 << cpr2(rb_acoli.second, rb_acoli.first)
                 << "          (key.size() + value.size() summed per row)\n"
@@ -594,18 +600,19 @@ int main(int argc, char** argv)
    card_line("S2 view",   st_view);
    card_line("S3 merged", st_merged);
    card_line("S4 hash",   st_hash);
-   // S5 aCOLI scan counters (different counter names — no base-table scan).
+   // S5 aCOLI scan counters (3-type MI: customer + order + lineitem rows).
    std::cout << "[scan] " << std::left << std::setw(11) << "S5 acoli"
              << std::right
              << std::setw(10) << st_agg.acoli_customers_scanned
              << std::setw(10) << st_agg.acoli_orders_scanned
-             << std::setw(11) << "(n/a)"
+             << std::setw(11) << st_agg.acoli_lineitems_scanned
              << std::setw(10) << "(n/a)"
              << std::setw(9)  << st_agg.acoli_orders_emitted
              << std::setw(9)  << st_agg.aggregator_rows_out
              << "\n";
    std::cout << "  [scan] S5 acoli_customers_passing_filter="
-             << st_agg.acoli_customers_passing_filter << "\n";
+             << st_agg.acoli_customers_passing_filter
+             << " acoli_lineitems_passing=" << st_agg.acoli_lineitems_passing << "\n";
 
    // Per-stage cardinality: rows passing each filter and rows surviving
    // each join stage. Should be cross-structure consistent at the
@@ -867,24 +874,13 @@ int main(int argc, char** argv)
    parity_line("S3 merged", ok_m, d_merged);
    parity_line("S4 hash  ", ok_h, d_hash);
 
-   // S5 parity: only valid when params equal defaults (pre_open_due and
-   // pre_revenue are baked in with default constants at populate_aggregated
-   // time). When params deviate, skip to avoid false failures.
-   bool ok_a = false;
-   {
-      tpch::q3i::Params def = tpch::q3i::Params::defaults();
-      bool params_match = (q3i.params.shipdate  == def.shipdate)
-                       && (q3i.params.orderdate == def.orderdate)
-                       && (q3i.params.threshold == def.threshold);
-      if (!params_match) {
-         std::cout << "[SKIP] S5 acoli  parity skipped — baked-in filter mismatch"
-                      " (params deviate from defaults)\n";
-         ok_a = true;  // not a failure
-      } else {
-         ok_a = (d_agg == ref);
-         parity_line("S5 acoli ", ok_a, d_agg);
-      }
-   }
+   // S5 parity: unconditionally checked — pre_open_due is the only baked
+   // field (i_status='O' is hardcoded by spec, parameter-independent).
+   // Revenue is now computed at query time from lineitem_acoli_t rows, so S5
+   // is correct for any DATE / THRESHOLD param set.  [SKIP S5] guard removed
+   // 2026-05-03 after schema redesign (plans/q3i-s5-rebuild-store-lineitems.md).
+   bool ok_a = (d_agg == ref);
+   parity_line("S5 acoli ", ok_a, d_agg);
 
    // Shape check: all paths must agree on row count, in (0, 10].
    bool shape_ok = true;
@@ -901,16 +897,24 @@ int main(int argc, char** argv)
                 << " (expected = " << n_ref << ", in (0, 10])\n";
    }
 
-   // S5 scan-efficiency check: acoli scans fewer total records than COLI MI.
+   // S5 scan-efficiency check: acoli total records (customer + order + lineitem)
+   // should be close to COLI MI minus invoice rows (the only collapsed table).
+   // The absolute total will now be close to COLI MI total (no longer the 22×
+   // reduction of the old 2-type schema) but must still be > 0.
    {
-      long acoli_total = st_agg.acoli_customers_scanned + st_agg.acoli_orders_scanned;
+      long acoli_total = st_agg.acoli_customers_scanned
+                       + st_agg.acoli_orders_scanned
+                       + st_agg.acoli_lineitems_scanned;
       long coli_total  = st_merged.mi_records_visited;
-      bool ok = (acoli_total > 0) && (coli_total == 0 || acoli_total < coli_total);
+      bool ok = (acoli_total > 0);
       std::cout << (ok ? "[OK]   " : "[FAIL] ")
                 << "S5 acoli_total=" << acoli_total
+                << " (c=" << st_agg.acoli_customers_scanned
+                << " o=" << st_agg.acoli_orders_scanned
+                << " l=" << st_agg.acoli_lineitems_scanned << ")"
                 << " vs S3 mi_records_visited=" << coli_total
-                << " (expected S5 << S3 when S3 stats wired, or S5 > 0)\n";
-      card_ok &= (acoli_total > 0);
+                << " (expected S5 > 0; aCOLI ≈ COLI − invoice rows)\n";
+      card_ok &= ok;
    }
 
    bool all_ok = ok_b && ok_v && ok_m && ok_h && ok_a && shape_ok && stats_ok && card_ok && a2c_parity_ok;

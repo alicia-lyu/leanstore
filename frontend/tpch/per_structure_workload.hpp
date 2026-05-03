@@ -24,6 +24,7 @@ struct BaseStructure {
    explicit BaseStructure(Workload& w) : w(w) {}
    long query(std::vector<AggRow>& out) { return w.query_by_base(out); }
    double get_size() const { return w.get_size(); }
+   void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
 };
 
 template <typename Workload, typename AggRow>
@@ -32,6 +33,7 @@ struct ViewStructure {
    explicit ViewStructure(Workload& w) : w(w) {}
    long query(std::vector<AggRow>& out) { return w.query_by_view(out); }
    double get_size() const { return w.get_size(); }
+   void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
 };
 
 template <typename Workload, typename AggRow>
@@ -40,6 +42,7 @@ struct MergedStructure {
    explicit MergedStructure(Workload& w) : w(w) {}
    long query(std::vector<AggRow>& out) { return w.query_by_merged(out); }
    double get_size() const { return w.get_size(); }
+   void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
 };
 
 template <typename Workload, typename AggRow>
@@ -48,6 +51,7 @@ struct HashStructure {
    explicit HashStructure(Workload& w) : w(w) {}
    long query(std::vector<AggRow>& out) { return w.query_by_hash(out); }
    double get_size() const { return w.get_size(); }
+   void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
 };
 
 // AggregatedStructure: for S5 variants that pre-aggregate records into the MI
@@ -58,6 +62,7 @@ struct AggregatedStructure {
    explicit AggregatedStructure(Workload& w) : w(w) {}
    long query(std::vector<AggRow>& out) { return w.query_by_aggregated(out); }
    double get_size() const { return w.get_size(); }
+   void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
 };
 
 }  // namespace tpch

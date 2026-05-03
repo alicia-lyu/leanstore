@@ -22,31 +22,41 @@ namespace tpch::q3i
 {
 
 // ---------------------------------------------------------------------------
-// Structure 2 pipeline view row: per-(custkey, orderkey) post-aggregate row.
+// Structure 2 pipeline view row: per-(custkey, orderkey, linenumber) row.
 //
-// Rationale for widening from joined_ol_t alias:
-//   The family logical plan's inside-pipeline SortedAggregate collapses all
-//   lineitems per orderkey into one revenue sum.  The view therefore has one
-//   row per (custkey, orderkey) — roughly |orders| rows — which is far smaller
-//   than joined_ol_t × N_lineitems_per_order.  Carrying cust_open_due,
-//   c_mktsegment, o_orderdate, and o_shippriority in the view row means S2's
-//   query time is a single sequential scan with per-row mktsegment + threshold
-//   filters, with no secondary invoice lookup needed.  This makes S2 a fair
-//   comparison point against S1/S3 (both of which build cust_open_due in a
-//   single streaming pass) while keeping the view UNFILTERED on parametrised
-//   predicates so it stays reusable across param sets (predicate hoisting).
+// Schema redesign (2026-05-03): the original per-(custkey, orderkey) row baked
+// the l_shipdate filter into the revenue sum at load time, locking S2 to a
+// single DATE param value.  The new schema stores unaggregated lineitem fields
+// (l_extendedprice, l_discount, l_shipdate) so query_by_view can apply the
+// shipdate filter live.  Revenue is accumulated per orderkey at query time,
+// making S2 reusable across all DATE param sets (predicate hoisting).
+//
+// FD-attached customer / order columns (c_mktsegment, cust_open_due,
+// o_orderdate, o_shippriority) are copied into every lineitem row — the same
+// "schema-faithful secondary" policy as the COLI MI (frontend/tpch/CLAUDE.md
+// §No project pushdown).  This keeps S2 a fair comparison against S1/S3
+// without penalising them for recomputing per-query revenue.
+//
+// View cardinality: one row per qualifying (custkey, orderkey, linenumber)
+// ≈ |lineitem| at SF=1.
 
 struct q3i_pipeline_view_t {
    static constexpr int id = 43;
 
    struct Key {
       static constexpr int id = 43;
-      Integer custkey;   // primary sort — groups custkey partitions
-      Integer orderkey;  // secondary sort — unique within a custkey group
-      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
+      Integer custkey;     // primary sort — groups custkey partitions
+      Integer orderkey;    // secondary sort — unique within a custkey group
+      Integer linenumber;  // tertiary sort — unique within an order
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
    };
 
-   Numeric     revenue;         // SUM(l_extendedprice * (1 - l_discount)) per orderkey
+   // Unaggregated lineitem fields needed for per-query revenue computation.
+   Numeric   l_extendedprice;  // filter: apply l_shipdate > params.shipdate at query time
+   Numeric   l_discount;
+   Timestamp l_shipdate;
+
+   // FD-attached customer / order columns (parameter-independent at load time).
    Numeric     cust_open_due;   // SUM(i_totaldue WHERE i_status='O') per custkey
    Varchar<10> c_mktsegment;    // customer market segment (filter at query time)
    Timestamp   o_orderdate;     // order date (filter at query time)

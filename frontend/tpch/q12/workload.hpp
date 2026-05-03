@@ -108,6 +108,15 @@ class Q12Workload
        typename Backend::template MergedAdapter<orders_t, lineitem_t>& merged_ol);
 
    // ------------------------------------------------------------------
+   // Param cycling — rotates through TPC-H §2.4.12 substitution-parameter
+   // sets deterministically so that S2/S5 secondaries that incorrectly
+   // bake parameterised filters diverge visibly from S1/S3/S4.
+   // Called by TpchExecutableHelper::tput_tx before each query invocation.
+   // ------------------------------------------------------------------
+
+   void set_params_for_iter(long iter);
+
+   // ------------------------------------------------------------------
    // Queries — one per storage structure.
    // Each returns the number of result rows written into `out`
    // (at most 7, the shipmode cardinality).

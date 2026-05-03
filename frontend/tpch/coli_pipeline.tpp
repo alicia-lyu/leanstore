@@ -14,8 +14,6 @@
 // Defined in tpch_flags.hpp; declared here to avoid an include-order
 // dependency on the per-executable TPCH_DEFINE_FLAGS pattern.
 DECLARE_int32(use_seek_skip);
-// G5: project-pushdown A/B-2 — populate / query the Q3I-projected aCOLI.
-DECLARE_bool(acoli_projected);
 
 namespace tpch
 {
@@ -35,9 +33,8 @@ CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePip
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
     typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
     typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli,
-    typename Backend::template MergedAdapter<customer_acoli_q3i_t,
-                                             orders_acoli_q3i_t>& acoli_proj)
+    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+                                             lineitem_acoli_t>& acoli)
     : customer(customer),
       orders(orders),
       lineitem(lineitem),
@@ -46,8 +43,7 @@ CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePip
       split_orders_ref(split_orders),
       split_lineitem_ref(split_lineitem),
       split_invoice_ref(split_invoice),
-      acoli_adapter_ref(acoli),
-      acoli_proj_adapter_ref(acoli_proj)
+      acoli_adapter_ref(acoli)
 {
 }
 
@@ -202,26 +198,19 @@ double CustomerOrdersLineitemInvoicePipeline<Backend>::get_split_size() const
 }
 
 // ---------------------------------------------------------------------------
-// populate_aggregated: build the aCOLI 2-type MI.
+// populate_aggregated: build the aCOLI 3-type MI.
 //
-// The aCOLI MI stores one customer_acoli_t per custkey (payload = all
-// customerh_t fields + pre_open_due) and one orders_acoli_t per
-// (custkey, orderkey) (payload = all orders_t fields + pre_revenue).
-// Invoice and lineitem rows are collapsed into these two aggregates,
-// eliminating them from the MI and reducing query-time scan cardinality
-// from ~8M records (COLI, S3) to ~1.15M records (aCOLI, S5) at SF=1.
+// Stores customer_acoli_t (pre_open_due baked), orders_acoli_t (no pre-aggregated
+// revenue), and lineitem_acoli_t (unaggregated lineitem payload).  Invoice rows
+// are collapsed to the pre_open_due scalar (i_status='O' is hardcoded by spec —
+// parameter-independent).  Lineitem revenue is computed at query time so S5
+// remains reusable across all DATE param sets.
 //
-// Filter constants baked in at load time (same as S2 view defaults):
-//   i_status = 'O'              for pre_open_due
-//   l_shipdate > DATE_1995_03_15 for pre_revenue
-// If runtime params change these constants, S5 results diverge from S1/S3/S4.
-//
-// Three-pass algorithm:
+// Two-pass algorithm (Pass B — lineitem revenue map — removed 2026-05-03):
 //   Pass A: scan invoice → build custkey → Numeric open_due map.
-//   Pass B: scan lineitem + orders orderkey→custkey map → build
-//           (custkey, orderkey) → Numeric revenue map.
-//   Pass C: scan customer + orders; insert customer_acoli_t (with open_due
-//           from map) and orders_acoli_t (with revenue from map).
+//   Pass C: scan customer + orders + lineitem, resolving custkey for lineitems
+//           via the orderkey→custkey map built during the orders sub-pass.
+//           Insert all three record types into acoli_adapter_ref.
 
 template <typename Backend>
 void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_aggregated()
@@ -237,78 +226,48 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_aggregated()
       }
    }
 
-   // --- Pass B: lineitem scan → per-(custkey,orderkey) revenue ---
-   // Need orderkey→custkey map first; build it by scanning orders.
-   std::unordered_map<Integer, Integer> orderkey_to_custkey;
-   {
-      auto scanner = orders.getScanner();
-      while (auto kv = scanner->next()) {
-         orderkey_to_custkey.emplace(kv->first.o_orderkey, kv->second.o_custkey);
-      }
-   }
-
-   // key: (custkey << 32) | orderkey — pack two Integers into uint64_t for speed.
-   // Using std::pair<Integer,Integer> as key with a custom hash is cleaner but
-   // this avoids a helper struct for a single private function.
-   using OKKey = std::pair<Integer, Integer>;
-   struct PairHash {
-      size_t operator()(const OKKey& k) const noexcept {
-         auto h1 = std::hash<int>{}(static_cast<int>(k.first));
-         auto h2 = std::hash<int>{}(static_cast<int>(k.second));
-         return h1 ^ (h2 * 2654435761u);
-      }
-   };
-   std::unordered_map<OKKey, Numeric, PairHash> revenue_map;
-   {
-      auto scanner = lineitem.getScanner();
-      while (auto kv = scanner->next()) {
-         const lineitem_t::Key& lk = kv->first;
-         const lineitem_t&      lv = kv->second;
-         if (lv.l_shipdate <= DATE_1995_03_15) continue;
-         auto it = orderkey_to_custkey.find(lk.l_orderkey);
-         assert(it != orderkey_to_custkey.end() && "lineitem references unknown orderkey");
-         Integer custkey = it->second;
-         revenue_map[{custkey, lk.l_orderkey}] +=
-             lv.l_extendedprice * (Numeric(1) - lv.l_discount);
-      }
-   }
-
-   // --- Pass C: scan customers + orders; insert into either the full-payload
-   // acoli MI or the Q3I-projected variant, gated by FLAGS_acoli_projected.
-   const bool projected = FLAGS_acoli_projected;
+   // --- Pass C: customer + orders + lineitem ---
+   //
+   // Sub-pass C1: scan customers.
    {
       auto cust_scan = customer.getScanner();
       while (auto kv = cust_scan->next()) {
-         Integer custkey = kv->first.c_custkey;
+         Integer custkey  = kv->first.c_custkey;
          Numeric open_due = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
-         if (projected) {
-            customer_acoli_q3i_t::Key ak{custkey};
-            acoli_proj_adapter_ref.template insert<customer_acoli_q3i_t>(
-                ak, customer_acoli_q3i_t::from_customer(kv->second, open_due));
-         } else {
-            customer_acoli_t::Key ak{custkey};
-            acoli_adapter_ref.template insert<customer_acoli_t>(
-                ak, customer_acoli_t::from_customer(kv->second, open_due));
-         }
+         customer_acoli_t::Key ak{custkey};
+         acoli_adapter_ref.template insert<customer_acoli_t>(
+             ak, customer_acoli_t::from_customer(kv->second, open_due));
       }
    }
+
+   // Sub-pass C2: scan orders, build orderkey→custkey map, insert orders_acoli_t.
+   // The map is reused by sub-pass C3 (lineitems) to resolve custkey.
+   std::unordered_map<Integer, Integer> orderkey_to_custkey;
    {
       auto ord_scan = orders.getScanner();
       while (auto kv = ord_scan->next()) {
          const orders_t::Key& ok = kv->first;
          const orders_t&      ov = kv->second;
          Integer custkey = ov.o_custkey;
-         OKKey pk{custkey, ok.o_orderkey};
-         Numeric revenue = revenue_map.count(pk) ? revenue_map.at(pk) : Numeric(0);
-         if (projected) {
-            orders_acoli_q3i_t::Key ak = orders_acoli_q3i_t::key_from_order(custkey, ok);
-            acoli_proj_adapter_ref.template insert<orders_acoli_q3i_t>(
-                ak, orders_acoli_q3i_t::from_order(ov, revenue));
-         } else {
-            orders_acoli_t::Key ak = orders_acoli_t::key_from_order(custkey, ok);
-            acoli_adapter_ref.template insert<orders_acoli_t>(
-                ak, orders_acoli_t::from_order(ov, custkey, revenue));
-         }
+         orderkey_to_custkey.emplace(ok.o_orderkey, custkey);
+         orders_acoli_t::Key ak = orders_acoli_t::key_from_order(custkey, ok);
+         acoli_adapter_ref.template insert<orders_acoli_t>(
+             ak, orders_acoli_t::from_order(ov, custkey));
+      }
+   }
+
+   // Sub-pass C3: scan lineitems, resolve custkey, insert lineitem_acoli_t.
+   {
+      auto lin_scan = lineitem.getScanner();
+      while (auto kv = lin_scan->next()) {
+         const lineitem_t::Key& lk = kv->first;
+         const lineitem_t&      lv = kv->second;
+         auto it = orderkey_to_custkey.find(lk.l_orderkey);
+         assert(it != orderkey_to_custkey.end() && "lineitem references unknown orderkey");
+         Integer custkey = it->second;
+         lineitem_acoli_t::Key ak = lineitem_acoli_t::key_from_base(custkey, lk);
+         acoli_adapter_ref.template insert<lineitem_acoli_t>(
+             ak, lineitem_acoli_t::from_base(lv));
       }
    }
 }
@@ -320,12 +279,6 @@ template <typename Backend>
 double CustomerOrdersLineitemInvoicePipeline<Backend>::get_aggregated_size() const
 {
    return acoli_adapter_ref.size();
-}
-
-template <typename Backend>
-double CustomerOrdersLineitemInvoicePipeline<Backend>::get_aggregated_proj_size() const
-{
-   return acoli_proj_adapter_ref.size();
 }
 
 }  // namespace tpch

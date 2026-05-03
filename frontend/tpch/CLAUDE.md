@@ -63,9 +63,12 @@ Shared files (used by all three queries):
 - `views_coli.hpp` — Calcite-style tagged record types for the
   CUSTOMER × ORDERS × LINEITEM × INVOICE 4-table merged index:
   `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t`.
-  Also defines the aCOLI (pre-aggregated) 2-type pair:
-  `customer_acoli_t` (id=49, adds `pre_open_due`) and
-  `orders_acoli_t` (id=50, adds `pre_revenue`), used by Q3I S5.
+  Also defines the aCOLI (pre-aggregated) 3-type set used by Q3I S5:
+  `customer_acoli_t` (id=49, adds `pre_open_due`),
+  `orders_acoli_t` (id=50, full `orders_t` payload — `pre_revenue` removed
+  2026-05-03 as it was parameterised by `l_shipdate`), and
+  `lineitem_acoli_t` (id=53, full `lineitem_t` payload mirror keyed by
+  `(custkey, orderkey, linenumber)` — revenue recomputed at query time).
   Each `Key` carries a `using path = tagged_path<IdxId, Steps...>` declaration
   (pointer-to-member steps: `tag_field_step`, `tag_fields2_step`) plus a
   `static bool matches(const u8*, size_t)` override that reads the trailing
@@ -266,7 +269,7 @@ expected ranges derived from the TPC-H spec).
 | 2 | `ViewQ{N}` | Intermediate pipeline view (materialized `joined_ol_t` rows) |
 | 3 | `MergedQ{N}` | `MI[0]` only — `PremergedJoin` at query time |
 | 4 | `HashQ{N}` | Traditional indexes + hash join |
-| 5 | `AggregatedQ{N}` | aCOLI MI (`MergedAdapter<customer_acoli_t, orders_acoli_t>`) — pre-aggregated fields; no accumulator pass (Q3I only) |
+| 5 | `AggregatedQ{N}` | aCOLI MI (`MergedAdapter<customer_acoli_t, orders_acoli_t, lineitem_acoli_t>`) — `pre_open_due` read directly; revenue recomputed from unaggregated lineitems (Q3I only) |
 
 Structure 0 (data reload) is handled before the switch in each executable.
 
@@ -344,12 +347,16 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 ## Completed (post-skeleton)
 
-- **Q3I S5 aCOLI MI + wrap-up** (2026-05-02): `customer_acoli_t` /
-  `orders_acoli_t` added to `views_coli.hpp` (ids 49/50); `populate_aggregated()`
-  3-pass algorithm in `coli_pipeline.tpp`; `query_by_aggregated` in
-  `q3i/query.tpp` (no accumulators — direct field reads). All five paths
-  produce identical digest at SF=1 (7 rows); `acoli_total=486` vs
-  `mi_records_visited=10918` (22× scan reduction). Also landed this session:
+- **Q3I S5 aCOLI MI + wrap-up** (2026-05-02; revised 2026-05-03):
+  `customer_acoli_t` / `orders_acoli_t` / `lineitem_acoli_t` in
+  `views_coli.hpp` (ids 49/50/53); `populate_aggregated()` 2-pass algorithm
+  in `coli_pipeline.tpp` (Pass B removed — `pre_revenue` dropped so S5 is
+  reusable across all DATE param sets); `query_by_aggregated` in
+  `q3i/query.tpp` (uses `LineitemRevenueAccumulator` shared with S1/S3;
+  `pre_open_due` read directly). `[SKIP S5]` parity guard removed — all five
+  paths produce identical digest at SF=1 (6 rows).
+  `acoli_total=744 (c=150 o=202 l=392)` vs `mi_records_visited~1547`
+  (S5 skips all invoice rows). Also landed this session:
   multi-level active markers design (`customer_active` / `order_active`)
   documented in `PLAYBOOK.md §7.1` — not yet refactored into coli_pipeline
   (current code still uses `wants_skip_group()` / `wants_skip_order()`);
