@@ -519,7 +519,8 @@ Two walkers expose the same Visitor interface and produce
   LeanStore SF=15, +28% on RocksDB SF=15).
 
 Production binaries dispatch via `--coli_walker_variant={baseline,
-fused_emit}` (default `baseline`). Plumbed through `tpch_flags.hpp`
+fused_emit}` (default `fused_emit` post-A2c, set in Makefile
+`coli_walker_variant ?= fused_emit`). Plumbed through `tpch_flags.hpp`
 and `generate_targets.py`. **Do not write a new walker that uses
 `next()` instead of `next_raw()`** — see Anti-Pattern #21.
 
@@ -563,26 +564,34 @@ then can't fire (`if (customer_active && ...)` is already false). Both
 paths produce identical walker state; `wants_skip_group()` is dead code
 once the bool-returning `on_order` design lands.
 
-**Customer-level Seek-skip is Backend-gated** (A3, commit `83870b48`):
-when `customer_active` becomes false (mktsegment fails, or threshold
-fails on first `on_order`), the walker can either forward-iterate
-past every record in the rejected custkey group OR physically Seek
-to the next custkey boundary. Each backend picks the cheaper path
-via a static constexpr trait in `frontend/tpch/backend.hpp`:
+**Customer-level Seek-skip is Backend-gated** (A3, commits `83870b48`
++ `9da4f295`): when `customer_active` becomes false (mktsegment
+fails, or threshold fails on first `on_order`), the walker can either
+forward-iterate past every record in the rejected custkey group OR
+physically Seek to the next custkey boundary. Each backend declares
+its preferred default via a static constexpr trait in
+`frontend/tpch/backend.hpp`:
 
 ```cpp
-struct RocksDBBackend  { static constexpr bool USE_PHYSICAL_SEEK_SKIP = false; };
-struct LeanStoreBackend { static constexpr bool USE_PHYSICAL_SEEK_SKIP = true;  };
+struct RocksDBBackend   { static constexpr bool USE_PHYSICAL_SEEK_SKIP = true; };
+struct LeanStoreBackend { static constexpr bool USE_PHYSICAL_SEEK_SKIP = true; };
 ```
 
-- **RocksDB=false**: physical Seek invalidates the SST prefetch
-  buffer, raising SSTRead/TX ~5× at SF=40 disk-bound. Forward
-  iteration is competitive because co-located records share SST
-  blocks.
-- **LeanStore=true**: B-tree Seek is `O(log N)` page touches against
-  mostly-cached internal nodes — no prefetch buffer to lose. Lifts
-  LeanStore SF=15 S3 +356% and SF=40 disk-bound +116× over the
-  forward-iter baseline.
+Both default `true` after the Linux re-A/B refuted the original macOS
+regression (which turned out to be a macOS page-cache artefact, not
+RocksDB SST prefetch invalidation as originally hypothesised). Linux
+RocksDB iso S3 fused_emit dram=0.1: SF=15 1.81 → 14.46 TX/s (+700%),
+SF=40 0.90 → 1.48 (+64%). LeanStore lift remains +356% / +116×.
+
+**Runtime override**: the walker actually reads `--use_seek_skip`
+(declared in `tpch_flags.hpp`) which takes one of:
+
+- `-1` (default): defer to `Backend::USE_PHYSICAL_SEEK_SKIP`.
+- `0`: force forward-iter (regression A/B).
+- `1`: force Seek-skip (regression A/B).
+
+So the trait is the production default and the flag is the override
+for losing-branch regression runs.
 
 **Customer-level only** — order-level skip remains forward iteration
 on both backends because order groups (~4 lineitems) are too small
@@ -1143,12 +1152,31 @@ cross-structure cache pollution. Default `-1` = load all.
 
 `generate_targets.py::run_isolated_experiment` emits per-structure
 make targets `q{N}_lsm_iso_M` and `q{N}_btree_iso_M` (`M` = storage
-structure). Register your query the same way and the iso targets
-appear automatically.
+structure 1–5), plus an aggregate `q{N}_lsm_iso` / `q{N}_btree_iso`
+target (commit `9da4f295` consolidated the on-disk layout):
+
+- Image dirs:  `$(data_disk)/{exec}_iso/iso_{N}/{scale}` (one per
+  storage structure).
+- Runtime dir: `build/{exec}_iso/{scale}-in-{dram}/` — **shared
+  across all five iso structures**, so `build/{exec}_iso/TPut.csv`
+  carries one row per `N`, parallel to the non-iso
+  `build/{exec}/TPut.csv`. Don't override `csv_path` per-structure.
+
+Register your query the same way and the iso targets appear
+automatically.
 
 ### `--coli_walker_variant={baseline,fused_emit}`
 
-Walker dispatch choice — see §7.1 above.
+Walker dispatch choice — see §7.1 above. **Default**: `fused_emit`
+(post-A2c, set in Makefile `coli_walker_variant ?= fused_emit`).
+Use `coli_walker_variant=baseline` to reproduce the regression A/B.
+
+### `--use_seek_skip={-1,0,1}`
+
+Walker Seek-skip override (commit `9da4f295`). `-1` (default) defers
+to `Backend::USE_PHYSICAL_SEEK_SKIP`; `0`/`1` force forward-iter /
+Seek-skip respectively. Both production binaries and the Makefile
+expose this for regression A/Bs (`use_seek_skip ?= -1`).
 
 ---
 
@@ -1258,9 +1286,9 @@ documented.
 | 15 | `load()` populating only one secondary | `47405bec` | 3 of 4 structures read empty adapters; fantasy throughput | Populate ALL secondaries unconditionally in `load()` |
 | 16 | Hardcoded row-count assertion | `c077236f` | False test failures when data yields fewer than LIMIT rows | Assert cross-structure agreement + range `(0, K]` instead |
 | 17 | No secondary cardinality check in test | `739ebf63` | Empty secondaries produce 0-row "fast" queries silently | Verify each secondary has nonzero rows after `populate_*` |
-| 18 | Physical Seek in skip path on RocksDB | `8d10782b` | SSTRead/TX rises 5× — prefetch buffer invalidated by Seek | Backend-trait gate: `RocksDBBackend::USE_PHYSICAL_SEEK_SKIP = false` (see #20) |
+| 18 | ~~Physical Seek in skip path on RocksDB~~ (RETIRED — macOS-only artefact) | `8d10782b` reversed by `9da4f295` | Original macOS A/B saw SSTRead/TX rise 5× and was attributed to SST prefetch invalidation; Linux re-A/B refuted this — was a macOS page-cache artefact. RocksDB Seek-skip lifts SF=15 +700% / SF=40 +64% on Linux | Default both backends to `USE_PHYSICAL_SEEK_SKIP = true`; if a macOS regression resurfaces, override via `--use_seek_skip=0` rather than flipping the trait |
 | 19 | `wants_skip_group()` alongside `bool on_order` | (post-`128f6d44`) | Dead code — `on_order → false` already clears `customer_active`; `wants_skip_group()` guard can never fire after that | Use `on_order → false` directly; remove `wants_skip_group()` when cleaning up |
-| 20 | File-local `USE_PHYSICAL_SEEK_SKIP` constexpr instead of Backend trait | `83870b48` | Setting works for one backend, regresses the other (RocksDB Seek invalidates the SST prefetch buffer; LeanStore B-tree benefits from Seek) | Read `Backend::USE_PHYSICAL_SEEK_SKIP` from `frontend/tpch/backend.hpp` in the walker |
+| 20 | File-local `USE_PHYSICAL_SEEK_SKIP` constexpr instead of Backend trait | `83870b48` | Hard-coded constexpr makes per-backend tuning impossible and makes regression A/Bs (`--use_seek_skip=0`) require a recompile | Read `Backend::USE_PHYSICAL_SEEK_SKIP` from `frontend/tpch/backend.hpp` and let `--use_seek_skip` override it at runtime |
 | 21 | Custom walker calling `MergedScanner::next()` for performance-critical paths | A2c (`6402ba97`) | Per-record `std::variant` construction (memcpy of widest-payload + dispatch tag setup) — 18–50% TX/s tax at SF=15 cache-resident on LeanStore; +28% on RocksDB | Use `scanner->next_raw()` returning `(tag_byte, key_slice, value_slice)`; dispatch via tag-byte switch + `memcpy` into the typed buffer the visitor needs |
 | 22 | Reusing shared DB image for cross-structure perf comparison | A5 (`200ee0ae`) | Differential cache pollution at cache-resident SFs: structures with the largest secondary footprints are evicted disproportionately. Q3I SF=15 LeanStore: shared S3-vs-S1 gap = 36.6% but isolated gap = 13.7% — most of the gap was a benchmarking artefact | Use `--load_only_structure=N` + per-structure iso make targets (`q{N}_lsm_iso_M`); compare iso numbers, not shared |
 | 23 | Skipping `--micro_perf` / `--cfstats` plumbing during bring-up | `b7ebebc8` | When perf surprises surface (and they will — H1, H4, H8 all did), no instrumentation means a round-trip to add it before any test can be run | Wire both flags into the executable scaffold; ~30 lines using `perf_context_capture.hpp` (RocksDB) + `scanner_perf_hook.hpp` (LeanStore) |
