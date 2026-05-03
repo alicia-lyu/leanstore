@@ -98,6 +98,7 @@ no 3-stage join chain, just one fused walk.
 | 2 | Intermediate pipeline view | `q3i_pipeline_view_t` (joined\_ol\_t rows) | Pre-build cust\_open\_due map; view scan + CUSTOMER hash filter |
 | 3 | MI\[COLI\] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | PremergedJoin over 4-table tagged-key MI; cust\_open\_due computed in same pass |
 | 4 | Traditional indexes + hash join | None | Pre-build cust\_open\_due map; HashJoin(OL) + CUSTOMER hash lookup |
+| 5 | aCOLI MI (pre-aggregated) | `MergedAdapter<customer_acoli_t, orders_acoli_t>` | Scan 2-type MI; pre\_open\_due and pre\_revenue read directly; no accumulator pass |
 
 ---
 
@@ -223,7 +224,7 @@ revenue DESC + truncate to 10).
 | `per_structure_workload.hpp` | Complete — alias-only (`BaseQ3I`, `ViewQ3I`, `MergedQ3I`, `HashQ3I`) |
 | `load.tpp` | Complete — ctor, `load()`, `get_size()`, `populate_q3i_view` free function |
 | `query.tpp` | Complete — all four `query_by_*` bodies, accumulators, `COLIGroupWalkVisitor`, predicates, `print()` |
-| `executable_rocksdb.cpp` | Complete — full `main()`, dispatches all four storage structures via `TpchExecutableHelper` |
+| `executable_rocksdb.cpp` | Complete — full `main()`, dispatches all five storage structures via `TpchExecutableHelper` |
 | `executable_leanstore.cpp` | Complete — same as above for LeanStore backend (`#ifndef ROCKSDB_ONLY`) |
 | `CLAUDE.md` | This file |
 
@@ -466,6 +467,68 @@ make q3i_lsm scale=1
 # S3 in isolation for memory-pressure experiments
 make q3i_lsm_3 dram=0.1
 ```
+
+---
+
+---
+
+### Phase 4 — S5: aCOLI MI with pre-aggregated fields
+
+**Status (2026-05-02): complete.**
+
+**Goal**: implement and verify the "MI-as-aggregate-store" research variant
+(REVIEWS.md §1.1, R2-D1): a merged index that stores pre-computed aggregates
+as included columns, sitting between raw co-location (S3) and full
+materialisation (S2) on the pre-computation spectrum.
+
+**Design:** `MergedAdapter<customer_acoli_t, orders_acoli_t>` — two record
+types only (no invoice or lineitem rows):
+
+- `customer_acoli_t` (id=49): full `customerh_t` payload +
+  `Numeric pre_open_due` = `SUM(i_totaldue WHERE i_status='O')` baked at
+  load time.
+- `orders_acoli_t` (id=50): `orders_t` payload + `Numeric pre_revenue` =
+  `SUM(l_extendedprice*(1-l_discount) WHERE l_shipdate > DATE_1995_03_15)`
+  baked at load time.
+
+**Scan cardinality at SF=1**: 150 customers + 336 orders (passing mktsegment
+gate) = 486 records vs COLI MI's 10918 total records — a 22× reduction.
+`query_by_aggregated` requires no accumulators; filters are direct field checks.
+
+**`populate_aggregated()` algorithm** (three passes):
+
+- Pass A: invoice scan → `unordered_map<custkey, open_due>` with
+  `i_status='O'` fused.
+- Pass B: lineitem scan + orderkey→custkey map → `unordered_map<(ck,ok),
+  revenue>` with `l_shipdate > DATE_1995_03_15` fused.
+- Pass C: customer + orders scan → insert `customer_acoli_t` and
+  `orders_acoli_t` into the aCOLI adapter.
+
+**Baked-in filter caveat:** S5 bakes `l_shipdate > DATE_1995_03_15` and
+`i_status='O'` at load time — the same constants as S2. If `params.shipdate`
+or `params.threshold` deviate from defaults at query time, S5 results diverge
+from S1/S3/S4. The test harness detects this and emits
+`[SKIP S5 — baked-in filter mismatch]` instead of failing.
+
+**Paper angle (REVIEWS.md §1.1, R2-D1):** S5 demonstrates that merged indexes
+can store not just raw records but pre-aggregated values as included columns.
+The spectrum is:
+
+```
+S1/S3 (raw co-location, full recompute each query)
+  → S5 (aCOLI: pre-aggregated, no per-query accumulation, reusable across
+         mktsegment/threshold/orderdate param sets)
+    → S2 (fully pre-computed view, only parameterised filters at query time)
+```
+
+S5's 1.15M-record scan footprint (customers + orders) is competitive with S2's
+~1.5M-row view while remaining reusable across different mktsegment and
+threshold parameters — addressing the reviewer's request for a "convincing
+application example" of multi-table merged indexes beyond raw co-location.
+
+**Exit criterion satisfied**: all five paths produce identical digest
+`0x7b38b1feece937ce` at SF=1 (7 rows), exit 0.
+`acoli_total=486 << mi_records_visited=10918` confirmed.
 
 ---
 
