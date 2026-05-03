@@ -15,6 +15,7 @@
 #include <unordered_map>
 
 DECLARE_int32(storage_structure);
+DECLARE_int32(load_only_structure);
 
 namespace tpch::q3i
 {
@@ -143,19 +144,25 @@ template <typename Backend>
 void Q3IWorkload<Backend>::load()
 {
    tpch.load();
-   // Populate ALL secondaries unconditionally so a single shared DB image
-   // can serve every --storage_structure query-time variant. The previous
-   // FLAGS_storage_structure-gated dispatch was a load-time/query-time
-   // confusion: the production Makefile flow loads once with no flag,
-   // then runs four --recover invocations selecting S1/S2/S3/S4 — so any
-   // gating here would leave 3 of 4 secondaries empty, producing fantasy
-   // throughput on the empty-adapter paths. The flag remains a query-time
-   // selector via the per-structure wrappers; load is now structure-agnostic.
-   coli.populate_split();   // S1
-   populate_q3i_view<Backend>(customer, orders, lineitem, invoice, pipeline_view);  // S2
-   coli.populate_merged();  // S3
-   // S4 needs no secondary.
-   coli.populate_aggregated();  // S5
+   // Default (FLAGS_load_only_structure < 0): populate ALL secondaries so a
+   // single shared DB image can serve every --storage_structure query-time
+   // variant. This is the production Makefile flow — load once with no
+   // gating, then run multiple --recover invocations selecting different
+   // S1/S2/S3/S4/S5 values.
+   //
+   // Isolated-DB mode (FLAGS_load_only_structure >= 1, A5 experiment): only
+   // populate the single secondary needed for that storage structure. Used
+   // to remove cross-structure cache pollution (H8) so each path reads
+   // *only* the data it actually queries. S4 has no secondary; in that case
+   // we just load base tables.
+   const int only = FLAGS_load_only_structure;
+   const bool load_all = (only < 0);
+   if (load_all || only == 1) coli.populate_split();
+   if (load_all || only == 2)
+      populate_q3i_view<Backend>(customer, orders, lineitem, invoice, pipeline_view);
+   if (load_all || only == 3) coli.populate_merged();
+   // S4 needs no secondary; nothing extra to populate.
+   if (load_all || only == 5) coli.populate_aggregated();
 }
 
 template <typename Backend>

@@ -31,6 +31,10 @@ TPCH_FLAG_BOOL(micro_perf, false,
                "Capture RocksDB PerfContext / IOStatsContext per query and print totals");
 TPCH_FLAG_BOOL(cfstats, false,
                "Snapshot per-CF RocksDB stats before/after helper.run() and print diff");
+TPCH_FLAG_INT(load_only_structure, -1,
+              "If >=1, populate only the secondary needed for this --storage_structure "
+              "at load time. Used by the A5 isolated-DB experiment to remove cross-"
+              "structure cache pollution. Default -1 = load all secondaries.");
 
 #undef TPCH_FLAG_INT
 #undef TPCH_FLAG_BOOL

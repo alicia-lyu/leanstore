@@ -117,9 +117,110 @@ class Experiment:
         self.generate_recover_file()
         if "debug" not in str(self.build_dir):
             self.run_experiment()
+            # A5: isolated-DB variant — one image per storage structure with
+            # only that structure's secondary loaded. Lets us measure each
+            # path without cross-structure cache pollution (H8). Only emitted
+            # for the build directory (not build-debug) and for q3i, which
+            # is the only target with the H8 hypothesis on its worklist.
+            if self.exec_fname in ("q3i_lsm", "q3i_btree"):
+                self.run_isolated_experiment()
         else:
             self.debug_experiment()
         self.reload()
+
+    def run_isolated_experiment(self) -> None:
+        """A5 isolated-DB variant: per-structure image + recover file.
+
+        For each --storage_structure N, emits:
+          - $(data_disk)/{exec}_iso{N}/{scale}: the image dir/file
+          - $(data_disk)/{exec}_iso{N}/build/{scale}.json: persist target
+            (loads ONLY structure N's secondary via --load_only_structure=N)
+          - {exec}_iso_{N}: recover + run target
+          - {exec}_iso: aggregate of all structures.
+        """
+        self.makefile_subsection("A5 isolated-DB experiment")
+        is_lsm = "lsm" in self.exec_fname
+        for n in STRUCTURE_OPTIONS[self.exec_fname]:
+            iso_image = data_disk / f"{self.exec_fname}_iso{n}" / f"{SCALE_ENV}"
+            iso_recover = data_disk / f"{self.exec_fname}_iso{n}" / "build" / f"{SCALE_ENV}.json"
+            iso_runtime = Path(f"{self.build_dir}/{self.exec_fname}_iso{n}/{SCALE_ENV}-in-$(dram)")
+            iso_image_str = str(iso_image) if is_lsm else f"{iso_image}.image"
+            create_cmd, _ = get_image_command(is_lsm, Path(iso_image_str))
+
+            # image dir/file
+            print(f"{iso_image_str}:")
+            print(f"\t{create_cmd}")
+            print()
+            # persist target
+            print(f"{iso_recover}: ./frontend/tpch/tpch_workload.hpp ./frontend/tpch/q3i/load.tpp | {iso_image_str}")
+            self.console_print_subsection(f"Persisting isolated structure {n} → {iso_recover}")
+            print(f"\tmkdir -p {iso_recover.parent}")
+            persist_flags = self.remaining_flags(
+                recover_file="./leanstore.json",
+                persist_file=str(iso_recover),
+                trunc=True,
+                ssd_path=iso_image_str,
+                scale=SCALE_ENV,
+                dram_gib=8,
+            )
+            if IS_MACOS:
+                prefix = f"script -q {iso_runtime}/load.log "
+                suffix = ""
+            else:
+                prefix = "script -q -c \""
+                suffix = f"\" {iso_runtime}/load.log"
+            print(f"\t@mkdir -p {iso_runtime}")
+            print(
+                f"\t{prefix}{self.exec_path}",
+                kv_to_str(self.class_flags),
+                kv_to_str(persist_flags),
+                f"--storage_structure={n}",
+                f"--load_only_structure={n}",
+                f"2>{iso_runtime}/load_stderr.txt{suffix}",
+                sep=" ",
+            )
+            print()
+            # run target
+            run_flags = self.remaining_flags(
+                recover_file=str(iso_recover),
+                persist_file="./leanstore.json",
+                trunc=False,
+                ssd_path=iso_image_str,
+                scale=SCALE_ENV,
+                dram_gib="$(dram)",
+            )
+            print(f"{self.exec_fname}_iso_{n}: check_perf_event_paranoid {self.exec_path} {iso_recover} {iso_image_str}")
+            print(f"\t@mkdir -p {iso_runtime}")
+            print(f"\ttouch {iso_runtime}/structure{n}.log")
+            if IS_MACOS:
+                print(
+                    f"\tscript -q {iso_runtime}/structure{n}.log",
+                    f"{self.exec_path}",
+                    kv_to_str(self.class_flags),
+                    kv_to_str(run_flags),
+                    f"--storage_structure={n}",
+                    "--micro_perf=true",
+                    "--cfstats=true",
+                    f"2>{iso_runtime}/structure{n}_stderr.txt",
+                    sep=" ",
+                )
+            else:
+                print(
+                    f"\tscript -q -c \"{self.exec_path}",
+                    kv_to_str(self.class_flags),
+                    kv_to_str(run_flags),
+                    f"--storage_structure={n}",
+                    "--micro_perf=true",
+                    "--cfstats=true",
+                    f"2>{iso_runtime}/structure{n}_stderr.txt\"",
+                    f"{iso_runtime}/structure{n}.log",
+                    sep=" ",
+                )
+            print()
+        # aggregate target
+        agg_deps = " ".join([f"{self.exec_fname}_iso_{n}" for n in STRUCTURE_OPTIONS[self.exec_fname]])
+        print(f"{self.exec_fname}_iso: {agg_deps}")
+        print()
 
     def makefile_subsection(self, title: str) -> None:
         print(f"#{self.sep} {title} {self.sep}")
@@ -360,6 +461,11 @@ def main() -> None:
 
     # phony declaration
     phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "all", "all_lldb"] + exec_names + [f"{e}_lldb" for e in exec_names] + [f"{e}_reload" for e in exec_names] + [f"{e}_lldb_reload" for e in exec_names]
+    # A5 iso aggregate targets are phony (per-structure run targets too).
+    for e in ("q3i_lsm", "q3i_btree"):
+        phony.append(f"{e}_iso")
+        for n in STRUCTURE_OPTIONS[e]:
+            phony.append(f"{e}_iso_{n}")
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")
