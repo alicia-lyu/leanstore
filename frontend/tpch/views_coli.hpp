@@ -563,6 +563,12 @@ struct customer_acoli_t {
 // broke correctness for any DATE param other than the validation value.
 // Lineitems are now stored in lineitem_acoli_t (sibling under this
 // orders_acoli_t in the merged adapter); revenue is recomputed at query time.
+//
+// G8b (2026-05-03): payload projected to {o_orderdate, o_shippriority} —
+// the only fields query_by_aggregated reads. Per CLAUDE.md §Project
+// pushdown: aCOLI is a pre-aggregated secondary (customer is the only
+// primary in the S5 storage variant), so non-customer types are projected
+// to query-required columns. Widen in place when a future query needs more.
 struct orders_acoli_t {
    static constexpr int id = 50;
 
@@ -573,15 +579,8 @@ struct orders_acoli_t {
       ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
    };
 
-   // Full orders_t payload (mirrored for cross-query reuse).
-   Integer     o_custkey;
-   Timestamp   o_orderdate;
-   Integer     o_shippriority;
-   Varchar<1>  o_orderstatus;
-   Numeric     o_totalprice;
-   Varchar<15> o_orderpriority;
-   Varchar<15> o_clerk;
-   Integer     o_comment_len;   // placeholder (comment not needed by Q3I)
+   Timestamp o_orderdate;
+   Integer   o_shippriority;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -589,7 +588,7 @@ struct orders_acoli_t {
 
    void print(std::ostream& os) const
    {
-      os << "orders_acoli(ck=" << o_custkey << ",date=" << o_orderdate << ")";
+      os << "orders_acoli(date=" << o_orderdate << ",shippri=" << o_shippriority << ")";
    }
 
    friend std::ostream& operator<<(std::ostream& os, const orders_acoli_t& r)
@@ -598,10 +597,9 @@ struct orders_acoli_t {
       return os;
    }
 
-   static orders_acoli_t from_order(const orders_t& o, Integer custkey)
+   static orders_acoli_t from_order(const orders_t& o, Integer /*custkey*/)
    {
-      return {custkey, o.o_orderdate, o.o_shippriority, o.o_orderstatus,
-              o.o_totalprice, o.o_orderpriority, o.o_clerk, 0};
+      return {o.o_orderdate, o.o_shippriority};
    }
    static Key key_from_order(Integer custkey, const orders_t::Key& ok)
    {
@@ -609,15 +607,18 @@ struct orders_acoli_t {
    }
 };
 
-// lineitem_acoli_t: full lineitem_t payload mirror keyed by
+// lineitem_acoli_t: projected lineitem mirror keyed by
 //   (custkey, orderkey, linenumber).
 //   id=53 (ids 51/52 were the now-retired projected aCOLI pair).
 //
 // Fold length: 12 bytes — distinct from customer_acoli_t (4) and
 // orders_acoli_t (8), so fold-length discrimination works without tagged keys.
 //
-// Full payload (no project pushdown) keeps this reusable across future queries
-// per frontend/tpch/CLAUDE.md §No project pushdown.
+// G8c (2026-05-03): payload projected to {l_extendedprice, l_discount,
+// l_shipdate} — the three fields the revenue accumulator reads. Per
+// CLAUDE.md §Project pushdown: aCOLI is a pre-aggregated secondary
+// (customer is the S5 primary), so non-customer types carry only
+// query-required columns. Widen in place when a future query needs more.
 struct lineitem_acoli_t {
    static constexpr int id = 53;
 
@@ -629,22 +630,9 @@ struct lineitem_acoli_t {
       ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
    };
 
-   // Full lineitem_t payload (mirrored for cross-query reuse and parity digest).
-   Integer    l_partkey;
-   Integer    l_suppkey;
-   Timestamp  l_shipdate;
-   Timestamp  l_commitdate;
-   Timestamp  l_receiptdate;
-   Numeric    l_quantity;
-   Numeric    l_extendedprice;
-   Numeric    l_discount;
-   Numeric    l_tax;
-   Varchar<1> l_returnflag;
-   Varchar<1> l_linestatus;
-   Varchar<1> l_shipinstruct;
-   Varchar<10> l_shipmode;
-   Integer    l_comment_len;
-   Integer    l_invoicekey;
+   Numeric   l_extendedprice;
+   Numeric   l_discount;
+   Timestamp l_shipdate;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -664,10 +652,7 @@ struct lineitem_acoli_t {
 
    static lineitem_acoli_t from_base(const lineitem_t& l)
    {
-      return {l.l_partkey, l.l_suppkey, l.l_shipdate, l.l_commitdate,
-              l.l_receiptdate, l.l_quantity, l.l_extendedprice, l.l_discount,
-              l.l_tax, l.l_returnflag, l.l_linestatus, l.l_shipinstruct,
-              l.l_shipmode, 0, l.l_invoicekey};
+      return {l.l_extendedprice, l.l_discount, l.l_shipdate};
    }
    static Key key_from_base(Integer custkey, const lineitem_t::Key& lk)
    {
