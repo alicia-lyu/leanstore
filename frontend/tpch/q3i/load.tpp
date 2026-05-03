@@ -142,13 +142,18 @@ template <typename Backend>
 void Q3IWorkload<Backend>::load()
 {
    tpch.load();
-   switch (FLAGS_storage_structure) {
-      case 1: coli.populate_split(); break;
-      case 4: break;  // base tables only
-      case 2: populate_q3i_view<Backend>(customer, orders, lineitem, invoice, pipeline_view); break;
-      case 3: coli.populate_merged(); break;
-      default: throw std::runtime_error("invalid --storage_structure");
-   }
+   // Populate ALL secondaries unconditionally so a single shared DB image
+   // can serve every --storage_structure query-time variant. The previous
+   // FLAGS_storage_structure-gated dispatch was a load-time/query-time
+   // confusion: the production Makefile flow loads once with no flag,
+   // then runs four --recover invocations selecting S1/S2/S3/S4 — so any
+   // gating here would leave 3 of 4 secondaries empty, producing fantasy
+   // throughput on the empty-adapter paths. The flag remains a query-time
+   // selector via the per-structure wrappers; load is now structure-agnostic.
+   coli.populate_split();   // S1
+   populate_q3i_view<Backend>(customer, orders, lineitem, invoice, pipeline_view);  // S2
+   coli.populate_merged();  // S3
+   // S4 needs no secondary.
 }
 
 template <typename Backend>
