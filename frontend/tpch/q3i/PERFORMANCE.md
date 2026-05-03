@@ -95,6 +95,15 @@ Not a code A/B; the data run that picks A2 vs A3 vs A4.
   merged-index disk-pressure pitch can't be evaluated here — bumps
   A6 (memory-pressure sweep) earlier in priority. macOS at
   dram=0.02 GiB or SF=40 needed to force eviction.
+- **macOS dram=0.025 follow-up (DB ~33 MiB > 26 MiB cache)**:
+  S3=1.59, S1=1.61, S4=1.62, S2=12.27, S5=11.70. Block-cache hit
+  rate still 100% — **OS page cache absorbs the I/O even when
+  RocksDB's internal cache is undersized**. macOS isn't a useful
+  testbed for the disk-bound regime; Linux (or RocksDB
+  `use_direct_reads=true`) needed. Notably user_key_comparison_count
+  drops from ~274k → 34 between the two runs — likely a
+  warm-vs-cold-iterator artefact in PerfContext (bloom-filter /
+  index-block lookups counted on first traversal only).
 - **macOS gap is 5%, Linux is 16%** at same SF/dram. Awaiting user's
   q3i_btree Linux numbers to compare scanner-emit attribution
   cross-backend.
