@@ -44,7 +44,7 @@ Compact status; full evidence in archive §2.
 | H5 | Storage-engine specific (RocksDB block layout) | **REFUTED** | Same ~16% gap on LeanStore at SF=15 |
 | H6 | Low filter selectivity | **CONFIRMED uniform** | All raw paths full-scan; doesn't explain S3-vs-S1 gap; explains S5 win |
 | H7 | SSTWrite during read-only queries | **OPEN, RocksDB-specific** | Read-only workload but histogram inflated; A4 attributes to source |
-| H8 | Shared-DB cache pollution | **OPEN** | Symmetric across S3/S1 so doesn't explain gap; inflates absolute times; A5 quantifies |
+| H8 | Shared-DB cache pollution | **OPEN** (macOS inconclusive, Linux pending) | A5 macOS narrows gap by 3.6% but mostly via S1 slowdown — likely OS-cache freshness artefact, not real H8 evidence. Linux still authoritative. |
 | —  | aCOLI size anomaly | **CLOSED (RocksDB)** | Was a `RocksDB::get_size` stale-cache bug; fixed in `50fd2052`. LeanStore inflation tracked as A7. |
 
 ---
@@ -183,6 +183,27 @@ flag for within-process A/B; XOR parity across variants is mandatory.
   - S3-vs-S1 gap unchanged → H8 confirmed as uniform overhead.
   - Gap shifts → pollution is differential; revisit shared-DB load
     strategy.
+
+#### macOS A5 partial result (2026-05-03, SF=15 dram=0.1, RocksDB)
+
+| Path | shared TX/s | iso TX/s | Δ |
+|------|------------:|---------:|---:|
+| S1 base_merge | 1.67 | 1.61 | -3.6% |
+| S2 view       | 13.03 | 12.33 | -5.4% |
+| S3 mi_coli    | 1.58 | 1.58 | 0.0% |
+| S4 base_hash  | 1.70 | 1.59 | -6.5% |
+| S5 aCOLI      | 11.63 | 10.85 | -6.7% |
+
+S3-vs-S1 gap: shared 5.4% → iso 1.9%. **Gap narrowed, but mostly
+because S1 slowed**, not because S3 sped up — opposite of what H8
+predicted. Likely an OS-page-cache freshness artefact (shared-DB
+ran 5 paths sequentially after one warm load; iso ran fresh-load-
+then-query per path with a colder OS cache). Block-cache hit rate
+remained 100% across all paths in both modes — macOS at this
+SF/dram is not the disk-bound regime A5 needs. Linux remains the
+canonical answer; H8 status stays OPEN. Implementation landed in
+commit `200ee0ae` (`--load_only_structure` flag +
+`q3i_{lsm,btree}_iso_N` make targets).
 
 ### A6 — RocksDB memory-pressure sweep
 
