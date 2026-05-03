@@ -25,6 +25,7 @@ paper*
 stderr.txt
 *.mk
 perf*
+!**/PERFORMANCE.md
 leanstore.json
 .claude
 /TRASH

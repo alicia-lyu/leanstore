@@ -531,10 +531,28 @@ void coli_group_walk(
       if (skip_pending) {
          // A/B EXPERIMENT (2026-05-02): the seek-based skip below trades
          // forward iteration past unwanted records for an explicit
-         // RocksDB Seek per skipped custkey group. SF=40 dram=0.1
-         // showed this is a net loss on disk (Seek invalidates the
-         // iterator's prefetch buffer; SSTRead/TX rose 5×). Disabled by
-         // default; re-enable to measure cache-resident behaviour.
+         // Seek to the next customer.
+         //
+         // RocksDB SF=40 dram=0.1: net LOSS on disk. Seek invalidates the
+         // iterator's prefetch buffer (RocksDB pre-reads the next 1-2 SST
+         // blocks ahead of the current iterator position); SSTRead/TX
+         // rose ~5×.
+         //
+         // LeanStore (B-tree): the same trade-off does NOT apply.
+         // B-tree Seek is a tree descent of O(log N) pages — there is
+         // no prefetch buffer to invalidate. Forward iteration through
+         // a rejected custkey's invoices+orders+lineitems can touch
+         // 10–50 records (avg ~10 invoices, ~10 orders, ~30 lineitems
+         // at SF=40), each potentially in a different leaf page. A
+         // direct Seek to the next customer should win on B-tree.
+         //
+         // TODO: gate this constexpr on the Backend trait so RocksDB
+         // and LeanStore branches differ. See PERFORMANCE.md §H2.
+         // **Per-order skip** (analogous flag in on_order's
+         // `skip_pending=true` branch above) is probably NOT worth
+         // doing on either backend: order groups are small (avg ~4
+         // lineitems per order) and the tree descent cost likely
+         // outweighs forward-iterating past a handful of records.
          skip_pending = false;
          constexpr bool USE_PHYSICAL_SEEK_SKIP = false;
          if constexpr (USE_PHYSICAL_SEEK_SKIP) {
