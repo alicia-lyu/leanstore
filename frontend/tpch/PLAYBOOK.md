@@ -32,16 +32,28 @@ Before starting, read (in order):
 ### Phase dependency graph
 
 ```
-Phase 1 (views.hpp)
-  → Phase 2 (workload.hpp)
-    → Phase 3 (load.tpp)
-      → Phase 4 (query.tpp)   ← the bulk of the work
-        → Phase 5 (per_structure_workload.hpp)
-          → Phase 6 (executables)
-            ├→ Phase 7 (test harness)    ← can start once Phase 5 is done
-            ├→ Phase 8 (CMake + targets) ← can start once Phase 6 files exist
-            └→ Phase 9 (documentation)   ← can start once Phase 7 passes
+Phase 0   (design doc — REQUIRED before any code)
+  → Phase 0.5 (skeleton commit — REQUIRED before Phase 1)
+    → Phase 1 (views.hpp)
+      → Phase 2 (workload.hpp)
+        → Phase 3 (load.tpp)
+          → Phase 4 (query.tpp)   ← the bulk of the work
+            → Phase 5 (per_structure_workload.hpp)
+              → Phase 6 (executables)
+                ├→ Phase 7 (test harness)    ← can start once Phase 5 is done
+                ├→ Phase 8 (CMake + targets) ← can start once Phase 6 files exist
+                └→ Phase 9 (documentation refresh) ← can start once Phase 7 passes
 ```
+
+> **Process rule (NON-NEGOTIABLE).** No code change for the new
+> query lands before Phase 0 + Phase 0.5 are committed. Phase 0
+> produces the per-query design doc (`q{N}/CLAUDE.md`) — SQL,
+> storage-structure table, plan descriptions, query shapes, open
+> questions. Phase 0.5 produces an 8-file skeleton (stub bodies,
+> compiles clean, no parity claim yet) so all subsequent edits land
+> in named places. Skipping either step has, historically, made the
+> first real-code commit a 2000-line "kitchen sink" diff that's
+> impossible to review.
 
 ---
 
@@ -142,6 +154,125 @@ Q10I, etc.). Allocate one ID per struct that participates in an adapter.
 > column family. The symptom is silent data corruption at load time — one
 > type's records overwrite the other's. The `id` grep above is the only
 > reliable check.
+
+---
+
+## §3.5 — Phase 0: Per-query design doc (REQUIRED before any code)
+
+The first thing that lands for a new query is **`q{N}/CLAUDE.md`**.
+No `.hpp`/`.cpp`/`.tpp` file appears in the tree until this doc has
+been committed and reviewed. The doc captures the big-picture design
+so the implementation can be reviewed against an explicit target,
+not against the implementer's evolving mental model.
+
+### Required sections
+
+1. **TPC-H definition (extended)** — the SQL with substitution params
+   in their canonical form. For Track 2 (invoice-extended) queries,
+   show both the original and the extended SQL side by side.
+2. **Substitution parameters** — table: parameter | domain |
+   description | validation value.
+3. **Motivation** — *why* this query was picked. For invoice-extended
+   queries this is also where the §3.1.x pattern (sibling
+   sub-aggregate / hierarchical / etc. — see
+   `MULTI_TABLE_MI_ANALYSIS.md`) is named. For Track 1, why
+   merged-index co-location is interesting on this join shape.
+4. **Cardinality structure** — true M:N joins vs scalar attachments
+   vs lookups. Q3I's "not a true 4-way M:N" section is the template:
+   surface any asymmetry that affects what the merged-index pitch
+   is actually claiming. This is the single most important
+   anti-overclaiming safeguard.
+5. **Storage Structure Options** — the 4–5 row table (S1 / S2 / S3 /
+   S4 / [S5]) listing for each: strategy, secondary structure, join
+   strategy.
+6. **Plan Descriptions (query shapes)** — operator graphs for each
+   storage structure. Either inline DOT diagrams or `plans/*.dot`
+   files referenced from the doc. **Each shape names the explicit
+   logical plan and the physical specialisation it ships.** This is
+   what gets compared against the implementation in code review;
+   absence here = freelance code in `query.tpp`.
+7. **Filter pushdown principle** — query-specific application of the
+   canonical rule (`OPERATORS.md §Filter Pushdown`). State which
+   filters fuse with which TableScan, which fuse with aggregators,
+   which fuse with Visitor hooks. The doc is the source of truth;
+   if `query.tpp` does something else, that's a review comment.
+8. **Required Record Types** — `q{N}_pipeline_view_t`,
+   `q{N}_agg_row_t`, intermediate join types (if S1 uses BMJ chain).
+   Just the shape and key — full bodies land in Phase 1.
+9. **Open questions** — whatever wasn't pinned down. Better to log
+   them up front than discover mid-Phase-4.
+
+### Why this gating exists
+
+Q3I's bring-up tried to land design and code in parallel. The result
+was three rounds of large refactors after most of the code existed,
+each driven by realisations that should have surfaced in a doc
+review. Having a frozen design doc means the rest of the playbook
+fills in named blanks; deviations are explicit decisions, not
+discoveries.
+
+### Exit criterion
+
+The design doc is committed; a reviewer signs off; this commit
+contains zero `.hpp` / `.cpp` / `.tpp` changes for the new query.
+
+---
+
+## §3.6 — Phase 0.5: Skeleton commit (REQUIRED before Phase 1)
+
+After the design doc lands, the next commit is the **skeleton**: all
+8 files from §3 exist with stub bodies, the executable links, and
+nothing claims correctness yet. This pins the *shape* of the
+implementation so subsequent phases edit named places.
+
+### What "skeleton" means concretely
+
+- All 8 files from §3 created in `q{N}/`.
+- `views.hpp`: record-type structs declared with their `id`,
+  `Key` shape, and field list — bodies (operators, `unfoldKey`,
+  `print`) may be `// TODO Phase 1`.
+- `workload.hpp`: `Q{N}Workload<Backend>` class declared with all
+  adapter members, `Params`, predicate signatures, four
+  `query_by_*` declarations. Bodies in `query.tpp` are stubs that
+  return `out.clear(); return 0;`.
+- `per_structure_workload.hpp`: alias-only, completed.
+- `load.tpp`: ctor + `load()` + `get_size()` real bodies (these
+  don't depend on the queries, so do them now and remove a
+  dependency from Phase 4).
+- `query.tpp`: `Params::defaults()` real body; predicates declared
+  but bodies optional; four `query_by_*` are stubs; `print()`
+  declared with `// TODO`.
+- `executable_{rocksdb,leanstore}.cpp`: full `main()` mirroring Q3I
+  — the executable should run end-to-end, load data, and "execute"
+  each storage structure (returning empty results) without crashing.
+- `tests/q{N}/test_query_q{N}_rocksdb.cpp`: harness loads, populates
+  ALL secondaries, calls all four `query_by_*`, computes digests.
+  Asserts `[OK]` on the four-paths-agree check and `[SKIP]` on the
+  cross-structure invariants until Phase 4 lands real bodies.
+- `q{N}/CLAUDE.md`: "Implementation Status (skeleton)" section
+  appended noting which file pairs are stubs.
+
+### Build/test gate
+
+- `make -C build/frontend test_query_q{N}_lsm q{N}_lsm -j$(nproc)`
+  builds clean.
+- `./test_query_q{N}_lsm --tpch_scale_factor=1` runs to exit 0
+  with all-stubs-agree (four empty result vectors digest to 0).
+- The skeleton commit message says explicitly "skeleton — no
+  parity claim yet".
+
+### Why this gating exists
+
+Without a skeleton commit, "Phase 1" tends to mushroom into
+"Phases 1–6 in one go". Reviewers can't follow a 2000-line diff
+that simultaneously introduces new types, new accumulators, new
+join drivers, and new test wiring. With a skeleton, every
+subsequent commit is a focused edit to a known shape.
+
+### Exit criterion
+
+The skeleton commit lands; the executable links and runs to exit 0;
+no parity claim is made; the next commit is Phase 1.
 
 ---
 
