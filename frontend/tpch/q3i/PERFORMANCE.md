@@ -193,15 +193,18 @@ A1 narrowed this: tagged-key decode (A2a) is refuted on macOS;
 scanner emit (A2c) is the live suspect. Variants coexist behind one
 flag for within-process A/B; XOR parity across variants is mandatory.
 
-- **A2c `fused_emit` (PRIORITY, A1-confirmed cross-backend)**:
-  specialise `*MergedScanner::next()` to emit raw
-  `(tag, k_view, v_view)` triple — no `std::variant` construction.
-  Skip variant copy when visitor returns void.
-  WHERE: `frontend/shared/adapter-scanner/RocksDBMergedScanner.hpp`
-  + `frontend/shared/adapter-scanner/LeanStoreMergedScanner.hpp`
-  + walker call site in `frontend/tpch/coli_pipeline.tpp`.
-  WIN: close the 5% (RocksDB macOS cache-resident) / 68%
-  (LeanStore Linux SF=15) iter_next_cpu_nanos gap.
+- **A2c `fused_emit` (IMPLEMENTED, awaiting Linux benchmark)**:
+  `*MergedScanner::next_raw()` emits raw `(tag, k_slice, v_slice)`
+  triple — no `std::variant` construction. `coli_group_walk_fused_emit`
+  dispatches via tag-byte switch with `memcpy` payload decode.
+  Gated by `--coli_walker_variant={baseline,fused_emit}` (default
+  `baseline`). XOR parity verified at SF=1: both variants produce
+  identical digest `0xc5d04de075f9ea5f`. Both `q3i_lsm` and
+  `q3i_btree` build clean. Linux SF=15 dram=0.1 benchmark pending —
+  **predicted to close the 147 ns/record × 160k records/q ≈ 24 ms/q
+  gap** (iter_next_cpu_nanos S3 364 vs S1 217 ns from A1).
+  WHERE: `RocksDBMergedScanner.hpp`, `LeanStoreMergedScanner.hpp`,
+  `coli_pipeline.{hpp,tpp}`, `tpch_flags.hpp`, `q3i/query.tpp`.
 - **A2b `template_dispatch`**: hand-rolled templated dispatch over a
   tag-byte switch; skip variant construction in the dispatcher.
   Probably subsumed by A2c if the bottleneck is the variant itself.

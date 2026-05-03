@@ -13,11 +13,13 @@
 #include <gflags/gflags.h>
 
 #ifdef TPCH_DEFINE_FLAGS
-   #define TPCH_FLAG_INT(name, def, doc) DEFINE_int32(name, def, doc)
-   #define TPCH_FLAG_BOOL(name, def, doc) DEFINE_bool(name, def, doc)
+   #define TPCH_FLAG_INT(name, def, doc)    DEFINE_int32(name, def, doc)
+   #define TPCH_FLAG_BOOL(name, def, doc)   DEFINE_bool(name, def, doc)
+   #define TPCH_FLAG_STRING(name, def, doc) DEFINE_string(name, def, doc)
 #else
-   #define TPCH_FLAG_INT(name, def, doc) DECLARE_int32(name)
-   #define TPCH_FLAG_BOOL(name, def, doc) DECLARE_bool(name)
+   #define TPCH_FLAG_INT(name, def, doc)    DECLARE_int32(name)
+   #define TPCH_FLAG_BOOL(name, def, doc)   DECLARE_bool(name)
+   #define TPCH_FLAG_STRING(name, def, doc) DECLARE_string(name)
 #endif
 
 TPCH_FLAG_INT(tpch_scale_factor, 1, "TPC-H scale factor");
@@ -35,6 +37,10 @@ TPCH_FLAG_INT(load_only_structure, -1,
               "If >=1, populate only the secondary needed for this --storage_structure "
               "at load time. Used by the A5 isolated-DB experiment to remove cross-"
               "structure cache pollution. Default -1 = load all secondaries.");
+TPCH_FLAG_STRING(coli_walker_variant, "baseline",
+                 "COLI walker dispatch: 'baseline' = std::variant + visitor; "
+                 "'fused_emit' = tag-byte switch + direct typed dispatch (A2c).");
 
 #undef TPCH_FLAG_INT
 #undef TPCH_FLAG_BOOL
+#undef TPCH_FLAG_STRING

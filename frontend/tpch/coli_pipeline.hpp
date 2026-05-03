@@ -66,6 +66,16 @@ void coli_group_walk(
                                              lineitem_coli_t, invoice_coli_t>& mi,
     Visitor& visitor);
 
+// A2c fused_emit variant: bypasses std::variant construction, dispatches via
+// a tag-byte switch on raw (idx_tag, key_view, value_view) triples.
+// Declared separately so callers can use it explicitly; the dispatcher
+// coli_group_walk_dispatch selects between the two based on FLAGS_coli_walker_variant.
+template <typename Backend, typename Visitor>
+void coli_group_walk_fused_emit(
+    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
+                                             lineitem_coli_t, invoice_coli_t>& mi,
+    Visitor& visitor);
+
 // ---------------------------------------------------------------------------
 // CustomerOrdersLineitemInvoicePipeline
 

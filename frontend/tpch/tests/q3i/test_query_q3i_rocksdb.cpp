@@ -784,6 +784,66 @@ int main(int argc, char** argv)
       card_ok &= topK_ok;
    }
 
+   // ---------------------------------------------------------------------------
+   // A2c fused_emit parity check: run query_by_merged a second time with the
+   // opposite variant and assert identical digest.  Uses gflags dynamic flip
+   // so both passes run against the same loaded data in the same process.
+   std::cout << "\n=== A2c fused_emit parity check ===\n";
+   bool a2c_parity_ok = true;
+   {
+      // Determine which variant is currently active and flip to the other.
+      std::string current_variant = FLAGS_coli_walker_variant;
+      std::string other_variant   = (current_variant == "fused_emit") ? "baseline" : "fused_emit";
+
+      std::vector<tpch::q3i::q3i_agg_row_t> r_fused;
+      tpch::q3i::Q3IStats st_fused;
+      gflags::SetCommandLineOption("coli_walker_variant", other_variant.c_str());
+      q3i.stats = &st_fused;
+      long us_fused = time_us([&] { q3i.query_by_merged(r_fused); });
+      q3i.stats = nullptr;
+      // Restore the original variant so subsequent code is unaffected.
+      gflags::SetCommandLineOption("coli_walker_variant", current_variant.c_str());
+
+      std::sort(r_fused.begin(), r_fused.end(), by_orderkey);
+      uint64_t d_fused = digest_rows(r_fused);
+
+      std::cout << "[a2c] " << current_variant << " (current) digest=0x"
+                << std::hex << d_merged << std::dec << "\n"
+                << "[a2c] " << other_variant   << " (flipped) digest=0x"
+                << std::hex << d_fused  << std::dec << "\n";
+      print_timing(other_variant.c_str(), us_fused);
+
+      bool digest_match = (d_fused == d_merged);
+      a2c_parity_ok &= digest_match;
+      std::cout << (digest_match ? "[OK]   " : "[FAIL] ")
+                << "A2c fused_emit digest "
+                << (digest_match ? "matches" : "DIFFERS from")
+                << " baseline\n";
+
+      // Also check row-by-row equality against S3 (merged) oracle.
+      if (digest_match && r_fused.size() == r_merged.size()) {
+         bool row_ok = true;
+         for (size_t i = 0; i < r_fused.size(); ++i) {
+            const auto& a = r_fused[i];
+            const auto& b = r_merged[i];
+            auto close = [](double x, double y) {
+               double d = x - y; return (d < 0 ? -d : d) <= 1e-3;
+            };
+            if (a.o_orderkey != b.o_orderkey
+                || !close(static_cast<double>(a.revenue),      static_cast<double>(b.revenue))
+                || a.o_orderdate    != b.o_orderdate
+                || a.o_shippriority != b.o_shippriority
+                || !close(static_cast<double>(a.cust_open_due), static_cast<double>(b.cust_open_due))) {
+               row_ok = false;
+               std::cout << "[FAIL] A2c row " << i << " differs from S3 oracle\n";
+               break;
+            }
+         }
+         if (row_ok) std::cout << "[OK]   A2c row-by-row matches S3 oracle\n";
+         a2c_parity_ok &= row_ok;
+      }
+   }
+
    // Parity check: all four digests must match.
    std::cout << "\n=== Parity check ===\n";
    uint64_t ref  = d_merged;  // S3 is the oracle
@@ -851,6 +911,6 @@ int main(int argc, char** argv)
       card_ok &= (acoli_total > 0);
    }
 
-   bool all_ok = ok_b && ok_v && ok_m && ok_h && ok_a && shape_ok && stats_ok && card_ok;
+   bool all_ok = ok_b && ok_v && ok_m && ok_h && ok_a && shape_ok && stats_ok && card_ok && a2c_parity_ok;
    return all_ok ? 0 : 1;
 }

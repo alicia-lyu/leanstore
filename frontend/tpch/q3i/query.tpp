@@ -31,6 +31,8 @@
 // directly) avoids a tpch_flags.hpp include-order dependency in this .tpp.
 #define MICRO_PERF_STATS(wl) ((wl).micro_perf ? (wl).stats : nullptr)
 
+DECLARE_string(coli_walker_variant);
+
 namespace tpch::q3i
 {
 
@@ -559,7 +561,14 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
       // S3 fuses scan / aggregator / join into a single walk; attribute
       // the whole walk to the join stage for cross-path comparison.
       StageTimer t(stats ? &stats->stage_us_join : nullptr);
-      coli_group_walk<Backend>(coli.merged_adapter(), v);
+      // A2c: dispatch to fused_emit walker when requested via --coli_walker_variant.
+      // Both paths produce identical output; the flag selects only the dispatch
+      // mechanism (std::variant vs tag-byte switch).
+      if (FLAGS_coli_walker_variant == "fused_emit") {
+         coli_group_walk_fused_emit<Backend>(coli.merged_adapter(), v);
+      } else {
+         coli_group_walk<Backend>(coli.merged_adapter(), v);
+      }
    }
    // Mirror the aggregator_rows_out semantics from the other paths so the
    // [card] table reports a non-zero `agg` column for S3.

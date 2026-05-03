@@ -16,6 +16,7 @@
 
 DECLARE_int32(storage_structure);
 DECLARE_int32(load_only_structure);
+DECLARE_string(coli_walker_variant);
 
 namespace tpch::q3i
 {

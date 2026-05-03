@@ -153,6 +153,7 @@ int main(int argc, char** argv)
    long total_stage_us = stats.stage_us_scan_filter + stats.stage_us_aggregator
                        + stats.stage_us_join + stats.stage_us_topN;
 
+   std::cout << "\n[q3i] coli_walker_variant=" << FLAGS_coli_walker_variant << "\n";
    std::cout << "\n[q3i] cardinality totals across all queries (tx=" << tx_count << "):"
              << "\n  customers_scanned       = " << stats.customers_scanned
              << "\n  customers_passing_filter= " << stats.customers_passing_filter

@@ -580,4 +580,232 @@ void coli_group_walk(
    }
 }
 
+// ---------------------------------------------------------------------------
+// coli_group_walk_fused_emit — A2c performance variant.
+//
+// Mirrors coli_group_walk exactly in semantics but bypasses std::variant
+// construction and std::visit double-dispatch.  Instead it calls
+// scanner->next_raw() to obtain a raw (idx_tag, key_slice, value_slice)
+// triple, then dispatches via a switch on the trailing idx_id byte.
+//
+// Key layout reminder (views_coli.hpp):
+//   customer : ... [t=0][idx=customer(0)]  trailing byte = 0
+//   orders   : ... [t=0][idx=orders(1)]    trailing byte = 1
+//   lineitem : ... [t=0][idx=lineitem(2)]  trailing byte = 2
+//   invoice  : ... [t=0][idx=invoice(3)]   trailing byte = 3
+//
+// custkey is always the first field after the leading domain-tag byte:
+//   byte 0 : domain tag (customer=1)
+//   bytes 1-4 : custkey folded big-endian XOR-flipped
+// decode_custkey reads these four bytes and reverses the fold.
+
+namespace {
+
+// Decode custkey from the first (tag, field) step of any COLI key.
+// Layout: key[0] = domain_tag::customer (1), key[1..4] = custkey big-endian XOR-flipped.
+// This mirrors the unfold() logic from Types.hpp for Integer (u32 big-endian flip).
+inline Integer decode_custkey_from_coli_key(const u8* key_bytes)
+{
+   // Skip the leading tag byte (1 byte), then unfold the 4-byte big-endian
+   // XOR-flipped Integer.  The fold/unfold for Integer is defined in Types.hpp:
+   //   fold:   XOR the value with 0x80000000, then store big-endian.
+   //   unfold: read big-endian, then XOR with 0x80000000.
+   const u8* p = key_bytes + 1;  // skip the domain-tag byte
+   uint32_t raw = (static_cast<uint32_t>(p[0]) << 24)
+                | (static_cast<uint32_t>(p[1]) << 16)
+                | (static_cast<uint32_t>(p[2]) <<  8)
+                | (static_cast<uint32_t>(p[3]));
+   return static_cast<Integer>(raw ^ 0x80000000u);
+}
+
+}  // anonymous namespace
+
+template <typename Backend, typename Visitor>
+void coli_group_walk_fused_emit(
+    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
+                                             lineitem_coli_t, invoice_coli_t>& mi,
+    Visitor& visitor)
+{
+   auto scanner = mi.template getScanner<customer_coli_t::Key, customer_coli_t>();
+
+   Integer cur_custkey  = -1;
+   Integer cur_orderkey = -1;
+   bool    group_active = true;
+   bool    skip_pending = false;
+
+   // coli_idx_id integer values (see views_coli.hpp coli_idx_id enum).
+   constexpr u8 TAG_CUSTOMER = static_cast<u8>(coli_idx_id::customer);  // 0
+   constexpr u8 TAG_ORDERS   = static_cast<u8>(coli_idx_id::orders);    // 1
+   constexpr u8 TAG_LINEITEM = static_cast<u8>(coli_idx_id::lineitem);  // 2
+   constexpr u8 TAG_INVOICE  = static_cast<u8>(coli_idx_id::invoice);   // 3
+
+   // Lambda to dispatch a raw record to the visitor, given pre-decoded key bytes
+   // and value bytes.  Keeps the inner loop tight: no variant, no type-erasure.
+   // Returns false if the current group has been deactivated (skip_pending set).
+   auto dispatch = [&](u8 tag, const u8* key_bytes, size_t key_len,
+                        const u8* val_bytes, size_t val_len) -> void {
+      if constexpr (requires { visitor.on_record_visited(); }) {
+         visitor.on_record_visited();
+      }
+
+      Integer row_custkey = decode_custkey_from_coli_key(key_bytes);
+
+      // Detect custkey group boundary.
+      if (cur_custkey != -1 && row_custkey != cur_custkey) {
+         if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
+            visitor.on_group_end(cur_custkey);
+         }
+         group_active = true;
+      }
+      cur_custkey = row_custkey;
+
+      switch (tag) {
+         case TAG_CUSTOMER: {
+            customer_coli_t rec;
+            std::memcpy(&rec, val_bytes, sizeof(customer_coli_t));
+            if constexpr (requires {
+                             { visitor.on_customer(row_custkey, rec) } -> std::same_as<bool>;
+                          }) {
+               group_active = visitor.on_customer(row_custkey, rec);
+               if (!group_active) {
+                  skip_pending = true;
+                  if constexpr (requires { visitor.on_group_skipped(row_custkey); }) {
+                     visitor.on_group_skipped(row_custkey);
+                  }
+               }
+            }
+            break;
+         }
+         case TAG_INVOICE: {
+            if (!group_active) break;
+            invoice_coli_t::Key ik;
+            invoice_coli_t::unfoldKey(key_bytes, ik);
+            invoice_coli_t rec;
+            std::memcpy(&rec, val_bytes, sizeof(invoice_coli_t));
+            if constexpr (requires {
+                             { visitor.on_invoice(ik, rec) } -> std::same_as<bool>;
+                          }) {
+               group_active = visitor.on_invoice(ik, rec);
+            } else if constexpr (requires { visitor.on_invoice(ik, rec); }) {
+               visitor.on_invoice(ik, rec);
+            }
+            break;
+         }
+         case TAG_ORDERS: {
+            if (!group_active) break;
+            orders_coli_t::Key ok;
+            orders_coli_t::unfoldKey(key_bytes, ok);
+            orders_coli_t rec;
+            std::memcpy(&rec, val_bytes, sizeof(orders_coli_t));
+            if constexpr (requires {
+                             { visitor.on_order(ok, rec) } -> std::same_as<bool>;
+                          }) {
+               cur_orderkey = ok.orderkey;
+               group_active = visitor.on_order(ok, rec);
+            } else if constexpr (requires { visitor.on_order(ok, rec); }) {
+               cur_orderkey = ok.orderkey;
+               visitor.on_order(ok, rec);
+            }
+            break;
+         }
+         case TAG_LINEITEM: {
+            if (!group_active) break;
+            lineitem_coli_t::Key lk;
+            lineitem_coli_t::unfoldKey(key_bytes, lk);
+            lineitem_coli_t rec;
+            std::memcpy(&rec, val_bytes, sizeof(lineitem_coli_t));
+            if constexpr (requires {
+                             { visitor.on_lineitem(lk, rec) } -> std::same_as<bool>;
+                          }) {
+               group_active = visitor.on_lineitem(lk, rec);
+            } else if constexpr (requires { visitor.on_lineitem(lk, rec); }) {
+               visitor.on_lineitem(lk, rec);
+            }
+            break;
+         }
+         default:
+            // Unknown tag — skip silently.  Should not occur for well-formed COLI keys.
+            break;
+      }
+
+      // Visitor-driven custkey skip (mirrors baseline walker logic exactly).
+      if constexpr (requires { { visitor.wants_skip_group() } -> std::convertible_to<bool>; }) {
+         if (group_active && visitor.wants_skip_group()) {
+            group_active  = false;
+            skip_pending  = true;
+            if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
+               visitor.on_group_skipped(cur_custkey);
+            }
+         }
+      }
+   };
+
+   while (auto raw = scanner->next_raw()) {
+      auto [tag, k_slice, v_slice] = *raw;
+      const u8* key_bytes = reinterpret_cast<const u8*>(k_slice.data());
+      const u8* val_bytes = reinterpret_cast<const u8*>(v_slice.data());
+
+      dispatch(tag, key_bytes, k_slice.size(), val_bytes, v_slice.size());
+
+      // Visitor-driven order skip: forward-iterate past current order's lineitems
+      // without dispatching on_lineitem.  Mirrors baseline walker logic.
+      if constexpr (requires { { visitor.wants_skip_order() } -> std::convertible_to<bool>; }) {
+         if (group_active && cur_orderkey >= 0 && visitor.wants_skip_order()) {
+            const Integer skip_orderkey = cur_orderkey;
+            while (auto raw2 = scanner->next_raw()) {
+               auto [tag2, k2_slice, v2_slice] = *raw2;
+               const u8* key2 = reinterpret_cast<const u8*>(k2_slice.data());
+               const u8* val2 = reinterpret_cast<const u8*>(v2_slice.data());
+
+               // Check if this is still a lineitem for the same (custkey, orderkey).
+               // A lineitem key has tag TAG_LINEITEM and the same custkey + orderkey prefix.
+               bool is_same_order_lineitem = false;
+               if (tag2 == TAG_LINEITEM && k2_slice.size() >= 10) {
+                  Integer ck2 = decode_custkey_from_coli_key(key2);
+                  // orderkey is at bytes 6-9 (after [t=1][custkey:4][t=3][orderkey:4]).
+                  const u8* op = key2 + 6;
+                  uint32_t ok_raw = (static_cast<uint32_t>(op[0]) << 24)
+                                  | (static_cast<uint32_t>(op[1]) << 16)
+                                  | (static_cast<uint32_t>(op[2]) <<  8)
+                                  | (static_cast<uint32_t>(op[3]));
+                  Integer ok2 = static_cast<Integer>(ok_raw ^ 0x80000000u);
+                  is_same_order_lineitem = (ck2 == cur_custkey && ok2 == skip_orderkey);
+               }
+
+               if (!is_same_order_lineitem) {
+                  // Not a lineitem for this order — dispatch it via the main path.
+                  dispatch(tag2, key2, k2_slice.size(), val2, v2_slice.size());
+                  break;
+               }
+               // Same-order lineitem: suppress dispatch, count as visited.
+               if constexpr (requires { visitor.on_record_visited(); }) {
+                  visitor.on_record_visited();
+               }
+            }
+         }
+      }
+
+      if (skip_pending) {
+         skip_pending = false;
+         constexpr bool USE_PHYSICAL_SEEK_SKIP = false;
+         if constexpr (USE_PHYSICAL_SEEK_SKIP) {
+            typename customer_coli_t::Key next_key{cur_custkey + 1};
+            scanner->template seek<customer_coli_t>(next_key);
+            if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
+               visitor.on_group_end(cur_custkey);
+            }
+            cur_custkey  = -1;
+            group_active = true;
+         }
+      }
+   }
+
+   // Flush the final group.
+   if (cur_custkey != -1) {
+      if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
+         visitor.on_group_end(cur_custkey);
+      }
+   }
+}
+
 }  // namespace tpch

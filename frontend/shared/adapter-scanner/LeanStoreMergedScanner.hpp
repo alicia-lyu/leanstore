@@ -146,6 +146,47 @@ struct LeanStoreMergedScanner
       return static_cast<int>(bytes_advanced);
    }
 
+   // ---------------------------------------------------------------------------
+   // next_raw() — A2c fused_emit scanner path.
+   //
+   // Advances the iterator and returns (idx_tag, key_slice, value_slice) without
+   // constructing the std::variant payload.  The idx_tag is the trailing byte of
+   // the COLI tagged key (coli_idx_id encoding — see views_coli.hpp).
+   //
+   // LeanStore limitation: leanstore::Slice points into the B-tree leaf page
+   // buffer; the slice is valid only until the next iterator operation or until
+   // the page is unlatched.  The fused_emit walker copies the value via memcpy
+   // (same as the baseline toType path) so alignment UB is avoided.
+   //
+   // If implementing a zero-copy value path on LeanStore proves awkward, the
+   // caller can fall back to the baseline next() path by checking HAS_FUSED_EMIT.
+   // For now this is fully implemented — the LeanStore leaf latch is held
+   // across the assembleKey()/key()/value() window in the BTreeSharedIterator,
+   // making the slices safe to use before the next iterator call.
+   std::optional<std::tuple<u8, leanstore::Slice, leanstore::Slice>> next_raw()
+   {
+      tpch::scanner_perf::ScopedTimer _spt_;
+      if (after_seek) {
+         after_seek = false;
+      } else {
+         const leanstore::OP_RESULT res = it->next();
+         if (res != leanstore::OP_RESULT::OK) {
+            return std::nullopt;
+         }
+         this->produced++;
+      }
+      if (it->cur == -1) {
+         return std::nullopt;
+      }
+      it->assembleKey();
+      leanstore::Slice k = it->key();
+      leanstore::Slice v = it->value();
+      u8 tag = (k.size() > 0)
+             ? static_cast<u8>(k.data()[k.size() - 1])
+             : u8{0};
+      return std::make_tuple(tag, k, v);
+   }
+
    // void scanJoin(std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
    // {
    //    reset();
