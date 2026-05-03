@@ -65,6 +65,58 @@ inline Params Params::defaults()
 }
 
 // ---------------------------------------------------------------------------
+// Q3IWorkload::set_params_for_iter — rotate through TPC-H §2.4.3 / Q3I
+// substitution params so each TX iteration exercises a distinct
+// (segment, date) combination.  threshold is always 0 (spec validation
+// default; non-zero thresholds shrink the result set and would make
+// cross-structure cardinality comparison noisier without adding signal).
+//
+// SEGMENT domain: {"AUTOMOBILE","BUILDING","FURNITURE","HOUSEHOLD","MACHINERY"}
+// DATE domain:    March 15 of each year in [1993, 1997] (same date drives
+//                 both the o_orderdate upper bound and the l_shipdate lower
+//                 bound per §2.4.3).
+//
+// Date constants (days since 1970-01-01):
+//   DATE_1995_03_15 = 9204  (defined in tpch_tables.hpp)
+//   1993-03-15 = 9204 - 2*365     = 8474  (1994 and 1995 are not leap years)
+//   1994-03-15 = 9204 - 365       = 8839
+//   1996-03-15 = 9204 + 366       = 9570  (1996 is a leap year)
+//   1997-03-15 = 9204 + 366 + 365 = 9935
+
+template <typename Backend>
+void Q3IWorkload<Backend>::set_params_for_iter(long iter)
+{
+   static constexpr Timestamp DATE_1993_03_15 = DATE_1995_03_15 - 365 - 365;
+   static constexpr Timestamp DATE_1994_03_15 = DATE_1995_03_15 - 365;
+   static constexpr Timestamp DATE_1996_03_15 = DATE_1995_03_15 + 366;  // 1996 leap year
+   static constexpr Timestamp DATE_1997_03_15 = DATE_1995_03_15 + 366 + 365;
+
+   struct Entry {
+      const char* segment;
+      Timestamp   date;
+   };
+   // 10 entries: all 5 segments × the two most discriminating years
+   // (1993 vs 1997) plus the validation year (1995) in the middle, and
+   // 1994/1996 flanking — covers the full DATE domain in 10 iterations.
+   static constexpr Entry TABLE[] = {
+       {"BUILDING",    DATE_1995_03_15},  // validation defaults
+       {"AUTOMOBILE",  DATE_1994_03_15},
+       {"FURNITURE",   DATE_1993_03_15},
+       {"HOUSEHOLD",   DATE_1996_03_15},
+       {"MACHINERY",   DATE_1997_03_15},
+       {"AUTOMOBILE",  DATE_1995_03_15},
+       {"BUILDING",    DATE_1993_03_15},
+       {"FURNITURE",   DATE_1997_03_15},
+       {"HOUSEHOLD",   DATE_1994_03_15},
+       {"MACHINERY",   DATE_1996_03_15},
+   };
+   static constexpr long N = static_cast<long>(sizeof(TABLE) / sizeof(TABLE[0]));
+
+   const Entry& e = TABLE[iter % N];
+   params = {Varchar<10>(e.segment), e.date, e.date, Numeric(0)};
+}
+
+// ---------------------------------------------------------------------------
 // Print helpers for new view / intermediate row types.
 
 inline void q3i_pipeline_view_t::print(std::ostream& os) const

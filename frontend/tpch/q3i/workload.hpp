@@ -259,6 +259,14 @@ class Q3IWorkload
                                                 lineitem_acoli_t>& acoli);
 
    // ------------------------------------------------------------------
+   // Param cycling: rotate through a static substitution-parameter table
+   // so each TX iteration exercises a distinct (segment, date) combination.
+   // Called by the per-structure wrapper's tput_tx before every query TX.
+   // ------------------------------------------------------------------
+
+   void set_params_for_iter(long iter);
+
+   // ------------------------------------------------------------------
    // Queries — one per storage structure.
    // Returns the number of result rows (at most 10, LIMIT 10 by revenue).
    // ------------------------------------------------------------------
