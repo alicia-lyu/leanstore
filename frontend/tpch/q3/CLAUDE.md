@@ -7,14 +7,11 @@ has no `CLAUDE.md`; indexed here as the nearest ancestor). Read each
 on the trigger described:
 
 - [`plans/family_logical.dot`](plans/family_logical.dot) — **shared
-  logical plan for S1, S2, S3** (to be refreshed in Phase 0.5; the
-  current file targets the stale OL pipeline).
+  logical plan for S1, S2, S3**, COL pipeline.
 - [`plans/family_s3_physical.dot`](plans/family_s3_physical.dot) —
-  **S3 physical specialisation**, COL pipeline (Phase 0.5).
+  **S3 physical specialisation** over the COL MI.
 - [`plans/baseline_s4.dot`](plans/baseline_s4.dot) — **S4 baseline**
-  (Phase 0.5).
-- [`plans/phase_2{a,b,c}.md`](plans/) — historical Q3 phase plans;
-  marked stale because they predate the COL-pipeline pivot.
+  (HashJoin chain with mktsegment pushed below customer scan).
 
 Read [`../q3i/CLAUDE.md`](../q3i/CLAUDE.md) for the canonical
 template — Q3 mirrors Q3I structure minus the invoice sibling.
@@ -115,26 +112,26 @@ populated and meaningful for Q3 S3.
 | # | Strategy | Secondary structure | Join strategy |
 |---|----------|--------------------|-|
 | 1 | Traditional indexes + binary merge join | Custkey-sorted secondary indexes on ORDERS (`(custkey, orderkey)`) and LINEITEM (`(custkey, orderkey, linenumber)`) | BMJ chain: customer ⋈ orders\_sec ⋈ lineitem\_sec on the custkey-extended prefix |
-| 2 | Intermediate pipeline view | `q3_pipeline_view_t` (post-filter, post-aggregate; one row per (orderkey, orderdate, shippriority)) | View scan + mktsegment filter + sort/limit |
+| 2 | Intermediate pipeline view | `q3_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)`; carries `l_extendedprice`, `l_discount`, `l_shipdate` + FD-attached order columns) | View scan + mktsegment + orderdate + shipdate filters live; per-orderkey revenue accumulator + sort/limit |
 | 3 | MI[COL] only | `MergedAdapter<customer_col_t, orders_col_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys | `col_group_walk[_fused_emit]` over the COL MI; CUSTOMER hierarchy co-located, no separate join |
 | 4 | Traditional indexes + hash join | None | `Scan(customer)` → `Filter(mktsegment)` → `HashJoin(⋈orders)` → `Filter(orderdate)` → `HashJoin(⋈lineitem)` → `Filter(shipdate)` → SortedAggregate → TopN |
 
-**S5 deliberately omitted.** See `§Open Questions` — Q3 has no
-parameter-independent aggregate to bake (lineitem revenue is
-filtered by `l_shipdate > $DATE`, which IS parameterised), so an
-aCOL MI with pre-aggregated columns would either be unsound or
-collapse to S3. Q3I's `pre_revenue` shares this dependence (the
-existing `views_coli.hpp` definition bakes `l_shipdate >
-DATE_1995_03_15` literally) and needs an audit; that work is
-tracked in `§Open Questions` and is out of scope for Q3 Phase 0.
+**S5 deliberately omitted.** Q3 has no parameter-independent
+aggregate to bake — Q3I's S5 keeps `pre_open_due` (invoice
+`status='O'` is hardcoded by spec, so the aggregate is genuinely
+param-independent), but Q3 has no invoice. The Q3I-S5 audit landed
+2026-05-03: `pre_revenue` was dropped, lineitems are now stored
+unaggregated in the aCOLI MI, revenue is recomputed at query time.
+With that fix in place, an aCOL MI for Q3 would carry only the
+3 base record types — i.e., it would equal S3 (the COL MI) with
+no extra information. So S5 collapses into S3 for Q3 and is
+omitted on those grounds, not on soundness grounds.
 
 ---
 
 ## Plan Descriptions
 
-Three DOT files in [`plans/`](plans/) document the operator graphs
-(refreshed in Phase 0.5 — the current files reference the stale OL
-pipeline and are kept only for diff context):
+Three DOT files in [`plans/`](plans/) document the operator graphs:
 
 - `plans/family_logical.dot` — shared logical plan for S1, S2, S3.
   All three agree on filter placement, aggregate shape, and TopN
@@ -197,17 +194,18 @@ apples-to-apples per OPERATORS.md §6.1 — same logical plan, same
 accumulator code, same filter pushdown, only the physical scan
 substrate differs.
 
-**S2 (materialised pipeline view)** caches the post-aggregate
-output of the family logical plan as a `q3_pipeline_view_t` table
-at load time. The view is loaded with the per-table date filters
-fused (since at view-load time those filter values must be picked)
-but **without** the mktsegment filter (predicate hoisting), so it
-is reusable across SEGMENT param sets at fixed DATE. Query time is
-then a sequential view scan with the mktsegment filter applied
-per row, then sort + limit. **Open question (§9)**: should the
-view be loaded fully unfiltered (date filters applied at query
-time) so it is reusable across both SEGMENT and DATE? This is the
-same dilemma S5 surfaces — defer until Phase 2 design.
+**S2 (materialised pipeline view)** caches per-lineitem rows of
+the post-join (pre-aggregate) family plan as a
+`q3_pipeline_view_t` table at load time, keyed by
+`(custkey, orderkey, linenumber)` and carrying
+`l_extendedprice`, `l_discount`, `l_shipdate` plus FD-attached
+order columns. **No filters are baked into the view** —
+mktsegment, orderdate, and shipdate are all parameterised, so
+predicate hoisting forbids fusing them at load time (the same
+audit that drove the Q3I S5 rebuild). Query time is a sequential
+view scan: filters apply live, a per-orderkey
+`LineitemRevenueAccumulator` rolls up revenue, then sort + limit.
+The view is reusable across all SEGMENT and DATE param sets.
 
 **S4 (HashJoin chain baseline)** uses the standard plan because
 nothing is custkey-sorted. Mktsegment fuses with the CUSTOMER
@@ -223,7 +221,7 @@ family is compared against.
 | Approach | Inside-pipeline physical | Filters resolved by |
 |----------|--------------------------|---------------------|
 | S1 (merge family) | 3-way custkey BMJ chain over secondaries | Visitor `on_*` hooks (same code as S3) |
-| S2 (merge family) | sequential view scan | Date filters baked into view at load; mktsegment per-row at query time |
+| S2 (merge family) | sequential per-lineitem view scan | All filters live at query time (no filter baking — view is param-reusable) |
 | S3 (merge family) | `col_group_walk` over MI[COL] | Visitor `on_*` hooks (same code as S1) |
 | S4 (baseline) | HashJoin chain | TableScan-time filters (mktsegment, orderdate, shipdate) all pushed below the corresponding hash build/probe |
 
@@ -259,9 +257,13 @@ For S1 (split secondaries):
 
 For S2 (pipeline view):
 
-- `q3_pipeline_view_t` — Key `(orderkey, orderdate, shippriority)`,
-  payload `(custkey, sum_revenue)`. One row per qualifying order
-  group.
+- `q3_pipeline_view_t` — Key
+  `(custkey, orderkey, linenumber)`, one row per lineitem.
+  Payload: `l_extendedprice`, `l_discount`, `l_shipdate`,
+  `c_mktsegment`, `o_orderdate`, `o_shippriority`. No
+  pre-aggregated `revenue` field (parameterised by shipdate;
+  same audit as Q3I S2). Mirrors Q3I `q3i_pipeline_view_t`
+  post-2026-05-03 redesign.
 
 Final output:
 
@@ -280,71 +282,63 @@ COL to be a strict subset of COLI — discuss in §Open Questions).
 
 ## Open Questions
 
-These resolve before Phase 0.5. Each is an explicit design
-checkpoint, not an implementation detail.
+### S5: omit (resolved)
 
-### S5 viability — drop or rebuild
+The Q3I S5 audit landed 2026-05-03: `pre_revenue` was dropped,
+lineitems are stored unaggregated in the aCOLI MI, revenue is
+recomputed per query. With the soundness issue fixed in Q3I,
+Q3's S5 question reduces to: would an aCOL MI carry any
+information not already in the COL MI? It would not — Q3 has
+no invoice and therefore no `pre_open_due`-style
+parameter-independent aggregate. **S5 is omitted for Q3 because
+it adds no information beyond S3, not because it would be
+unsound.**
 
-The lineitem revenue field is parameterised by
-`l_shipdate > $DATE`. In Q3I, `views_coli.hpp` defines:
+**Workload follow-up (raised by user)**: the realistic Q3 / Q3I
+workload should vary SEGMENT and DATE across query invocations
+within a single executable run, not pin them to validation
+values. The current Q3I executable uses `Params::defaults()` —
+fixed BUILDING / 1995-03-15. That fixed regime is precisely why
+the `pre_revenue` shipdate-baking bug went undetected for as
+long as it did. Tracked as a separate Q3I executable upgrade;
+Q3 should follow the same convention from day one (Phase 1+
+harness drives a sequence of param sets per run, not just
+defaults).
 
-```cpp
-// orders_acoli_t.pre_revenue =
-//   SUM(l_extendedprice*(1-l_discount) WHERE l_shipdate>DATE_1995_03_15)
-```
+### S2 view granularity: per-lineitem (resolved)
 
-So Q3I S5 is **already shipdate-locked** to the validation value
-— it is not reusable across DATE param sets. Q3 inherits the same
-constraint. Resolutions:
-
-1. **Drop S5 from Q3** (current plan default). aCOL collapses to
-   COL because Q3 has no parameter-independent aggregate to bake.
-2. **Build S5 with unaggregated lineitems**, applying the
-   shipdate filter and SUM at read time over the per-customer
-   lineitem set. This is what the user pushed back on — store
-   lineitems as-is, do not pre-aggregate when the aggregate
-   depends on a parameterised filter.
-
-If we adopt (2) for Q3, **the same fix applies to Q3I S5**: its
-current `pre_revenue` is unsound for any SEGMENT/DATE param set
-other than the validation pair. Phase 0 flags this as a Q3I
-audit; Q3 itself defers S5 design until that audit lands.
-
-USER RESPONSE: This bug prompted a question---in Q3I, does the parameters change across queries in the executables at all, or is the same used again and again? The realistic workload should be the former.
-
-### S2 view granularity
-
-Post-aggregate (one row per qualifying order, much smaller) vs
-post-join (one row per qualifying lineitem, parallels Q3I S2 which
-chose post-join). Q3I's choice was driven by needing per-lineitem
-shipdate visibility for the `cust_open_due` threshold gate; Q3 has
-no such constraint, so post-aggregate may be the simpler choice.
-Decide before Phase 2.
+Same logic as S5: shipdate is parameterised, so any
+pre-aggregated revenue forces a load-time filter bake — exactly
+the bug the Q3I S2 rebuild fixed. Q3 S2 stores per-lineitem
+rows keyed by `(custkey, orderkey, linenumber)` with
+`l_extendedprice`, `l_discount`, `l_shipdate` and FD-attached
+order columns; revenue is recomputed at query time. The view is
+reusable across all SEGMENT and DATE param sets.
 
 ### COL pipeline naming
 
-Confirm `col_pipeline.{hpp,tpp}` and
-`CustomerOrdersLineitemPipeline<Backend>` as the analog to
-`coli_pipeline` / `COLIPipeline`. Names propagate into the walker
-(`col_group_walk[_fused_emit]`) and load helpers
-(`populate_merged`, `populate_split`).
+`col_pipeline.{hpp,tpp}` and
+`CustomerOrdersLineitemPipeline<Backend>` are the analogs to
+`coli_pipeline` / `COLIPipeline`. Names propagate into the
+walker (`col_group_walk[_fused_emit]`) and load helpers
+(`populate_merged`, `populate_split`). Confirmed.
 
-### COL as a strict subset of COLI
+### COL ↔ COLI relationship: composition, not extension
 
-Should `customer_col_t` reuse `customer_coli_t`'s sentinel id and
-Key shape (so the COL MI is byte-compatible with a COLI MI minus
-invoice)? If yes, future Q3 → Q3I migration becomes free; if no,
-COL is independent and may diverge. Recommend strict-subset
-naming/encoding with a TODO in the file header.
-
-USER RESPONSE: Yes, but not for migration from Q3 to Q3I, but for DRY, and if Q3 and Q3I needs the same change, we don't need to apply it twice.
-
-### Q3I refactor (later, out of scope)
-
-Once COL pipeline exists, can Q3I's COLI be defined as
-`COL + invoice` extension? Worth flagging but no decision in Phase 0.
-
-USER RESPONSE: I am not sure I completely understand this point. But we use the composition principle, not inheritance. So as long as Q3 and Q3I share as many components as possible, we don't need to reframe one as the other's extension
+Q3 and Q3I should share record types, walkers, accumulators,
+and pipeline helpers wherever the shape is identical (for DRY:
+a fix in one place doesn't have to be applied twice). That is
+**composition** — both queries use the same building blocks —
+not **inheritance** or "Q3I extends Q3". Concretely: aim for
+`customer_col_t` ≡ `customer_coli_t` minus invoice
+considerations (likely a strict-subset Key shape and shared
+sentinel id 1), `lineitem_col_t` ≡ `lineitem_coli_t` minus
+`l_invoicekey`-aware sentinel ordering, and
+`LineitemRevenueAccumulator` reused verbatim across S1/S2/S3 of
+both queries. Where a piece truly differs (Q3I's
+`CustomerOpenDueAccumulator`, Q3I's invoice walker hook), it
+lives in Q3I-only files. Phase 0.5 will identify the exact
+shareable surface.
 
 ---
 
