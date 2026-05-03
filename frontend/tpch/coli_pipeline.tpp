@@ -295,21 +295,28 @@ void coli_group_walk(
       }
 
       if (skip_pending) {
-         // Seek to the next custkey's customer record.  RocksDB's Seek
-         // positions to the first key >= target; for sparse custkeys we
-         // land on the next live customer.
+         // A/B EXPERIMENT (2026-05-02): the seek-based skip below trades
+         // forward iteration past unwanted records for an explicit
+         // RocksDB Seek per skipped custkey group. SF=40 dram=0.1
+         // showed this is a net loss on disk (Seek invalidates the
+         // iterator's prefetch buffer; SSTRead/TX rose 5×). Disabled by
+         // default; re-enable to measure cache-resident behaviour.
          skip_pending = false;
-         typename customer_coli_t::Key next_key{cur_custkey + 1};
-         scanner->template seek<customer_coli_t>(next_key);
-         // Fire on_group_end for the skipped group so per-group state in
-         // the visitor is reset consistently with the natural-transition
-         // path. Then reset cur_custkey so the next iteration's transition
-         // detector doesn't fire it again.
-         if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
-            visitor.on_group_end(cur_custkey);
+         constexpr bool USE_PHYSICAL_SEEK_SKIP = false;
+         if constexpr (USE_PHYSICAL_SEEK_SKIP) {
+            typename customer_coli_t::Key next_key{cur_custkey + 1};
+            scanner->template seek<customer_coli_t>(next_key);
+            if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
+               visitor.on_group_end(cur_custkey);
+            }
+            cur_custkey  = -1;
+            group_active = true;
          }
-         cur_custkey  = -1;
-         group_active = true;
+         // When the physical skip is disabled, group_active stays false
+         // (set by on_customer or wants_skip_group) and the loop simply
+         // forward-iterates past the rest of the group; on_invoice /
+         // on_order / on_lineitem are short-circuited by the existing
+         // `else if (group_active)` guard.
       }
    }
 
