@@ -46,3 +46,6 @@ test_data_q3i - moved to TRASH/test_data_q3i_stale - stale Q3I RocksDB data befo
 test_csv_q3i - moved to TRASH/test_csv_q3i_stale - stale Q3I CSV/log dir before S3 bug investigation
 .git/index.lock - moved to TRASH/git-index.lock - stale git lock blocking commit
 .git/index.lock - moved to TRASH/git-index.lock-2 - stale git lock blocking commit (second occurrence)
+
+/tmp/leanstore/q3i_lsm - moved to TRASH/q3i_lsm-pre-a1-* - prior run data, wiping for A1 baseline
+build/q3i_lsm - moved to TRASH/build-q3i_lsm-pre-a1-* - prior structure logs, wiping for A1 baseline
