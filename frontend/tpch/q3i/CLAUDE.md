@@ -126,7 +126,7 @@ no 3-stage join chain, just one fused walk.
 | 2 | Intermediate pipeline view | `q3i_pipeline_view_t` (joined\_ol\_t rows) | Pre-build cust\_open\_due map; view scan + CUSTOMER hash filter |
 | 3 | MI\[COLI\] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | PremergedJoin over 4-table tagged-key MI; cust\_open\_due computed in same pass |
 | 4 | Traditional indexes + hash join | None | Pre-build cust\_open\_due map; HashJoin(OL) + CUSTOMER hash lookup |
-| 5 | aCOLI MI (pre-aggregated) | `MergedAdapter<customer_acoli_t, orders_acoli_t>` | Scan 2-type MI; pre\_open\_due and pre\_revenue read directly; no accumulator pass |
+| 5 | aCOLI MI (pre-aggregated) | `MergedAdapter<customer_acoli_t, orders_acoli_t, lineitem_acoli_t>` | Scan 3-type MI; pre\_open\_due read directly; revenue recomputed from unaggregated lineitems |
 
 ---
 
@@ -228,7 +228,7 @@ no-merged-index baseline that the family is compared against.
 | S2 (merge family) | sequential view scan | TableScan-time filters baked into view; mktsegment / threshold per-row at query time |
 | S3 (merge family) | `coli_group_walk` over MI[COLI] | Visitor `on_*` hooks (same code as S1) |
 | S4 (baseline)     | HashJoin(O ⋈ L) + 2 probe hashmaps | TableScan + per-aggregate; probe lookups encode the rest |
-| S5 (aCOLI MI)     | scan `MergedAdapter<customer_acoli_t, orders_acoli_t>` | Pre-aggregated fields read directly; mktsegment / threshold / orderdate per-row |
+| S5 (aCOLI MI)     | scan `MergedAdapter<customer_acoli_t, orders_acoli_t, lineitem_acoli_t>` | pre\_open\_due read directly; revenue recomputed live; mktsegment / threshold / orderdate / shipdate per-row |
 
 All five agree on what's outside the pipeline: `apply_top10` (sort by
 revenue DESC + truncate to 10).
@@ -242,8 +242,11 @@ revenue DESC + truncate to 10).
   `o_shippriority`. Fully implemented (Phase 2).
 - `q3i_agg_row_t` — final output row: `o_orderkey`, `revenue`, `o_orderdate`,
   `o_shippriority`, `cust_open_due`.
-- `customer_acoli_t` / `orders_acoli_t` — S5 aCOLI MI record types; defined in
-  `views_coli.hpp`. IDs 49 / 50.
+- `customer_acoli_t` / `orders_acoli_t` / `lineitem_acoli_t` — S5 aCOLI MI
+  record types; defined in `views_coli.hpp`. IDs 49 / 50 / 53.
+  `customer_acoli_t` carries `pre_open_due` (invoice sub-aggregate, baked at
+  load time). `orders_acoli_t` and `lineitem_acoli_t` carry full base payloads;
+  revenue is computed at query time.
 
 ---
 
@@ -385,8 +388,9 @@ binary entirely.
   mktsegment + threshold filters), `query_by_hash` (S4: 3-HJ chain over base
   tables). All four paths end with `apply_topN(..., 10, revenue DESC)`.
 - `load.tpp` — `populate_q3i_view` free function (two-pointer merge over
-  orders + lineitem, l_shipdate filter baked in at load time using default
-  params, one row per `(custkey, orderkey)`).
+  orders + lineitem, one row **per lineitem** keyed by
+  `(custkey, orderkey, linenumber)`; no shipdate filter at load time —
+  predicate hoisting; revenue computed at query time).
 - `tests/q3i/test_query_q3i_rocksdb.cpp` — load-once harness: single
   `tpch.load()` + explicit `populate_q3i_view` / `populate_split` /
   `populate_merged`, all four paths against the same DB, XOR parity +
@@ -396,11 +400,13 @@ binary entirely.
 **Implementation notes:**
 
 - `q3i_pipeline_view_t` is a real struct (not a `joined_ol_t` alias) keyed
-  by `(custkey, orderkey)`. One row per order — cardinality ≈ `|orders|`.
-  Carries `revenue`, `cust_open_due`, `c_mktsegment`, `o_orderdate`,
-  `o_shippriority`. The `l_shipdate` filter is baked in at load time (default
-  `DATE_1995_03_15`); `o_orderdate` and mktsegment/threshold are re-applied
-  at query time (predicate hoisting).
+  by `(custkey, orderkey, linenumber)`. One row **per lineitem** — cardinality
+  ≈ `|lineitem|`. Carries `l_extendedprice`, `l_discount`, `l_shipdate`
+  (unaggregated), plus FD-attached `cust_open_due`, `c_mktsegment`,
+  `o_orderdate`, `o_shippriority`. Revenue is computed at query time with
+  the shipdate filter applied live — view is reusable across all DATE param
+  sets (predicate hoisting). **Revised 2026-05-03** from the original
+  one-row-per-order schema which baked revenue with a hardcoded shipdate.
 - `CustomerOpenDueAggregator<Backend>` and `LineitemRevenueAggregator<Backend>`
   are scanner-wrapper aggregators (OPERATORS.md §3 op 6) that drive
   `split_invoice` and `split_lineitem` respectively, emitting one aggregate
@@ -423,6 +429,9 @@ binary entirely.
 - **S2 bug fixed (Phase 2C):** `populate_q3i_view` was not applying the
   `l_shipdate` filter; `query_by_view` intentionally does not re-apply it
   ("baked in at load time"). Filter now applied in the view loader.
+  **Superseded 2026-05-03** by the S2 de-bake: the view now stores
+  unaggregated per-lineitem rows without any shipdate filter; `query_by_view`
+  applies the shipdate filter live at query time.
 
 - **Top-10 tiebreaker fix (post-Phase-2C):** all four `apply_topN` calls now
   use `revenue DESC, o_orderdate ASC, o_orderkey ASC` as the comparator.
@@ -493,41 +502,39 @@ make q3i_lsm_3 dram=0.1
 
 ### Phase 4 — S5: aCOLI MI with pre-aggregated fields
 
-**Status (2026-05-02): complete.**
+**Status (2026-05-02): complete. Revised 2026-05-03: revenue de-bake.**
 
 **Goal**: implement and verify the "MI-as-aggregate-store" research variant
 (REVIEWS.md §1.1, R2-D1): a merged index that stores pre-computed aggregates
 as included columns, sitting between raw co-location (S3) and full
 materialisation (S2) on the pre-computation spectrum.
 
-**Design:** `MergedAdapter<customer_acoli_t, orders_acoli_t>` — two record
-types only (no invoice or lineitem rows):
+**Design (revised):** `MergedAdapter<customer_acoli_t, orders_acoli_t,
+lineitem_acoli_t>` — three record types (invoice rows collapsed to a scalar;
+lineitems stored unaggregated so revenue is computed at query time):
 
 - `customer_acoli_t` (id=49): full `customerh_t` payload +
   `Numeric pre_open_due` = `SUM(i_totaldue WHERE i_status='O')` baked at
-  load time.
-- `orders_acoli_t` (id=50): `orders_t` payload + `Numeric pre_revenue` =
-  `SUM(l_extendedprice*(1-l_discount) WHERE l_shipdate > DATE_1995_03_15)`
-  baked at load time.
+  load time. Parameter-independent (`i_status='O'` is hardcoded by spec).
+- `orders_acoli_t` (id=50): `orders_t` payload. `pre_revenue` field
+  **removed 2026-05-03** — it was parameterised by `l_shipdate` and made
+  S5 incorrect for any DATE param other than the default.
+- `lineitem_acoli_t` (id=53): full `lineitem_t` payload mirror keyed by
+  `(custkey, orderkey, linenumber)`. Revenue computed at query time via
+  `LineitemRevenueAccumulator`, applying the shipdate filter live.
 
-**Scan cardinality at SF=1**: 150 customers + 336 orders (passing mktsegment
-gate) = 486 records vs COLI MI's 10918 total records — a 22× reduction.
-`query_by_aggregated` requires no accumulators; filters are direct field checks.
+**Scan cardinality at SF=1**: 150 customers + 202 orders + 392 lineitems =
+744 records vs COLI MI's ~1547 records visited — S5 skips all invoice rows.
+`query_by_aggregated` uses `LineitemRevenueAccumulator` (shared with S1/S3)
+for revenue; `pre_open_due` is read directly with no invoice pass.
 
-**`populate_aggregated()` algorithm** (three passes):
+**`populate_aggregated()` algorithm** (two passes — Pass B removed):
 
 - Pass A: invoice scan → `unordered_map<custkey, open_due>` with
   `i_status='O'` fused.
-- Pass B: lineitem scan + orderkey→custkey map → `unordered_map<(ck,ok),
-  revenue>` with `l_shipdate > DATE_1995_03_15` fused.
-- Pass C: customer + orders scan → insert `customer_acoli_t` and
-  `orders_acoli_t` into the aCOLI adapter.
-
-**Baked-in filter caveat:** S5 bakes `l_shipdate > DATE_1995_03_15` and
-`i_status='O'` at load time — the same constants as S2. If `params.shipdate`
-or `params.threshold` deviate from defaults at query time, S5 results diverge
-from S1/S3/S4. The test harness detects this and emits
-`[SKIP S5 — baked-in filter mismatch]` instead of failing.
+- Pass C: customer + orders + lineitem scan → insert all three record types.
+  Lineitem `custkey` resolved via orderkey→custkey map built during orders
+  sub-pass. No shipdate filter at load time (predicate hoisting).
 
 **Paper angle (REVIEWS.md §1.1, R2-D1):** S5 demonstrates that merged indexes
 can store not just raw records but pre-aggregated values as included columns.
@@ -535,19 +542,19 @@ The spectrum is:
 
 ```
 S1/S3 (raw co-location, full recompute each query)
-  → S5 (aCOLI: pre-aggregated, no per-query accumulation, reusable across
-         mktsegment/threshold/orderdate param sets)
-    → S2 (fully pre-computed view, only parameterised filters at query time)
+  → S5 (aCOLI: invoice pre-aggregated to pre_open_due; lineitems unaggregated;
+         reusable across all SEGMENT/DATE/THRESHOLD param sets)
+    → S2 (fully pre-computed per-lineitem view; no accumulator at query time)
 ```
 
-S5's 1.15M-record scan footprint (customers + orders) is competitive with S2's
-~1.5M-row view while remaining reusable across different mktsegment and
-threshold parameters — addressing the reviewer's request for a "convincing
-application example" of multi-table merged indexes beyond raw co-location.
+S5 avoids invoice rows at query time while remaining reusable across all
+param sets — addressing the reviewer's request for a "convincing application
+example" of multi-table merged indexes beyond raw co-location.
 
-**Exit criterion satisfied**: all five paths produce identical digest
-`0x7b38b1feece937ce` at SF=1 (7 rows), exit 0.
-`acoli_total=486 << mi_records_visited=10918` confirmed.
+**Exit criterion satisfied**: all five paths produce identical digest at SF=1
+(6 rows), exit 0. `[SKIP S5]` parity guard removed — S5 now participates in
+the same XOR parity check as S1–S4.
+`acoli_total=744 (c=150 o=202 l=392)` vs COLI MI ~1547 records visited.
 
 ---
 
