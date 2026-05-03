@@ -142,6 +142,19 @@ fair against S3 — each path uses the best available physical-skip
 strategy for its operator graph. The merged-index pitch is no
 longer artificially inflated by S3's exclusive access to skip-skip.
 
+**Why S4's lift dominates S1's** (e.g. LeanStore SF=40: +2580% vs +27%).
+The S4 HJ chain folds *every* upstream filter (mktsegment, threshold,
+orderdate) into a single `ord_map`. A lineitem probe-miss therefore
+indicates the parent customer **or** parent order failed at least one
+filter, and the seek skips the entire customer's lineitem run when
+the most-selective upstream gate (mktsegment, ~80% drop) excluded it.
+S1's BMJ chain gates customers at BMJ#1 already, so by the time the
+analogous skip-site is reached the easy customer-level wins are
+captured upstream — only the residual `agg_inv` stream benefits.
+Concretely at SF=15: S4 lineitems_scanned/q drops 90108 → 12153
+(87% reduction, ≈ mktsegment selectivity × order-date selectivity);
+S1 only saves on the much smaller invoice stream.
+
 ### A6 — Memory-pressure sweep with all post-A3 defaults
 
 Now that A3 is confirmed on both backends, the open question is
