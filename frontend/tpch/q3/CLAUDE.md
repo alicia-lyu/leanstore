@@ -85,8 +85,9 @@ benefit so that Q3I's incremental gains can be attributed cleanly.
 
 ## Cardinality structure
 
-Unlike Q3I, **Q3 is a genuine 3-way M:N join** with no shortcut from
-sibling decomposition:
+Q3 is a **pure hierarchical schema** — no sibling table, no sibling
+aggregate. CUSTOMER, ORDERS, and LINEITEM form a strict 3-level
+prefix chain along `custkey ⊃ orderkey ⊃ linenumber`:
 
 - CUSTOMER × ORDERS: 1:N on `c_custkey = o_custkey`
   (~10 orders per customer at SF=1).
@@ -95,13 +96,16 @@ sibling decomposition:
 - Total join cardinality: ~1.5M customers × 10 × 4 ≈ 60M rows
   at SF=1, before filters.
 
-The MI benefit is hierarchical-prefix scan locality, not branch
-elimination. Per-customer, per-order, and per-lineitem filters all
-fire inside the walker; nothing is reduced to a scalar before the
-join (contrast Q3I's `cust_open_due`).
+Contrast with Q3I, which adds INVOICE as a *sibling* of ORDERS under
+CUSTOMER and reduces it to a per-custkey scalar (`cust_open_due`)
+before the main join — the §3.1.2 sibling sub-aggregate pattern. Q3
+has no such sibling. The MI benefit here is purely hierarchical-prefix
+scan locality (§3.1.3): per-customer, per-order, and per-lineitem
+filters all fire inside the walker; the chain itself is the entire
+plan.
 
-This is the §3.1.3 hierarchical-M:N showcase that Q3I explicitly
-disclaims; the joinN counters that are blank for Q3I S3 should be
+This makes Q3 the cleanest §3.1.3 hierarchical-prefix showcase in the
+Tier-1 set; the joinN counters that are blank for Q3I S3 should be
 populated and meaningful for Q3 S3.
 
 ---
