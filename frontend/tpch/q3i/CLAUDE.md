@@ -200,18 +200,22 @@ no-merged-index baseline that the family is compared against.
 | S2 (merge family) | sequential view scan | TableScan-time filters baked into view; mktsegment / threshold per-row at query time |
 | S3 (merge family) | `coli_group_walk` over MI[COLI] | Visitor `on_*` hooks (same code as S1) |
 | S4 (baseline)     | HashJoin(O ⋈ L) + 2 probe hashmaps | TableScan + per-aggregate; probe lookups encode the rest |
+| S5 (aCOLI MI)     | scan `MergedAdapter<customer_acoli_t, orders_acoli_t>` | Pre-aggregated fields read directly; mktsegment / threshold / orderdate per-row |
 
-All four agree on what's outside the pipeline: `apply_top10` (sort by
+All five agree on what's outside the pipeline: `apply_top10` (sort by
 revenue DESC + truncate to 10).
 
 ---
 
 ## Required Record Types
 
-- `q3i_pipeline_view_t` — currently aliased to `joined_ol_t`; widen to include
-  `cust_open_due` aggregate field once the COLI MI driver is implemented.
+- `q3i_pipeline_view_t` — real struct keyed by `(custkey, orderkey)`; one row
+  per order. Carries `revenue`, `cust_open_due`, `c_mktsegment`, `o_orderdate`,
+  `o_shippriority`. Fully implemented (Phase 2).
 - `q3i_agg_row_t` — final output row: `o_orderkey`, `revenue`, `o_orderdate`,
   `o_shippriority`, `cust_open_due`.
+- `customer_acoli_t` / `orders_acoli_t` — S5 aCOLI MI record types; defined in
+  `views_coli.hpp`. IDs 49 / 50.
 
 ---
 

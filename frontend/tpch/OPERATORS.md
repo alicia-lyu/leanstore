@@ -326,6 +326,29 @@ strategy above:
 Reference: `q3i/CLAUDE.md §Plan Descriptions`, `q3i/plans/family_logical.dot`,
 `q3i/plans/family_s3_physical.dot`.
 
+### §6.2 — Aggregate pushdown into MI (aCOLI pattern)
+
+A MI can store **pre-aggregated included columns** alongside the primary
+record payload, pushing per-custkey or per-order aggregates from query time
+into load time. This is orthogonal to filter pushdown: the MI is still loaded
+unfiltered on parameterised predicates, but the per-record arithmetic
+(`SUM(i_totaldue)`, `SUM(l_extendedprice*(1-l_discount))`) is pre-computed.
+
+**When it applies**: constant-filter aggregates (e.g. `i_status='O'`,
+`l_shipdate > DATE_constant`) whose predicate does not vary across param sets.
+The baked-in constant must match the query's default; non-default params
+require a separate load or a runtime re-aggregate (defeating the purpose).
+
+**Trade-off**: eliminates the per-query accumulator pass and reduces scan
+cardinality (no invoice/lineitem rows in the MI), but loses reusability for
+the baked-in filter. Sits between raw co-location (S3) and full
+materialisation (S2) on the pre-computation spectrum.
+
+**Reference implementation**: Q3I S5 (`customer_acoli_t` / `orders_acoli_t`
+in `views_coli.hpp`; `populate_aggregated()` in `coli_pipeline.tpp`;
+`query_by_aggregated` in `q3i/query.tpp`). Full design rationale in
+`PLAYBOOK.md §7.4`.
+
 ## 7. Comparison-Integrity Rules
 
 1. **No hash-aggregate inside the merged-index-family pipeline.**

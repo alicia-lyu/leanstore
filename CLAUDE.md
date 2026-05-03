@@ -24,13 +24,15 @@ Q5I, Q10I — are the active showcase for the §3.1.2 sibling sub-aggregate
 pattern: Invoice attaches under Customer as a sibling of Orders, and the COLI
 MI co-locates all four record types per `custkey` so a single `PremergedJoin`
 pass computes per-customer invoice aggregates alongside the O×L join. **Q3I
-Phases 1 and 2 are complete** — all four storage paths (S1 custkey-sorted
-split indexes, S2 pipeline view, S3 COLI MI, S4 hash baseline) produce
-identical XOR digests at SF=1, 10 rows each. Two real bugs were caught and
-fixed during Phase 2C: `flush_order` was emitting zero-revenue orders and
-`populate_q3i_view` was missing the `l_shipdate` filter. Q5I and Q10I are
-design-doc only. Phase 3 (production `q3i_lsm`/`q3i_btree` targets + Makefile
-integration) is next — see `frontend/tpch/q3i/CLAUDE.md §Implementation Phases`.
+is fully complete across all five storage structures** — S1 (custkey-sorted
+split indexes), S2 (pipeline view), S3 (COLI MI), S4 (hash baseline), and
+S5 (aCOLI MI: `MergedAdapter<customer_acoli_t, orders_acoli_t>` with
+pre-aggregated `pre_open_due` / `pre_revenue` baked at load time). S5
+demonstrates MI-as-aggregate-store: 22× scan reduction vs S3 (486 vs 10918
+records at SF=1) while remaining reusable across mktsegment/threshold/orderdate
+param sets. Production `q3i_lsm` / `q3i_btree` targets are wired into CMake
+and `generate_targets.py`. Q5I and Q10I are design-doc only. See
+`frontend/tpch/q3i/CLAUDE.md §Implementation Phases` for full detail.
 
 ### TPC-H Q12 Implementation (In Progress)
 

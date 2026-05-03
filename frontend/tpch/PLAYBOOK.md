@@ -774,7 +774,57 @@ long Q{{N}}Workload<Backend>::query_by_view(std::vector<q{{N}}_agg_row_t>& out)
 
 ---
 
-### §7.4 — S4: Hash Join Baseline
+### §7.4 — S5: aCOLI MI (Pre-Aggregated Variant)
+
+**When to use**: the query has simple per-custkey and per-order aggregates
+(e.g. `SUM(i_totaldue)`, `SUM(l_extendedprice*(1-l_discount))`) whose filter
+predicates are constant or invariant across the param sets you care about, AND
+the COLI MI scan is cache-bound at target scale factors (i.e. S3 is paying
+per-record dispatch overhead for data that fits in cache).
+
+**When NOT to use**: when the aggregate filter parameter changes between
+production runs (e.g. a different `shipdate` cutoff per experiment). Baking
+in a date constant defeats reuse — S5 results diverge from S1–S4 for any
+non-default params, and the test harness emits `[SKIP S5 — baked-in filter
+mismatch]` rather than failing.
+
+**Pattern** (Q3I S5, reference implementation):
+
+- Define `customer_acoli_t` (id=N) and `orders_acoli_t` (id=N+1) in
+  `views_coli.hpp`. Each carries the base record payload plus one or more
+  pre-aggregated `Numeric` included columns.
+- `populate_aggregated()` in `coli_pipeline.tpp`: multi-pass algorithm —
+  Pass A builds per-custkey aggregate map (invoice scan, constant filter
+  fused), Pass B builds per-(custkey,orderkey) aggregate map (lineitem scan,
+  constant filter fused), Pass C inserts `customer_acoli_t` and
+  `orders_acoli_t` records into a `MergedAdapter<customer_acoli_t,
+  orders_acoli_t>`.
+- `query_by_aggregated` in `q{N}/query.tpp`: scan the 2-type aCOLI MI,
+  apply parameterised filters (mktsegment, threshold, orderdate) per-row
+  as direct field comparisons — no accumulators needed.
+
+**Spectrum position** (cross-reference `q3i/CLAUDE.md §Phase 4`):
+
+```
+S1/S3 (raw co-location, full recompute each query)
+  → S5 (aCOLI: pre-aggregated, no per-query accumulation, reusable across
+         mktsegment/threshold/orderdate param sets)
+    → S2 (fully pre-computed view, only parameterised filters at query time)
+```
+
+S5 sits between S3 and S2 on the pre-computation spectrum: smaller scan
+footprint than S3 (no invoice/lineitem rows in the MI), more param-reuse
+than S2 (parameterised filters not baked in). At SF=1 Q3I: 486 aCOLI
+records scanned vs 10918 COLI records (22× reduction) and ~1.5M view rows.
+
+**Paper angle**: S5 is the concrete "MI-as-aggregate-store" example for
+reviewer R2-D1 (MULTI_TABLE_MI_ANALYSIS.md §6 / INVOICE_EXTENSION_CANDIDATES.md).
+It demonstrates that merged indexes can store not just raw records but
+pre-computed included columns — a point distinct from raw co-location.
+
+---
+
+### §7.5 — S4: Hash Join Baseline
 
 Pre-build hashmaps, then probe. S4 is the no-MI baseline — hash-aggregates
 and hashmaps are acceptable here (unlike the MI family).
@@ -803,7 +853,7 @@ See Q3I `query.tpp` lines 620–740 for the full pattern.
 
 ---
 
-### §7.5 — Common Epilogue: `apply_topN`
+### §7.6 — Common Epilogue: `apply_topN`
 
 Every `query_by_*` body ends with:
 

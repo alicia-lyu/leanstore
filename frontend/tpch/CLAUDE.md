@@ -34,9 +34,12 @@ Shared files (used by all three queries):
   `get_merged_size`. Operator drivers and view loading are **not** here — they
   depend on per-query types and live in `q{N}/query.tpp` and `q{N}/load.tpp`.
   See §Pipeline Convention below.
-- `views_coli.hpp` — four Calcite-style tagged record types for the
+- `views_coli.hpp` — Calcite-style tagged record types for the
   CUSTOMER × ORDERS × LINEITEM × INVOICE 4-table merged index:
   `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t`.
+  Also defines the aCOLI (pre-aggregated) 2-type pair:
+  `customer_acoli_t` (id=49, adds `pre_open_due`) and
+  `orders_acoli_t` (id=50, adds `pre_revenue`), used by Q3I S5.
   Each `Key` carries a `using path = tagged_path<IdxId, Steps...>` declaration
   (pointer-to-member steps: `tag_field_step`, `tag_fields2_step`) plus a
   `static bool matches(const u8*, size_t)` override that reads the trailing
@@ -78,9 +81,9 @@ Per-query subdirectories:
 - `q3/`  — Shipping Priority (3 tables, 2 joins; adds CUSTOMER adapter).
 - `q9/`  — Product Type Profit Measure (6 tables, 5 joins; adds NATION,
   SUPPLIER, PART, PARTSUPP adapters).
-- `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; all four
-  `query_by_*` bodies complete, cross-structure parity verified at SF=1 —
-  see `q3i/CLAUDE.md §Implementation Phases`).
+- `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; all five
+  storage structures complete — S1–S4 parity verified, S5 aCOLI MI
+  implemented and verified; see `q3i/CLAUDE.md §Implementation Phases`).
 - `q5i/` — Q5 + Invoice payment-status split (design doc only; no skeleton yet).
 - `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
 
@@ -237,6 +240,7 @@ expected ranges derived from the TPC-H spec).
 | 2 | `ViewQ{N}` | Intermediate pipeline view (materialized `joined_ol_t` rows) |
 | 3 | `MergedQ{N}` | `MI[0]` only — `PremergedJoin` at query time |
 | 4 | `HashQ{N}` | Traditional indexes + hash join |
+| 5 | `AggregatedQ{N}` | aCOLI MI (`MergedAdapter<customer_acoli_t, orders_acoli_t>`) — pre-aggregated fields; no accumulator pass (Q3I only) |
 
 Structure 0 (data reload) is handled before the switch in each executable.
 
@@ -312,6 +316,19 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
 ## Completed (post-skeleton)
+
+- **Q3I S5 aCOLI MI + wrap-up** (2026-05-02): `customer_acoli_t` /
+  `orders_acoli_t` added to `views_coli.hpp` (ids 49/50); `populate_aggregated()`
+  3-pass algorithm in `coli_pipeline.tpp`; `query_by_aggregated` in
+  `q3i/query.tpp` (no accumulators — direct field reads). All five paths
+  produce identical digest at SF=1 (7 rows); `acoli_total=486` vs
+  `mi_records_visited=10918` (22× scan reduction). Also landed this session:
+  multi-level active markers design (`customer_active` / `order_active`)
+  documented in `PLAYBOOK.md §7.1` — not yet refactored into coli_pipeline
+  (current code still uses `wants_skip_group()` / `wants_skip_order()`);
+  `RocksDBLogger::capture_baseline()` for SSTWrite baseline-subtract
+  (documented in `PLAYBOOK.md §10`); `StageTimer` per-stage attribution and
+  per-query averages in production stats output.
 
 - **`views_ol.hpp` fully implemented** (2026-04-29): `ol_sort_key_t` (match,
   first_diff, matching_keys), `joined_ol_t` (constructors, accessors),
