@@ -843,15 +843,25 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
 
       // Build orders map filtered by date, custkey membership in open_due_map,
       // and mktsegment filter.
+      //
+      // Capture o.o_custkey / o.o_orderdate / o.o_shippriority into locals
+      // before the gate checks so the `count()` probe and the OrderSlot store
+      // see the same value even if `kv->second` is a buffer-pool reference
+      // that gets re-bound across field accesses on LeanStore. Without this,
+      // q3i_btree S4 at SF=15 dram=0.1 hits the post-gate invariant violation
+      // logged at the lineitem probe loop below.
       while (auto kv = ord_scan->next()) {
          if (stats) stats->orders_scanned++;
          const orders_t& o = kv->second;
-         if (o.o_orderdate >= params.orderdate) continue;
+         const Timestamp od      = o.o_orderdate;
+         if (od >= params.orderdate) continue;
          if (stats) stats->orders_passing_filter++;
-         if (!open_due_map.count(o.o_custkey)) continue;
-         if (!cust_ok.count(o.o_custkey)) continue;
+         const Integer   ck      = o.o_custkey;
+         const Integer   shippri = o.o_shippriority;
+         if (!open_due_map.count(ck)) continue;
+         if (!cust_ok.count(ck))      continue;
          if (stats) stats->join1_output_rows++;  // post HJ#1+HJ#2 (cust_open_due ∩ cust_seg)
-         ord_map[kv->first.o_orderkey] = {o.o_custkey, o.o_orderdate, o.o_shippriority};
+         ord_map[kv->first.o_orderkey] = {ck, od, shippri};
          if (stats) stats->join2_output_rows++;  // each surviving (custkey,orderkey)
       }
 
@@ -874,10 +884,23 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
             auto& row = per_order[orderkey];
             if (row.o_orderkey == Integer(0)) {
                // First lineitem for this order: populate order fields.
+               // Defensive lookup: by construction (line 851's gate), every
+               // slot.custkey was in open_due_map when ord_map was populated.
+               // If we ever miss here, log and skip — this is the symptom of
+               // the SF=15 dram=0.1 q3i_btree S4 crash before the local-copy
+               // fix above. Once that fix holds, this branch should never fire.
+               auto due_it = open_due_map.find(slot.custkey);
+               if (due_it == open_due_map.end()) {
+                  std::cerr << "[q3i S4 invariant violation] slot.custkey="
+                            << slot.custkey << " orderkey=" << orderkey
+                            << " open_due_map.size=" << open_due_map.size()
+                            << " ord_map.size=" << ord_map.size() << "\n";
+                  continue;
+               }
                row.o_orderkey     = orderkey;
                row.o_orderdate    = slot.orderdate;
                row.o_shippriority = slot.shippriority;
-               row.cust_open_due  = open_due_map.at(slot.custkey);
+               row.cust_open_due  = due_it->second;
             }
             row.revenue += acc.revenue;
             acc.reset();
