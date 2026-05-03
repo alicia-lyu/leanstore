@@ -299,6 +299,33 @@ stay reusable across param sets — predicate hoisting). Concretely:
 - Secondary structures (MIs, split indexes, pipeline views) are loaded
   UNFILTERED on parameterised predicates.
 
+### Q3I addendum: custkey-sorted family logical plan
+
+Invoice-extended queries (Q3I, Q5I, Q10I) shift the merged-index family to a
+**custkey-sorted** logical plan (see `q3i/plans/family_logical.dot`), replacing
+the orderkey-sorted Q3 pattern. Key differences from the vanilla Q3 operator
+strategy above:
+
+- The inside-pipeline `SortedAggregate` is now **per-custkey** (invoice
+  sub-aggregate producing `cust_open_due`), not per-orderkey. It precedes the
+  O×L revenue accumulation in the scan order (`customer → invoice* → (orders →
+  lineitem*)+`).
+- The threshold filter on `cust_open_due` fuses with the per-customer aggregate
+  and fires at the custkey group boundary — **before** any O×L rows for that
+  custkey enter the pipeline. This is not an outside-pipeline Filter node.
+- S1 implements the family plan as a **3-BMJ chain** over four custkey-sorted
+  streams: `CustomerOpenDueAggregator` (scanner-wrapper over `split_invoice`)
+  and `LineitemRevenueAggregator` (scanner-wrapper over `split_lineitem`) feed
+  the three successive `BinaryMergeJoin` steps. The same accumulator structs
+  (`CustomerOpenDueAccumulator`, `LineitemRevenueAccumulator`) are shared with
+  S3's `COLIGroupWalkVisitor` — same logical code, different physical scan.
+- S3 fuses all of the above into the `coli_group_walk` Visitor's `on_*` hooks.
+  By the time a row leaves the walker it has passed every per-table predicate,
+  the mktsegment gate, and the threshold gate.
+
+Reference: `q3i/CLAUDE.md §Plan Descriptions`, `q3i/plans/family_logical.dot`,
+`q3i/plans/family_s3_physical.dot`.
+
 ## 7. Comparison-Integrity Rules
 
 1. **No hash-aggregate inside the merged-index-family pipeline.**

@@ -1,5 +1,10 @@
 # Q3I Phase 2C — Unified harness + finalisation
 
+**Status (2026-05-02): complete.** All four Q3I storage paths produce identical
+XOR digests at SF=1 (10 rows each). Both query-body bugs fixed (S3
+`flush_order` zero-revenue emit; S2 `populate_q3i_view` missing `l_shipdate`
+filter). Phase 1 harness retired. Doc updates propagated.
+
 Lands the cross-structure parity check, retires the temporary
 Phase 1 test binary, and propagates the Phase 2 design upward to
 shared TPC-H docs.
