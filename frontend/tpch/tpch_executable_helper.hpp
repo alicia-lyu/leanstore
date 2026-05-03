@@ -83,6 +83,7 @@ struct TpchExecutableHelper {
          out.clear();
          jumpmuTry()
          {
+            wrapper.set_params_for_iter(static_cast<long>(count.load()));
             db_traits->run_tx([&]() { wrapper.query(out); });
             count++;
          }
