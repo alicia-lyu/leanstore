@@ -219,8 +219,8 @@ class Experiment:
             dest = data_disk / self.exec_fname / b / f'{SCALE_ENV}.json'
             print(f"\tmkdir -p {dest.parent}")
             print(f"\tcp -f {self.recover_file} {dest}")
-        print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path}")
-        print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk}")
+        print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path} | awk '{{print $1}}'")
+        print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk} | awk '{{print $1}}'")
         print()
         
     def experiment_flags(self) -> tuple[dict[str, str], str]:
