@@ -108,6 +108,8 @@ int main(int argc, char** argv)
 
    // S5: aCOLI 2-type MI (customer_acoli_t + orders_acoli_t).
    B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t> acoli(rocks_db);
+   // G4/G5: Q3I-projected aCOLI variant (declared but not populated by default).
+   B::MergedAdapter<tpch::customer_acoli_q3i_t, tpch::orders_acoli_q3i_t> acoli_proj(rocks_db);
 
    // Defensive wipe: if --ssd_path holds a prior DB, remove it before opening.
    // See file-header comment for why this matters (parity-failure mode caused
@@ -131,7 +133,7 @@ int main(int argc, char** argv)
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
-                                   split_orders, split_lineitem, split_invoice, acoli);
+                                   split_orders, split_lineitem, split_invoice, acoli, acoli_proj);
 
    // Load base tables ONCE — this is the key fix vs. Phase 2B's per-structure
    // wipe/reload pattern.  All four paths will see the same data.

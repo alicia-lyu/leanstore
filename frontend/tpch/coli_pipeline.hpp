@@ -104,6 +104,13 @@ class CustomerOrdersLineitemInvoicePipeline
    // fields at load time (populate_aggregated), eliminating them from the MI.
    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli_adapter_ref;
 
+   // G4/G5: Q3I-projected aCOLI MI — same shape but only the columns Q3I
+   // reads. Loaded by populate_aggregated when FLAGS_acoli_projected=true,
+   // queried by query_by_aggregated under the same flag. See
+   // q3i/PERFORMANCE.md §3 A/B-2.
+   typename Backend::template MergedAdapter<customer_acoli_q3i_t,
+                                            orders_acoli_q3i_t>& acoli_proj_adapter_ref;
+
   public:
    CustomerOrdersLineitemInvoicePipeline(
        typename Backend::template Adapter<customerh_t>&  customer,
@@ -115,7 +122,9 @@ class CustomerOrdersLineitemInvoicePipeline
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
        typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
        typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli);
+       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli,
+       typename Backend::template MergedAdapter<customer_acoli_q3i_t,
+                                                orders_acoli_q3i_t>& acoli_proj);
 
    // Dual-write replay: scans all four base tables and inserts each record
    // into merged_coli using *_coli_t tagged keys. Lineitem records are rekeyed
@@ -142,6 +151,7 @@ class CustomerOrdersLineitemInvoicePipeline
 
    // Returns estimated size of the aCOLI MI in MiB.
    double get_aggregated_size() const;
+   double get_aggregated_proj_size() const;
 
    // Expose the merged adapter so per-query drivers can call coli_group_walk.
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
@@ -151,6 +161,10 @@ class CustomerOrdersLineitemInvoicePipeline
    // Expose the aCOLI 2-type MI for S5 query drivers.
    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>&
    acoli_adapter() { return acoli_adapter_ref; }
+
+   // Expose the Q3I-projected aCOLI 2-type MI (G4/G5 A/B-2).
+   typename Backend::template MergedAdapter<customer_acoli_q3i_t, orders_acoli_q3i_t>&
+   acoli_proj_adapter() { return acoli_proj_adapter_ref; }
 
    // Expose custkey-sorted split adapters so per-query S1 drivers can scan
    // the single-type indexes directly (parallel to merged_adapter() for S3).

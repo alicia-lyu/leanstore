@@ -621,6 +621,102 @@ struct orders_acoli_t {
 };
 
 // ---------------------------------------------------------------------------
+// G4: Q3I-projected aCOLI record types.
+//
+// Same shape as customer_acoli_t / orders_acoli_t but carrying ONLY the
+// fields Q3I::query_by_aggregated reads. Lets us A/B-2 the upper bound
+// of project-pushdown into the aggregated MI (frontend/tpch/CLAUDE.md
+// "No project pushdown" section). Toggled at populate / query time by
+// FLAGS_acoli_projected; production target wiring deferred until A/B-2
+// shows a clear win.
+//
+// Q3I-only field set:
+//   customer_acoli_q3i_t: c_mktsegment + pre_open_due
+//   orders_acoli_q3i_t:   o_orderdate, o_shippriority + pre_revenue
+//                         (custkey + orderkey are in the Key, not the payload)
+//
+// Estimated row-size shrinkage: ~280 B → ~30 B (customer); ~160 B → ~30 B
+// (orders). Aggregate ~62% smaller at SF=1.
+//
+// The user-facing tradeoff: this projection is Q3I-specific. Q5I or Q10I
+// would each need their own projection (or a templated projection schema
+// — deferred). That's why the new types live alongside the full-payload
+// variants rather than replacing them.
+
+struct customer_acoli_q3i_t {
+   static constexpr int id = 51;
+
+   struct Key {
+      static constexpr int id = 51;
+      Integer custkey;
+      ADD_KEY_TRAITS(&Key::custkey)
+   };
+
+   Varchar<10> c_mktsegment;
+   Numeric     pre_open_due;
+
+   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
+   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
+   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+   void print(std::ostream& os) const
+   {
+      os << "customer_acoli_q3i(seg=" << c_mktsegment << ",open_due=" << pre_open_due << ")";
+   }
+
+   friend std::ostream& operator<<(std::ostream& os, const customer_acoli_q3i_t& r)
+   {
+      r.print(os);
+      return os;
+   }
+
+   static customer_acoli_q3i_t from_customer(const customerh_t& c, Numeric open_due)
+   {
+      return {c.c_mktsegment, open_due};
+   }
+   static Key key_from_base(const customerh_t::Key& k) { return Key{k.c_custkey}; }
+};
+
+struct orders_acoli_q3i_t {
+   static constexpr int id = 52;
+
+   struct Key {
+      static constexpr int id = 52;
+      Integer custkey;
+      Integer orderkey;
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
+   };
+
+   Timestamp o_orderdate;
+   Integer   o_shippriority;
+   Numeric   pre_revenue;
+
+   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
+   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
+   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+   void print(std::ostream& os) const
+   {
+      os << "orders_acoli_q3i(rev=" << pre_revenue << ")";
+   }
+
+   friend std::ostream& operator<<(std::ostream& os, const orders_acoli_q3i_t& r)
+   {
+      r.print(os);
+      return os;
+   }
+
+   static orders_acoli_q3i_t from_order(const orders_t& o, Numeric revenue)
+   {
+      return {o.o_orderdate, o.o_shippriority, revenue};
+   }
+   static Key key_from_order(Integer custkey, const orders_t::Key& ok)
+   {
+      return Key{custkey, ok.o_orderkey};
+   }
+};
+
+// ---------------------------------------------------------------------------
 // Byte-driven variant dispatcher.
 //
 // Reads the trailing idx_id byte (key_bytes[key_len - 1]), switches on it,

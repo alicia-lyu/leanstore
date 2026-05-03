@@ -251,7 +251,9 @@ class Q3IWorkload
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
        typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
        typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli);
+       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t>& acoli,
+       typename Backend::template MergedAdapter<customer_acoli_q3i_t,
+                                                orders_acoli_q3i_t>& acoli_proj);
 
    // ------------------------------------------------------------------
    // Queries — one per storage structure.
