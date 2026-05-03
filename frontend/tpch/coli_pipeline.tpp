@@ -264,12 +264,23 @@ void coli_group_walk(
              } else if (group_active) {
                 if constexpr (std::is_same_v<V, invoice_coli_t>) {
                    auto* ik = std::get_if<invoice_coli_t::Key>(&kv->first);
-                   if constexpr (requires { visitor.on_invoice(*ik, val); }) {
+                   if constexpr (requires {
+                                    { visitor.on_invoice(*ik, val) } -> std::same_as<bool>;
+                                 }) {
+                      if (ik) group_active = visitor.on_invoice(*ik, val);
+                   } else if constexpr (requires { visitor.on_invoice(*ik, val); }) {
                       if (ik) visitor.on_invoice(*ik, val);
                    }
                 } else if constexpr (std::is_same_v<V, orders_coli_t>) {
                    auto* ok = std::get_if<orders_coli_t::Key>(&kv->first);
-                   if constexpr (requires { visitor.on_order(*ok, val); }) {
+                   if constexpr (requires {
+                                    { visitor.on_order(*ok, val) } -> std::same_as<bool>;
+                                 }) {
+                      if (ok) {
+                         cur_orderkey = ok->orderkey;
+                         group_active = visitor.on_order(*ok, val);
+                      }
+                   } else if constexpr (requires { visitor.on_order(*ok, val); }) {
                       if (ok) {
                          cur_orderkey = ok->orderkey;
                          visitor.on_order(*ok, val);
@@ -277,7 +288,11 @@ void coli_group_walk(
                    }
                 } else if constexpr (std::is_same_v<V, lineitem_coli_t>) {
                    auto* lk = std::get_if<lineitem_coli_t::Key>(&kv->first);
-                   if constexpr (requires { visitor.on_lineitem(*lk, val); }) {
+                   if constexpr (requires {
+                                    { visitor.on_lineitem(*lk, val) } -> std::same_as<bool>;
+                                 }) {
+                      if (lk) group_active = visitor.on_lineitem(*lk, val);
+                   } else if constexpr (requires { visitor.on_lineitem(*lk, val); }) {
                       if (lk) visitor.on_lineitem(*lk, val);
                    }
                 }
@@ -291,7 +306,11 @@ void coli_group_walk(
       // to scroll past and be filtered row-by-row.
       if constexpr (requires { { visitor.wants_skip_group() } -> std::convertible_to<bool>; }) {
          if (group_active && visitor.wants_skip_group()) {
-            skip_pending = true;
+            // Mark the group dead immediately so no further on_order /
+            // on_lineitem dispatch happens while forward-iterating to the
+            // next custkey boundary.
+            group_active  = false;
+            skip_pending  = true;
             if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
                visitor.on_group_skipped(cur_custkey);
             }
@@ -348,12 +367,23 @@ void coli_group_walk(
                          } else if (group_active) {
                             if constexpr (std::is_same_v<V2, invoice_coli_t>) {
                                auto* ik2 = std::get_if<invoice_coli_t::Key>(&kv2->first);
-                               if constexpr (requires { visitor.on_invoice(*ik2, val2); }) {
+                               if constexpr (requires {
+                                                { visitor.on_invoice(*ik2, val2) } -> std::same_as<bool>;
+                                             }) {
+                                  if (ik2) group_active = visitor.on_invoice(*ik2, val2);
+                               } else if constexpr (requires { visitor.on_invoice(*ik2, val2); }) {
                                   if (ik2) visitor.on_invoice(*ik2, val2);
                                }
                             } else if constexpr (std::is_same_v<V2, orders_coli_t>) {
                                auto* ok2 = std::get_if<orders_coli_t::Key>(&kv2->first);
-                               if constexpr (requires { visitor.on_order(*ok2, val2); }) {
+                               if constexpr (requires {
+                                                { visitor.on_order(*ok2, val2) } -> std::same_as<bool>;
+                                             }) {
+                                  if (ok2) {
+                                     cur_orderkey = ok2->orderkey;
+                                     group_active = visitor.on_order(*ok2, val2);
+                                  }
+                               } else if constexpr (requires { visitor.on_order(*ok2, val2); }) {
                                   if (ok2) {
                                      cur_orderkey = ok2->orderkey;
                                      visitor.on_order(*ok2, val2);
@@ -361,7 +391,11 @@ void coli_group_walk(
                                }
                             } else if constexpr (std::is_same_v<V2, lineitem_coli_t>) {
                                auto* lk2 = std::get_if<lineitem_coli_t::Key>(&kv2->first);
-                               if constexpr (requires { visitor.on_lineitem(*lk2, val2); }) {
+                               if constexpr (requires {
+                                                { visitor.on_lineitem(*lk2, val2) } -> std::same_as<bool>;
+                                             }) {
+                                  if (lk2) group_active = visitor.on_lineitem(*lk2, val2);
+                               } else if constexpr (requires { visitor.on_lineitem(*lk2, val2); }) {
                                   if (lk2) visitor.on_lineitem(*lk2, val2);
                                }
                             }
@@ -371,7 +405,8 @@ void coli_group_walk(
                   // Re-apply the group-level skip check for the re-dispatched record.
                   if constexpr (requires { { visitor.wants_skip_group() } -> std::convertible_to<bool>; }) {
                      if (group_active && visitor.wants_skip_group()) {
-                        skip_pending = true;
+                        group_active  = false;
+                        skip_pending  = true;
                         if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
                            visitor.on_group_skipped(cur_custkey);
                         }

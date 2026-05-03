@@ -51,6 +51,9 @@ struct TpchExecutableHelper {
                 << std::string(std::max(1, 40 - (int)structure_name.size()), '-')
                 << std::endl;
       tpch.prepare();
+      // Snap a baseline before the query loop so post-load compactions
+      // are excluded from per-TX SSTWrite figures.
+      tpch.logger.capture_baseline();
       tput_tx("query");
    }
 

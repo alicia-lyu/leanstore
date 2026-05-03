@@ -171,6 +171,12 @@ class Logger
 
    virtual void prepare() = 0;
 
+   // Snap a baseline so that background I/O accumulated before the query
+   // measurement loop (e.g. post-load compactions) is excluded from per-TX
+   // figures. Default is a no-op; storage backends that track write stats
+   // override this.
+   virtual void capture_baseline() {}
+
    void log_loading() { log(0, "load", "", 0); }
 
    static inline std::string to_fixed(double value)
