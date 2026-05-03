@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Workflow Rules
+
+- **Do not run end-to-end executables on macOS.** macOS builds
+  (RocksDB-only) exist for compile-checks and unit/load tests, not for
+  full per-query binaries (`q3i_lsm`, `q12_lsm`, `q3_lsm`, etc.).
+  Performance numbers and long-running TX loops belong on Linux. On
+  macOS: build the target to verify it compiles, then stop. Use
+  `test_query_q*_lsm` and `test_load_*_lsm` for correctness checks.
+
 ## Project Overview
 
 This is a fork of [LeanStore](https://db.in.tum.de/~leis/papers/leanstore.pdf), a high-performance OLTP storage engine optimized for many-core CPUs and NVMe SSDs. It serves as the **execution engine** in a [Calcite ↔ LeanStore integration](https://github.com/alicia-lyu/calcite/blob/main/CALCITE_LEANSTORE_INTEGRATION.md), where Apache Calcite acts as the query optimizer (cost-based join ordering, merged-index substitution) and LeanStore executes the resulting plans against B-tree/LSM merged indexes.
