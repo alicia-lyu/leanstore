@@ -156,6 +156,25 @@ struct Q3IStats {
    long stage_us_join        = 0;
    long stage_us_topN        = 0;
 
+   // RocksDB PerfContext / IOStatsContext totals (RocksDB backend only).
+   // Populated only when --micro_perf=true; zero otherwise.
+   // All counters are accumulated across all queries in the run window;
+   // divide by tx_count for per-query averages.
+   //
+   // PerfContext fields (rocksdb/perf_context.h):
+   uint64_t pc_user_key_comparison_count = 0;
+   uint64_t pc_block_cache_hit_count     = 0;
+   uint64_t pc_block_read_count          = 0;
+   uint64_t pc_block_read_byte           = 0;
+   uint64_t pc_block_read_time           = 0;  // nanoseconds
+   uint64_t pc_block_decompress_time     = 0;  // nanoseconds
+   uint64_t pc_iter_next_cpu_nanos       = 0;
+   uint64_t pc_iter_seek_cpu_nanos       = 0;
+   // IOStatsContext fields (rocksdb/iostats_context.h):
+   uint64_t ioc_bytes_read  = 0;
+   uint64_t ioc_read_nanos  = 0;
+   uint64_t ioc_open_nanos  = 0;
+
    void reset() { *this = Q3IStats{}; }
 };
 
@@ -182,7 +201,8 @@ class Q3IWorkload
 
   public:
    Params params;
-   Q3IStats* stats = nullptr;
+   Q3IStats* stats      = nullptr;
+   bool      micro_perf = false;  // set to true when --micro_perf is active
 
    // Expose the COLI pipeline so test harnesses can call populate_split() and
    // populate_merged() directly without routing through load()'s

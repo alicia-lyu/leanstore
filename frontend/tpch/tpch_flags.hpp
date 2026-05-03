@@ -27,6 +27,10 @@ TPCH_FLAG_INT(tx_seconds, 15, "Seconds to run each transaction type");
 TPCH_FLAG_INT(warmup_seconds, 0, "Warmup seconds");
 TPCH_FLAG_INT(bgw_pct, 0, "Percentage of background write transactions");
 TPCH_FLAG_BOOL(log_progress, true, "Log loading/query progress");
+TPCH_FLAG_BOOL(micro_perf, false,
+               "Capture RocksDB PerfContext / IOStatsContext per query and print totals");
+TPCH_FLAG_BOOL(cfstats, false,
+               "Snapshot per-CF RocksDB stats before/after helper.run() and print diff");
 
 #undef TPCH_FLAG_INT
 #undef TPCH_FLAG_BOOL
