@@ -339,8 +339,8 @@ STRUCTURE_OPTIONS = {
     "geo_lsm": [1, 2, 3, 4],
     "q12_btree": [1, 2, 3, 4],
     "q12_lsm": [1, 2, 3, 4],
-    "q3i_btree": [1, 2, 3, 4],
-    "q3i_lsm": [1, 2, 3, 4],
+    "q3i_btree": [1, 2, 3, 4, 5],
+    "q3i_lsm": [1, 2, 3, 4, 5],
 }
 
 def main() -> None:
