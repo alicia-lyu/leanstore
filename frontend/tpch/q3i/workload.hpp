@@ -133,6 +133,14 @@ struct Q3IStats {
    long mi_records_visited = 0;
    long mi_groups_skipped  = 0;
 
+   // S1 / S4 customer-level Seek-skip counters (G1/G2 A/B). Mirror
+   // mi_groups_skipped: count custkey groups physically skipped on the
+   // secondary scanners after a customer-side gate rejection. Trait-gated
+   // by Backend::USE_PHYSICAL_SEEK_SKIP, runtime-overridden by
+   // FLAGS_use_seek_skip. See q3i/PERFORMANCE.md §3 A/B-1.
+   long bj_groups_skipped = 0;  // S1 BMJ chain
+   long hj_groups_skipped = 0;  // S4 HJ chain
+
    // Stage cardinalities (uniform across S1/S2/S3/S4 — let us compare
    // intermediate counts row-for-row across paths). Filled in best-effort:
    // some stages don't exist for some paths (e.g. S2 has no separate join

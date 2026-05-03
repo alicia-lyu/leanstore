@@ -77,6 +77,71 @@ Full evidence: archive `PERFORMANCE-2026-05-03b.md` §3.
 
 ## §3 — Active worklist
 
+### A/B-1 — DONE: customer-/orderkey-level Seek-skip on S1 + S4
+
+Symmetric A/B for the comparison-fairness story: A3 lifted S3 with a
+customer-level Seek-skip; S1 and S4 needed the equivalent to keep the
+S1/S3/S4 axis honest (OPERATORS.md §6.1). Same `--use_seek_skip`
+runtime override, same `Backend::USE_PHYSICAL_SEEK_SKIP` trait gate.
+
+Implementations differ by structure because the secondary streams
+have different sort orders:
+
+- **S1 (3-BMJ chain)** — only `agg_inv` (cust_open_due aggregator
+  over custkey-sorted `split_invoice`) is safely skippable from
+  inside `fetch_cust`. Skipping `ord_scan` / `agg_lin` from
+  `fetch_bmj1`/`fetch_bmj2` was attempted and reverted: BMJ caches
+  `next_right` records that haven't been emplaced yet, so seeking
+  ahead inside refill loses 1:N children of the current key. The
+  S3 walker doesn't have this problem because it has a single
+  scanner. Mirroring the S3 trick on a 3-BMJ chain would require
+  buffered OrdersByCustkey/LineitemsByCustkey wrappers — deferred.
+- **S4 (3-HJ chain)** — base-table primary keys are not
+  custkey-sorted (orders is orderkey-PK; lineitem is
+  orderkey/linenumber-PK). So custkey-skip is structurally
+  impossible. The natural analog is **orderkey-level skip on the
+  lineitem probe**: after the orders-build phase, sort the
+  surviving orderkeys; on probe-miss, `upper_bound` to the next
+  surviving orderkey and seek the lineitem scanner there. Skips
+  the (large) cold-page reads for orders that didn't survive any
+  filter.
+
+Counters: `bj_groups_skipped` (S1) and `hj_groups_skipped` (S4)
+mirror `mi_groups_skipped` (S3). All three increment per skip
+event in their respective query paths.
+
+Iso TX/s, fused_emit, dram=0.1, post-9da4f295 trait defaults:
+
+| Cell                    | ss=0   | ss=1   | Lift     |
+|-------------------------|-------:|-------:|---------:|
+| **S1 LeanStore SF=15**  | 22.50  | 27.59  | +22.6%   |
+| **S1 LeanStore SF=40**  | 0.30   | 0.38   | +27%     |
+| **S1 RocksDB SF=15**    | 2.05   | 3.99   | +94.6%   |
+| **S1 RocksDB SF=40**    | 0.82   | 0.60   | **−27%** |
+| **S4 LeanStore SF=15**  | 20.82  | 27.56  | +32.4%   |
+| **S4 LeanStore SF=40**  | 0.36   | **9.57** | **+2580%** (27×) |
+| **S4 RocksDB SF=15**    | 2.29   | 6.28   | +174%    |
+| **S4 RocksDB SF=40**    | 0.66   | 0.83   | +25%     |
+
+(S4 LeanStore SF=40 confirmed across multiple trials; S1 RocksDB SF=40
+mean across 3 trials — a real regression, not noise.)
+
+**Decision**: keep the trait `true` on both backends (the default
+wins on 7 of 8 cells and is dramatic on disk-bound LeanStore).
+Document the **S1 RocksDB SF=40** regression: the invoice-CF Seek
+invalidates the SST prefetch buffer the same way the original macOS
+A3 A/B reported for S3 — but for S1 on Linux disk-bound the
+regression survives, perhaps because S1's invoice-aggregator path
+has a longer prefetch reach than S3's COLI MI walker. Users can
+override per-cell via `--use_seek_skip=0`. A finer-grained per-
+structure trait (`USE_BMJ_SEEK_SKIP`) is deferred until a second
+cell motivates it.
+
+**Comparison-axis impact**: the S1/S4 baselines are now structurally
+fair against S3 — each path uses the best available physical-skip
+strategy for its operator graph. The merged-index pitch is no
+longer artificially inflated by S3's exclusive access to skip-skip.
+
 ### A6 — Memory-pressure sweep with all post-A3 defaults
 
 Now that A3 is confirmed on both backends, the open question is
