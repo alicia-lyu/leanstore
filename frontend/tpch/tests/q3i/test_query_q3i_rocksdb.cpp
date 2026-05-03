@@ -14,10 +14,20 @@
 //       --tpch_scale_factor=1
 //
 // Expected: 4 identical digests, 4 identical row counts (10 at SF=1), exit 0.
+//
+// IMPORTANT: this harness wipes --ssd_path before opening the DB. RocksDB does
+// not cleanly overwrite an existing DB; reusing a populated dir across runs
+// causes tpch.load() to write new records on top of the prior state, growing
+// the lineitem count (e.g. 6051 → 7765 → 10017 across re-runs at SF=1) and
+// breaking the consistency invariants between base tables, the COLI MI, the
+// pipeline view, and the split indexes — manifesting as a 4-distinct-digest
+// parity failure that looks like a query-body bug. The wipe makes the harness
+// re-runnable in place, matching how a developer naturally re-invokes it.
 
 #include <gflags/gflags.h>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -94,6 +104,20 @@ int main(int argc, char** argv)
    B::Adapter<tpch::orders_coli_t>   split_orders(rocks_db);
    B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
+
+   // Defensive wipe: if --ssd_path holds a prior DB, remove it before opening.
+   // See file-header comment for why this matters (parity-failure mode caused
+   // by stale RocksDB state across re-runs).
+   {
+      namespace fs = std::filesystem;
+      fs::path ssd(FLAGS_ssd_path);
+      if (fs::exists(ssd) && !fs::is_empty(ssd)) {
+         std::cout << "=== Wiping prior --ssd_path contents at " << ssd
+                   << " (re-runnable harness) ===\n";
+         fs::remove_all(ssd);
+      }
+      fs::create_directories(ssd);
+   }
 
    rocks_db.open();
 
