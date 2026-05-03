@@ -70,8 +70,9 @@ inline Params Params::defaults()
 
 inline void q3i_pipeline_view_t::print(std::ostream& os) const
 {
-   os << "view(" << revenue << "," << cust_open_due << "," << o_orderdate
-      << "," << o_shippriority << ")\n";
+   os << "view(ep=" << l_extendedprice << ",disc=" << l_discount
+      << ",ship=" << l_shipdate << ",open_due=" << cust_open_due
+      << ",date=" << o_orderdate << ",shippri=" << o_shippriority << ")\n";
 }
 
 inline void cust_open_due_t::print(std::ostream& os) const
@@ -786,47 +787,96 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
 {
    // S2: sequential scan of the materialised q3i_pipeline_view_t.
    //
-   // The view is unfiltered on parameterised predicates (predicate hoisting —
-   // OPERATORS.md §4 / §6).  Apply mktsegment and threshold per-row here;
-   // o_orderdate and l_shipdate are baked into revenue at view-load time so
-   // they are NOT re-applied (the view stores pre-aggregated revenue per
-   // orderkey, already summing all lineitems).  This keeps S2 fair against
-   // S1/S3 which also fuse those filters in the streaming pass.
+   // Schema redesign (2026-05-03): the view now stores one row per
+   // (custkey, orderkey, linenumber) carrying unaggregated lineitem fields.
+   // Revenue is accumulated per orderkey at query time, with the shipdate
+   // filter applied live.  This makes S2 reusable across all DATE param sets
+   // (the original per-orderkey schema baked l_shipdate > DATE_1995_03_15 at
+   // load time, breaking correctness for any other DATE value).
+   //
+   // Scan order: (custkey, orderkey, linenumber) ascending.  Within a
+   // (custkey, orderkey) group the parameterised filters (mktsegment,
+   // threshold, orderdate) are identical for every row, so we check them once
+   // when we first see a new orderkey.  Per-lineitem we apply l_shipdate.
+   // At each orderkey boundary we emit the per-orderkey agg row if it has
+   // any qualifying lineitems (revenue > 0).
+   //
+   // OPERATORS.md §4 / §6: all parameterised filters applied at query time;
+   // none baked into the view at load time.
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
+
+   // Per-orderkey accumulator state — tracks the currently-open order group.
+   Integer   cur_orderkey    = -1;
+   Timestamp cur_orderdate   = 0;
+   Integer   cur_shippriority = 0;
+   Numeric   cur_open_due    = 0;
+   bool      cur_order_ok    = false;  // passes mktsegment + threshold + orderdate
+   LineitemRevenueAccumulator rev;
+
+   // Emit the currently-open order group if it produced any revenue.
+   auto flush_order = [&]() {
+      if (!cur_order_ok || cur_orderkey < 0) return;
+      if (rev.revenue <= Numeric(0)) { rev.reset(); return; }
+      if (stats) {
+         stats->join_callbacks++;
+         stats->join3_output_rows++;
+      }
+      out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
+                     cur_shippriority, cur_open_due});
+      rev.reset();
+   };
 
    {
       StageTimer t(stats ? &stats->stage_us_scan_filter : nullptr);
       auto vs = pipeline_view.getScanner();
       while (auto kv = vs->next()) {
-         const q3i_pipeline_view_t& row = kv->second;
+         const q3i_pipeline_view_t::Key& k   = kv->first;
+         const q3i_pipeline_view_t&      row = kv->second;
 
-         // Mktsegment filter (parameterised — applied at query time).
-         auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
-         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-         if (sm != psm) continue;
-         if (stats) stats->customers_passing_filter++;
+         // Orderkey transition: flush the previous group and re-evaluate
+         // per-order gates for the new (custkey, orderkey).
+         if (k.orderkey != cur_orderkey) {
+            flush_order();
+            cur_orderkey     = k.orderkey;
+            cur_orderdate    = row.o_orderdate;
+            cur_shippriority = row.o_shippriority;
+            cur_open_due     = row.cust_open_due;
+            cur_order_ok     = false;
 
-         // o_orderdate filter: only orders before params.orderdate.
-         if (row.o_orderdate >= params.orderdate) continue;
-         if (stats) stats->orders_passing_filter++;
+            // Mktsegment filter.
+            auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
+            auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+            if (sm != psm) continue;
 
-         // Threshold filter on cust_open_due (parameterised — applied at query time).
-         if (row.cust_open_due <= params.threshold) continue;
+            // Threshold filter.
+            if (row.cust_open_due <= params.threshold) continue;
 
-         // Revenue guard: suppress orders whose lineitems all failed the shipdate
-         // filter baked in at view-load time. SQL requires at least one matching
-         // lineitem; revenue=0 means none qualified (same suppression as S1/S3/S4).
-         if (row.revenue <= Numeric(0)) continue;
-
-         if (stats) {
-            stats->join_callbacks++;
-            stats->join3_output_rows++;
+            // Orderdate filter.
+            if (row.o_orderdate >= params.orderdate) {
+               if (stats) stats->customers_passing_filter++;
+               continue;
+            }
+            if (stats) {
+               stats->customers_passing_filter++;
+               stats->orders_passing_filter++;
+            }
+            cur_order_ok = true;
          }
-         Integer orderkey = kv->first.orderkey;
-         out.push_back({orderkey, row.revenue, row.o_orderdate,
-                        row.o_shippriority, row.cust_open_due});
+
+         if (!cur_order_ok) continue;
+
+         // Per-lineitem: apply shipdate filter and accumulate revenue.
+         // LineitemRevenueAccumulator::consume(lineitem_t, params) checks
+         // l_shipdate > params.shipdate — reusing the same accumulator as S1/S3
+         // for OPERATORS.md §6.1 comparison-integrity.
+         lineitem_t proxy;
+         proxy.l_shipdate      = row.l_shipdate;
+         proxy.l_extendedprice = row.l_extendedprice;
+         proxy.l_discount      = row.l_discount;
+         rev.consume(proxy, params);
       }
+      flush_order();
    }
 
    if (stats) {
