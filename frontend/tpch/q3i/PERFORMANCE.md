@@ -10,18 +10,21 @@ Forward-looking worklist. Evidence trails for completed runs live in
 
 ## §1 — Where we are
 
-Two remediations have landed; the merged-index pitch on LeanStore is
-now solid across both regimes:
+Three remediations have landed; the merged-index pitch is now solid
+on **both** backends:
 
-- **A2c (`fused_emit`, SF=15 cache-resident).** S3 matches/beats S1 on
-  both backends. H4 closed.
-- **A3 (Backend-trait Seek-skip, LeanStore only).** Customer-level
-  Seek across rejected custkey groups: SF=15 23.06 → 105.27 TX/s
-  (+356%); SF=40 disk-bound 0.29 → 33.69 TX/s (+116×). H2 closed on
-  LeanStore. RocksDB unchanged (Seek invalidates prefetch buffer; A/B
-  refuted earlier — trait stays off there).
+- **A2c (`fused_emit`, SF=15 cache-resident).** S3 matches/beats S1
+  on both backends. H4 closed. Default flipped to `fused_emit`.
+- **A3 (Backend-trait Seek-skip, LeanStore).** Customer-level Seek
+  across rejected custkey groups: SF=15 23.06 → 105.27 TX/s (+356%);
+  SF=40 disk-bound 0.29 → 33.69 TX/s (+116×). H2 closed on LeanStore.
+- **A3 RocksDB re-A/B on Linux** (refutes the earlier macOS A/B that
+  blocked it). With the trait flipped to `true` on RocksDB too:
+  SF=15 1.81 → 14.46 TX/s (+700%); SF=40 0.90 → 1.48 (+64%).
+  The macOS regression appears to have been a page-cache artefact.
+  H2 now closed on **both** backends.
 
-LeanStore S3 (iso, fused_emit, dram=0.1) reference numbers:
+LeanStore S3 (iso, fused_emit, dram=0.1):
 
 | stage              | SF=15 TX/s | SF=40 TX/s |
 |--------------------|-----------:|-----------:|
@@ -31,10 +34,23 @@ LeanStore S3 (iso, fused_emit, dram=0.1) reference numbers:
 | S1 (ref)           | 22.63      | 0.30       |
 | S4 (ref)           | 21.61      | 0.32       |
 
-Open question: on **RocksDB**, what gets disk-pressure S3 above S4?
-A4 (SSTWrite source) and A6 (memory-pressure sweep on LSM, post-A2c)
-are the live levers. On both backends, **H12 (load-amortized cost vs
-query count)** is the second-order story the paper should tell anyway.
+RocksDB S3 (iso, fused_emit, dram=0.1, Linux):
+
+| stage              | SF=15 TX/s | SF=40 TX/s |
+|--------------------|-----------:|-----------:|
+| pre-A3 (trait off) | 1.81       | 0.90       |
+| + A3 (trait on)    | **14.46**  | **1.48**   |
+
+Open question now: **H12 (load-amortized cost vs query count)** —
+the reviewer-facing question of "how many queries justify a merged
+index" is the second-order story the paper should tell. A4 (SSTWrite
+attribution) remains useful but is a side investigation, not a
+showcase blocker.
+
+**Defaults**: `coli_walker_variant=fused_emit`, both backends'
+`USE_PHYSICAL_SEEK_SKIP=true`. Override knobs preserved
+(`coli_walker_variant=baseline`, `--use_seek_skip=0`) for regression
+A/Bs but not the active code path.
 
 ---
 
@@ -43,7 +59,7 @@ query count)** is the second-order story the paper should tell anyway.
 | ID | Hypothesis                              | Status | One-line takeaway |
 |----|-----------------------------------------|--------|-------------------|
 | H1 | MI too large per row                    | **REFUTED** | `get_size` artefact (closed in `50fd2052`) |
-| H2 | Iter overhead on rejected groups        | **CONFIRMED + REMEDIATED on LeanStore (A3, `83870b48`); REVERTED on RocksDB (`8d10782b`)** | B-tree Seek to next custkey: +356% SF=15, +116× SF=40 |
+| H2 | Iter overhead on rejected groups        | **CONFIRMED + REMEDIATED on BOTH backends (A3 + Linux re-A/B)** | LeanStore +356% SF=15 / +116× SF=40; RocksDB +700% SF=15 / +64% SF=40 (macOS A/B was a page-cache artefact) |
 | H3 | Walker visits entire MI per query       | **CONFIRMED uniform (subsumed by H6)** | Doesn't explain S3-vs-S1 gap |
 | H4 | Per-record dispatch overhead            | **CONFIRMED + REMEDIATED at SF=15 (A2c, `88088305`)** | fused_emit closes per-call gap to ~3% of S1; neutral at SF=40 disk-bound |
 | H5 | Storage-engine specific                 | **REFUTED** | Same direction on LeanStore |
@@ -52,7 +68,7 @@ query count)** is the second-order story the paper should tell anyway.
 | H8 | Shared-DB cache pollution               | **SPLIT: differential SF=15, symmetric SF=40 (LeanStore)** | SF=15 baseline numbers were partly artefact |
 | H9 | Per-record-width tax                    | **REFUTED** | No wide-union padding on disk; `bytes_read/q` parity at SF=40 |
 | H10| Compression masks locality              | **REFUTED** | Cross-backend disk-bound TX/s consistent |
-| H11| S3 vs S1 is the wrong baseline          | **PARTIALLY REFUTED on LeanStore (post-A3)** | LeanStore S3-vs-S4 at SF=40 is now +100×; merged-index pitch is alive on B-tree. Open on RocksDB. |
+| H11| S3 vs S1 is the wrong baseline          | **REFUTED on BOTH backends (post-A3)** | LeanStore S3-vs-S4 at SF=40 is +100×; RocksDB S3 lifts +64% disk-bound. Merged-index pitch lives on both engines. |
 | H12| Load-amortized cost is the real metric  | **OPEN** | Crossover (queries vs total time) is the right axis |
 
 Full evidence: archive `PERFORMANCE-2026-05-03b.md` §3.
@@ -61,11 +77,11 @@ Full evidence: archive `PERFORMANCE-2026-05-03b.md` §3.
 
 ## §3 — Active worklist
 
-### A6 — RocksDB memory-pressure sweep, post-A2c (top priority)
+### A6 — Memory-pressure sweep with all post-A3 defaults
 
-Now that LeanStore disk-bound is solved by A3, **RocksDB is the only
-backend where S3 still doesn't dominate at disk pressure**. A6 sweeps
-the operating envelope to find the cell (or prove there isn't one).
+Now that A3 is confirmed on both backends, the open question is
+**how the win shape varies across the (dram, SF) envelope**. A6
+sweeps to characterise it.
 
 - **WHAT**: dram ∈ {0.05, 0.1, 0.5, 1.0, full} at SF=40, all five
   paths, **shared and iso**, with `--coli_walker_variant=fused_emit`,

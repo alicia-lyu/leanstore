@@ -37,9 +37,15 @@ TPCH_FLAG_INT(load_only_structure, -1,
               "If >=1, populate only the secondary needed for this --storage_structure "
               "at load time. Used by the A5 isolated-DB experiment to remove cross-"
               "structure cache pollution. Default -1 = load all secondaries.");
-TPCH_FLAG_STRING(coli_walker_variant, "baseline",
+TPCH_FLAG_STRING(coli_walker_variant, "fused_emit",
                  "COLI walker dispatch: 'baseline' = std::variant + visitor; "
-                 "'fused_emit' = tag-byte switch + direct typed dispatch (A2c).");
+                 "'fused_emit' = tag-byte switch + direct typed dispatch. "
+                 "Default flipped to 'fused_emit' post-A2c (q3i/PERFORMANCE.md §2 H4); "
+                 "pass coli_walker_variant=baseline for A/B regression.");
+TPCH_FLAG_INT(use_seek_skip, -1,
+              "Override Backend::USE_PHYSICAL_SEEK_SKIP at runtime: "
+              "-1 = use trait (default), 0 = force off, 1 = force on. "
+              "A3-Linux re-A/B (q3i/PERFORMANCE.md §3 A3 RocksDB re-open).");
 
 #undef TPCH_FLAG_INT
 #undef TPCH_FLAG_BOOL
