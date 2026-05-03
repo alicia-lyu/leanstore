@@ -602,29 +602,62 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 ## Known Design Limitations
 
-### No project pushdown below secondary-structure loading
+### Project pushdown — primary indexes are full, secondaries are projected
 
-Today, every secondary structure — merged indexes (MI[0], COLI MI),
-COLI custkey-sorted secondaries, and per-query pipeline views —
-stores **the full base record** for each row it carries. Filter
-pushdown into the load path is also avoided on purpose so that
-secondaries stay reusable across param sets (see Q12 §4 predicate
-hoisting, Q3I `plans/family_logical.dot`). Project pushdown is the
-companion optimisation that we have **not** taken: the secondaries
-materialise every column whether the queries need it or not.
+**Rule** (resolved 2026-05-03):
 
-Concretely:
+- A merged index whose participating sub-index is a **primary index
+  of the underlying table(s)** carries the **full base record**.
+  It *is* the primary storage of those rows; pruning columns would
+  mean information loss.
+- Every other secondary structure — pipeline views, pre-aggregated
+  MIs (aCOLI), or any future secondary that doesn't act as the
+  primary index of its rows — carries **only the columns required
+  by queries** that consume it.
+- When a future query needs an additional column from a secondary,
+  *modify the existing record type* to add the field. Do not fork
+  a wider variant.
 
-- `MI[0]` (Q12 OL merged index) stores full `orders_t` and full
-  `lineitem_t` records, even though Q12's `query_by_*` only reads
-  `o_orderpriority`, `o_orderkey`, `l_shipmode`, `l_orderkey`,
-  `l_commitdate`, `l_receiptdate`, `l_shipdate`.
-- `MI[COLI]` (4-table) stores full `customer_coli_t`, `orders_coli_t`,
-  `lineitem_coli_t`, `invoice_coli_t`, even though Q3I (the first
-  consumer) only touches a small projection from each.
-- `q12_pipeline_view_t`, `q3i_pipeline_view_t` (planned), and the COLI
-  secondaries (`Adapter<orders_coli_t>` etc.) all carry the full
-  source-record payload for the same reason.
+This is **project pushdown** complementing **filter pushdown**:
+parameterised filters are still avoided at load time so secondaries
+remain reusable across param sets, but column projection is applied
+at load time because pruning unused columns shrinks scan cost
+without losing reusability inside the consuming query family.
+
+| Secondary | Role | Columns carried |
+|-----------|------|----------------|
+| `MI[0]` (Q12 OL merged index) | Primary index of `orders_t` + `lineitem_t` (in MI form) | Full `orders_t` + `lineitem_t` |
+| `MI[COLI]` (4-table merged index) | Primary index of customer/orders/lineitem/invoice (in tagged-key MI form) | Full `customer_coli_t` etc. (= base record + tag bytes) |
+| COLI split adapters (`Adapter<*_coli_t>`) in S1 mode | Primary index of those tables in split-storage layout | Full payloads |
+| `q12_pipeline_view_t` (Q12 S2) | Pre-aggregated secondary | Q12-only columns |
+| `q3i_pipeline_view_t` (Q3I S2) | Pre-aggregated secondary | Q3I-only: `revenue`, `cust_open_due`, `c_mktsegment`, `o_orderdate`, `o_shippriority` |
+| aCOLI MI (`customer_acoli_q3i_t` + `orders_acoli_q3i_t`, Q3I S5) | Pre-aggregated secondary, Q3I-projected | 4 base columns + 2 pre-aggregates per type |
+
+The legacy `customer_acoli_t` / `orders_acoli_t` types (full base
+payload + 2 pre-aggregates) are kept behind `--acoli_projected=false`
+for backwards compatibility with the A/B-2 measurement; they are
+NOT the default and should be retired once the measurement is
+archived. See `q3i/PERFORMANCE.md` §A/B-2.
+
+**Why S5's projected variant lifts so dramatically (100×–10000×
+TX/s on the iso harness)**: the variant payload narrows from ~240
+B (full) to ~32 B (projected), so each `std::visit` dispatch in
+the per-record loop costs one cache line instead of four. Same
+record count, same code path, vastly different per-record memory
+traffic. The decision rule above (primary indexes carry full
+columns; secondaries carry query columns) is the long-term answer:
+secondaries should *always* be narrow.
+
+**Worth widening *only* under these triggers:**
+
+1. **A real future query needs an additional column.** Modify the
+   existing record type, add a field, re-load.
+2. **A new secondary structure consumes the same data with a
+   superset of column requirements.** Same response — extend, not
+   fork.
+
+Speculative widening on the rationale that "some future query
+might want it" is exactly what this rule rejects.
 
 This is intentional for the current paper — keeping secondaries
 schema-faithful makes them reusable across query variants and keeps

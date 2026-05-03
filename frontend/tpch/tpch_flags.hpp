@@ -46,12 +46,13 @@ TPCH_FLAG_INT(use_seek_skip, -1,
               "Override Backend::USE_PHYSICAL_SEEK_SKIP at runtime: "
               "-1 = use trait (default), 0 = force off, 1 = force on. "
               "A3-Linux re-A/B (q3i/PERFORMANCE.md §3 A3 RocksDB re-open).");
-TPCH_FLAG_BOOL(acoli_projected, false,
+TPCH_FLAG_BOOL(acoli_projected, true,
                "Q3I-only: use the projected aCOLI MI "
                "(customer_acoli_q3i_t + orders_acoli_q3i_t) which carries "
-               "only the columns Q3I reads, instead of the full-payload "
-               "aCOLI. A/B-2 measurement; default false. See "
-               "q3i/PERFORMANCE.md §3 A/B-2.");
+               "only the columns Q3I reads. Default true per the "
+               "'secondaries cover query columns' rule "
+               "(frontend/tpch/CLAUDE.md §Project pushdown). Set false "
+               "to keep the legacy full-payload aCOLI for A/B comparison.");
 
 #undef TPCH_FLAG_INT
 #undef TPCH_FLAG_BOOL

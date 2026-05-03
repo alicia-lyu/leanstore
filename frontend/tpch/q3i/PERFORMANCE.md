@@ -254,16 +254,80 @@ change in another query") flags projected aCOLI as showcase-specific:
 Q5I/Q10I would each need their own projection schemas, and a permanent
 default would couple the aCOLI MI to one query's column set.
 
-**Followup**: instrument the SF=15 LeanStore cell with `[scan]` /
-`[card]` printout to verify projected and full traverse the same
-record counts; if so, the lift is genuine cache-line savings on
-narrower payloads, and a paper-figure section comparing the
-pre-aggregation spectrum (raw COLI / aCOLI-full / aCOLI-projected
-/ pipeline-view) becomes worthwhile.
+**Production wiring**: `--acoli_projected` plumbed through
+`q3i_lsm` / `q3i_btree` and Makefile (`make q3i_*_iso_5
+acoli_projected={true,false}`). Default flipped to `true` after G7
+(below).
 
-**Production wiring**: deferred until the followup above resolves
-the magnitude question. The flag is plumbed through `q3i_lsm` /
-`q3i_btree` and Makefile (`make q3i_*_iso_5 acoli_projected=true`).
+### G7 — DONE: A/B-2 magnitude attribution
+
+**Question**: is the 100×–10000× TX/s lift between full-payload
+and Q3I-projected aCOLI a genuine cache-line / variant-dispatch
+saving, or a counter / record-count anomaly making the comparison
+unfair?
+
+**Step 1 — sizeof print** (one-shot diagnostic in
+`query_by_aggregated`):
+
+```
+[acoli sizeof] full: cust=248 ord=80  variant=256
+             | proj: cust=24  ord=24  variant=32
+```
+
+8× narrower variant payload (256 B → 32 B). Each `MergedAdapter`
+scanner emit constructs a `std::variant<R1, R2>` whose width is
+`max(sizeof(R1), sizeof(R2))` plus a small tag — projected variant
+fits in one 64 B cache line, full variant straddles four.
+
+**Step 2 — scan-count parity at iso, dram=0.1 (BTree)**:
+
+| Cell                       | ap=false                  | ap=true                   |
+|----------------------------|---------------------------|---------------------------|
+| `acoli_customers_scanned`  | 6,189,750 (SF=15) / 7,770,000 (SF=40) | identical |
+| `acoli_customers_passing`  | 825,300 / 1,055,425       | identical |
+| `acoli_orders_scanned`     | 12,148,416 / 15,581,440   | identical |
+| `acoli_orders_emitted`     | 536,445 / 625,485         | identical |
+
+Both code paths traverse exactly the same record counts and emit
+exactly the same number of result rows. **No record-count
+anomaly.** The lift is genuine per-record cost reduction.
+
+**Step 3 — TX/s ratios** (iso, dram=0.1, fused_emit, post-default
+flip):
+
+| Cell                  | full   | projected | lift    |
+|-----------------------|-------:|----------:|--------:|
+| **S5 LeanStore SF=15**| 183.35 | 18756.64  | **102×** |
+| **S5 LeanStore SF=40**| 86.29  | 18441.14  | **214×** |
+| **S5 RocksDB SF=15**  | 22.53  | 93004.51  | **4126×** |
+| **S5 RocksDB SF=40**  | 8.24   | 89621.36  | **10876×** |
+
+**Why much larger than the 8× variant ratio?** Three compounding
+factors per emitted record:
+
+1. *Variant memcpy.* Every `kv->second` materialised by the scanner
+   copies into a 256 B vs. 32 B variant slot.
+2. *L1 cache pressure.* The hot `std::visit` loop touches the
+   variant payload + iteration state. Full variant + state spills
+   beyond L1; projected fits comfortably with overhead.
+3. *RocksDB SST block reads (LSM only).* Smaller records pack
+   more entries per SST block, so the iterator advances through
+   the same logical scan with fewer block fetches. SSTRead/TX
+   collapses from ~50 µs (full) to ~0.01 µs (projected) at SF=15
+   per the `[stage]` metrics — the iterator effectively reads from
+   page cache instead of fetching from SST. This is the source of
+   the much larger LSM lift (4000×) vs. LeanStore's (100×).
+
+**Decision**: flip the default to `--acoli_projected=true`. The
+projected aCOLI is now the production aCOLI; the full-payload type
+is retained behind `--acoli_projected=false` for backwards-A/B
+only and should be retired once the measurement is archived.
+
+**Doc updates**: `frontend/tpch/CLAUDE.md §Project pushdown`
+documents the resolved rule (primary indexes carry full columns;
+secondary structures cover only query-required columns).
+`q3i/CLAUDE.md §Storage Structure Options` updated to reflect
+projected default.
 
 ### A6 — Memory-pressure sweep with all post-A3 defaults
 

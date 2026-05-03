@@ -123,10 +123,27 @@ no 3-stage join chain, just one fused walk.
 | # | Strategy | Secondary structure | Join strategy |
 |---|----------|--------------------|-|
 | 1 | Traditional indexes + merge join | None | Pre-build cust\_open\_due map from INVOICE; BinaryMergeJoin(OL) + CUSTOMER hash lookup |
-| 2 | Intermediate pipeline view | `q3i_pipeline_view_t` (joined\_ol\_t rows) | Pre-build cust\_open\_due map; view scan + CUSTOMER hash filter |
+| 2 | Intermediate pipeline view | `q3i_pipeline_view_t` (Q3I-projected: only the 5 columns Q3I reads + 2 pre-aggregates) | Sequential view scan + per-row mktsegment / threshold filters |
 | 3 | MI\[COLI\] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | PremergedJoin over 4-table tagged-key MI; cust\_open\_due computed in same pass |
 | 4 | Traditional indexes + hash join | None | Pre-build cust\_open\_due map; HashJoin(OL) + CUSTOMER hash lookup |
-| 5 | aCOLI MI (pre-aggregated) | `MergedAdapter<customer_acoli_t, orders_acoli_t>` | Scan 2-type MI; pre\_open\_due and pre\_revenue read directly; no accumulator pass |
+| 5 | aCOLI MI (pre-aggregated) | Default: `MergedAdapter<customer_acoli_q3i_t, orders_acoli_q3i_t>` (Q3I-projected: 4 base columns + 2 pre-aggregates per type). Legacy: `MergedAdapter<customer_acoli_t, orders_acoli_t>` (full base payload + 2 pre-aggregates) under `--acoli_projected=false`, retained for A/B-2 measurement only | Scan 2-type MI; pre\_open\_due and pre\_revenue read directly; no accumulator pass |
+
+**Projection rule.** Both S2 (`q3i_pipeline_view_t`) and S5 (aCOLI
+default) carry only the columns Q3I reads, plus their pre-aggregates.
+This follows the **project-pushdown rule** documented in
+`frontend/tpch/CLAUDE.md §Project pushdown`: secondary structures
+that aren't primary indexes of their rows carry only query-required
+columns; primary-index secondaries (MI[COLI], split adapters) keep
+full payloads. When a future query consuming the same secondary
+needs an additional column, modify the record type — don't fork a
+wider variant.
+
+The G7 investigation (`PERFORMANCE.md §A/B-2`) attributes the
+dramatic TX/s lift on the projected aCOLI variant (100×–10000×) to
+variant-payload cache-line savings, not a record-count bug. With the
+projected variant now default, there is no remaining "narrow
+opt-in"; the legacy full-payload aCOLI is kept only as the
+A/B-2 baseline.
 
 ---
 

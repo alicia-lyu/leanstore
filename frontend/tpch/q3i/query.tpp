@@ -10,9 +10,11 @@
 #pragma once
 
 #include <chrono>
+#include <iostream>
 #include <ostream>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 
 #include "../operators.hpp"
 #include "../../shared/merge-join/binary_merge_join.hpp"
@@ -1072,6 +1074,26 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
 template <typename Backend>
 long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
 {
+   // G7: one-shot sizeof diagnostic. Prints once per process so the
+   // A/B-2 lift can be attributed to variant width vs. record count.
+   // The MergedAdapter scanner's std::visit dispatch constructs a
+   // variant<R1, R2> per emitted record; variant width = max(sizeof(Ri))
+   // + small tag, so a 7.5× narrower variant means 7.5× fewer cache
+   // lines per record dispatched.
+   static bool sizeof_printed = false;
+   if (!sizeof_printed) {
+      sizeof_printed = true;
+      std::cerr << "[acoli sizeof] full: cust=" << sizeof(customer_acoli_t)
+                << " ord=" << sizeof(orders_acoli_t)
+                << " variant=" << sizeof(std::variant<customer_acoli_t,
+                                                       orders_acoli_t>)
+                << " | proj: cust=" << sizeof(customer_acoli_q3i_t)
+                << " ord=" << sizeof(orders_acoli_q3i_t)
+                << " variant=" << sizeof(std::variant<customer_acoli_q3i_t,
+                                                       orders_acoli_q3i_t>)
+                << "\n";
+   }
+
    // S5: scan the aCOLI 2-type MI (customer_acoli_t + orders_acoli_t).
    //
    // The aCOLI MI pre-bakes two aggregates at load time:
