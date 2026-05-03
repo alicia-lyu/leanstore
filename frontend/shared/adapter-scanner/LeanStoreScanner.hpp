@@ -5,6 +5,7 @@
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
+#include "scanner_perf_hook.hpp"
 
 template <class Record>
 struct LeanStoreScanner {
@@ -72,6 +73,7 @@ struct LeanStoreScanner {
 
    std::optional<std::pair<typename Record::Key, Record>> next()
    {
+      tpch::scanner_perf::ScopedTimer _spt_;
       this->produced++;
       if (after_seek) {
          after_seek = false;

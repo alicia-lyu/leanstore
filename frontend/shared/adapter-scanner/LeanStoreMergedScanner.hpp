@@ -6,6 +6,7 @@
 #include "leanstore/KVInterface.hpp"
 #include "leanstore/storage/btree/core/BTreeGeneric.hpp"
 #include "leanstore/storage/btree/core/BTreeGenericIterator.hpp"
+#include "scanner_perf_hook.hpp"
 
 template <typename JK, typename JR, typename... Records>
 struct LeanStoreMergedScanner
@@ -29,6 +30,7 @@ struct LeanStoreMergedScanner
 
    std::optional<std::pair<std::variant<typename Records::Key...>, std::variant<Records...>>> next()
    {
+      tpch::scanner_perf::ScopedTimer _spt_;
       if (after_seek) {
          after_seek = false;
          return current();
