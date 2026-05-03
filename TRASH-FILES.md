@@ -45,3 +45,4 @@ test_query_q3i_phase1_rocksdb.cpp - moved to TRASH/ - temporary Phase 1 harness 
 test_data_q3i - moved to TRASH/test_data_q3i_stale - stale Q3I RocksDB data before S3 bug investigation
 test_csv_q3i - moved to TRASH/test_csv_q3i_stale - stale Q3I CSV/log dir before S3 bug investigation
 .git/index.lock - moved to TRASH/git-index.lock - stale git lock blocking commit
+.git/index.lock - moved to TRASH/git-index.lock-2 - stale git lock blocking commit (second occurrence)

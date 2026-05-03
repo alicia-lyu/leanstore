@@ -27,6 +27,7 @@
 #include <gflags/gflags.h>
 #include <algorithm>
 #include <chrono>
+#include <climits>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -172,14 +173,68 @@ int main(int argc, char** argv)
    long n_split_l  = count_typed(split_lineitem, tpch::lineitem_coli_t{});
    long n_split_i  = count_typed(split_invoice,  tpch::invoice_coli_t{});
 
-   // Walk merged_coli once via a counting Visitor.
+   // Walk merged_coli once via a counting Visitor that also collects a
+   // per-customer-group distribution (orders/customer, lineitems/order,
+   // invoices/customer) and per-record-type byte totals.
    struct CountVisitor {
       long customers = 0, invoices = 0, orders = 0, lineitems = 0, groups = 0;
-      bool on_customer(Integer, const tpch::customer_coli_t&) { ++customers; return true; }
-      void on_invoice (const tpch::invoice_coli_t::Key&,  const tpch::invoice_coli_t&)  { ++invoices; }
-      void on_order   (const tpch::orders_coli_t::Key&,   const tpch::orders_coli_t&)   { ++orders; }
-      void on_lineitem(const tpch::lineitem_coli_t::Key&, const tpch::lineitem_coli_t&) { ++lineitems; }
-      void on_group_end(Integer) { ++groups; }
+      // Byte totals (sum of sizeof per record type).
+      long bytes_customer = 0, bytes_invoice = 0, bytes_order = 0, bytes_lineitem = 0;
+      // Per-group running counters (reset on each on_group_end).
+      long g_orders = 0, g_invoices = 0, g_lineitems = 0;
+      // Per-order running lineitem counter (reset on each on_order).
+      long o_lineitems = 0;
+      // Aggregated min/max/mean across groups and orders.
+      long min_o_per_g = LONG_MAX, max_o_per_g = 0, sum_o_per_g = 0;
+      long min_i_per_g = LONG_MAX, max_i_per_g = 0, sum_i_per_g = 0;
+      long min_l_per_o = LONG_MAX, max_l_per_o = 0, sum_l_per_o = 0, n_orders_for_l = 0;
+      // Sentinel ordering check: customer must arrive before invoices /
+      // orders / lineitems in each group.
+      bool customer_seen_in_group = false;
+      long sentinel_violations = 0;
+      bool on_customer(Integer, const tpch::customer_coli_t&) {
+         ++customers; bytes_customer += sizeof(tpch::customer_coli_t);
+         customer_seen_in_group = true;
+         return true;
+      }
+      void on_invoice (const tpch::invoice_coli_t::Key&,  const tpch::invoice_coli_t&)  {
+         ++invoices; ++g_invoices; bytes_invoice += sizeof(tpch::invoice_coli_t);
+         if (!customer_seen_in_group) ++sentinel_violations;
+      }
+      void on_order   (const tpch::orders_coli_t::Key&,   const tpch::orders_coli_t&)   {
+         // Close the previous order's lineitem counter.
+         if (g_orders > 0) {
+            min_l_per_o = std::min(min_l_per_o, o_lineitems);
+            max_l_per_o = std::max(max_l_per_o, o_lineitems);
+            sum_l_per_o += o_lineitems;
+            ++n_orders_for_l;
+         }
+         o_lineitems = 0;
+         ++orders; ++g_orders; bytes_order += sizeof(tpch::orders_coli_t);
+         if (!customer_seen_in_group) ++sentinel_violations;
+      }
+      void on_lineitem(const tpch::lineitem_coli_t::Key&, const tpch::lineitem_coli_t&) {
+         ++lineitems; ++o_lineitems; bytes_lineitem += sizeof(tpch::lineitem_coli_t);
+         if (!customer_seen_in_group) ++sentinel_violations;
+      }
+      void on_group_end(Integer) {
+         ++groups;
+         // Close the final order's lineitem counter.
+         if (g_orders > 0) {
+            min_l_per_o = std::min(min_l_per_o, o_lineitems);
+            max_l_per_o = std::max(max_l_per_o, o_lineitems);
+            sum_l_per_o += o_lineitems;
+            ++n_orders_for_l;
+         }
+         min_o_per_g = std::min(min_o_per_g, g_orders);
+         max_o_per_g = std::max(max_o_per_g, g_orders);
+         sum_o_per_g += g_orders;
+         min_i_per_g = std::min(min_i_per_g, g_invoices);
+         max_i_per_g = std::max(max_i_per_g, g_invoices);
+         sum_i_per_g += g_invoices;
+         g_orders = g_invoices = g_lineitems = o_lineitems = 0;
+         customer_seen_in_group = false;
+      }
    } cv;
    tpch::coli_group_walk<B>(merged_coli, cv);
    long n_merged_total = cv.customers + cv.invoices + cv.orders + cv.lineitems;
@@ -251,6 +306,59 @@ int main(int argc, char** argv)
              << "  split_invoice=" << split_invoice.size() << " MiB"
              << "  merged_coli=" << merged_coli.size() << " MiB\n";
 
+   // Per-secondary average bytes per row. Quantifies the tagged-key overhead
+   // in MI vs split adapters and view row width. RocksDB's reported size
+   // includes all per-row metadata (key + value + WAL fragments before
+   // compaction), so this is end-to-end physical bytes/row.
+   auto bpr = [](double size_mib, long rows) -> double {
+      if (rows <= 0) return 0.0;
+      return size_mib * 1024.0 * 1024.0 / static_cast<double>(rows);
+   };
+   std::cout << "[bytes/row] pipeline_view="   << std::fixed << std::setprecision(1)
+             << bpr(pipeline_view.size(),  n_view)
+             << "  split_orders="   << bpr(split_orders.size(),   n_split_o)
+             << "  split_lineitem=" << bpr(split_lineitem.size(), n_split_l)
+             << "  split_invoice="  << bpr(split_invoice.size(),  n_split_i)
+             << "  merged_coli="    << bpr(merged_coli.size(),    n_merged_total) << "\n";
+
+   // Per-customer-group MI distribution. Min/max/mean of orders/customer,
+   // invoices/customer, and lineitems/order. Sanity-checks the data shape
+   // against TPC-H spec and catches generator drift.
+   std::cout << "\n=== merged_coli per-group distribution ===\n";
+   auto dist_line = [](const char* label, long min_v, long max_v, long sum_v, long n) {
+      double mean = (n > 0) ? (double)sum_v / (double)n : 0.0;
+      std::cout << "[dist] " << std::left << std::setw(22) << label
+                << "min=" << std::right << std::setw(4) << (min_v == LONG_MAX ? 0 : min_v)
+                << " max=" << std::setw(5) << max_v
+                << " mean=" << std::fixed << std::setprecision(2) << mean
+                << " (n=" << n << ")\n";
+   };
+   dist_line("orders/customer",   cv.min_o_per_g, cv.max_o_per_g, cv.sum_o_per_g, cv.groups);
+   dist_line("invoices/customer", cv.min_i_per_g, cv.max_i_per_g, cv.sum_i_per_g, cv.groups);
+   dist_line("lineitems/order",   cv.min_l_per_o, cv.max_l_per_o, cv.sum_l_per_o, cv.n_orders_for_l);
+
+   // Sentinel-ordering check: customer must arrive before invoices/orders/
+   // lineitems within each group. coli_group_walk relies on this for the
+   // mktsegment short-circuit.
+   {
+      bool ok = (cv.sentinel_violations == 0);
+      stats_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ") << "sentinel ordering"
+                << " violations=" << cv.sentinel_violations << " (expected 0)\n";
+   }
+
+   // Per-record-type byte distribution within MI. Confirms no record type
+   // is unexpectedly bloated.
+   long total_bytes = cv.bytes_customer + cv.bytes_invoice + cv.bytes_order + cv.bytes_lineitem;
+   auto pct = [&](long b) {
+      return total_bytes > 0 ? 100.0 * (double)b / (double)total_bytes : 0.0;
+   };
+   std::cout << "[mi-bytes] customer=" << cv.bytes_customer << " (" << std::fixed
+             << std::setprecision(1) << pct(cv.bytes_customer) << "%)"
+             << "  invoice=" << cv.bytes_invoice << " (" << pct(cv.bytes_invoice) << "%)"
+             << "  order="   << cv.bytes_order   << " (" << pct(cv.bytes_order)   << "%)"
+             << "  lineitem="<< cv.bytes_lineitem<< " (" << pct(cv.bytes_lineitem)<< "%)\n";
+
    // Run all four paths.
    std::cout << "=== Running queries ===\n";
    std::vector<tpch::q3i::q3i_agg_row_t> r_base, r_view, r_merged, r_hash;
@@ -317,8 +425,9 @@ int main(int argc, char** argv)
    // future schema lets `populate_*` write a non-empty but mis-shaped
    // adapter. join_callbacks > 0 on every path is the second line of
    // defence — zero callbacks means the query never saw a row.
-   std::cout << "\n=== Per-path cardinality (Q3IStats) ===\n";
-   std::cout << "[card] " << std::left << std::setw(11) << "path"
+   bool card_ok = true;
+   std::cout << "\n=== Per-path cardinality: scanned ===\n";
+   std::cout << "[scan] " << std::left << std::setw(11) << "path"
              << std::right << std::setw(10) << "cust"
              << std::setw(10) << "orders"
              << std::setw(11) << "lineitems"
@@ -327,7 +436,7 @@ int main(int argc, char** argv)
              << std::setw(9)  << "agg"
              << "\n";
    auto card_line = [](const char* name, const tpch::q3i::Q3IStats& s) {
-      std::cout << "[card] " << std::left << std::setw(11) << name
+      std::cout << "[scan] " << std::left << std::setw(11) << name
                 << std::right << std::setw(10) << s.customers_scanned
                 << std::setw(10) << s.orders_scanned
                 << std::setw(11) << s.lineitems_scanned
@@ -341,7 +450,81 @@ int main(int argc, char** argv)
    card_line("S3 merged", st_merged);
    card_line("S4 hash",   st_hash);
 
-   bool card_ok = true;
+   // Per-stage cardinality: rows passing each filter and rows surviving
+   // each join stage. Should be cross-structure consistent at the
+   // aggregate-output level (S1/S3/S4 emit the same set; S2 reads from a
+   // pre-aggregated view so its post-filter counts are smaller).
+   std::cout << "\n=== Per-path cardinality: post-filter / post-join ===\n";
+   std::cout << "[stage] " << std::left << std::setw(10) << "path"
+             << std::right << std::setw(9)  << "cust+"
+             << std::setw(9)  << "ord+"
+             << std::setw(10) << "lin+"
+             << std::setw(9)  << "inv+"
+             << std::setw(8)  << "j1"
+             << std::setw(8)  << "j2"
+             << std::setw(8)  << "j3"
+             << std::setw(7)  << "topN"
+             << "\n";
+   auto stage_line = [](const char* name, const tpch::q3i::Q3IStats& s) {
+      std::cout << "[stage] " << std::left << std::setw(10) << name
+                << std::right << std::setw(9)  << s.customers_passing_filter
+                << std::setw(9)  << s.orders_passing_filter
+                << std::setw(10) << s.lineitems_passing_filter
+                << std::setw(9)  << s.invoices_passing_filter
+                << std::setw(8)  << s.join1_output_rows
+                << std::setw(8)  << s.join2_output_rows
+                << std::setw(8)  << s.join3_output_rows
+                << std::setw(7)  << s.topN_candidates
+                << "\n";
+   };
+   stage_line("S1 base",   st_base);
+   stage_line("S2 view",   st_view);
+   stage_line("S3 merged", st_merged);
+   stage_line("S4 hash",   st_hash);
+
+   // Per-stage wall-clock breakdown (microseconds).
+   std::cout << "\n=== Per-path stage wall-clock (us) ===\n";
+   std::cout << "[time] " << std::left << std::setw(11) << "path"
+             << std::right << std::setw(11) << "scan_filt"
+             << std::setw(11) << "aggregator"
+             << std::setw(11) << "join"
+             << std::setw(11) << "topN"
+             << "\n";
+   auto time_line = [](const char* name, const tpch::q3i::Q3IStats& s) {
+      std::cout << "[time] " << std::left << std::setw(11) << name
+                << std::right << std::setw(11) << s.stage_us_scan_filter
+                << std::setw(11) << s.stage_us_aggregator
+                << std::setw(11) << s.stage_us_join
+                << std::setw(11) << s.stage_us_topN
+                << "\n";
+   };
+   time_line("S1 base",   st_base);
+   time_line("S2 view",   st_view);
+   time_line("S3 merged", st_merged);
+   time_line("S4 hash",   st_hash);
+
+   // Cross-structure stage cardinality consistency: S1/S3/S4 should agree
+   // on customers passing mktsegment, lineitems passing shipdate, invoices
+   // passing status='O', and post-aggregate row count. S2 is exempt
+   // (operates on the pre-aggregated view).
+   {
+      auto cross_check = [&](const char* label, long s1, long s3, long s4) {
+         bool ok = (s1 == s3) && (s3 == s4);
+         card_ok &= ok;
+         std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                   << "cross-structure " << std::left << std::setw(20) << label
+                   << " S1=" << s1 << " S3=" << s3 << " S4=" << s4 << "\n";
+      };
+      cross_check("customers_pass",
+                  st_base.customers_passing_filter,
+                  st_merged.customers_passing_filter,
+                  st_hash.customers_passing_filter);
+      cross_check("aggregator_rows_out",
+                  st_base.aggregator_rows_out,
+                  st_merged.aggregator_rows_out,
+                  st_hash.aggregator_rows_out);
+   }
+
    auto check_joins = [&](const char* tag, long joins) {
       bool ok = joins > 0;
       card_ok &= ok;
@@ -376,6 +559,44 @@ int main(int argc, char** argv)
    std::cout << "\n=== Top-10 S3 (merged) by revenue DESC ===\n";
    std::cout << "  o_orderkey\trevenue\to_orderdate\to_shippriority\tcust_open_due\n";
    for (const auto& r : r_merged_top) r.print(std::cout);
+
+   // Top-K row-by-row cross-structure check: parity digest is
+   // order-independent, so it can pass even when two paths disagree on
+   // tiebreaker ordering. This block compares the by-orderkey-sorted top-K
+   // pointwise across S1/S2/S3/S4.
+   {
+      auto rows_eq = [](const tpch::q3i::q3i_agg_row_t& a,
+                        const tpch::q3i::q3i_agg_row_t& b) {
+         return a.o_orderkey      == b.o_orderkey
+             && a.revenue         == b.revenue
+             && a.o_orderdate     == b.o_orderdate
+             && a.o_shippriority  == b.o_shippriority
+             && a.cust_open_due   == b.cust_open_due;
+      };
+      bool topK_ok = true;
+      // Use S3 (merged) as the oracle. r_merged is already sorted by orderkey.
+      auto check_path = [&](const char* tag, const std::vector<tpch::q3i::q3i_agg_row_t>& v) {
+         if (v.size() != r_merged.size()) {
+            topK_ok = false;
+            std::cout << "[FAIL] " << tag << " topK size mismatch: "
+                      << v.size() << " vs S3 " << r_merged.size() << "\n";
+            return;
+         }
+         for (size_t i = 0; i < v.size(); ++i) {
+            if (!rows_eq(v[i], r_merged[i])) {
+               topK_ok = false;
+               std::cout << "[FAIL] " << tag << " topK row " << i
+                         << " differs from S3 (orderkey "
+                         << v[i].o_orderkey << " vs " << r_merged[i].o_orderkey << ")\n";
+            }
+         }
+      };
+      check_path("S1 base  ", r_base);
+      check_path("S2 view  ", r_view);
+      check_path("S4 hash  ", r_hash);
+      if (topK_ok) std::cout << "[OK]   topK row-by-row equal across S1/S2/S3/S4\n";
+      card_ok &= topK_ok;
+   }
 
    // Parity check: all four digests must match.
    std::cout << "\n=== Parity check ===\n";

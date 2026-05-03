@@ -104,6 +104,29 @@ struct Q3IStats {
    long mi_records_visited = 0;
    long mi_groups_skipped  = 0;
 
+   // Stage cardinalities (uniform across S1/S2/S3/S4 — let us compare
+   // intermediate counts row-for-row across paths). Filled in best-effort:
+   // some stages don't exist for some paths (e.g. S2 has no separate join
+   // stage, S3 fuses everything into one walk); those leave the counter
+   // at zero, distinguishable from "intermediate cardinality = 0 rows".
+   long customers_passing_filter = 0;  // post c_mktsegment filter
+   long orders_passing_filter    = 0;  // post o_orderdate filter
+   long lineitems_passing_filter = 0;  // post l_shipdate filter
+   long invoices_passing_filter  = 0;  // post i_status='O' filter
+   long join1_output_rows        = 0;  // customer ⋈ open_due (or hashmap probe)
+   long join2_output_rows        = 0;  // (..) ⋈ orders_coli
+   long join3_output_rows        = 0;  // (..) ⋈ lineitem_agg
+   long topN_candidates          = 0;  // rows entering apply_topN
+
+   // Per-stage wall-clock (microseconds). Filled by std::chrono brackets
+   // around the matching stage. Sum may exceed total query time slightly
+   // because pipelined paths (S1/S3) have overlapping stages — these are
+   // best-effort attribution, not strict accounting.
+   long stage_us_scan_filter = 0;
+   long stage_us_aggregator  = 0;
+   long stage_us_join        = 0;
+   long stage_us_topN        = 0;
+
    void reset() { *this = Q3IStats{}; }
 };
 

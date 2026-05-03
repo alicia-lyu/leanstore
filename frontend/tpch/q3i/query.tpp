@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <ostream>
 #include <string_view>
 #include <unordered_map>
@@ -20,6 +21,20 @@
 
 namespace tpch::q3i
 {
+
+// RAII stage timer: accumulates microseconds into a long counter.
+// Use as: { StageTimer t(stats ? &stats->stage_us_join : nullptr); ... }
+// The pointer-or-nullptr form means stat-disabled paths pay no cost.
+struct StageTimer {
+   long* acc;
+   std::chrono::high_resolution_clock::time_point t0;
+   explicit StageTimer(long* a) : acc(a), t0(std::chrono::high_resolution_clock::now()) {}
+   ~StageTimer() {
+      if (!acc) return;
+      auto t1 = std::chrono::high_resolution_clock::now();
+      *acc += std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+   }
+};
 
 // ---------------------------------------------------------------------------
 // Params::defaults — Q3I SQL validation values.
@@ -206,6 +221,10 @@ struct COLIGroupWalkVisitor {
       // passed the shipdate filter (revenue > 0). Orders whose lineitems all
       // fail the shipdate predicate have no matching rows in the SQL result.
       if (rev.revenue > Numeric(0)) {
+         if (stats) {
+            stats->join2_output_rows++;  // surviving (custkey,orderkey)
+            stats->join3_output_rows++;  // post-aggregate emit
+         }
          out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
                         cur_shippriority, open_due.value});
       }
@@ -215,22 +234,28 @@ struct COLIGroupWalkVisitor {
    // Gate predicate: returning false suppresses on_invoice / on_order /
    // on_lineitem for the entire custkey group (on_group_end still fires).
    bool on_customer(Integer /*ck*/, const customer_coli_t& c) {
+      if (stats) stats->customers_scanned++;
       auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
       auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
       mktsegment_ok = (sm == psm);
+      if (mktsegment_ok && stats) stats->customers_passing_filter++;
       return mktsegment_ok;
    }
 
    // Accumulate open-due sub-aggregate before any order rows arrive
    // (guaranteed by invoice tag = 2 < orders tag = 3 in byte-lex order).
    void on_invoice(const invoice_coli_t::Key&, const invoice_coli_t& i) {
+      if (stats) stats->invoices_scanned++;
+      Numeric before = open_due.value;
       open_due.consume_invoice(i);
+      if (open_due.value != before && stats) stats->invoices_passing_filter++;
    }
 
    // First on_order call: finalise threshold_ok (open_due is complete).
    // Subsequent calls: flush the previous order register, open a new one
    // only when both the date filter and the threshold pass.
    void on_order(const orders_coli_t::Key& k, const orders_coli_t& o) {
+      if (stats) stats->orders_scanned++;
       if (!threshold_ok) {
          // First order for this custkey — evaluate threshold now that all
          // invoices have been consumed.
@@ -246,6 +271,10 @@ struct COLIGroupWalkVisitor {
          flush_order();  // close previous order before opening a new one
       }
       if (o.o_orderdate >= params.orderdate) return;  // single-table date filter
+      if (stats) {
+         stats->orders_passing_filter++;
+         stats->join1_output_rows++;  // post mktsegment+threshold+orderdate
+      }
       have_open_order  = true;
       cur_orderkey     = k.orderkey;
       cur_orderdate    = o.o_orderdate;
@@ -254,8 +283,14 @@ struct COLIGroupWalkVisitor {
 
    // Accumulate revenue; no-op when threshold failed or order was filtered.
    void on_lineitem(const lineitem_coli_t::Key&, const lineitem_coli_t& l) {
+      if (stats) stats->lineitems_scanned++;
       if (!threshold_ok || !have_open_order) return;
+      Numeric before = rev.revenue;
       rev.consume(l, params);
+      if (rev.revenue != before && stats) {
+         stats->lineitems_passing_filter++;
+         stats->join_callbacks++;
+      }
    }
 
    // Emit last open order for this group, then reset per-group state.
@@ -486,21 +521,30 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
    // All remaining Visitor fields have in-class default initializers; only
    // params and out lack defaults so they are named explicitly.
    COLIGroupWalkVisitor v{.params = params, .out = out, .stats = stats};
-   coli_group_walk<Backend>(coli.merged_adapter(), v);
+   {
+      // S3 fuses scan / aggregator / join into a single walk; attribute
+      // the whole walk to the join stage for cross-path comparison.
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
+      coli_group_walk<Backend>(coli.merged_adapter(), v);
+   }
    // Mirror the aggregator_rows_out semantics from the other paths so the
    // [card] table reports a non-zero `agg` column for S3.
    if (stats) {
       stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
    }
    // Apply top-10 ordered by revenue DESC outside the pipeline
    // (OPERATORS.md §3 op 8–9).  o_orderdate ASC, then o_orderkey ASC as
    // tiebreakers keep partial_sort deterministic across paths whose input
    // ordering differs (view scan vs. hash-map iteration vs. merged scan).
-   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      if (a.revenue    != b.revenue)    return a.revenue    > b.revenue;
-      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-      return a.o_orderkey < b.o_orderkey;
-   });
+   {
+      StageTimer t(stats ? &stats->stage_us_topN : nullptr);
+      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+         if (a.revenue    != b.revenue)    return a.revenue    > b.revenue;
+         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+         return a.o_orderkey < b.o_orderkey;
+      });
+   }
    return static_cast<long>(out.size());
 }
 
@@ -539,7 +583,10 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
          auto sm  = std::string_view(kv->second.c_mktsegment.data,
                                      kv->second.c_mktsegment.length);
          auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-         if (sm == psm) return kv;
+         if (sm == psm) {
+            if (stats) stats->customers_passing_filter++;
+            return kv;
+         }
       }
       return std::nullopt;
    };
@@ -557,42 +604,65 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
    auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
       while (auto kv = ord_scan_ptr->next()) {
          if (stats) stats->orders_scanned++;
-         if (kv->second.o_orderdate < params.orderdate) return kv;
+         if (kv->second.o_orderdate < params.orderdate) {
+            if (stats) stats->orders_passing_filter++;
+            return kv;
+         }
       }
       return std::nullopt;
    };
 
-   auto fetch_bmj1 = [&]() { return bmj1.next(); };
+   auto fetch_bmj1 = [&]() {
+      auto kv = bmj1.next();
+      if (kv && stats) stats->join1_output_rows++;
+      return kv;
+   };
 
    BinaryMergeJoin<cust_open_due_t::Key, q3i_jr2_t, q3i_jr1_t, orders_coli_t>
        bmj2(fetch_bmj1, fetch_ord);
 
    // BMJ #3: q3i_jr2_t ⋈ lineitem_agg_t on (custkey, orderkey).
-   auto fetch_bmj2    = [&]() { return bmj2.next(); };
+   auto fetch_bmj2 = [&]() {
+      auto kv = bmj2.next();
+      if (kv && stats) stats->join2_output_rows++;
+      return kv;
+   };
    auto fetch_lin_agg = [&]() { return agg_lin.next(); };
 
    BinaryMergeJoin<lineitem_agg_t::Key, q3i_jr3_t, q3i_jr2_t, lineitem_agg_t>
        bmj3(fetch_bmj2, fetch_lin_agg);
 
    // Drain BMJ #3: each JR3 carries (q3i_jr2_t, lineitem_agg_t).
-   while (auto kv = bmj3.next()) {
-      if (stats) stats->join_callbacks++;
-      const q3i_jr3_t& jr3 = kv->second;
-      const q3i_jr2_t& jr2 = jr3.jr2();
-      const lineitem_agg_t& lagg = jr3.linagg();
-      const orders_coli_t&  o   = jr2.order();
-      const cust_open_due_t& due = jr2.jr1().due();
-      Integer orderkey = kv->first.jk.orderkey;
-      out.push_back({orderkey, lagg.revenue, o.o_orderdate,
-                     o.o_shippriority, due.cust_open_due});
+   {
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
+      while (auto kv = bmj3.next()) {
+         if (stats) {
+            stats->join_callbacks++;
+            stats->join3_output_rows++;
+         }
+         const q3i_jr3_t& jr3 = kv->second;
+         const q3i_jr2_t& jr2 = jr3.jr2();
+         const lineitem_agg_t& lagg = jr3.linagg();
+         const orders_coli_t&  o   = jr2.order();
+         const cust_open_due_t& due = jr2.jr1().due();
+         Integer orderkey = kv->first.jk.orderkey;
+         out.push_back({orderkey, lagg.revenue, o.o_orderdate,
+                        o.o_shippriority, due.cust_open_due});
+      }
    }
 
-   if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
-   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
-      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-      return a.o_orderkey < b.o_orderkey;
-   });
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
+   }
+   {
+      StageTimer t(stats ? &stats->stage_us_topN : nullptr);
+      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
+         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+         return a.o_orderkey < b.o_orderkey;
+      });
+   }
    return static_cast<long>(out.size());
 }
 
@@ -609,38 +679,52 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
    // S1/S3 which also fuse those filters in the streaming pass.
    out.clear();
 
-   auto vs = pipeline_view.getScanner();
-   while (auto kv = vs->next()) {
-      const q3i_pipeline_view_t& row = kv->second;
+   {
+      StageTimer t(stats ? &stats->stage_us_scan_filter : nullptr);
+      auto vs = pipeline_view.getScanner();
+      while (auto kv = vs->next()) {
+         const q3i_pipeline_view_t& row = kv->second;
 
-      // Mktsegment filter (parameterised — applied at query time).
-      auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
-      auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-      if (sm != psm) continue;
+         // Mktsegment filter (parameterised — applied at query time).
+         auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
+         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+         if (sm != psm) continue;
+         if (stats) stats->customers_passing_filter++;
 
-      // o_orderdate filter: only orders before params.orderdate.
-      if (row.o_orderdate >= params.orderdate) continue;
+         // o_orderdate filter: only orders before params.orderdate.
+         if (row.o_orderdate >= params.orderdate) continue;
+         if (stats) stats->orders_passing_filter++;
 
-      // Threshold filter on cust_open_due (parameterised — applied at query time).
-      if (row.cust_open_due <= params.threshold) continue;
+         // Threshold filter on cust_open_due (parameterised — applied at query time).
+         if (row.cust_open_due <= params.threshold) continue;
 
-      // Revenue guard: suppress orders whose lineitems all failed the shipdate
-      // filter baked in at view-load time. SQL requires at least one matching
-      // lineitem; revenue=0 means none qualified (same suppression as S1/S3/S4).
-      if (row.revenue <= Numeric(0)) continue;
+         // Revenue guard: suppress orders whose lineitems all failed the shipdate
+         // filter baked in at view-load time. SQL requires at least one matching
+         // lineitem; revenue=0 means none qualified (same suppression as S1/S3/S4).
+         if (row.revenue <= Numeric(0)) continue;
 
-      if (stats) stats->join_callbacks++;
-      Integer orderkey = kv->first.orderkey;
-      out.push_back({orderkey, row.revenue, row.o_orderdate,
-                     row.o_shippriority, row.cust_open_due});
+         if (stats) {
+            stats->join_callbacks++;
+            stats->join3_output_rows++;
+         }
+         Integer orderkey = kv->first.orderkey;
+         out.push_back({orderkey, row.revenue, row.o_orderdate,
+                        row.o_shippriority, row.cust_open_due});
+      }
    }
 
-   if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
-   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
-      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-      return a.o_orderkey < b.o_orderkey;
-   });
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
+   }
+   {
+      StageTimer t(stats ? &stats->stage_us_topN : nullptr);
+      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
+         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+         return a.o_orderkey < b.o_orderkey;
+      });
+   }
    return static_cast<long>(out.size());
 }
 
@@ -670,6 +754,7 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    // Reuses CustomerOpenDueAccumulator's consume_invoice(invoice_t) overload.
    std::unordered_map<Integer, Numeric> open_due_map;
    {
+      StageTimer t(stats ? &stats->stage_us_aggregator : nullptr);
       CustomerOpenDueAccumulator acc;
       auto inv_scan = invoice.getScanner();
       while (auto kv = inv_scan->next()) {
@@ -679,6 +764,7 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          Numeric before = acc.value;
          acc.consume_invoice(inv);
          if (acc.value != before) {
+            if (stats) stats->invoices_passing_filter++;
             open_due_map[inv.i_custkey] = open_due_map[inv.i_custkey] + (acc.value - before);
          }
          acc.reset();
@@ -693,13 +779,17 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    // --- Step b: customer mktsegment filter map ---
    std::unordered_map<Integer, bool> cust_ok;  // true = passes mktsegment filter
    {
+      StageTimer t(stats ? &stats->stage_us_scan_filter : nullptr);
       auto cust_scan = customer.getScanner();
       while (auto kv = cust_scan->next()) {
          if (stats) stats->customers_scanned++;
          const customerh_t& c = kv->second;
          auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
          auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-         if (sm == psm) cust_ok[kv->first.c_custkey] = true;
+         if (sm == psm) {
+            cust_ok[kv->first.c_custkey] = true;
+            if (stats) stats->customers_passing_filter++;
+         }
       }
    }
 
@@ -719,18 +809,23 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    };
    std::unordered_map<Integer, OrderSlot> ord_map;
    {
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
       while (auto kv = ord_scan->next()) {
          if (stats) stats->orders_scanned++;
          const orders_t& o = kv->second;
          if (o.o_orderdate >= params.orderdate) continue;
+         if (stats) stats->orders_passing_filter++;
          if (!open_due_map.count(o.o_custkey)) continue;
          if (!cust_ok.count(o.o_custkey)) continue;
+         if (stats) stats->join1_output_rows++;  // post HJ#1+HJ#2 (cust_open_due ∩ cust_seg)
          ord_map[kv->first.o_orderkey] = {o.o_custkey, o.o_orderdate, o.o_shippriority};
+         if (stats) stats->join2_output_rows++;  // each surviving (custkey,orderkey)
       }
    }
 
    // Probe lineitem against orders map; accumulate revenue per orderkey.
    {
+      StageTimer t(stats ? &stats->stage_us_join : nullptr);
       LineitemRevenueAccumulator acc;
       while (auto kv = lin_scan->next()) {
          if (stats) stats->lineitems_scanned++;
@@ -738,7 +833,11 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          auto it = ord_map.find(kv->first.l_orderkey);
          if (it == ord_map.end()) continue;
          if (!acc.consume(l, params)) continue;  // shipdate filter fused in consume
-         if (stats) stats->join_callbacks++;
+         if (stats) {
+            stats->lineitems_passing_filter++;
+            stats->join_callbacks++;
+            stats->join3_output_rows++;
+         }
          const OrderSlot& slot = it->second;
          Integer orderkey = kv->first.l_orderkey;
          auto& row = per_order[orderkey];
@@ -758,12 +857,18 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
       if (row.revenue > Numeric(0)) out.push_back(row);
    }
 
-   if (stats) stats->aggregator_rows_out = static_cast<long>(out.size());
-   apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-      if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
-      if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-      return a.o_orderkey < b.o_orderkey;
-   });
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
+   }
+   {
+      StageTimer t(stats ? &stats->stage_us_topN : nullptr);
+      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
+         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
+         return a.o_orderkey < b.o_orderkey;
+      });
+   }
    return static_cast<long>(out.size());
 }
 
