@@ -302,15 +302,12 @@ struct orders_coli_t {
       }
    };
 
-   // Payload: all orders_t fields.
-   Integer    o_custkey;
-   Varchar<1> o_orderstatus;
-   Numeric    o_totalprice;
+   // Payload: Q3I-projected fields only (project-pushdown rule —
+   // see frontend/tpch/CLAUDE.md §Project pushdown). orders_coli_t is a
+   // co-located indexed view, not a primary index; widen in place when a
+   // future query (Q5I/Q10I) reads more columns.
    Timestamp  o_orderdate;
-   Varchar<15> o_orderpriority;
-   Varchar<15> o_clerk;
    Integer    o_shippriority;
-   Varchar<79> o_comment;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -318,7 +315,8 @@ struct orders_coli_t {
 
    void print(std::ostream& os) const
    {
-      os << "orders_coli(" << o_custkey << "," << o_orderdate << ")";
+      os << "orders_coli(orderdate=" << o_orderdate
+         << ",shippri=" << o_shippriority << ")";
    }
 
    friend std::ostream& operator<<(std::ostream& os, const orders_coli_t& r)
@@ -329,8 +327,7 @@ struct orders_coli_t {
 
    static orders_coli_t from_base(const orders_t& o)
    {
-      return {o.o_custkey, o.o_orderstatus, o.o_totalprice, o.o_orderdate,
-              o.o_orderpriority, o.o_clerk, o.o_shippriority, o.o_comment};
+      return {o.o_orderdate, o.o_shippriority};
    }
    static Key key_from_base(Integer custkey, const orders_t::Key& k)
    {
@@ -338,8 +335,7 @@ struct orders_coli_t {
    }
 };
 
-static_assert(sizeof(orders_coli_t) == sizeof(orders_t),
-              "orders_coli_t must be the same size as orders_t");
+// orders_coli_t is now Q3I-projected; size will diverge from orders_t.
 
 // ---------------------------------------------------------------------------
 // lineitem_coli_t — stores lineitem_t payload under tagged key.
@@ -384,22 +380,13 @@ struct lineitem_coli_t {
       }
    };
 
-   // Payload: all lineitem_t fields.
-   Integer    l_partkey;
-   Integer    l_suppkey;
-   Numeric    l_quantity;
-   Numeric    l_extendedprice;
-   Numeric    l_discount;
-   Numeric    l_tax;
-   Varchar<1> l_returnflag;
-   Varchar<1> l_linestatus;
-   Timestamp  l_shipdate;
-   Timestamp  l_commitdate;
-   Timestamp  l_receiptdate;
-   Varchar<25> l_shipinstruct;
-   Varchar<10> l_shipmode;
-   Varchar<44> l_comment;
-   Integer    l_invoicekey;
+   // Payload: Q3I-projected fields only (project-pushdown rule —
+   // see frontend/tpch/CLAUDE.md §Project pushdown). lineitem_coli_t is a
+   // co-located indexed view; widen in place when a future query reads
+   // more columns. l_orderkey/l_invoicekey/l_linenumber are in the Key.
+   Numeric   l_extendedprice;
+   Numeric   l_discount;
+   Timestamp l_shipdate;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -407,7 +394,8 @@ struct lineitem_coli_t {
 
    void print(std::ostream& os) const
    {
-      os << "lineitem_coli(" << l_shipmode << ")";
+      os << "lineitem_coli(extprice=" << l_extendedprice
+         << ",disc=" << l_discount << ")";
    }
 
    friend std::ostream& operator<<(std::ostream& os, const lineitem_coli_t& r)
@@ -418,10 +406,7 @@ struct lineitem_coli_t {
 
    static lineitem_coli_t from_base(const lineitem_t& l)
    {
-      return {l.l_partkey, l.l_suppkey, l.l_quantity, l.l_extendedprice,
-              l.l_discount, l.l_tax, l.l_returnflag, l.l_linestatus,
-              l.l_shipdate, l.l_commitdate, l.l_receiptdate,
-              l.l_shipinstruct, l.l_shipmode, l.l_comment, l.l_invoicekey};
+      return {l.l_extendedprice, l.l_discount, l.l_shipdate};
    }
    static Key key_from_base(Integer custkey, const lineitem_t::Key& k, const lineitem_t& v)
    {
@@ -429,8 +414,7 @@ struct lineitem_coli_t {
    }
 };
 
-static_assert(sizeof(lineitem_coli_t) == sizeof(lineitem_t),
-              "lineitem_coli_t must be the same size as lineitem_t");
+// lineitem_coli_t is now Q3I-projected; size will diverge from lineitem_t.
 
 // ---------------------------------------------------------------------------
 // invoice_coli_t — stores invoice_t payload under tagged key.
@@ -467,13 +451,12 @@ struct invoice_coli_t {
       }
    };
 
-   // Payload: all invoice_t fields.
-   Integer    i_custkey;
-   Timestamp  i_invoicedate;
+   // Payload: Q3I-projected fields only (project-pushdown rule —
+   // see frontend/tpch/CLAUDE.md §Project pushdown). invoice_coli_t is a
+   // co-located indexed view; widen in place when a future query reads
+   // more columns. i_custkey is in the Key.
    Numeric    i_totaldue;
-   Varchar<1>  i_status;
-   Varchar<25> i_paymentterm;
-   Varchar<79> i_comment;
+   Varchar<1> i_status;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -481,7 +464,8 @@ struct invoice_coli_t {
 
    void print(std::ostream& os) const
    {
-      os << "invoice_coli(" << i_custkey << ")";
+      os << "invoice_coli(totaldue=" << i_totaldue
+         << ",status=" << i_status << ")";
    }
 
    friend std::ostream& operator<<(std::ostream& os, const invoice_coli_t& r)
@@ -492,8 +476,7 @@ struct invoice_coli_t {
 
    static invoice_coli_t from_base(const invoice_t& i)
    {
-      return {i.i_custkey, i.i_invoicedate, i.i_totaldue,
-              i.i_status, i.i_paymentterm, i.i_comment};
+      return {i.i_totaldue, i.i_status};
    }
    static Key key_from_base(Integer custkey, const invoice_t::Key& k)
    {
@@ -501,8 +484,7 @@ struct invoice_coli_t {
    }
 };
 
-static_assert(sizeof(invoice_coli_t) == sizeof(invoice_t),
-              "invoice_coli_t must be the same size as invoice_t");
+// invoice_coli_t is now Q3I-projected; size will diverge from invoice_t.
 
 // ---------------------------------------------------------------------------
 // aCOLI (aggregated COLI) record types.

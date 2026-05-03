@@ -86,7 +86,10 @@ ColiStats scan_coli_stats(
                 stats.orders_count++;
              } else if constexpr (std::is_same_v<V, lineitem_coli_t>) {
                 stats.lineitem_count++;
-                stats.lineitem_invoicekeys.insert(val.l_invoicekey);
+                // l_invoicekey moved to the Key after G8a projection.
+                if (auto* lk = std::get_if<lineitem_coli_t::Key>(&kv->first)) {
+                   stats.lineitem_invoicekeys.insert(lk->invoicekey);
+                }
              } else if constexpr (std::is_same_v<V, invoice_coli_t>) {
                 stats.invoice_count++;
                 if (std::isfinite(val.i_totaldue)) stats.invoice_finite_count++;
@@ -238,6 +241,10 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> lineitem_sec(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  invoice_sec(rocks_db);
 
+   // S5 aCOLI 3-type MI (load test does not exercise it but ctor requires it).
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+                    tpch::lineitem_acoli_t> acoli(rocks_db);
+
    rocks_db.open();
 
    RocksDBLogger logger(rocks_db);
@@ -247,7 +254,7 @@ int main(int argc, char** argv)
 
    tpch::CustomerOrdersLineitemInvoicePipeline<B> coli_pipe(
        customer, orders, lineitem, invoice, merged_coli,
-       orders_sec, lineitem_sec, invoice_sec);
+       orders_sec, lineitem_sec, invoice_sec, acoli);
    coli_pipe.populate_merged();
 
    // -----------------------------------------------------------------------
