@@ -39,7 +39,7 @@ Compact status; full evidence in archive §2.
 |----|------------|--------|-------------------|
 | H1 | MI is too large per row | **REFUTED** | `get_size` reporting artefact; content/row 177 vs 150–190 splits |
 | H2 | Iterator overhead on rejected groups | **CONFIRMED, fix reverted on RocksDB; PENDING on LeanStore** | Forward iteration cheaper than physical Seek on RocksDB; B-tree branch unexplored (A3) |
-| H3 | Walker visits entire MI per query | **CONFIRMED** | ~425k records/q at SF=40; only ~20% pass the visitor |
+| H3 | Walker visits entire MI per query | **CONFIRMED uniform** (subsumed by H6) | ~425k records/q at SF=40; but S1/S4 also full-scan their inputs — doesn't explain the S3-vs-S1 gap |
 | H4 | Per-record dispatch overhead | **OPEN** | Not `std::visit` alone (geo precedent); A2 variants will attribute |
 | H5 | Storage-engine specific (RocksDB block layout) | **REFUTED** | Same ~16% gap on LeanStore at SF=15 |
 | H6 | Low filter selectivity | **CONFIRMED uniform** | All raw paths full-scan; doesn't explain S3-vs-S1 gap; explains S5 win |
