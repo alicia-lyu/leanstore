@@ -10,6 +10,8 @@
 #include <rocksdb/table.h>
 #include <rocksdb/wide_columns.h>
 
+#include <unordered_map>
+
 // -------------------------------------------------------------------------------------
 #include "./Types.hpp"
 #include "Units.hpp"
@@ -165,7 +167,13 @@ struct RocksDB {
       delete txn;
       txn = nullptr;
    }
-   double default_cf_size = 0.0;
+   // Per-CF size cache. Previously a single `default_cf_size` field cached the
+   // first caller's result and returned it for ALL subsequent get_size(cf,...)
+   // calls — silently making every MergedAdapter (e.g. COLI + aCOLI) report
+   // the same size. PERFORMANCE.md Phase 6 traced the cross-backend aCOLI
+   // size anomaly to this bug. Keyed by the CF handle pointer; mapped value
+   // is the size in MiB so the same cache-skip semantics still hold.
+   std::unordered_map<ColumnFamilyHandle*, double> cf_size_cache;
    double get_size(ColumnFamilyHandle* cf_handle, const std::string& name = "default");
 
    template <typename Record>

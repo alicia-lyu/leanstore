@@ -10,11 +10,14 @@
 #include <gflags/gflags.h>
 #include <iomanip>
 #include <iostream>
+#include <map>
+#include <string>
 
 #include "../../shared/RocksDB.hpp"
 #include "../../shared/adapter-scanner/RocksDBAdapter.hpp"
 #include "../../shared/adapter-scanner/RocksDBMergedAdapter.hpp"
 #include "../../shared/logger/rocksdb_logger.hpp"
+#include <rocksdb/perf_level.h>
 #include "../backend.hpp"
 #include "../tpch_tables.hpp"
 #include "../tpch_workload.hpp"
@@ -64,6 +67,13 @@ int main(int argc, char** argv)
 
    rocks_db.open();  // must be called after all adapters register their CFs
 
+   // Enable CPU-time perf counters once at DB open if requested.
+   // kEnableTimeAndCPUTimeExceptForMutex populates block_read_time,
+   // iter_next_cpu_nanos, iter_seek_cpu_nanos, etc. on all threads.
+   if (FLAGS_micro_perf) {
+      rocksdb::SetPerfLevel(rocksdb::PerfLevel::kEnableTimeAndCPUTimeExceptForMutex);
+   }
+
    RocksDBLogger logger(rocks_db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, invoice, logger);
@@ -81,7 +91,25 @@ int main(int argc, char** argv)
    // stage cardinalities and per-stage wall-clock. Counters accumulate
    // across all queries in the 15s window; divide by count for per-query.
    tpch::q3i::Q3IStats stats;
-   q3i.stats = &stats;
+   q3i.stats      = &stats;
+   q3i.micro_perf = FLAGS_micro_perf;
+
+   // cfstats: snapshot per-CF property strings before helper.run().
+   // We capture the raw "rocksdb.cfstats-no-file-histogram" string for every
+   // registered CF so we can print the before/after diff at the end.
+   auto snapshot_cfstats = [&]() -> std::map<std::string, std::string> {
+      std::map<std::string, std::string> snap;
+      if (!FLAGS_cfstats) return snap;
+      for (auto* cfh : rocks_db.cf_handles) {
+         if (!cfh) continue;
+         std::string val;
+         rocks_db.tx_db->GetProperty(cfh, "rocksdb.cfstats-no-file-histogram", &val);
+         snap[cfh->GetName()] = std::move(val);
+      }
+      return snap;
+   };
+
+   auto cfstats_before = snapshot_cfstats();
 
    using AggRow = tpch::q3i::q3i_agg_row_t;
    long tx_count = 0;
@@ -126,10 +154,15 @@ int main(int argc, char** argv)
          return 1;
    }
 
+   auto cfstats_after = snapshot_cfstats();
+
    // Print accumulated Q3I stats and per-query averages.
    // Counters are totals across all tx_count queries in the run window;
    // per-query averages normalise for the different TX/s across structures.
    auto per_q = [&](long total) -> double {
+      return tx_count > 0 ? static_cast<double>(total) / tx_count : 0.0;
+   };
+   auto per_q_u64 = [&](uint64_t total) -> double {
       return tx_count > 0 ? static_cast<double>(total) / tx_count : 0.0;
    };
    long total_stage_us = stats.stage_us_scan_filter + stats.stage_us_aggregator
@@ -169,5 +202,93 @@ int main(int argc, char** argv)
              << "\n  Compare per-query averages, not totals — totals reflect the run window,"
              << "\n  not per-query cost."
              << std::endl;
+
+   // --micro_perf block: RocksDB PerfContext / IOStatsContext totals.
+   if (FLAGS_micro_perf) {
+      // Derived: block cache miss count is not directly on PerfContext; compute
+      // it as block_read_count (physical reads) which represents cache misses
+      // (each physical block read is a cache miss by definition).
+      uint64_t misses     = stats.pc_block_read_count;
+      uint64_t hits       = stats.pc_block_cache_hit_count;
+      uint64_t total_acc  = hits + misses;
+      double   hit_rate   = total_acc > 0
+                            ? 100.0 * static_cast<double>(hits) / static_cast<double>(total_acc)
+                            : 0.0;
+
+      auto ns_to_ms = [](uint64_t ns) -> double { return static_cast<double>(ns) / 1e6; };
+      auto b_to_mib = [](uint64_t b)  -> double { return static_cast<double>(b)  / (1024.0 * 1024.0); };
+
+      std::cout << std::fixed << std::setprecision(3)
+                << "\n[q3i] rocksdb perf-context totals (tx=" << tx_count << "):"
+                << "\n  user_key_comparison_count = " << stats.pc_user_key_comparison_count
+                << "\n  block_cache_hit_count     = " << hits
+                << "\n  block_read_count          = " << misses
+                                                         << "  (cache misses; hit_rate = "
+                                                         << std::setprecision(1) << hit_rate << "%)"
+                << "\n  block_read_byte           = " << std::setprecision(3) << b_to_mib(stats.pc_block_read_byte) << " MiB"
+                << "\n  block_read_time           = " << ns_to_ms(stats.pc_block_read_time) << " ms"
+                << "\n  block_decompress_time     = " << ns_to_ms(stats.pc_block_decompress_time) << " ms"
+                << "\n  iter_next_cpu_nanos       = " << ns_to_ms(stats.pc_iter_next_cpu_nanos) << " ms"
+                << "\n  iter_seek_cpu_nanos       = " << ns_to_ms(stats.pc_iter_seek_cpu_nanos) << " ms"
+                << "\n  bytes_read (iostats)      = " << b_to_mib(stats.ioc_bytes_read) << " MiB"
+                << "\n  read_nanos (iostats)      = " << ns_to_ms(stats.ioc_read_nanos) << " ms"
+                << "\n  open_nanos (iostats)      = " << ns_to_ms(stats.ioc_open_nanos) << " ms"
+                << "\n[q3i] rocksdb perf-context per-query averages (tx=" << tx_count << "):"
+                << "\n  user_key_comparison_count/q = " << std::setprecision(1) << per_q_u64(stats.pc_user_key_comparison_count)
+                << "\n  block_cache_hit_rate        = " << hit_rate << "%"
+                << "\n  block_read_count/q          = " << per_q_u64(stats.pc_block_read_count)
+                << "\n  block_read_byte/q           = " << std::setprecision(3)
+                                                        << per_q_u64(stats.pc_block_read_byte) / 1024.0 << " KiB"
+                << "\n  block_read_time/q           = " << per_q_u64(stats.pc_block_read_time) / 1e3 << " us"
+                << "\n  block_decompress_time/q     = " << per_q_u64(stats.pc_block_decompress_time) / 1e3 << " us"
+                << "\n  iter_next_cpu_nanos/q       = " << per_q_u64(stats.pc_iter_next_cpu_nanos) / 1e3 << " us"
+                << "\n  iter_seek_cpu_nanos/q       = " << per_q_u64(stats.pc_iter_seek_cpu_nanos) / 1e3 << " us"
+                << "\n  bytes_read (iostats)/q      = " << per_q_u64(stats.ioc_bytes_read) / 1024.0 << " KiB"
+                << "\n  read_nanos (iostats)/q      = " << per_q_u64(stats.ioc_read_nanos) / 1e3 << " us"
+                << std::endl;
+   }
+
+   // --cfstats block: per-CF stats diff.
+   if (FLAGS_cfstats) {
+      std::cout << "\n[q3i] per-CF stats (after - before helper.run()):\n";
+      for (auto* cfh : rocks_db.cf_handles) {
+         if (!cfh) continue;
+         const std::string& name = cfh->GetName();
+         std::cout << "  CF: " << name << "\n";
+
+         // Print the after-state cfstats blob (full diff would require parsing;
+         // printing the after blob gives the absolute counters which are
+         // already cumulative from DB open — sufficient for investigation).
+         std::string after_val;
+         rocks_db.tx_db->GetProperty(cfh, "rocksdb.cfstats-no-file-histogram", &after_val);
+         // Print only if different from before (avoids noise from idle CFs).
+         auto it = cfstats_before.find(name);
+         if (it == cfstats_before.end() || it->second != after_val) {
+            std::cout << after_val << "\n";
+         } else {
+            std::cout << "    (no change)\n";
+         }
+
+         // Block-cache entry stats (available in newer RocksDB builds).
+         std::map<std::string, std::string> cache_map;
+         if (rocks_db.tx_db->GetMapProperty(cfh, "rocksdb.block-cache-entry-stats", &cache_map)) {
+            std::cout << "  block-cache-entry-stats:\n";
+            for (auto& [k, v] : cache_map) {
+               std::cout << "    " << k << " = " << v << "\n";
+            }
+         }
+
+         // SST file counts per level.
+         for (int lvl = 0; lvl <= 6; ++lvl) {
+            std::string prop = "rocksdb.num-files-at-level" + std::to_string(lvl);
+            std::string val;
+            if (rocks_db.tx_db->GetProperty(cfh, prop, &val)) {
+               std::cout << "    L" << lvl << " files = " << val << "\n";
+            }
+         }
+      }
+      std::cout << std::endl;
+   }
+
    return 0;
 }

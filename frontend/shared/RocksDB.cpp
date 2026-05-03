@@ -144,8 +144,13 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
 
 double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
 {
-   if (default_cf_size > 0.0) {
-      return default_cf_size;  // avoid frequent compactions
+   // Per-CF cache (Phase 6 fix). Previously a single `default_cf_size` field
+   // returned the first caller's result for every subsequent CF — so two
+   // MergedAdapters in the same RocksDB (e.g. COLI + aCOLI) reported byte-
+   // for-byte identical sizes. Keying by cf_handle restores per-CF accuracy
+   // while preserving the original "compact once per CF" behaviour.
+   if (auto it = cf_size_cache.find(cf_handle); it != cf_size_cache.end()) {
+      return it->second;
    }
    // compact so that every experiment starts with a clean slate for fair comparison
    std::cout << "Compacting " << name << "..." << std::flush;
@@ -203,6 +208,7 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
                << num_keys << "," << total_num_deletions << std::endl;
    sstable_csv.close();
 
-   default_cf_size = (double)live_data_size_bytes / 1024.0 / 1024.0;
-   return default_cf_size;
+   double cf_size_mib = (double)live_data_size_bytes / 1024.0 / 1024.0;
+   cf_size_cache[cf_handle] = cf_size_mib;
+   return cf_size_mib;
 }

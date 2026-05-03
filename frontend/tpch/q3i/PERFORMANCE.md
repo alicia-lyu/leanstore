@@ -31,10 +31,51 @@ see H6.)
 
 **LeanStore-Btree (Linux / dram=0.1) — same ~15% gap, storage-engine-independent:**
 
-| Scale | S1 base_merge | S2 view | S3 mi_coli      | S4 hash |
-|-------|---------------|---------|-----------------|---------|
-| SF=15 | 30.36         | 437.17  | 25.41 (~16% gap)| —       |
-| SF=40 | 0.3926        | 163.33  | 0.3667          | 0.3762  |
+| Scale | S1 base_merge | S2 view | S3 mi_coli      | S4 hash | S5 aCOLI |
+|-------|---------------|---------|-----------------|---------|----------|
+| SF=15 | 30.36         | 437.17  | 25.41 (~16% gap)| 28.38   | 265.63   |
+| SF=40 | 0.3926        | 163.33  | 0.3667          | 0.3397  | 89.67    |
+
+S5 on LeanStore SF=15 reproduces the RocksDB pattern: ~10× ahead of the
+raw paths (S1/S3/S4 ≈ 25–30 TX/s) but ~38% behind S2 (265.63 vs 437.17).
+S5 worker cycles/TX = 7.44 M vs S4's 75.5 M — the aCOLI scan does
+~10× less per-query work, matching the TX/s ratio.
+
+**At SF=40 the picture sharpens dramatically.** With raw paths
+collapsed to ~0.34–0.39 TX/s by DRAM-spilling page faults, S5 holds
+89.67 TX/s — **~260× ahead of the raw paths** and ~55% behind S2
+(163.33). S5 worker cycles/TX = 27.6 M (vs S4's 622 M, a ~22×
+reduction in per-query CPU work) and `R MiB/TX = 2.97e-05` vs S4's
+`6.67e-03` (~225× less I/O traffic).
+
+**aCOLI footprint anomaly (RocksDB side: ROOT-CAUSED & FIXED, commit
+`50fd2052`).** Was: at SF=40 RocksDB reported aCOLI = 136.62 MiB,
+suspiciously close to COLI = 269 MiB (~52% rather than the ~14%
+that cardinality predicted). Root cause: `RocksDB::get_size(cf, ...)`
+cached the first caller's result in a single `default_cf_size`
+field and returned it for **every** subsequent CF — so any binary
+holding two `MergedAdapter`s (e.g. COLI + aCOLI) reported byte-for-
+byte identical sizes. SF=1 reproduction with the new
+`[content/row]` + `[overhead]` walk in
+`tests/q3i/test_query_q3i_rocksdb.cpp` showed aCOLI content =
+0.162 MiB but reported = 2.341 MiB (93% "metadata") — pointing at
+a measurement-API bug rather than real footprint. Fix: per-CF
+cache (`std::unordered_map<ColumnFamilyHandle*, double>`).
+Verified at SF=1 post-fix: aCOLI = 0.100 MiB,
+merged_coli = 1.120 MiB, parity unchanged. SF=40 RocksDB re-run
+pending; expected to drop the reported aCOLI by ~3-4×.
+
+**LeanStore side: still open.** LeanStore's `MergedAdapter::size()`
+goes through `btree->estimatePages() * EFFECTIVE_PAGE_SIZE`
+(unrelated code path, no caching). At SF=15 aCOLI reports
+52.95 MiB and at SF=40 it reports 141.16 MiB — both still
+inflated relative to the ~14% cardinality expectation. Likely
+B-tree page-utilisation (50-70% fill factor counts every page
+including half-full leaves) but not yet quantified. Outstanding
+work: add `[content/row]` walk to the LeanStore harness
+(`test_load_coli_btree` / `test_query_q3i_btree`) so the inflation
+is traceable to leaf-fill ratio rather than another measurement
+bug.
 
 (SF=40 collapses S1/S3/S4 to ~0.4 TX/s — data spills out of the 0.1 GiB
 DRAM budget; bottleneck is page-fault traffic, not the join algorithm.
@@ -385,6 +426,56 @@ structures. Until ruled out, **focus on SSTRead/TX and TX/s** for
 cross-structure comparison on RocksDB; on LeanStore the column is
 trivially zero and not useful either way.
 
+### H8 — Shared-DB cache pollution from non-queried structures → OPEN
+
+All five storage structures are populated into a **single shared database
+instance** before any query runs. `Q3IWorkload::load()` unconditionally
+calls `populate_split()` (S1), `populate_q3i_view()` (S2),
+`populate_merged()` (S3), and `populate_aggregated()` (S5); S4 uses the
+base tables that are always present. The design is intentional — the
+Makefile loads once, then runs multiple `--recover` invocations selecting
+different `--storage_structure` values. Gating on the flag would leave
+3 of 4 secondaries empty, producing fantasy throughput on the
+empty-adapter paths (see comment in `load.tpp`).
+
+**Mechanism.** On RocksDB, all `RocksDBAdapter<R>` instances (8 base
+tables + S1 split indexes + S2 view) share the default column family.
+Each `RocksDBMergedAdapter` (S3 COLI MI, S5 aCOLI MI) gets a dedicated
+CF. A single `block_cache` — sized at 80% of `dram_gib` during query
+time — is shared across ALL CFs. On LeanStore, each adapter is a
+separate B-tree competing for the same buffer pool.
+
+**Footprint at SF=40.** Base tables ≈ 266 MiB, COLI MI ≈ 269 MiB,
+S1 split indexes ≈ 269 MiB, S5 aCOLI ≈ 141 MiB, plus the S2 view.
+Total DB footprint is ~950+ MiB. At `dram=0.1`, block cache ≈ 82 MiB.
+Data blocks from non-queried structures are evicted quickly under
+pressure, but SST metadata (bloom filters, block-index entries, table
+properties) from every CF occupies cache capacity even when the
+structure is never queried. Each non-queried CF/file set contributes a
+fixed metadata overhead.
+
+**Symmetry argument.** S3 and S1 read roughly the same total bytes
+(269 vs 266 MiB at SF=40 on LeanStore). The pollution from non-queried
+structures is **symmetric**: when S3 runs, S1's split indexes and S5's
+aCOLI pollute the cache; when S1 runs, S3's COLI MI and S5's aCOLI
+pollute the cache. Both pay approximately the same metadata tax.
+**H8 does NOT explain the S3-vs-S1 gap.** But it inflates absolute
+wall-clock times for all paths uniformly, making the benchmark
+pessimistic relative to a production deployment where only one
+secondary structure exists.
+
+**Actionable tests:**
+
+- **Isolated-DB test.** Build separate `--ssd_path` directories each
+  containing only base tables plus the single queried secondary. Compare
+  absolute TX/s and the S3-vs-S1 relative gap at SF=40 dram=0.1. If the
+  gap is unchanged in isolation, H8 is confirmed as a uniform overhead.
+  If the gap shifts, the pollution is differential and the shared-DB
+  design needs revisiting.
+- **Block-cache metadata audit.** Inspect `rocksdb.block-cache-entry-stats`
+  per CF before and after `helper.run()` to quantify the fraction of
+  block-cache capacity consumed by metadata from non-queried CFs.
+
 ---
 
 ## §3 — Investigations done (chronological)
@@ -402,6 +493,9 @@ trivially zero and not useful either way.
 | `16e98eb6`   | S5 aCOLI MI                               | SF=1                                                     | 486 records vs S3's 10918 (22× scan reduction); 5-way digest match |
 | 2026-05-02   | LeanStore-Btree run on Linux              | SF=15 / SF=40 dram=0.1                                   | Same ~15% S3-vs-S1 gap as RocksDB → H5 REFUTED. `W MiB/TX = 0` on B-tree → SSTWrite anomaly is RocksDB-specific (compaction). |
 | 2026-05-03   | S5 aCOLI MI on RocksDB                    | SF=40 dram=0.1                                           | S5=123.17 TX/s — beats S1/S3/S4 (~0.4 TX/s, DRAM-spilling) by ~300×, behind S2 (198.3) by ~38%. Reported size 136.62 MiB suspiciously close to base alone (~130 MiB) — aCOLI MI delta ≈ 6 MiB; potential `get_aggregated_size()` measurement bug, not yet root-caused. |
+| 2026-05-03   | S5 aCOLI MI + S4 hash on LeanStore        | SF=15 dram=0.1                                           | S5=265.63 TX/s (worker cycles 7.44 M) reproduces the RocksDB pattern; ~10× ahead of S1/S3/S4 raw paths, ~38% behind S2 (437.17). S4=28.38 TX/s slots between S1 (30.36) and S3 (25.41) — completes the SF=15 raw-path picture. aCOLI footprint 52.95 MiB vs base 48.90 MiB (~4 MiB delta) matches the RocksDB size anomaly — likely `get_aggregated_size()` measures the wrong CF / range on both backends. |
+| 2026-05-03   | S5 aCOLI MI + S4 hash on LeanStore        | SF=40 dram=0.1                                           | S5=89.67 TX/s (worker cycles 27.6 M, R MiB/TX 2.97e-05). S4=0.3397 TX/s (worker cycles 622 M, R MiB/TX 6.67e-03) — DRAM-spilling, 6 queries in 17.7 s. **S5 holds ~260× lead over raw paths under disk pressure**, ~22× fewer cycles/TX and ~225× less I/O than S4; ~55% behind S2 (163.33). aCOLI footprint 141.16 MiB vs S4 base 130.43 MiB (~11 MiB delta) — same anomaly pattern at SF=40 LeanStore. |
+| 2026-05-03   | aCOLI size anomaly root-caused on RocksDB | SF=1 (`test_query_q3i_lsm`)                              | Bug: `RocksDB::get_size(cf,...)` cached one global result and returned it for every CF. With two MergedAdapters (COLI + aCOLI) both reported byte-for-byte identical sizes. Phase 6 [content/row] walk surfaced it (aCOLI content 0.162 MiB vs reported 2.341 MiB → 93% "metadata"). Fix `50fd2052` keys cache per-CF. Post-fix SF=1: aCOLI = 0.100 MiB, merged_coli = 1.120 MiB. Parity unchanged across all 5 paths. |
 
 ---
 
@@ -457,6 +551,17 @@ RocksDB stays on forward iteration. Re-run SF=15 dram=0.1 on B-tree and
 record the delta vs S3=25.41 TX/s. The expected win is meaningful only
 when ~80% of customers fail mktsegment and each rejected group spans
 10–50 records on average (true at SF=15+ for default Q3I params).
+
+### 7. Quantify shared-DB cache pollution (H8)
+
+Run the isolated-DB test described in H8: build separate `--ssd_path`
+directories each containing only base tables plus the single queried
+secondary. Compare absolute TX/s and `block_cache_hit_rate` against the
+current shared-DB setup at SF=40 dram=0.1. If the S3-vs-S1 relative gap
+is unchanged in isolation, H8 is confirmed as a uniform overhead and the
+shared-DB design is validated for comparative benchmarking (even if
+absolute numbers are pessimistic). If the gap changes, the pollution is
+differential and the load strategy needs revisiting.
 
 ---
 
