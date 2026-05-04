@@ -13,7 +13,6 @@
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "../backend.hpp"
-#include "../tpch_tables.hpp"
 #include "../tpch_workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
@@ -40,10 +39,14 @@ int main(int argc, char** argv)
    B::Adapter<lineitem_t>  lineitem;
    B::Adapter<nation_t>    nation;
    B::Adapter<region_t>    region;
-   B::Adapter<invoice_t>   invoice;
 
    B::Adapter<tpch::q3::q3_pipeline_view_t> pipeline_view;
-   B::MergedAdapter<orders_t, lineitem_t>   merged_ol;
+
+   // COL 3-table merged index (S3) + custkey-sorted split indexes (S1)
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
+                    tpch::lineitem_col_t>  merged_col;
+   B::Adapter<tpch::orders_coli_t>        split_orders;
+   B::Adapter<tpch::lineitem_col_t>       split_lineitem;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -55,16 +58,19 @@ int main(int argc, char** argv)
       lineitem      = B::Adapter<lineitem_t>(db, "lineitem");
       nation        = B::Adapter<nation_t>(db, "nation");
       region        = B::Adapter<region_t>(db, "region");
-      invoice       = B::Adapter<invoice_t>(db, "invoice");
       pipeline_view = B::Adapter<tpch::q3::q3_pipeline_view_t>(db, "q3_pipeline_view");
-      merged_ol     = B::MergedAdapter<orders_t, lineitem_t>(db, "q3_merged_ol");
+      merged_col    = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
+                                       tpch::lineitem_col_t>(db, "q3_merged_col");
+      split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q3_split_orders");
+      split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "q3_split_lineitem");
    });
 
    LeanStoreLogger logger(db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                  orders, lineitem, nation, region, invoice, logger);
-   tpch::q3::Q3Workload<B> q3(tpch, orders, lineitem, customer,
-                               pipeline_view, merged_ol);
+                                  orders, lineitem, nation, region, logger);
+   tpch::q3::Q3Workload<B> q3(tpch, customer, orders, lineitem,
+                               pipeline_view, merged_col,
+                               split_orders, split_lineitem);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
