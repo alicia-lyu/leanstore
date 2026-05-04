@@ -43,7 +43,7 @@
 #include "../../backend.hpp"
 #include "../../coli_pipeline.hpp"
 #include "../../tpch_tables.hpp"
-#include "../../tpch_workload.hpp"
+#include "../../tpchi_workload.hpp"
 #include "../../q3i/workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
@@ -89,7 +89,7 @@ int main(int argc, char** argv)
    B::Adapter<partsupp_t>  partsupp;
    B::Adapter<customerh_t> customer;
    B::Adapter<orders_t>    orders;
-   B::Adapter<lineitem_t>  lineitem;
+   B::Adapter<lineitem_i_t>  lineitem;
    B::Adapter<nation_t>    nation;
    B::Adapter<region_t>    region;
    B::Adapter<invoice_t>   invoice;
@@ -114,7 +114,7 @@ int main(int argc, char** argv)
       partsupp       = B::Adapter<partsupp_t>(db, "partsupp");
       customer       = B::Adapter<customerh_t>(db, "customer");
       orders         = B::Adapter<orders_t>(db, "orders");
-      lineitem       = B::Adapter<lineitem_t>(db, "lineitem");
+      lineitem       = B::Adapter<lineitem_i_t>(db, "lineitem");
       nation         = B::Adapter<nation_t>(db, "nation");
       region         = B::Adapter<region_t>(db, "region");
       invoice        = B::Adapter<invoice_t>(db, "invoice");
@@ -130,7 +130,7 @@ int main(int argc, char** argv)
    });
 
    LeanStoreLogger logger(db);
-   TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
+   TPCHIWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, invoice, logger);
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
@@ -253,7 +253,7 @@ int main(int argc, char** argv)
       n_split_i       = count_typed(split_invoice,  tpch::invoice_coli_t{});
       n_customers     = count_typed(customer, customerh_t{});
       n_orders_b      = count_typed(orders,   orders_t{});
-      n_lineitems_ref = count_typed(lineitem, lineitem_t{});
+      n_lineitems_ref = count_typed(lineitem, lineitem_i_t{});
       n_invoices_ref  = count_typed(invoice,  invoice_t{});
       tpch::coli_group_walk<B>(merged_coli, cv);
       leanstore::cr::Worker::my().commitTX();

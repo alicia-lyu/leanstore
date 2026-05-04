@@ -401,6 +401,9 @@ else()
     add_executable(test_load_col_lsm tpch/tests/q3/test_load_col_lsm.cpp)
     target_link_libraries(test_load_col_lsm PUBLIC RocksDBLogger Threads::Threads)
 
+    add_executable(test_load_col_btree tpch/tests/q3/test_load_col_leanstore.cpp)
+    target_link_libraries(test_load_col_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
     # Q3I all-four query_by_* cross-structure parity test (RocksDB).
     add_executable(test_query_q3i_lsm tpch/tests/q3i/test_query_q3i_rocksdb.cpp)
     target_link_libraries(test_query_q3i_lsm PUBLIC RocksDBLogger Threads::Threads)

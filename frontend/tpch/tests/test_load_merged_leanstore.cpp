@@ -38,7 +38,6 @@ int main(int argc, char** argv)
    B::Adapter<lineitem_t>  lineitem;
    B::Adapter<nation_t>    nation;
    B::Adapter<region_t>    region;
-   B::Adapter<invoice_t>   invoice;
 
    B::MergedAdapter<orders_t, lineitem_t> merged_ol;
 
@@ -52,13 +51,12 @@ int main(int argc, char** argv)
       lineitem  = B::Adapter<lineitem_t>(db, "lineitem");
       nation    = B::Adapter<nation_t>(db, "nation");
       region    = B::Adapter<region_t>(db, "region");
-      invoice   = B::Adapter<invoice_t>(db, "invoice");
       merged_ol = B::MergedAdapter<orders_t, lineitem_t>(db, "test_merged_ol");
    });
 
    LeanStoreLogger logger(db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                  orders, lineitem, nation, region, invoice, logger);
+                                  orders, lineitem, nation, region, logger);
 
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
