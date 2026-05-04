@@ -218,7 +218,23 @@ Seek-prone paths (ord_scan, agg_lin) on top of agg_inv.
 `Q3IStats` as zero-valued placeholders — re-enable when a future
 mechanic (buffered wrapper or BMJ hook) lands.
 
-### A/B-2 — DONE: aCOLI Q3I-projected variant (G4+G5)
+### A/B-2 — HISTORICAL (retired 2026-05-03): aCOLI Q3I-projected variant (G4+G5+G7)
+
+> **Note (2026-05-03):** the types this section measured —
+> `customer_acoli_q3i_t` (id=51) and `orders_acoli_q3i_t` (id=52),
+> selected via `--acoli_projected` — were **retired** along with the
+> `--acoli_projected` flag when the upstream merge introduced the
+> 3-type aCOLI design (`customer_acoli_t` + `orders_acoli_t` +
+> `lineitem_acoli_t`, with revenue computed live). G8b/c then
+> projected `orders_acoli_t` and `lineitem_acoli_t` to query-required
+> columns, applying the project-pushdown rule by default — there is
+> no longer a "full vs projected" toggle. The numbers below describe
+> the **retired 2-type design** and remain in the doc as historical
+> evidence. **G9** will re-measure projection's contribution on the
+> current 3-type design (checkout-based pre-G8 vs post-G8 A/B at
+> SF=15+40 both backends).
+
+
 
 **WHAT**: the S5 aCOLI MI carries full base-record payloads
 (`customer_acoli_t` ~280 B/row, `orders_acoli_t` ~140 B/row) even

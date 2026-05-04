@@ -607,23 +607,26 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   `test_load_q12_btree` are already added.)
 - `generate_targets.py` Makefile entries for the new targets.
 
-## Known Design Limitations
+## Project pushdown — primary indexes are full, secondaries are projected
 
-### Project pushdown — primary indexes are full, secondaries are projected
-
-**Rule** (resolved 2026-05-03):
+**Rule** (resolved 2026-05-03; G8 audit applied across TPCH):
 
 - A merged index whose participating sub-index is a **primary index
-  of the underlying table(s)** carries the **full base record**.
-  It *is* the primary storage of those rows; pruning columns would
-  mean information loss.
+  of its rows in the active storage variant** carries the **full
+  base record**. It *is* the primary storage of those rows; pruning
+  columns would mean information loss.
 - Every other secondary structure — pipeline views, pre-aggregated
-  MIs (aCOLI), or any future secondary that doesn't act as the
-  primary index of its rows — carries **only the columns required
-  by queries** that consume it.
+  MIs (aCOLI), co-located secondaries inside a primary-anchored MI —
+  carries **only the columns required by queries** that consume it.
 - When a future query needs an additional column from a secondary,
-  *modify the existing record type* to add the field. Do not fork
-  a wider variant.
+  *modify the existing record type in place* to add the field. Do
+  not fork a wider variant.
+
+The primary-vs-secondary axis is **per storage variant**: a record
+type can be the primary in one variant and a secondary in another
+(see `customer_acoli_t` below). The same record type may also be
+shared across MI and split-adapter layouts; projecting once narrows
+both paths.
 
 This is **project pushdown** complementing **filter pushdown**:
 parameterised filters are still avoided at load time so secondaries
@@ -631,75 +634,34 @@ remain reusable across param sets, but column projection is applied
 at load time because pruning unused columns shrinks scan cost
 without losing reusability inside the consuming query family.
 
-| Secondary | Role | Columns carried |
-|-----------|------|----------------|
-| `MI[0]` (Q12 OL merged index) | Primary index of `orders_t` + `lineitem_t` (in MI form) | Full `orders_t` + `lineitem_t` |
-| `MI[COLI]` (4-table merged index) | Primary index of customer/orders/lineitem/invoice (in tagged-key MI form) | Full `customer_coli_t` etc. (= base record + tag bytes) |
-| COLI split adapters (`Adapter<*_coli_t>`) in S1 mode | Primary index of those tables in split-storage layout | Full payloads |
-| `q12_pipeline_view_t` (Q12 S2) | Pre-aggregated secondary | Q12-only columns |
-| `q3i_pipeline_view_t` (Q3I S2) | Pre-aggregated secondary | Q3I-only: `revenue`, `cust_open_due`, `c_mktsegment`, `o_orderdate`, `o_shippriority` |
-| aCOLI MI (`customer_acoli_q3i_t` + `orders_acoli_q3i_t`, Q3I S5) | Pre-aggregated secondary, Q3I-projected | 4 base columns + 2 pre-aggregates per type |
+| Type | Variant | Role | Columns carried |
+|------|---------|------|----------------|
+| `orders_t` / `lineitem_t` in `MI[0]` | Q12 S3 | **Primary** of orders + lineitem (in MI form) | Full base records |
+| `customer_coli_t` (id=30) | COLI MI (S3) and split (S1) | **Primary** of customer | Full `customerh_t` payload |
+| `orders_coli_t` (id=31) | COLI MI (S3) and split (S1) | **Secondary** | `{o_orderdate, o_shippriority}` (G8a) |
+| `lineitem_coli_t` (id=32) | COLI MI (S3) and split (S1) | **Secondary** | `{l_extendedprice, l_discount, l_shipdate}` (G8a) |
+| `invoice_coli_t` (id=33) | COLI MI (S3) and split (S1) | **Secondary** | `{i_totaldue, i_status}` (G8a) |
+| `customer_acoli_t` (id=49) | aCOLI MI (Q3I S5) | **Primary** of customer in S5 (S3 not present) | Full `customerh_t` + `pre_open_due` |
+| `orders_acoli_t` (id=50) | aCOLI MI (Q3I S5) | **Secondary** | `{o_orderdate, o_shippriority}` (G8b) |
+| `lineitem_acoli_t` (id=53) | aCOLI MI (Q3I S5) | **Secondary** | `{l_extendedprice, l_discount, l_shipdate}` (G8c) |
+| `q12_pipeline_view_t` (id=34) | Q12 S2 view | **Secondary** (pre-aggregated) | `{l_shipmode, o_orderpriority, l_shipdate, l_commitdate, l_receiptdate}` (G8d) |
+| `q3i_pipeline_view_t` (id=43) | Q3I S2 view | **Secondary** (pre-aggregated) | `{l_extendedprice, l_discount, l_shipdate, cust_open_due, c_mktsegment, o_orderdate, o_shippriority}` |
 
-The legacy `customer_acoli_t` / `orders_acoli_t` types (full base
-payload + 2 pre-aggregates) are kept behind `--acoli_projected=false`
-for backwards compatibility with the A/B-2 measurement; they are
-NOT the default and should be retired once the measurement is
-archived. See `q3i/PERFORMANCE.md` §A/B-2.
+`joined_ol_t` is a **join-output** type used by `PremergedJoin` /
+`BinaryMergeJoin` / `HashJoin` at query time, not a stored secondary;
+it carries full base payloads by construction (the join operators
+need them) and is out of scope for this rule.
 
-**Why S5's projected variant lifts so dramatically (100×–10000×
-TX/s on the iso harness)**: the variant payload narrows from ~240
-B (full) to ~32 B (projected), so each `std::visit` dispatch in
-the per-record loop costs one cache line instead of four. Same
-record count, same code path, vastly different per-record memory
-traffic. The decision rule above (primary indexes carry full
-columns; secondaries carry query columns) is the long-term answer:
-secondaries should *always* be narrow.
-
-**Worth widening *only* under these triggers:**
+### Worth widening *only* under these triggers
 
 1. **A real future query needs an additional column.** Modify the
-   existing record type, add a field, re-load.
+   existing record type in place, add a field, re-load.
 2. **A new secondary structure consumes the same data with a
    superset of column requirements.** Same response — extend, not
    fork.
 
-Speculative widening on the rationale that "some future query
-might want it" is exactly what this rule rejects.
-
-This is intentional for the current paper — keeping secondaries
-schema-faithful makes them reusable across query variants and keeps
-the comparison axis clean (S1/S2/S3 read the same logical row, only
-the physical operator differs). But it also means MI scans pay a
-cache-line cost proportional to the **widest** consumer's record,
-not the narrowest active query's projection.
-
-**Worth exploring later, especially under any of these triggers:**
-
-1. **Cache-bound MI scans become a bottleneck** at scale factors
-   where the secondary's row width dominates wall-clock time. We can
-   measure this directly: profile L2/L3 miss rate against a
-   projected-payload variant.
-2. **A query needs only a narrow projection** of a wide base record
-   (e.g. a future query that only reads `c_acctbal` from
-   `customer_coli_t`'s 200+-byte payload).
-3. **Materialised pipeline views balloon at high SF** because their
-   row width is the union of every column the family logical plan
-   touches. Per-query projection-pushed views could shrink them
-   substantially.
-
-The principled fix is a per-secondary projection schema that ships
-only the columns the query family actually reads, with a
-`from_base()` helper analogous to `*_coli_t::from_base` but
-projecting rather than just retagging. Compile-time templating on
-the projection would keep the comparison axis honest (S1 reads the
-same projected record as S3). Calcite's `EnumerableProject` already
-expresses these projections at the planner level — wiring them
-through to the secondary-loading path is the missing piece.
-
-Until then: when adding a new query that touches a merged index, do
-not optimise this prematurely. Note the projection cost in the
-per-query CLAUDE.md §Implementation Status and revisit as part of
-performance-tuning, not initial bring-up.
+Speculative widening on the rationale that "some future query might
+want it" is exactly what this rule rejects.
 
 ## Out of Scope (Skeleton)
 
