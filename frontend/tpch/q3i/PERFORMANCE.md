@@ -218,6 +218,47 @@ Seek-prone paths (ord_scan, agg_lin) on top of agg_inv.
 `Q3IStats` as zero-valued placeholders — re-enable when a future
 mechanic (buffered wrapper or BMJ hook) lands.
 
+### G9 — DONE (2026-05-03): project-pushdown A/B on the post-merge 3-type aCOLI
+
+**Setup**: pre-G8 = commit `e723b0d9` (origin merge with full-payload
+`orders_coli_t` / `lineitem_coli_t` / `invoice_coli_t` and full-
+payload `orders_acoli_t` / `lineitem_acoli_t`). Post-G8 = current
+HEAD with G8a (COLI co-located secondaries projected) + G8b/c (aCOLI
+secondaries projected). Both run via the same `q3i_lsm_iso_{3,5}`
+Makefile targets, SF=15, dram=0.1, fused_emit, RocksDB. Pre-G8 used
+a separate worktree `/tmp/leanstore-preg8` with its own `build/`
+tree to avoid rebuild contamination.
+
+| Cell                      | pre-G8                   | post-G8                  | TX/s lift | size shrink |
+|---------------------------|-------------------------:|-------------------------:|----------:|------------:|
+| **S3 LSM SF=15 (iso_3)**  | 8.17 TX/s, 33.33 MiB     | 15.52 TX/s, 20.11 MiB    | **+90%**  | **-40%**    |
+| **S5 LSM SF=15 (iso_5)**  | 4.62 TX/s, 23.03 MiB     | 4.85 TX/s, 18.96 MiB     | **+5%**   | **-18%**    |
+
+**Reading**: G8a (project COLI co-located secondaries) is the
+high-payoff lever — S3's group walker scans every co-located record,
+so narrowing `orders_coli_t` / `lineitem_coli_t` / `invoice_coli_t`
+from full base payloads to the 2–3 fields each query reads almost
+doubles throughput at SF=15 disk-bound. G8b/c (project aCOLI
+secondaries) yields a smaller TX/s lift because the new 3-type aCOLI
+recomputes revenue live from `lineitem_acoli_t`, so the per-record
+work is dominated by the revenue accumulator, not the variant
+payload. Size shrinks meaningfully in both cases.
+
+**Caveat — single backend, single SF**: only LSM SF=15 measured this
+session. BTree numbers and SF=40 disk-bound cells (which would test
+the cache-line / SST-block hypothesis from the historical A/B-2
+below) are not part of this G9 record. The scale-magnitude question
+the historical A/B-2 settled (4000–10000× lifts on RocksDB at high
+SF) is **not** what's being measured here — that was a 2-type design
+where the projected variant was many cache lines narrower; the
+3-type design's projected vs full delta is one cache line for orders
+and two for lineitem. The +5% S5 lift is consistent with that.
+
+**Decision**: keep G8 projections as the default. The S3 lift alone
+justifies the audit; S5's smaller lift confirms the rule is correct
+(pre-aggregated secondaries should always be narrow) but doesn't
+shift the ordering between storage structures.
+
 ### A/B-2 — HISTORICAL (retired 2026-05-03): aCOLI Q3I-projected variant (G4+G5+G7)
 
 > **Note (2026-05-03):** the types this section measured —
@@ -230,9 +271,8 @@ mechanic (buffered wrapper or BMJ hook) lands.
 > columns, applying the project-pushdown rule by default — there is
 > no longer a "full vs projected" toggle. The numbers below describe
 > the **retired 2-type design** and remain in the doc as historical
-> evidence. **G9** will re-measure projection's contribution on the
-> current 3-type design (checkout-based pre-G8 vs post-G8 A/B at
-> SF=15+40 both backends).
+> evidence. G9 above re-measured projection's contribution on the
+> current 3-type design.
 
 
 
