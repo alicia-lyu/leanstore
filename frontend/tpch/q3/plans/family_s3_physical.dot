@@ -7,7 +7,11 @@
 //
 //     customer → (orders → lineitem*)+
 //
-// (sentinel ordering customer=1 < orders=2 < lineitem=3). This means
+// (sentinel ordering customer=1 < invoice=2 (reserved/unused) <
+// orders=3 < lineitem=4 — COL reuses COLI tag values verbatim per
+// q3/CLAUDE.md §Required Record Types; the invoice slot is empty in
+// COL so the effective order collapses to customer→orders→lineitem).
+// This means
 // a single forward streaming pass — no buffering, no hashmaps — can:
 //
 //   1. Apply the c_mktsegment gate at the customer record (suppresses

@@ -77,10 +77,21 @@
 //   S1 → col_secondary_group_walk over CUSTOMER + 2 COL secondaries
 //        (orders_sec keyed by (custkey, orderkey); lineitem_sec keyed
 //        by (custkey, orderkey, linenumber))
-//   S2 → scan q3_pipeline_view_t (loaded via the same Visitor at load
-//        time; populate_q3_view applies pushed-down per-table filters
-//        but NOT mktsegment so the view is reusable across SEGMENT param
-//        sets — date-filter scope is an open Phase 2 design question)
+//   S2 → scan q3_pipeline_view_t. The view is loaded UNFILTERED and
+//        per-lineitem (one row per (custkey, orderkey, linenumber)
+//        carrying l_extendedprice, l_discount, l_shipdate plus
+//        FD-attached customer/order columns) — predicate hoisting
+//        forbids baking ANY parameterised filter (mktsegment,
+//        orderdate, shipdate) at load time, so the view is reusable
+//        across all SEGMENT and DATE param sets (resolved
+//        2026-05-03; same audit as Q3I S2). Query-time replays the
+//        family logical plan with the view scan substituting for
+//        the base LINEITEM scan: all 3 filters apply live on view
+//        rows, the per-orderkey SortedAggregate fires (view rows
+//        are already (custkey, orderkey, linenumber)-sorted, so
+//        within a custkey block they cluster by orderkey), and the
+//        FD-attached order/customer columns satisfy the joinB/joinA
+//        attaches without rescanning ORDERS/CUSTOMER.
 //   S3 → col_group_walk over the 3-table COL MergedAdapter
 //
 // Outside-pipeline operators are byte-identical across the three.
