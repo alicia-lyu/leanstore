@@ -70,9 +70,9 @@ A/Bs but not the active code path.
 | H10| Compression masks locality              | **REFUTED** | Cross-backend disk-bound TX/s consistent |
 | H11| S3 vs S1 is the wrong baseline          | **REFUTED on BOTH backends (post-A3)** | LeanStore S3-vs-S4 at SF=40 is +100×; RocksDB S3 lifts +64% disk-bound. Merged-index pitch lives on both engines. |
 | H12| Load-amortized cost is the real metric  | **OPEN** | Crossover (queries vs total time) is the right axis |
-| H13| S5 revenue accumulator eats the pre_open_due win | **OPEN** | See §A1 — main anomaly (S3 > S5) |
+| H13| Walker outer-loop tuning beats generic MergedAdapter scan | **OPEN** | See §A1 — main anomaly (S3 > S5) |
 | H14| S2 view has redundant FD-attached ancestor columns per lineitem | **OPEN** | See §A1 — explains S2 < S3, not the main anomaly |
-| H15| S5 per-record dispatch cost erodes the no-invoice savings | **OPEN** | See §A1 — alt explanation for the main anomaly |
+| H15| S5 lacks the customer-level Seek-skip A3 added to S3 walker | **OPEN** | See §A1 — likely explanation for S3 > S5 |
 
 Full evidence: archive `PERFORMANCE-2026-05-03b.md` §3.
 
@@ -114,38 +114,51 @@ scans at query time.
 
 - S5 *should* dominate. It visits fewer records (no invoice rows),
   reads `pre_open_due` directly instead of summing it live, and
-  uses the same revenue accumulator as S3.
+  uses the **same** `LineitemRevenueAccumulator` over the **same**
+  projected lineitem payload as S3 (post-G8 both
+  `lineitem_coli_t` and `lineitem_acoli_t` carry exactly
+  `{l_extendedprice, l_discount, l_shipdate}`). Per-lineitem work is
+  identical between S3 and S5.
 - At SF=1 we measure `acoli_total=744 vs mi_records_visited≈1547`
   — S5 visits ≈48% as many records as S3, yet S5 is **2.5× slower**
   at SF=15.
 - This contradicts H6 (low filter selectivity → S5 wins) and the
   pre-computation spectrum.
 
+**Important**: H13 (originally "S5 revenue accumulator dominates")
+is **refuted by code inspection**. S3 and S5 share the accumulator,
+the projected lineitem record type, and the per-record cost model
+verbatim. The revenue work is *not* what makes S5 slower.
+
 **Hypotheses for the S3 > S5 anomaly** (not yet investigated):
 
-1. **H13 — S5 revenue accumulator dominates.** Revenue
-   recomputation from `lineitem_acoli_t` may be the hot loop in S5,
-   with the `pre_open_due` win amortised to nothing. Test: compare
-   per-query stage timers `revenue_accum_us` between S3 and S5 — if
-   S5's accumulator runs over the same lineitem cardinality as S3's,
-   then S5's only intrinsic advantage over S3 is "no invoice scan",
-   which at low/medium SF is small.
+1. **H13 — Walker-vs-MergedAdapter scan substrate.** S3 uses
+   `coli_group_walk`, a hand-written forward walker over a single
+   4-type MergedAdapter that has been hot-tuned (A2c fused_emit,
+   A3 Seek-skip). S5 uses a generic 3-type MergedAdapter scan +
+   visitor dispatch. Even though the lineitem inner loop is shared,
+   the *outer* loop differs: S3's walker has tighter dispatch and a
+   single-scanner Seek-skip; S5's scan goes through the standard
+   merged-scanner variant-dispatch path. Test: A/B
+   `--coli_walker_variant=baseline` against S5; if S5 catches up to
+   walker-baseline (not fused_emit), the walker tuning is the gap.
 2. **H14 — S2 view redundancy (explains the S2 < S3 secondary
    observation, not the main anomaly).** `q3i_pipeline_view_t` is
    keyed by `(custkey, orderkey, linenumber)` — one row per lineitem,
    each row carrying 5 FD-attached ancestor columns. S2 therefore
    pays the per-lineitem fanout cost on the FD-attached fields N
    times per order group. Test: compare `bytes_scanned/q` for S2 vs
-   S3 at SF=15. Note: this is filed as the explanation for **S2 vs
-   S3**, not the S3 > S5 anomaly.
-3. **H15 — Top-K + per-record dispatch advantage in S3.** S3's
-   `coli_group_walk` is a tight forward scan with fused-emit
-   per-record dispatch (post-A2c), while S5's MergedAdapter has
-   three record types and an extra customer-level join boundary.
-   The per-record dispatch cost on S5 may already eat the savings
-   from skipping invoice rows. Test: micro-benchmark S5 against a
-   hypothetical "S3 minus invoice rows" path; if the gap closes,
-   the cost is in record dispatch, not in scan width.
+   S3 at SF=15.
+3. **H15 — S5 lacks Seek-skip on rejected mktsegment customers.**
+   The A3 customer-level Seek-skip lives in S3's walker
+   (`mi_groups_skipped` counter). S5's
+   `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>`
+   scan does not currently exploit the equivalent. With ~80% of
+   customers failing mktsegment at the validation params, S5 visits
+   every order + lineitem under those rejected customers; S3 skips
+   them at the customer boundary. Test: instrument S5 with a
+   per-customer skip and re-A/B; expected lift comparable to A3 on
+   S3 (+356% LeanStore SF=15).
 
 **What the anomaly doesn't undermine**:
 
