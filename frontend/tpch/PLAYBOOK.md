@@ -118,6 +118,52 @@ split adapter.
 **Building the COL pipeline is a separate infrastructure task, not part
 of per-query implementation.** This playbook assumes the pipeline exists.
 
+### S5 (aCOLI / pre-aggregated MI) — DEFERRED for the current paper
+
+The aCOLI MI (`MergedAdapter<customer_acoli_t, orders_coli_t,
+lineitem_acoli_t>` with `pre_open_due` baked at load time) is
+**deferred indefinitely**. New queries should land **S1–S4 only**.
+
+**Reason** (`q3i/PERFORMANCE.md §A1`, hypothesis ledger H13/H15):
+post-G8 measurements show S3 > S5 on both backends at SF=15
+cache-resident — the most pre-computed MI variant *loses* to the raw
+COLI walk by ~2.5×. Code inspection refuted "S5's revenue
+accumulator dominates" (S3 and S5 share `LineitemRevenueAccumulator`
+over identically-projected lineitem payloads). The remaining
+plausible explanation is that the gap comes from **S3's hand-tuned
+`coli_group_walk`** (A2c fused-emit + A3 customer-level Seek-skip,
+massive measured wins) versus S5's generic MergedAdapter scan that
+lacks the equivalent tuning.
+
+Closing the gap would require **hand-writing a second walker** for
+the aCOLI MergedAdapter family with the same dispatch tuning and
+Seek-skip facility. That is not a per-query task — it's
+infrastructure work on the order of the original COLI walker.
+
+**For the paper's story, S1–S4 are sufficient**. The merged-index
+pitch is the S3-vs-S1/S4 axis (raw co-location vs split-index merge
+join vs hash join), which already shows the operator-level locality
+win. S5 (MI-as-aggregate-store) is a research variant that addresses
+a separate reviewer concern (R2-D1) and can be re-investigated later
+when the second walker is justified by a query whose semantics the
+S3 walker cannot serve.
+
+**What this means for new queries** (Track 1 / Track 2):
+
+- Implement S1 / S2 / S3 / S4 only. No `query_by_aggregated`. No
+  aCOLI adapter members. No `populate_aggregated()` call site.
+- Per-structure wrappers stop at `HashQ{N}`; do not add
+  `AggregatedQ{N}`.
+- Storage-structure dispatch in executables and `load()` covers
+  cases 1–4.
+- The aCOLI record types (`customer_acoli_t`, `lineitem_acoli_t`)
+  remain in `views_coli.hpp` for Q3I's existing S5 path; new queries
+  do not reference them.
+
+When S5 is later revisited, the work item is "build aCOLI walker as
+a tuned analogue of `coli_group_walk`," not "wire S5 into a new
+query." Track that as infrastructure, not per-query.
+
 ---
 
 ## §3 — Directory and File Scaffold
