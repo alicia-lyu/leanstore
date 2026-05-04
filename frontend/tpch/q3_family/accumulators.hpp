@@ -3,8 +3,8 @@
 // Shared accumulator structs for the Q3 / Q3I query family.
 //
 // Both accumulators read only the fields `l_extendedprice`, `l_discount`,
-// and `l_shipdate`, which are present on lineitem_t, lineitem_coli_t, and
-// lineitem_acoli_t.  The overloaded consume() / consume_invoice() methods
+// and `l_shipdate`, which are present on lineitem_t, lineitem_col_t,
+// lineitem_coli_t, and lineitem_acoli_t.  The overloaded consume() methods
 // provide duck-typed dispatch without requiring a common base class.
 //
 // Sharing these structs across Q3 and Q3I keeps the per-record arithmetic
@@ -12,6 +12,7 @@
 // comparison-integrity).
 
 #include "../tpch_tables.hpp"
+#include "../views_col.hpp"
 #include "../views_coli.hpp"
 
 namespace tpch::q3_family
@@ -37,8 +38,15 @@ struct LineitemRevenueAccumulator {
       return true;
    }
 
-   // COLI / aCOLI lineitem variants (used by Q3I S1/S3/S5).
+   // COLI / COL / aCOLI lineitem variants (used by Q3 S3 and Q3I S1/S3/S5).
    bool consume(const lineitem_coli_t& l, const P& p) {
+      if (l.l_shipdate <= p.shipdate) return false;
+      revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
+      return true;
+   }
+
+   // lineitem_col_t: tagged COL lineitem without invoicekey segment (used by Q3 S3).
+   bool consume(const lineitem_col_t& l, const P& p) {
       if (l.l_shipdate <= p.shipdate) return false;
       revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
       return true;

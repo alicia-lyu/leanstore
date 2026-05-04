@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   cross-structure parity. Only after all three are green should an
   end-to-end executable run. Performance numbers from a binary that
   hasn't passed parity are noise.
-- **Reload eagerly when load-path files change.** Each
+- **Reload eagerly on Linux when load-path files change.** Each
   `q*_{lsm,btree}_iso_N` Makefile target depends on the persisted
   `$(data_disk)/<query>_iso/iso_N/build/$(scale).json`, which in
   turn depends on `frontend/tpch/tpch_workload.hpp`,

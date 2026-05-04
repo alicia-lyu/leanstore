@@ -1,6 +1,6 @@
 // Q3 family logical plan — shared by S1, S2, S3.
 //
-// Departs from Calcite's vanilla-Q3 plan in one key way:
+// Departs from Calcite's vanilla-Q3 plan in two key ways:
 //
 //   1. Pipeline sort key is CUSTKEY, not ORDERKEY. ORDERS and LINEITEM
 //      secondaries are extended with the custkey FD (orders key
@@ -9,13 +9,22 @@
 //      Per OPERATORS.md §1, the family logical plan must match the COL
 //      MI's natural sort key.
 //
-//   2. One SortedAggregate inside the pipeline (per-ORDERKEY revenue),
-//      realised in C++ as a namespace-scope accumulator struct
-//      (LineitemRevenueAccumulator) consumed by a single Visitor via
-//      col_group_walk / col_secondary_group_walk (see
-//      family_s3_physical.dot for the S3 specialisation). Q3 has NO
-//      sibling sub-aggregate (no invoice / threshold) — that is the
-//      Q3I extension.
+//   2. **Aggregation is pushed BELOW the join chain — directly above
+//      LINEITEM**. We group lineitems by `l_orderkey` and pre-aggregate
+//      revenue = SUM(l_extendedprice * (1 - l_discount)) before joining
+//      with orders. The downstream `joinB` (⋈ ORDERS) attaches
+//      `o_orderdate` / `o_shippriority` per orderkey; `joinA` (⋈
+//      CUSTOMER) then applies the mktsegment gate. Because the
+//      lineitem stream arrives custkey-sorted via the FD-extended
+//      secondary key (`l_orderkey` is the second component, so within
+//      a custkey block the lineitems naturally cluster by orderkey),
+//      this is a SortedAggregate, not a HashAggregate.
+//
+//      Pushing aggregation below the join shrinks the join input from
+//      ~4 lineitems/order to 1 partial-revenue tuple/order, removing
+//      ~4× of the join's per-row work. The sibling-free hierarchical
+//      shape makes this safe: nothing past the lineitem level depends
+//      on individual lineitem fields (only `revenue`).
 //
 // FILTER PUSHDOWN: every parameterised filter is pushed as far down the
 // graph as possible, stopping ONLY at secondary structures (so the COL
@@ -43,15 +52,15 @@
 //                                               on_customer (returns
 //                                               false to suppress the
 //                                               whole group)
-//   • CUSTOMER ⋈ ORDERS ⋈ LINEITEM           — Visitor sequencing:
-//                                               on_customer gates the
-//                                               group; on_order /
-//                                               on_lineitem accumulate
-//                                               per orderkey under the
-//                                               gate
-//   • Per-ORDERKEY SortedAggregate (lineitem)— Visitor::flush_order +
+//   • Per-ORDERKEY SortedAggregate (lineitem) — Visitor::flush_order +
 //                                               LineitemRevenueAccumulator,
 //                                               reset on each new orderkey
+//                                               (FIRST aggregation, before
+//                                                any join up the tree)
+//   • ORDERS ⋈ <agg-lineitem>                 — attach o_orderdate,
+//                                               o_shippriority by orderkey
+//   • CUSTOMER ⋈ <ordered-agg>                — gate by mktsegment via
+//                                               on_customer suppress
 //   • Pipeline output                         — q3_pipeline_view_t
 //                                               (one row per (custkey,
 //                                                orderkey) carrying revenue
@@ -92,16 +101,21 @@ digraph {
           shape=box, style=filled, fillcolor="#E8F0FE"];
 
   // ─────────── Inside pipeline (custkey-sorted) ───────────
-  // The 3-way custkey-sorted join. In S3 this collapses into a single
-  // walker over the merged adapter; in S1 it is a 3-way merge over
-  // separate secondary scanners.
-  joinA [label="Join(CUSTOMER ⋈ ORDERS, c_custkey = o_custkey)\nsorted on custkey",
-         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  joinB [label="Join(⋈ LINEITEM, o_orderkey = l_orderkey)\nstill custkey-sorted (FD via parent)",
-         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  // Aggregation FIRST, directly above LINEITEM — pushed below both
+  // joins. Group by l_orderkey, sum revenue per orderkey. Custkey-
+  // sorted FD-extended secondary key gives us sorted lineitem groups
+  // for free (lineitems within a custkey block cluster by orderkey).
+  agg_ord [label="SortedAggregate(group=[l_orderkey],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[LineitemRevenueAccumulator]\n— pushed down: directly above LINEITEM",
+           shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
-  agg_ord [label="SortedAggregate(group=[o_orderkey,\n  o_orderdate, o_shippriority,\n  custkey],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[LineitemRevenueAccumulator]",
-           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  // The 3-way custkey-sorted join, now joining the aggregated lineitem
+  // stream up the hierarchy. In S3 this collapses into a single walker
+  // over the merged adapter; in S1 it is a 3-way merge over separate
+  // secondary scanners.
+  joinB [label="Join(ORDERS ⋈ <agg-lineitem>, o_orderkey = l_orderkey)\nattaches o_orderdate, o_shippriority\nstill custkey-sorted (FD via parent)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  joinA [label="Join(CUSTOMER ⋈ <ordered-agg>, c_custkey = o_custkey)\nsorted on custkey",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
   proj    [label="Project(orderkey, revenue,\n  o_orderdate, o_shippriority)\n→ q3_pipeline_view_t / q3_agg_row_t"];
 
@@ -112,14 +126,16 @@ digraph {
             shape=box, style=filled, fillcolor="#E6F4EA"];
 
   // ─────────── Edges ───────────
+  // Aggregate first (directly above lineitem), then join up.
+  s_lin  -> agg_ord;
+
+  s_ord  -> joinB  [label="0"];
+  agg_ord -> joinB [label="1"];
+
   s_cust -> joinA  [label="0"];
-  s_ord  -> joinA  [label="1"];
+  joinB  -> joinA  [label="1"];
 
-  joinA  -> joinB  [label="0"];
-  s_lin  -> joinB  [label="1"];
-
-  joinB -> agg_ord;
-  agg_ord -> proj;
+  joinA -> proj;
   proj  -> sort;
   sort  -> limit;
 }

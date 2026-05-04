@@ -1,11 +1,13 @@
 // Q3 S4 baseline plan — no merged index; default Calcite-style HashJoin
-// chain over base tables.
+// chain over base tables, with **aggregation pushed directly above the
+// LINEITEM scan** (mirrors the family logical-plan push-down).
 //
-// Diverges from the family logical plan because no input is custkey-
-// sorted: ORDERS / LINEITEM are orderkey-sorted, CUSTOMER is
-// custkey-sorted but the join order can't exploit it without merge
-// ordering across all three. Per OPERATORS.md §6.4, S4 is allowed
-// its own logical plan.
+// Diverges from the family logical plan only in physical operators (no
+// input is custkey-sorted, so the joins are HashJoins and the lineitem
+// pre-aggregate is a HashAggregate not a SortedAggregate). Logical
+// shape is identical: aggregate first, join up afterwards. Per
+// OPERATORS.md §6.4, S4 may pick its own physical operators provided
+// the logical comparison axis is preserved.
 //
 // FILTER PUSHDOWN: same principle as the family — push every filter as
 // far down as possible, stopping at secondary structures. S4 has no
@@ -21,29 +23,37 @@
 //                                    HashJoin, shrinking the build/probe
 //                                    side
 //   • l_shipdate > DATE           → fused with TableScan(LINEITEM)
-//                                    similarly, BEFORE HashJoin
+//                                    BEFORE the per-orderkey aggregate
+//
+// AGGREGATION PUSH-DOWN: revenue per orderkey is computed BEFORE
+// joining with ORDERS / CUSTOMER. Lineitem is the only source of
+// `l_extendedprice` / `l_discount`; nothing past the lineitem level
+// depends on individual lineitem fields, so pre-aggregating shrinks the
+// join input from ~4 lineitems/order to 1 partial-revenue tuple/order.
+// Identical logical shape to family_logical.dot — only the physical
+// operators differ (HashAggregate, HashJoin).
 //
 // C++ implementation map (q3/query.tpp::query_by_hash):
 //
-//   Query-time HashJoin chain (over already-filtered base scanners):
+//   Query-time HashJoin chain over already-filtered base scanners,
+//   with pre-aggregation directly above the LINEITEM scan:
 //   ────────────────────────────────────────────────────────────────
-//     // Phase 1: build customer hashmap from filtered customer scan
-//     unordered_map<custkey, customerh_t> cust_seg;
-//     customer.scan_filtered(c_mktsegment == SEGMENT,
-//        [&](const customerh_t& c) { cust_seg.emplace(c.c_custkey, c); });
+//     // Phase 1: scan + filter + aggregate LINEITEM by orderkey
+//     unordered_map<orderkey, Numeric> lin_revenue;
+//     lineitem.scan_filtered(l_shipdate > DATE,
+//        [&](const lineitem_t& l) {
+//          lin_revenue[l.l_orderkey] +=
+//              l.l_extendedprice * (1 - l.l_discount);
+//        });
 //
-//     // Phase 2: HashJoin(customer ⋈ orders) probed on o_custkey,
-//     //          ORDERS already filtered by orderdate
-//     // Phase 3: HashJoin(... ⋈ lineitem) probed on o_orderkey,
-//     //          LINEITEM already filtered by shipdate
-//     // Phase 4: per-orderkey SortedAggregate (revenue) into
-//     //          unordered_map<orderkey, q3_agg_row_t>
+//     // Phase 2: scan + filter ORDERS, HashJoin against lin_revenue
+//     //          on orderkey, attach o_orderdate / o_shippriority /
+//     //          o_custkey. Output: q3_agg_row_t-shaped tuples
+//     //          (still missing mktsegment gate).
 //
-// The post-join unordered_map<orderkey, q3_agg_row_t> is acceptable
-// in S4 because §6.1's "no hash-aggregate inside the merged-index
-// family pipeline" rule applies to S1/S2/S3 only. S4 already pays the
-// hashmap tax for unsorted HashJoin output, so the per-orderkey
-// aggregate is in keeping with the "no merge ordering" baseline.
+//     // Phase 3: scan + filter CUSTOMER on c_mktsegment, build hashmap
+//     //          on c_custkey; HashJoin gates the per-orderkey tuples
+//     //          by mktsegment.
 //
 // Reuse from the family code: LineitemRevenueAccumulator (via a static
 // helper that takes an external Numeric&). Same per-record arithmetic
@@ -61,16 +71,18 @@ digraph {
   s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_shipdate > DATE)",
           shape=box, style=filled, fillcolor="#E8F0FE"];
 
-  // ─────────── HashJoin chain ───────────
-  hj_co [label="HashJoin(c_custkey = o_custkey)\n[shared HashJoin primitive]\nINPUT IS ALREADY FILTERED on\nc_mktsegment / o_orderdate",
+  // ─────────── Pre-aggregate revenue per orderkey ───────────
+  // Pushed directly above LINEITEM, below both joins. HashAggregate
+  // because the filtered lineitem stream is not orderkey-sorted in S4.
+  pre_agg [label="HashAggregate(group=[l_orderkey],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[LineitemRevenueAccumulator inner expr]\n— pushed down: directly above LINEITEM",
+           shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── HashJoin chain over the aggregated stream ───────────
+  hj_ol [label="HashJoin(o_orderkey = l_orderkey)\n[shared HashJoin primitive]\nattaches o_orderdate, o_shippriority,\n  o_custkey to <agg-lineitem>\nORDERS already filtered on o_orderdate",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  hj_col [label="HashJoin(o_orderkey = l_orderkey)\n[shared HashJoin primitive]\n→ joined_col_t (or per-row tuple)\nLINEITEM ALREADY FILTERED on\nl_shipdate",
-          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-
-  // ─────────── Post-join aggregate (orderkey) ───────────
-  post_agg [label="Aggregate(group=[o_orderkey,\n  o_orderdate, o_shippriority],\n  revenue += l_extendedprice * (1 - l_discount))\n→ unordered_map<orderkey, q3_agg_row_t>\n[LineitemRevenueAccumulator inner expr;\n NOT a filter — hashmap tax for\n unsorted HashJoin output]",
-            shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+  hj_co [label="HashJoin(c_custkey = o_custkey)\n[shared HashJoin primitive]\ngates by mktsegment\nCUSTOMER already filtered on c_mktsegment",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
   // ─────────── Outside-pipeline tail (constant) ───────────
   sort  [label="Sort(revenue DESC, orderdate ASC)\n[apply_top10 partial_sort]",
@@ -79,13 +91,14 @@ digraph {
          shape=box, style=filled, fillcolor="#E6F4EA"];
 
   // ─────────── Edges ───────────
+  s_lin -> pre_agg;
+
+  s_ord  -> hj_ol [label="0"];
+  pre_agg -> hj_ol [label="1"];
+
   s_cust -> hj_co [label="0"];
-  s_ord  -> hj_co [label="1"];
+  hj_ol  -> hj_co [label="1"];
 
-  hj_co -> hj_col [label="0"];
-  s_lin -> hj_col [label="1"];
-
-  hj_col -> post_agg;
-  post_agg -> sort;
-  sort -> limit;
+  hj_co -> sort;
+  sort  -> limit;
 }

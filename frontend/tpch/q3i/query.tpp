@@ -16,6 +16,7 @@
 
 #include "../operators.hpp"
 #include "../q3_family/accumulators.hpp"
+#include "../q3_family/coli_visitors.hpp"
 #include "../q3_family/params.hpp"
 #include "../q3_family/predicates.hpp"
 #include "../../shared/merge-join/binary_merge_join.hpp"
@@ -194,104 +195,48 @@ struct CustomerOpenDueAccumulator {
 using LineitemRevenueAccumulator = q3_family::LineitemRevenueAccumulator<Params>;
 
 // ---------------------------------------------------------------------------
-// COLIGroupWalkVisitor — lifted to namespace scope so Phase 2B S1/S2/S4
-// drivers can reference the same Visitor type without duplication.
+// COLIGroupWalkVisitor — Q3I subclass of Q3FamilyVisitor.
+//
+// Derives from the shared C×O×L base visitor and overlays the invoice arm:
+//   • on_invoice: accumulates cust_open_due before the first on_order fires
+//     (guaranteed by invoice tag=2 < orders tag=3 in COLI byte-lex order).
+//   • per_order_admit_check: gates the OL sub-tree on cust_open_due > threshold
+//     at the first on_order call, when open_due is fully accumulated.
+//   • extra_emit_fields: attaches cust_open_due to each emitted q3i_agg_row_t.
 //
 // Design notes:
-//   • threshold_ok is computed once per custkey group, the first time
-//     on_order fires.  Because invoices precede orders in COLI byte-lex
-//     order (tag 2 < tag 3), open_due.value is fully accumulated before
-//     the first on_order call — so the threshold check is final at that
-//     point.  on_order / on_lineitem no-op for the rest of the group when
-//     threshold_ok is false, honouring OPERATORS.md §6 Filter Pushdown:
-//     the aggregate-output filter fuses with the SortedAggregate, never
-//     a post-walk Filter node.
+//   • threshold_ok is evaluated once per custkey group, at the first on_order
+//     call.  Because invoices precede orders in COLI byte-lex order (tag 2 <
+//     tag 3), open_due.value is fully accumulated before the first on_order —
+//     so the threshold check is final at that point.  When the check fails,
+//     per_order_admit_check returns false; the base sets skip_group_pending,
+//     and the rest of the OL sub-tree is physically skipped by the walker
+//     (OPERATORS.md §6 Filter Pushdown: aggregate-output filter fuses with
+//     the SortedAggregate, never a post-walk Filter node).
 //   • The Visitor collects all qualifying rows into `out`; apply_topN is
 //     called by query_by_merged after the walk to enforce ORDER BY revenue
 //     DESC LIMIT 10 (OPERATORS.md §3 op 8–9).
 //   • (invoice→customer is 1:1 after the sub-aggregate; this is not a
 //     4-way M:N — see q3i/CLAUDE.md §Cardinality structure.)
 
-struct COLIGroupWalkVisitor {
-   const Params& params;
-   std::vector<q3i_agg_row_t>& out;
-   Q3IStats* stats = nullptr;  // optional — bumped by walker hooks below
+struct COLIGroupWalkVisitor
+    : q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor, Params,
+                                  lineitem_coli_t, q3i_agg_row_t, Q3IStats> {
+   // Forwarding constructor — base fields (params, out, stats) live in the base.
+   COLIGroupWalkVisitor(const Params& p, std::vector<q3i_agg_row_t>& o,
+                        Q3IStats* s = nullptr)
+       : q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor, Params,
+                                     lineitem_coli_t, q3i_agg_row_t,
+                                     Q3IStats>{p, o, s}
+   {}
 
-   // Walker hooks — coli_group_walk dispatches to these via SFINAE.
-   void on_record_visited() { if (stats) stats->mi_records_visited++; }
-   void on_group_skipped(Integer /*ck*/) { if (stats) stats->mi_groups_skipped++; }
-
-   // Visitor-driven custkey skip: set true to request walker to seek to
-   // the next custkey. Used when the cust_open_due threshold finalises
-   // false on the first on_order (the rest of the OL sub-tree of this
-   // custkey is doomed by the aggregate-output filter — no point
-   // streaming it).
-   bool skip_group_pending = false;
-   bool wants_skip_group() {
-      bool s = skip_group_pending;
-      skip_group_pending = false;  // one-shot — consumed by walker
-      return s;
-   }
-
-   // Visitor-driven order skip: set true to request walker to forward-iterate
-   // past the current order's lineitems without dispatching on_lineitem. Used
-   // when on_order rejects the orderdate filter — the lineitems under that
-   // order are all doomed, so skipping them avoids per-row dispatch cost
-   // (≈75% of lineitems at default params with a 1995-03-15 cutoff).
-   bool skip_order_pending = false;
-   bool wants_skip_order() {
-      bool s = skip_order_pending;
-      skip_order_pending = false;  // one-shot — consumed by walker
-      return s;
-   }
-
-   // Inside-pipeline accumulators (factored — S1 reuses these in Phase 2).
+   // Per-custkey invoice sub-aggregate: SUM(i_totaldue WHERE i_status='O').
+   // Accumulated by on_invoice before the first on_order fires.
    CustomerOpenDueAccumulator open_due;
-   LineitemRevenueAccumulator rev;
-
-   // Per-custkey gates.
-   bool mktsegment_ok = false;  // set by on_customer; gate for entire group
-   bool threshold_ok  = false;  // set on first on_order; gate for OL work
-
-   // Current open order register: reset per order, flushed at next order
-   // or at on_group_end.  Lineitems are co-located under their parent order
-   // in COLI byte order, so a single register suffices.
-   bool      have_open_order = false;
-   Integer   cur_orderkey    = 0;
-   Timestamp cur_orderdate   = 0;
-   Integer   cur_shippriority = 0;
-
-   // Emit the current order and reset per-order state.
-   // Called at each on_order boundary and at on_group_end.
-   void flush_order() {
-      if (!have_open_order) return;
-      have_open_order = false;
-      // threshold_ok already confirmed. Only emit when at least one lineitem
-      // passed the shipdate filter (revenue > 0). Orders whose lineitems all
-      // fail the shipdate predicate have no matching rows in the SQL result.
-      if (rev.revenue > Numeric(0)) {
-         // join2/join3_output_rows are S1/S4 chain-join abstractions; S3 is a
-         // single fused walk — those counters stay at zero for S3. See
-         // q3i/CLAUDE.md §Cardinality structure.
-         out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
-                        cur_shippriority, open_due.value});
-      }
-      rev.reset();
-   }
-
-   // Gate predicate: returning false suppresses on_invoice / on_order /
-   // on_lineitem for the entire custkey group (on_group_end still fires).
-   bool on_customer(Integer /*ck*/, const customer_coli_t& c) {
-      if (stats) stats->customers_scanned++;
-      auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
-      auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-      mktsegment_ok = (sm == psm);
-      if (mktsegment_ok && stats) stats->customers_passing_filter++;
-      return mktsegment_ok;
-   }
 
    // Accumulate open-due sub-aggregate before any order rows arrive
-   // (guaranteed by invoice tag = 2 < orders tag = 3 in byte-lex order).
+   // (guaranteed by invoice tag = 2 < orders tag = 3 in COLI byte-lex order).
+   // Not part of the base — only the COLI walker dispatches on_invoice.
    void on_invoice(const invoice_coli_t::Key&, const invoice_coli_t& i) {
       if (stats) stats->invoices_scanned++;
       Numeric before = open_due.value;
@@ -299,61 +244,26 @@ struct COLIGroupWalkVisitor {
       if (open_due.value != before && stats) stats->invoices_passing_filter++;
    }
 
-   // First on_order call: finalise threshold_ok (open_due is complete).
-   // Subsequent calls: flush the previous order register, open a new one
-   // only when both the date filter and the threshold pass.
-   void on_order(const orders_coli_t::Key& k, const orders_coli_t& o) {
-      if (stats) stats->orders_scanned++;
-      if (!threshold_ok) {
-         // First order for this custkey — evaluate threshold now that all
-         // invoices have been consumed.
-         threshold_ok = (open_due.value > params.threshold);
-         if (!threshold_ok) {
-            // Request a physical custkey-skip from the walker; the rest
-            // of the OL sub-tree is rejected by the aggregate-output
-            // filter on cust_open_due (Q3I `oi.cust_open_due > :threshold`).
-            skip_group_pending = true;
-            return;
-         }
-      } else {
-         flush_order();  // close previous order before opening a new one
-      }
-      if (o.o_orderdate >= params.orderdate) {
-         // Date filter failed: skip this order's lineitems without dispatch.
-         // The walker will forward-iterate past them when wants_skip_order()
-         // fires. have_open_order stays false so flush_order() is a no-op.
-         skip_order_pending = true;
-         have_open_order    = false;
-         return;
-      }
-      if (stats) {
-         stats->orders_passing_filter++;
-         // join1_output_rows is a S1/S4 chain-join counter; S3 is a fused
-         // walk so this counter stays at zero — see §Cardinality structure.
-      }
-      have_open_order  = true;
-      cur_orderkey     = k.orderkey;
-      cur_orderdate    = o.o_orderdate;
-      cur_shippriority = o.o_shippriority;
+   // CRTP hook: called at the first on_order for a custkey group, after all
+   // invoices have been consumed.  Returns false (and triggers a group skip)
+   // when cust_open_due <= threshold.
+   bool per_order_admit_check(const orders_coli_t& /*o*/) {
+      return open_due.value > params.threshold;
    }
 
-   // Accumulate revenue; no-op when threshold failed or order was filtered.
-   void on_lineitem(const lineitem_coli_t::Key&, const lineitem_coli_t& l) {
-      if (stats) stats->lineitems_scanned++;
-      if (!threshold_ok || !have_open_order) return;
-      Numeric before = rev.revenue;
-      rev.consume(l, params);
-      if (rev.revenue != before && stats) {
-         stats->lineitems_passing_filter++;
-         stats->join_callbacks++;
-      }
+   // CRTP hook: attaches cust_open_due to the emitted row.
+   void extra_emit_fields(q3i_agg_row_t& row) {
+      row.cust_open_due = open_due.value;
    }
 
-   // Emit last open order for this group, then reset per-group state.
-   void on_group_end(Integer /*ck*/) {
-      if (threshold_ok) flush_order();
-      mktsegment_ok  = false;
-      threshold_ok   = false;
+   // CRTP hook: reset open_due at each custkey group boundary.
+   // Called from on_group_end() in the base after flushing the last order.
+   // We override on_group_end to also reset open_due.
+   void on_group_end(Integer ck) {
+      // Delegate to base to flush the last open order and reset OL state.
+      q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor, Params,
+                                  lineitem_coli_t, q3i_agg_row_t,
+                                  Q3IStats>::on_group_end(ck);
       open_due.reset();
    }
 };
@@ -616,9 +526,7 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
    // the SortedAggregate, never a post-walk Filter node).
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
-   // All remaining Visitor fields have in-class default initializers; only
-   // params and out lack defaults so they are named explicitly.
-   COLIGroupWalkVisitor v{.params = params, .out = out, .stats = stats};
+   COLIGroupWalkVisitor v(params, out, stats);
    {
       // S3 fuses scan / aggregator / join into a single walk; attribute
       // the whole walk to the join stage for cross-path comparison.
