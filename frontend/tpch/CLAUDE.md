@@ -235,14 +235,19 @@ base class to update.
 
 ### Current state
 
-Two pipelines exist:
+Three pipelines exist:
 
 - `OrdersLineitemPipeline<Backend>` (`ol_pipeline.hpp`) — 2-table OL merged
   index. Q12, Q3, and Q9 each hold exactly one instance named `ol`.
 - `COLIPipeline<Backend>` (`coli_pipeline.hpp`) — 4-table COLI merged index
   (CUSTOMER × ORDERS × LINEITEM × INVOICE). Uses tagged-key format with
-  `views_coli.hpp` types. Currently a standalone pipeline not yet wired into
-  any per-query workload class.
+  `views_coli.hpp` types. Wired into Q3I; standalone load-test passes at SF=1.
+- `CustomerOrdersLineitemPipeline<Backend>` (`col_pipeline.hpp`) — 3-table
+  COL merged index (CUSTOMER × ORDERS × LINEITEM). Strict subset of COLI:
+  reuses `customer_coli_t` and `orders_coli_t` verbatim; introduces
+  `lineitem_col_t` (no `invoicekey` key segment). Uses tagged-key format with
+  `views_col.hpp` types. Standalone load-test (`test_load_col_lsm`) passes at
+  SF=1. Not yet wired into any per-query workload class (Q3 Phase 0.5).
 
 ## Per-query File Convention
 
@@ -309,6 +314,7 @@ point. Run from the repo root.
 | `test_load_merged_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_merged_rocksdb.cpp` |
 | `test_load_merged_btree` | this dir | LeanStore (Linux only) | `tests/test_load_merged_leanstore.cpp` |
 | `test_load_coli_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_coli_rocksdb.cpp` |
+| `test_load_col_lsm` | `q3/` | RocksDB (mac+Linux) | `tests/q3/test_load_col_lsm.cpp` |
 | `test_views_acoli` | this dir | RocksDB (mac+Linux) | `tests/test_views_acoli.cpp` |
 | `test_projection_widths` | this dir | RocksDB (mac+Linux) | `tests/test_projection_widths.cpp` |
 | `test_q3_family` | this dir | RocksDB (mac+Linux) | `tests/test_q3_family.cpp` |
@@ -320,7 +326,7 @@ point. Run from the repo root.
 | `test_query_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_query_q12_leanstore.cpp` |
 | `test_query_q3i_lsm` | `q3i/` | RocksDB (mac+Linux) | `tests/q3i/test_query_q3i_rocksdb.cpp` |
 | `test_query_q3i_btree` | `q3i/` | LeanStore (Linux only) | `tests/q3i/test_query_q3i_leanstore.cpp` |
-| Q3/Q9 tests | `q3/`, `q9/` | — | none yet (load/query bodies TODO) |
+| Q9 tests | `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
 
@@ -360,6 +366,20 @@ mkdir -p test_data_coli test_csv_coli
 # all [OK] at SF=1.
 ```
 
+```bash
+# Build COL load test (macOS)
+make -C build/frontend test_load_col_lsm -j$(sysctl -n hw.ncpu)
+
+# Run COL load test (fresh directory required — same RocksDB constraint)
+mkdir -p test_data_col test_csv_col
+./build/frontend/test_load_col_lsm \
+    --ssd_path=./test_data_col \
+    --csv_path=./test_csv_col \
+    --tpch_scale_factor=1
+# Expected: customer/orders/lineitem counts, FK-resolution, hierarchical
+# order, and split-index checks — all [OK] at SF=1.
+```
+
 **Note**: `--ssd_path` and `--csv_path` MUST be distinct directories.
 RocksDB writes its info log inside `ssd_path`; the Logger calls
 `create_directories(csv_path)` which fails if `csv_path` collides with
@@ -369,7 +389,8 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 ### Per-query test commands
 
 - Q12 — see [`q12/CLAUDE.md §Tests`](q12/CLAUDE.md#tests)
-- Q3, Q9 — none yet
+- Q3 load — `test_load_col_lsm` (see commands above)
+- Q3 query, Q9 — none yet
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
 ## Completed (post-skeleton)

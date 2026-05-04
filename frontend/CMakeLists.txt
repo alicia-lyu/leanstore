@@ -252,6 +252,21 @@ if (APPLE)
 
 
 
+    # --- test_load_col_lsm: standalone load-test for COL 3-table merged-index pipeline (RocksDB) ---
+    add_executable(test_load_col_lsm tpch/tests/q3/test_load_col_lsm.cpp)
+    target_compile_definitions(test_load_col_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_load_col_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_load_col_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
     # --- test_query_q3i_lsm: Q3I all-four query_by_* cross-structure parity test (RocksDB) ---
     add_executable(test_query_q3i_lsm tpch/tests/q3i/test_query_q3i_rocksdb.cpp)
     target_compile_definitions(test_query_q3i_lsm PRIVATE ROCKSDB_ONLY)
@@ -352,6 +367,9 @@ else()
 
     add_executable(test_load_coli_lsm tpch/tests/test_load_coli_rocksdb.cpp)
     target_link_libraries(test_load_coli_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_load_col_lsm tpch/tests/q3/test_load_col_lsm.cpp)
+    target_link_libraries(test_load_col_lsm PUBLIC RocksDBLogger Threads::Threads)
 
     # Q3I all-four query_by_* cross-structure parity test (RocksDB).
     add_executable(test_query_q3i_lsm tpch/tests/q3i/test_query_q3i_rocksdb.cpp)

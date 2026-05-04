@@ -271,16 +271,30 @@ Final output:
   payload `revenue` (already declared in current `q3/views.hpp`;
   preserve).
 
-**Sentinel ordering note**: in Q3I the COLI sentinels are
-`customer=1 < invoice=2 < orders=3 < lineitem=4` so invoice
-finalises before O×L within a custkey group. Q3 has no invoice
-sibling, so the natural order is `customer=1 < orders=2 <
-lineitem=3` (keep the invoice slot reserved at id=2 if we want
-COL to be a strict subset of COLI — discuss in §Open Questions).
+**Sentinel ordering note**: COL uses strict-subset ordering —
+COLI domain tags are reused verbatim: `customer=1`, `invoice=2`
+(reserved, unused), `orders=3`, `lineitem=4`. The reserved invoice
+slot keeps prefix bytes aligned with COLI, enabling byte-compatible
+keys and future dual-format scanner reuse. Resolved 2026-05-03; see
+§Open Questions — COL domain-tag allocation.
 
 ---
 
 ## Open Questions
+
+### COL domain-tag allocation: strict subset (resolved 2026-05-03)
+
+COL reuses `coli_domain_tag` verbatim: `index=0`, `customer=1`,
+`invoice=2` (reserved, unused), `orders=3`, `lineitem=4`. The invoice
+slot stays reserved even though no invoice records exist in COL.
+
+Why strict subset: byte-compatibility with COLI keys lets COL reuse
+`customer_coli_t` and `orders_coli_t` verbatim (same Key shape,
+same tagged-path encoding), and keeps prefix bytes aligned for any
+future dual-format scanner. `lineitem_col_t` (idx=36) is the only
+new type — its Key omits the `invoicekey` segment present in
+`lineitem_coli_t`. Implemented in `views_col.hpp`; load-tested via
+`test_load_col_lsm` at SF=1 (all [OK]).
 
 ### S5: omit (resolved)
 
