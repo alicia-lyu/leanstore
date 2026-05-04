@@ -140,13 +140,15 @@ the aCOLI MergedAdapter family with the same dispatch tuning and
 Seek-skip facility. That is not a per-query task — it's
 infrastructure work on the order of the original COLI walker.
 
-**For the paper's story, S1–S4 are sufficient**. The merged-index
-pitch is the S3-vs-S1/S4 axis (raw co-location vs split-index merge
-join vs hash join), which already shows the operator-level locality
-win. S5 (MI-as-aggregate-store) is a research variant that addresses
-a separate reviewer concern (R2-D1) and can be re-investigated later
-when the second walker is justified by a query whose semantics the
-S3 walker cannot serve.
+**For the paper's story, S1–S4 are sufficient**. The pitch is **S3
+matches S2 while beating S1/S4** — i.e. raw co-location with a tuned
+walker reaches the throughput of full materialisation without paying
+materialisation's storage cost or maintenance burden, and does so
+while comfortably beating split-index merge-join (S1) and hash-join
+(S4) baselines. S5 (MI-as-aggregate-store) addresses a separate
+reviewer concern (R2-D1) and can be re-investigated later when the
+second walker is justified by a query whose semantics the S3 walker
+cannot serve.
 
 **What this means for new queries** (Track 1 / Track 2):
 

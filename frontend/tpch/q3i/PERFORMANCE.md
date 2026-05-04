@@ -162,15 +162,21 @@ verbatim. The revenue work is *not* what makes S5 slower.
 
 **What the anomaly doesn't undermine**:
 
-- S3's win against S1/S4 (the merged-index pitch) — that ordering is
-  consistent with prior SF=15+40 evidence and §1 hypothesis ledger.
+- The paper's main pitch — **S3 matches S2 while beating S1/S4** —
+  holds at SF=15 on both backends:
+    LSM:   S3 95.44 ≥ S2 56.40 > S1 27.88 > S4 17.12
+    Btree: S3 198.50 ≥ S2 90.11 > S1 62.35 > S4 39.64
+  S3 actually *beats* S2 here, which is the strongest possible
+  framing of the pitch (raw co-location matching the fully
+  materialised view without paying materialisation's storage /
+  maintenance cost).
 - The post-G8 project-pushdown rule — narrower secondaries
   unconditionally help (G9 confirmed +90% S3 LSM at iso SF=15).
 
 **Decision**: leave as-is for now. Document so any future S2 / S5
-optimisation work starts from honest priors. None of the three
-hypotheses are paper-blocking; the merged-index pitch is S3 vs
-S1/S4, not S5 vs S3.
+optimisation work starts from honest priors. None of these
+hypotheses are paper-blocking; the paper's pitch is S3 ≥ S2 > S1/S4,
+which already holds.
 
 **Investigation deferred** under a new H13–H15 ledger entry; status
 **OPEN**. Earliest revisit when (a) reviewer raises "why does the
