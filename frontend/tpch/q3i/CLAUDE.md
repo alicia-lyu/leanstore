@@ -126,7 +126,7 @@ no 3-stage join chain, just one fused walk.
 | 2 | Intermediate pipeline view | `q3i_pipeline_view_t` (joined\_ol\_t rows) | Pre-build cust\_open\_due map; view scan + CUSTOMER hash filter |
 | 3 | MI\[COLI\] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | PremergedJoin over 4-table tagged-key MI; cust\_open\_due computed in same pass |
 | 4 | Traditional indexes + hash join | None | Pre-build cust\_open\_due map; HashJoin(OL) + CUSTOMER hash lookup |
-| 5 | aCOLI MI (pre-aggregated) | `MergedAdapter<customer_acoli_t, orders_acoli_t, lineitem_acoli_t>` | Scan 3-type MI; pre\_open\_due read directly; revenue recomputed from unaggregated lineitems |
+| 5 | aCOLI MI (pre-aggregated) | `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` (`orders_acoli_t` retired Step 4b — collapsed into `orders_coli_t`) | Scan 3-type MI; pre\_open\_due read directly; revenue recomputed from unaggregated lineitems |
 
 ---
 
@@ -228,7 +228,7 @@ no-merged-index baseline that the family is compared against.
 | S2 (merge family) | sequential view scan | TableScan-time filters baked into view; mktsegment / threshold per-row at query time |
 | S3 (merge family) | `coli_group_walk` over MI[COLI] | Visitor `on_*` hooks (same code as S1) |
 | S4 (baseline)     | HashJoin(O ⋈ L) + 2 probe hashmaps | TableScan + per-aggregate; probe lookups encode the rest |
-| S5 (aCOLI MI)     | scan `MergedAdapter<customer_acoli_t, orders_acoli_t, lineitem_acoli_t>` | pre\_open\_due read directly; revenue recomputed live; mktsegment / threshold / orderdate / shipdate per-row |
+| S5 (aCOLI MI)     | scan `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` (`orders_acoli_t` retired Step 4b) | pre\_open\_due read directly; revenue recomputed live; mktsegment / threshold / orderdate / shipdate per-row |
 
 All five agree on what's outside the pipeline: `apply_top10` (sort by
 revenue DESC + truncate to 10).
@@ -242,11 +242,15 @@ revenue DESC + truncate to 10).
   `o_shippriority`. Fully implemented (Phase 2).
 - `q3i_agg_row_t` — final output row: `o_orderkey`, `revenue`, `o_orderdate`,
   `o_shippriority`, `cust_open_due`.
-- `customer_acoli_t` / `orders_acoli_t` / `lineitem_acoli_t` — S5 aCOLI MI
-  record types; defined in `views_coli.hpp`. IDs 49 / 50 / 53.
-  `customer_acoli_t` carries `pre_open_due` (invoice sub-aggregate, baked at
-  load time). `orders_acoli_t` and `lineitem_acoli_t` carry full base payloads;
-  revenue is computed at query time.
+- `customer_acoli_t` / `orders_coli_t` (reused) / `lineitem_acoli_t` — S5
+  aCOLI MI record types; defined in `views_coli.hpp`. IDs 49 / 1 / 53.
+  `orders_acoli_t` (id=50) was retired Step 4b (2026-05-03): after switching
+  aCOLI types to tagged-key encoding its key became byte-identical to
+  `orders_coli_t`, so the type was collapsed via
+  `using orders_acoli_t = orders_coli_t`. `customer_acoli_t` carries
+  `pre_open_due` (invoice sub-aggregate, baked at load time).
+  `lineitem_acoli_t` carries the projected lineitem payload; revenue is
+  computed at query time.
 
 ---
 
@@ -509,17 +513,20 @@ make q3i_lsm_3 dram=0.1
 as included columns, sitting between raw co-location (S3) and full
 materialisation (S2) on the pre-computation spectrum.
 
-**Design (revised):** `MergedAdapter<customer_acoli_t, orders_acoli_t,
-lineitem_acoli_t>` — three record types (invoice rows collapsed to a scalar;
-lineitems stored unaggregated so revenue is computed at query time):
+**Design (revised, Step 4b 2026-05-03):** `MergedAdapter<customer_acoli_t,
+orders_coli_t, lineitem_acoli_t>` — three record types (invoice rows collapsed
+to a scalar; lineitems stored unaggregated so revenue is computed at query time):
 
 - `customer_acoli_t` (id=49): full `customerh_t` payload +
   `Numeric pre_open_due` = `SUM(i_totaldue WHERE i_status='O')` baked at
   load time. Parameter-independent (`i_status='O'` is hardcoded by spec).
-- `orders_acoli_t` (id=50): `orders_t` payload. `pre_revenue` field
-  **removed 2026-05-03** — it was parameterised by `l_shipdate` and made
-  S5 incorrect for any DATE param other than the default.
-- `lineitem_acoli_t` (id=53): full `lineitem_t` payload mirror keyed by
+- `orders_coli_t` (id=1): **reused** in place of the retired `orders_acoli_t`
+  (id=50). After switching aCOLI types to tagged-key encoding, the two types
+  became byte-identical (same domain tags, same trailing `idx_id=1`, same
+  `{o_orderdate, o_shippriority}` payload post-G8). Collapsed via
+  `using orders_acoli_t = orders_coli_t`. `pre_revenue` field was already
+  **removed 2026-05-03** — it was parameterised by `l_shipdate`.
+- `lineitem_acoli_t` (id=53): projected lineitem payload keyed by
   `(custkey, orderkey, linenumber)`. Revenue computed at query time via
   `LineitemRevenueAccumulator`, applying the shipdate filter live.
 

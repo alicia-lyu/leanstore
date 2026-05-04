@@ -1081,9 +1081,13 @@ anti-pattern #24 / #26 in §13.)
 implementation in `coli_pipeline.tpp::populate_aggregated` and
 `q3i/query.tpp::query_by_aggregated`):
 
-- aCOLI is a **3-type** `MergedAdapter<customer_acoli_t, orders_acoli_t,
-  lineitem_acoli_t>`. Lineitems are stored unaggregated so that
-  parameterised filters (shipdate, mktsegment) are applied at query time.
+- aCOLI is a **3-type** `MergedAdapter<customer_acoli_t, orders_coli_t,
+  lineitem_acoli_t>`. `orders_acoli_t` (id=50) was retired Step 4b
+  (2026-05-03): switching all aCOLI types to tagged-key encoding made its
+  key byte-identical to `orders_coli_t`, so the type was collapsed via
+  `using orders_acoli_t = orders_coli_t`. Lineitems are stored unaggregated
+  so that parameterised filters (shipdate, mktsegment) are applied at query
+  time.
 - Pre-aggregated columns are permitted **only** when the aggregate filter is
   a TPC-H-spec hardcoded constant. Example: `customer_acoli_t.pre_open_due`
   from `i_status='O'` in Q3I. The removed `orders_acoli_t.pre_revenue`

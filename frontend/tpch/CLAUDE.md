@@ -64,14 +64,21 @@ Shared files (used by all three queries):
   CUSTOMER × ORDERS × LINEITEM × INVOICE 4-table merged index:
   `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t`.
   Also defines the aCOLI (pre-aggregated) 3-type set used by Q3I S5:
-  `customer_acoli_t` (id=49, adds `pre_open_due`),
-  `orders_acoli_t` (id=50, full `orders_t` payload — `pre_revenue` removed
-  2026-05-03 as it was parameterised by `l_shipdate`), and
-  `lineitem_acoli_t` (id=53, full `lineitem_t` payload mirror keyed by
-  `(custkey, orderkey, linenumber)` — revenue recomputed at query time).
+  `customer_acoli_t` (id=49, tagged key, adds `pre_open_due`),
+  `orders_coli_t` (id=1, **reused** — `orders_acoli_t` was retired Step 4b
+  2026-05-03 because after tagged-key adoption its key bytes are identical to
+  `orders_coli_t`; id=50 is reserved/retired), and
+  `lineitem_acoli_t` (id=53, tagged key, no `invoicekey` segment — revenue
+  recomputed at query time). The aCOLI `MergedAdapter` is therefore
+  `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>`.
+  All three aCOLI-family keys use `tagged_path` encoding (uniform with COLI)
+  and carry `accepts_key` dispatch hooks that read the trailing `idx_id` byte
+  (49, 1, 53 — all distinct). `orders_acoli_t` previously used plain
+  `keyfold`; the collapse to `orders_coli_t` was blocked until tagged-key
+  adoption made the bytes identical.
   Each `Key` carries a `using path = tagged_path<IdxId, Steps...>` declaration
   (pointer-to-member steps: `tag_field_step`, `tag_fields2_step`) plus a
-  `static bool matches(const u8*, size_t)` override that reads the trailing
+  `static bool accepts_key(const u8*, size_t)` hook that reads the trailing
   `idx_id` byte. Sentinel tag `index=0` sorts before all domain tags
   (`customer=1`, `invoice=2`, `orders=3`, `lineitem=4`). Within a custkey
   group the byte-lex order is customer → invoice → orders → lineitems:
@@ -657,7 +664,8 @@ without losing reusability inside the consuming query family.
 | `lineitem_coli_t` (id=32) | COLI MI (S3) and split (S1) | **Secondary** | `{l_extendedprice, l_discount, l_shipdate}` (G8a) |
 | `invoice_coli_t` (id=33) | COLI MI (S3) and split (S1) | **Secondary** | `{i_totaldue, i_status}` (G8a) |
 | `customer_acoli_t` (id=49) | aCOLI MI (Q3I S5) | **Primary** of customer in S5 (S3 not present) | Full `customerh_t` + `pre_open_due` |
-| `orders_acoli_t` (id=50) | aCOLI MI (Q3I S5) | **Secondary** | `{o_orderdate, o_shippriority}` (G8b) |
+| ~~`orders_acoli_t` (id=50)~~ | **Retired** (Step 4b, 2026-05-03) | Collapsed into `orders_coli_t` after tagged-key adoption made keys identical | id=50 reserved; use `orders_coli_t` (id=1) |
+| `orders_coli_t` (id=1) | aCOLI MI (Q3I S5) — **reused** | **Secondary** | `{o_orderdate, o_shippriority}` (G8a/G8b — same projection) |
 | `lineitem_acoli_t` (id=53) | aCOLI MI (Q3I S5) | **Secondary** | `{l_extendedprice, l_discount, l_shipdate}` (G8c) |
 | `q12_pipeline_view_t` (id=34) | Q12 S2 view | **Secondary** (pre-aggregated) | `{l_shipmode, o_orderpriority, l_shipdate, l_commitdate, l_receiptdate}` (G8d) |
 | `q3i_pipeline_view_t` (id=43) | Q3I S2 view | **Secondary** (pre-aggregated) | `{l_extendedprice, l_discount, l_shipdate, cust_open_due, c_mktsegment, o_orderdate, o_shippriority}` |
@@ -677,6 +685,34 @@ need them) and is out of scope for this rule.
 
 Speculative widening on the rationale that "some future query might
 want it" is exactly what this rule rejects.
+
+## Tagged-key uniformity within a MergedAdapter family
+
+**Rule** (landed Step 4b, 2026-05-03):
+
+Every record type co-located inside a `MergedAdapter` family that uses
+tagged-key dispatch **must itself use tagged-key encoding
+(`tagged_path<…>`)**.  Mixing tagged and plain-fold record types within
+one `MergedAdapter` breaks variant dispatch in the merged scanner:
+`accepts_key` hooks rely on reading a trailing `idx_id` byte whose
+position is only stable when every co-resident key is encoded with the
+same `tagged_path` scheme.
+
+**Carve-out**: the OL pipeline (`MI[0]` for Q12/Q3/Q9) keeps
+fold-length discrimination because the base TPC-H tables (`orders_t`,
+`lineitem_t`) cannot carry COLI domain tags without modifying the
+vanilla schema — which would break the schema split between vanilla
+and invoice-extended workloads.  Fold-length discrimination is safe
+there because the two key sizes (4 bytes vs 8 bytes) are permanently
+distinct by TPC-H spec.
+
+**Consequence that motivated this rule**: `orders_acoli_t` previously
+used plain `keyfold` (8-byte key) while `customer_acoli_t` and
+`lineitem_acoli_t` used `tagged_path`.  This mixed encoding made
+`accepts_key` dispatch unreliable for `orders_acoli_t` rows.  Switching
+all three aCOLI types to `tagged_path` made `orders_acoli_t::Key`
+byte-identical to `orders_coli_t::Key`, enabling the type collapse
+(`using orders_acoli_t = orders_coli_t`).
 
 ## Out of Scope (Skeleton)
 
