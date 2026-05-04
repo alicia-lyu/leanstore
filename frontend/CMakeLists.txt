@@ -106,6 +106,19 @@ if (APPLE)
         random_standalone
     )
 
+    # --- test_projection_widths: static_assert + runtime pins for post-G8 payload sizes ---
+    add_executable(test_projection_widths tpch/tests/test_projection_widths.cpp)
+    target_compile_definitions(test_projection_widths PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_projection_widths PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_projection_widths PUBLIC
+        config_standalone
+        random_standalone
+    )
+
     # --- test_views_acoli: unit tests for aCOLI tagged-key encoding ---
     add_executable(test_views_acoli tpch/tests/test_views_acoli.cpp)
     target_compile_definitions(test_views_acoli PRIVATE ROCKSDB_ONLY)
