@@ -70,9 +70,9 @@ A/Bs but not the active code path.
 | H10| Compression masks locality              | **REFUTED** | Cross-backend disk-bound TX/s consistent |
 | H11| S3 vs S1 is the wrong baseline          | **REFUTED on BOTH backends (post-A3)** | LeanStore S3-vs-S4 at SF=40 is +100×; RocksDB S3 lifts +64% disk-bound. Merged-index pitch lives on both engines. |
 | H12| Load-amortized cost is the real metric  | **OPEN** | Crossover (queries vs total time) is the right axis |
-| H13| S5 revenue accumulator dominates pre_open_due win | **OPEN** | See §A1 |
-| H14| S2 view rows fatter than S3's narrowed records  | **OPEN** | See §A1 |
-| H15| Top-10 sort fixed-cost dominates at SF=15       | **OPEN** | See §A1 |
+| H13| S5 revenue accumulator eats the pre_open_due win | **OPEN** | See §A1 — main anomaly (S3 > S5) |
+| H14| S2 view has redundant FD-attached ancestor columns per lineitem | **OPEN** | See §A1 — explains S2 < S3, not the main anomaly |
+| H15| S5 per-record dispatch cost erodes the no-invoice savings | **OPEN** | See §A1 — alt explanation for the main anomaly |
 
 Full evidence: archive `PERFORMANCE-2026-05-03b.md` §3.
 
@@ -92,62 +92,60 @@ projections, both backends, this session's commits `55546eec` /
 | S4 base_hash_join        | 17.12    | 39.64      |
 | **S5 acoli_aggregated**  | **37.41**| **67.72**  |
 
-So on **both** backends the ordering is **S3 > S2 > S5** at SF=15
-cache-resident. This is **anomalous** against the design intent:
+**Pre-computation spectrum** (per `q3i/CLAUDE.md §Phase 4`):
 
-- S5 is supposed to be **the most pre-computed** (aCOLI MI bakes
-  `pre_open_due` at load time; only revenue is recomputed live), so
-  it should be at least as fast as S3 (which recomputes both
-  `cust_open_due` *and* revenue live from a 4-table walk).
-- S2 is supposed to sit between S1 and S5 on the pre-computation
-  spectrum (per `q3i/CLAUDE.md §Phase 4`):
-  ```
-  S1/S3 (raw, full recompute) → S5 (invoice pre-aggregated) → S2 (full per-lineitem view)
-  ```
-  S2 should be the fastest because the `q3i_pipeline_view_t` rows
-  carry FD-attached `cust_open_due` / `c_mktsegment` / `o_orderdate` /
-  `o_shippriority` plus the projected lineitem fields, so the entire
-  pipeline collapses to a sequential scan + per-row filter + revenue
-  accumulation.
+```
+S3 (raw 4-table MI, recompute everything)
+ < S5 (aCOLI: pre_open_due baked, revenue live from projected lineitems)
+ < S2 (per-lineitem view with FD-attached cust_open_due / mktsegment / orderdate / shippriority)
+```
 
-**Why this is unexpected**:
+So the *expected* TX/s ordering, all else equal, is **S3 < S5 < S2**.
 
-- S3 winning over S5 contradicts the H6 finding (low filter
-  selectivity → S5 should win because it skips invoice rows
-  entirely). At SF=1 we see `acoli_total=744 vs mi_records_visited≈1547`
-  — S5 visits ≈48% as many records as S3, yet S5 is **2.5× slower** at
-  SF=15.
-- S3 winning over S2 contradicts the family-pre-computation spectrum:
-  S2 should be cheaper than S3 per query, since S2 already paid the
-  inside-pipeline join + FD-attach cost at load time.
+**Observed**: S3 > S2 > S5 — the **main anomaly is S3 faster than
+S5**. S2 underperforming S3 is plausibly explained by
+**redundancy in the view rows** (H14 below): the FD-attached columns
+on every per-lineitem row mean S2 carries the customer/order context
+N times per order group instead of once, so even though S2 has done
+the join work at load time, it spends the savings paying for fatter
+scans at query time.
 
-**Hypotheses** (not yet investigated):
+**Why S5 < S3 is the real puzzle**:
 
-1. **H13 — S5 revenue accumulator dominates.** Revenue recomputation
-   from `lineitem_acoli_t` may be the actual hot loop in S5, with the
-   pre_open_due win amortised to nothing. Test: compare per-query
-   stage timers `revenue_accum_us` between S3 and S5 — if S5's
-   accumulator runs over the same lineitem cardinality as S3's, the
-   `pre_open_due` saving (1 invoice row per custkey, ~40% of records
-   skipped) is dwarfed by the lineitem-revenue work S3 *also* does.
-   Then S5's only intrinsic advantage over S3 is "no invoice scan",
+- S5 *should* dominate. It visits fewer records (no invoice rows),
+  reads `pre_open_due` directly instead of summing it live, and
+  uses the same revenue accumulator as S3.
+- At SF=1 we measure `acoli_total=744 vs mi_records_visited≈1547`
+  — S5 visits ≈48% as many records as S3, yet S5 is **2.5× slower**
+  at SF=15.
+- This contradicts H6 (low filter selectivity → S5 wins) and the
+  pre-computation spectrum.
+
+**Hypotheses for the S3 > S5 anomaly** (not yet investigated):
+
+1. **H13 — S5 revenue accumulator dominates.** Revenue
+   recomputation from `lineitem_acoli_t` may be the hot loop in S5,
+   with the `pre_open_due` win amortised to nothing. Test: compare
+   per-query stage timers `revenue_accum_us` between S3 and S5 — if
+   S5's accumulator runs over the same lineitem cardinality as S3's,
+   then S5's only intrinsic advantage over S3 is "no invoice scan",
    which at low/medium SF is small.
-2. **H14 — S2 view is per-lineitem, not per-order.** Per
-   `q3i/CLAUDE.md` Phase 2, `q3i_pipeline_view_t` is keyed by
-   `(custkey, orderkey, linenumber)` — one row per lineitem (revised
-   2026-05-03 from one-row-per-order). S2 therefore scans ≈|lineitem|
-   rows like S3 does, but each row is a fat FD-attached struct (5
-   ancestor columns + 3 lineitem columns + key). Cache footprint per
-   row is larger than S3's narrowed `lineitem_coli_t`. Test: compare
-   `bytes_scanned/q` for S2 vs S3 at SF=15.
-3. **H15 — top-10 sort cost dominates at SF=15.** All four
-   non-stub paths run `apply_topN(..., 10, revenue DESC, orderdate
-   ASC, orderkey ASC)` over the per-orderkey result vec. If the
-   surviving orderkey count is similar across S2/S3/S5, the
-   `partial_sort_copy` cost per query is the same, so the spread
-   between paths is dominated by the inside-pipeline streaming cost,
-   which now favours `coli_group_walk`'s tight forward scan over both
-   S2's wider rows and S5's revenue accumulator.
+2. **H14 — S2 view redundancy (explains the S2 < S3 secondary
+   observation, not the main anomaly).** `q3i_pipeline_view_t` is
+   keyed by `(custkey, orderkey, linenumber)` — one row per lineitem,
+   each row carrying 5 FD-attached ancestor columns. S2 therefore
+   pays the per-lineitem fanout cost on the FD-attached fields N
+   times per order group. Test: compare `bytes_scanned/q` for S2 vs
+   S3 at SF=15. Note: this is filed as the explanation for **S2 vs
+   S3**, not the S3 > S5 anomaly.
+3. **H15 — Top-K + per-record dispatch advantage in S3.** S3's
+   `coli_group_walk` is a tight forward scan with fused-emit
+   per-record dispatch (post-A2c), while S5's MergedAdapter has
+   three record types and an extra customer-level join boundary.
+   The per-record dispatch cost on S5 may already eat the savings
+   from skipping invoice rows. Test: micro-benchmark S5 against a
+   hypothetical "S3 minus invoice rows" path; if the gap closes,
+   the cost is in record dispatch, not in scan width.
 
 **What the anomaly doesn't undermine**:
 
