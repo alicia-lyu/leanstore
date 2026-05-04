@@ -124,7 +124,7 @@ Q3IWorkload<Backend>::Q3IWorkload(
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
     typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
     typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+    typename Backend::template MergedAdapter<customer_acoli_t, orders_coli_t,
                                              lineitem_acoli_t>& acoli)
     : tpch(tpch),
       customer(customer),

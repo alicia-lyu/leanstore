@@ -1150,8 +1150,8 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
    // OPERATORS.md §6.1 comparison-integrity.  pre_open_due on customer_acoli_t
    // is still baked (parameter-independent: i_status='O' is hardcoded by spec).
    //
-   // Byte-lex sort order within a custkey group:
-   //   customer_acoli_t (fold=4) → orders_acoli_t (fold=8) → lineitem_acoli_t (fold=12)
+   // Byte-lex sort order within a custkey group (tagged keys, Step 4b):
+   //   customer_acoli_t (7 B) → orders_coli_t (12 B) → lineitem_acoli_t (17 B)
    //
    // Walk logic per custkey group:
    //   on_customer: check mktsegment + threshold; gate further processing.
@@ -1207,14 +1207,15 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
                    cust_passes  = (sm == psm) && (cur_open_due > params.threshold);
                    if (cust_passes && stats) stats->acoli_customers_passing_filter++;
 
-                } else if constexpr (std::is_same_v<V, orders_acoli_t>) {
+                } else if constexpr (std::is_same_v<V, orders_coli_t>) {
                    if (!cust_passes) return;
                    // Order transition: flush the previous order before opening a new one.
+                   // orders_acoli_t was collapsed into orders_coli_t (Step 4b).
                    flush_order();
                    if (stats) stats->acoli_orders_scanned++;
                    if (val.o_orderdate >= params.orderdate) return;
                    // Open a new per-order accumulator.
-                   const auto* ok = std::get_if<orders_acoli_t::Key>(&kv->first);
+                   const auto* ok = std::get_if<orders_coli_t::Key>(&kv->first);
                    if (!ok) return;
                    order_open      = true;
                    cur_orderkey    = ok->orderkey;

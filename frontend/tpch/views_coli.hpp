@@ -51,11 +51,16 @@ enum class coli_domain_tag : u8 {
 };
 
 // Index identifier: trailing byte that names the leaf record type.
+// Values 0–3 are the four COLI types; 49 and 53 are the two aCOLI-specific
+// types (customer_acoli_t and lineitem_acoli_t).  orders_acoli_t was retired
+// and collapsed into orders_coli_t (trailing byte = 1, same key bytes).
 enum class coli_idx_id : u8 {
-   customer = 0,
-   orders   = 1,
-   lineitem = 2,
-   invoice  = 3,
+   customer        = 0,
+   orders          = 1,
+   lineitem        = 2,
+   invoice         = 3,
+   customer_acoli  = 49,  // customer_acoli_t — carries pre_open_due
+   lineitem_acoli  = 53,  // lineitem_acoli_t — no invoicekey segment
 };
 
 // ---------------------------------------------------------------------------
@@ -489,36 +494,64 @@ struct invoice_coli_t {
 // ---------------------------------------------------------------------------
 // aCOLI (aggregated COLI) record types.
 //
-// These form a 3-type MergedAdapter<customer_acoli_t, orders_acoli_t,
+// These form a 3-type MergedAdapter<customer_acoli_t, orders_coli_t,
 // lineitem_acoli_t> that pre-bakes the per-customer invoice sub-aggregate
 // into customer_acoli_t and stores unaggregated lineitems in lineitem_acoli_t.
 // Invoice rows are collapsed to the pre_open_due scalar (parameter-independent:
 // i_status='O' is hardcoded by the TPC-H Q3I spec).  Lineitem revenue is
 // computed at query time so S5 remains reusable across all DATE param sets.
 //
-// Schema (2026-05-03 redesign — see plans/q3i-s5-rebuild-store-lineitems.md):
+// Schema (2026-05-03 redesign; tagged keys adopted 2026-05-03 Step 4b):
 //   customer_acoli_t.pre_open_due  = SUM(i_totaldue WHERE i_status='O')
-//   orders_acoli_t  — no pre-aggregated revenue; orders_t payload only.
+//   orders_coli_t   — retired orders_acoli_t (id=50); byte-identical key and
+//                     payload after G8 projection, so collapsed to one type.
 //   lineitem_acoli_t — full lineitem_t payload for per-query revenue computation.
 //
-// Key fold lengths (used for fold-length discrimination — no tagged keys needed):
-//   customer_acoli_t::Key  (custkey)                 → 4 bytes
-//   orders_acoli_t::Key    (custkey, orderkey)        → 8 bytes
-//   lineitem_acoli_t::Key  (custkey, orderkey, lineno)→ 12 bytes
-// All three are distinct so the simple fold-length heuristic suffices.
+// Tagged-key encoding (uniform with COLI — Step 4b):
+//   customer_acoli_t::Key → [t=1][custkey:4][t=0][idx=49]   = 7 bytes
+//   orders_coli_t::Key    → [t=1][custkey:4][t=3][orderkey:4][t=0][idx=1] = 12 bytes
+//   lineitem_acoli_t::Key → [t=1][custkey:4][t=3][orderkey:4][t=4][lineno:4][t=0][idx=53] = 17 bytes
 //
-// Byte-lex order within a custkey group:
-//   customer_acoli_t → (orders_acoli_t → lineitem_acoli_t*)+ ...
+// All three trailing idx bytes (49, 1, 53) are distinct → merged-scanner
+// variant dispatch via accepts_key works cleanly.
+//
+// Byte-lex sort order within a custkey group:
+//   customer_acoli_t (7 B) → orders_coli_t (12 B) → lineitem_acoli_t (17 B)
+// Sentinel byte (0) sorts before domain tags (1, 3, 4) so parent rows
+// naturally precede child rows at each level.
 
 // customer_acoli_t: customerh_t payload + pre_open_due aggregate.
-//   Key: (custkey)  — same prefix shape as customerh_t.
+//
+// Key layout: [t=1(cust)][custkey:4][t=0(idx)][idx=customer_acoli(49)]  = 7 bytes
+// Same domain-tag structure as customer_coli_t; distinguished at scan time
+// by the trailing idx byte (49 vs 30) — the two types live in different
+// MergedAdapters and never share a scanner.
 struct customer_acoli_t {
    static constexpr int id = 49;
 
    struct Key {
       static constexpr int id = 49;
+
       Integer custkey;
-      ADD_KEY_TRAITS(&Key::custkey)
+
+      using path = tagged_path<coli_idx_id::customer_acoli,
+                               tag_field_step<coli_domain_tag::customer, &Key::custkey>>;
+
+      static constexpr unsigned maxFoldLength() { return path::maxFoldLength(); }
+
+      static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
+      static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
+
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
+      {
+         return key_len == maxFoldLength()
+             && key_bytes[key_len - 1] == static_cast<u8>(coli_idx_id::customer_acoli);
+      }
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& k)
+      {
+         return os << "customer_acoli_key(custkey=" << k.custkey << ")";
+      }
    };
 
    // Full customerh_t payload (mirrored for cross-query reuse).
@@ -556,65 +589,30 @@ struct customer_acoli_t {
    static Key key_from_base(const customerh_t::Key& k) { return Key{k.c_custkey}; }
 };
 
-// orders_acoli_t: orders payload projected to {o_orderdate, o_shippriority}.
-//   Key: (custkey, orderkey) — plain two-field fold (8 bytes).
+// orders_acoli_t — RETIRED (Step 4b, 2026-05-03).
 //
-// NOTE: orders_coli_t carries the same payload but uses a COLI tagged-key
-// encoding (12 bytes), which would collide with lineitem_acoli_t's 12-byte
-// plain fold key and break fold-length discrimination in the aCOLI
-// MergedAdapter.  The types are payload-identical but key-shape-different,
-// so collapse is deferred. id=50 reserved.
+// After switching aCOLI types to tagged-key encoding, orders_acoli_t::Key is
+// byte-identical to orders_coli_t::Key (same domain tags, same idx byte = 1,
+// same payload {o_orderdate, o_shippriority}).  The type is therefore
+// collapsed: the aCOLI MergedAdapter stores orders_coli_t rows directly.
+// id=50 is retired; do not reuse it.
 //
-// pre_revenue REMOVED (2026-05-03): it was parameterised by l_shipdate and
-// broke correctness for any DATE param other than the validation value.
-// Lineitems are now stored in lineitem_acoli_t; revenue is recomputed at
-// query time.
-//
-// G8b (2026-05-03): payload projected to {o_orderdate, o_shippriority}.
-struct orders_acoli_t {
-   static constexpr int id = 50;
-
-   struct Key {
-      static constexpr int id = 50;
-      Integer custkey;
-      Integer orderkey;
-      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
-   };
-
-   Timestamp o_orderdate;
-   Integer   o_shippriority;
-
-   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
-   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
-   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
-
-   void print(std::ostream& os) const
-   {
-      os << "orders_acoli(date=" << o_orderdate << ",shippri=" << o_shippriority << ")";
-   }
-
-   friend std::ostream& operator<<(std::ostream& os, const orders_acoli_t& r)
-   {
-      r.print(os);
-      return os;
-   }
-
-   static orders_acoli_t from_order(const orders_t& o, Integer /*custkey*/)
-   {
-      return {o.o_orderdate, o.o_shippriority};
-   }
-   static Key key_from_order(Integer custkey, const orders_t::Key& ok)
-   {
-      return Key{custkey, ok.o_orderkey};
-   }
-};
+// Consumers that previously referenced orders_acoli_t now use orders_coli_t.
+// The existing orders_coli_t::key_from_base / from_base factories work
+// unchanged because the payloads were already identical post-G8.
+using orders_acoli_t = orders_coli_t;
 
 // lineitem_acoli_t: projected lineitem mirror keyed by
 //   (custkey, orderkey, linenumber).
 //   id=53 (ids 51/52 were the now-retired projected aCOLI pair).
 //
-// Fold length: 12 bytes — distinct from customer_acoli_t (4) and
-// orders_acoli_t (8), so fold-length discrimination works without tagged keys.
+// Key layout:
+//   [t=1(cust)][custkey:4][t=3(ord)][orderkey:4][t=4(li)][linenumber:4]
+//   [t=0(idx)][idx=lineitem_acoli(53)]  =  17 bytes
+//
+// No invoicekey segment (S5 doesn't co-locate invoices — they are collapsed
+// into customer_acoli_t.pre_open_due at load time).  This is what keeps the
+// key shape distinct from lineitem_coli_t (21 bytes, with invoicekey).
 //
 // G8c (2026-05-03): payload projected to {l_extendedprice, l_discount,
 // l_shipdate} — the three fields the revenue accumulator reads. Per
@@ -626,10 +624,34 @@ struct lineitem_acoli_t {
 
    struct Key {
       static constexpr int id = 53;
+
       Integer custkey;
       Integer orderkey;
       Integer linenumber;
-      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
+
+      using path = tagged_path<
+          coli_idx_id::lineitem_acoli,
+          tag_field_step<coli_domain_tag::customer, &Key::custkey>,
+          tag_field_step<coli_domain_tag::orders,   &Key::orderkey>,
+          tag_field_step<coli_domain_tag::lineitem,  &Key::linenumber>>;
+
+      static constexpr unsigned maxFoldLength() { return path::maxFoldLength(); }
+
+      static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
+      static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
+
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
+      {
+         return key_len == maxFoldLength()
+             && key_bytes[key_len - 1] == static_cast<u8>(coli_idx_id::lineitem_acoli);
+      }
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& k)
+      {
+         return os << "lineitem_acoli_key(custkey=" << k.custkey
+                   << ",orderkey=" << k.orderkey
+                   << ",linenumber=" << k.linenumber << ")";
+      }
    };
 
    Numeric   l_extendedprice;
@@ -666,6 +688,7 @@ struct lineitem_acoli_t {
 // the Q3I-projected aCOLI pair — were retired 2026-05-03.  They embedded
 // pre_revenue (parameterised by l_shipdate) and were never wired into
 // production targets.  The ids 51/52 are reserved; do not reuse them.
+// id=50 (orders_acoli_t) was retired Step 4b — collapsed into orders_coli_t.
 
 // ---------------------------------------------------------------------------
 // Byte-driven variant dispatcher.

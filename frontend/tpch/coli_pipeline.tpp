@@ -33,7 +33,7 @@ CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePip
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
     typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
     typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-    typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+    typename Backend::template MergedAdapter<customer_acoli_t, orders_coli_t,
                                              lineitem_acoli_t>& acoli)
     : customer(customer),
       orders(orders),
@@ -240,7 +240,9 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_aggregated()
       }
    }
 
-   // Sub-pass C2: scan orders, build orderkey→custkey map, insert orders_acoli_t.
+   // Sub-pass C2: scan orders, build orderkey→custkey map, insert orders_coli_t.
+   // orders_acoli_t was collapsed into orders_coli_t (Step 4b): byte-identical
+   // tagged key and same {o_orderdate, o_shippriority} payload after G8.
    // The map is reused by sub-pass C3 (lineitems) to resolve custkey.
    std::unordered_map<Integer, Integer> orderkey_to_custkey;
    {
@@ -250,9 +252,9 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_aggregated()
          const orders_t&      ov = kv->second;
          Integer custkey = ov.o_custkey;
          orderkey_to_custkey.emplace(ok.o_orderkey, custkey);
-         orders_acoli_t::Key ak = orders_acoli_t::key_from_order(custkey, ok);
-         acoli_adapter_ref.template insert<orders_acoli_t>(
-             ak, orders_acoli_t::from_order(ov, custkey));
+         orders_coli_t::Key ak = orders_coli_t::key_from_base(custkey, ok);
+         acoli_adapter_ref.template insert<orders_coli_t>(
+             ak, orders_coli_t::from_base(ov));
       }
    }
 

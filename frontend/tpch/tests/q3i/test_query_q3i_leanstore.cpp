@@ -102,8 +102,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem;
    B::Adapter<tpch::invoice_coli_t>  split_invoice;
 
-   // S5: aCOLI 3-type MI (customer_acoli_t + orders_acoli_t + lineitem_acoli_t).
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+   // S5: aCOLI 3-type MI (customer_acoli_t + orders_coli_t + lineitem_acoli_t).
+   // orders_acoli_t was retired Step 4b and collapsed into orders_coli_t.
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                     tpch::lineitem_acoli_t> acoli;
 
    auto& crm = db.getCRManager();
@@ -124,7 +125,7 @@ int main(int argc, char** argv)
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q3i_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_coli_t>(db, "q3i_split_lineitem");
       split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "q3i_split_invoice");
-      acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+      acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                                         tpch::lineitem_acoli_t>(db, "q3i_acoli");
    });
 

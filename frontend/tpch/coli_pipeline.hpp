@@ -102,11 +102,13 @@ class CustomerOrdersLineitemInvoicePipeline
    typename Backend::template Adapter<invoice_coli_t>&  split_invoice_ref;
 
    // aCOLI (aggregated COLI) 3-type MI:
-   //   customer_acoli_t + orders_acoli_t + lineitem_acoli_t.
+   //   customer_acoli_t + orders_coli_t + lineitem_acoli_t.
+   // orders_acoli_t was retired (Step 4b) — byte-identical to orders_coli_t
+   // after tagged-key adoption, so collapsed into the same type.
    // Invoice rows are collapsed into pre_open_due at load time (parameter-
    // independent: i_status='O' is hardcoded by spec).  Lineitems are stored
    // unaggregated so S5 remains reusable across all DATE param sets.
-   typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+   typename Backend::template MergedAdapter<customer_acoli_t, orders_coli_t,
                                             lineitem_acoli_t>& acoli_adapter_ref;
 
   public:
@@ -120,7 +122,7 @@ class CustomerOrdersLineitemInvoicePipeline
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
        typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
        typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
-       typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+       typename Backend::template MergedAdapter<customer_acoli_t, orders_coli_t,
                                                 lineitem_acoli_t>& acoli);
 
    // Dual-write replay: scans all four base tables and inserts each record
@@ -156,7 +158,7 @@ class CustomerOrdersLineitemInvoicePipeline
    merged_adapter() { return merged_coli; }
 
    // Expose the aCOLI 3-type MI for S5 query drivers.
-   typename Backend::template MergedAdapter<customer_acoli_t, orders_acoli_t,
+   typename Backend::template MergedAdapter<customer_acoli_t, orders_coli_t,
                                             lineitem_acoli_t>&
    acoli_adapter() { return acoli_adapter_ref; }
 

@@ -242,7 +242,8 @@ int main(int argc, char** argv)
    B::Adapter<tpch::invoice_coli_t>  invoice_sec(rocks_db);
 
    // S5 aCOLI 3-type MI (load test does not exercise it but ctor requires it).
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+   // orders_acoli_t was retired Step 4b and collapsed into orders_coli_t.
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                     tpch::lineitem_acoli_t> acoli(rocks_db);
 
    rocks_db.open();

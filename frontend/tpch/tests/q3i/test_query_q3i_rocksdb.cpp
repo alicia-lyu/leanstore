@@ -106,8 +106,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
-   // S5: aCOLI 3-type MI (customer_acoli_t + orders_acoli_t + lineitem_acoli_t).
-   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
+   // S5: aCOLI 3-type MI (customer_acoli_t + orders_coli_t + lineitem_acoli_t).
+   // orders_acoli_t was retired Step 4b and collapsed into orders_coli_t.
+   B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                     tpch::lineitem_acoli_t> acoli(rocks_db);
 
    // Defensive wipe: if --ssd_path holds a prior DB, remove it before opening.
@@ -455,7 +456,7 @@ int main(int argc, char** argv)
          std::visit([&](auto&& val) {
             using V = std::decay_t<decltype(val)>;
             if constexpr (std::is_same_v<V, tpch::customer_acoli_t>)  ++n_acoli_c;
-            else if constexpr (std::is_same_v<V, tpch::orders_acoli_t>) ++n_acoli_o;
+            else if constexpr (std::is_same_v<V, tpch::orders_coli_t>) ++n_acoli_o;
             else ++n_acoli_l;
          }, kv->second);
       }
