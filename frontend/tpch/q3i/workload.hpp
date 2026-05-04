@@ -19,6 +19,7 @@
 
 #include "../backend.hpp"
 #include "../coli_pipeline.hpp"
+#include "../q3_family/stats.hpp"
 #include "../tpchi_workload.hpp"
 #include "views.hpp"
 
@@ -110,13 +111,22 @@ bool q3i_predicate_invoice(const invoice_t& i);
 //      relax can be removed and S3 can join the regular check_joins
 //      gate.
 
-struct Q3IStats {
-   long customers_scanned   = 0;
-   long orders_scanned      = 0;
-   long lineitems_scanned   = 0;
-   long invoices_scanned    = 0;
-   long join_callbacks      = 0;
-   long aggregator_rows_out = 0;
+// Q3IStats: Q3-family base counters (via Q3FamilyStats) plus Q3I-specific
+// fields (invoice sub-aggregate, per-structure chain-join output rows,
+// aCOLI MI scan counts, seek-skip events, and backend perf counters).
+//
+// Derivation keeps all Q3-shape increment sites (stats->customers_scanned,
+// stats->join_callbacks, etc.) unchanged — no call-site churn.
+struct Q3IStats : q3_family::Q3FamilyStats {
+   // Invoice sub-aggregate counters (Q3I-only: Q3 has no INVOICE table).
+   long invoices_scanned        = 0;
+   long invoices_passing_filter = 0;  // post i_status='O' filter
+
+   // S1/S4 chain-join intermediate cardinalities.  S3 fuses everything into
+   // one walk so these stay at zero for S3 — see §Cardinality structure.
+   long join1_output_rows = 0;  // customer ⋈ open_due (or hashmap probe)
+   long join2_output_rows = 0;  // (..) ⋈ orders_coli
+   long join3_output_rows = 0;  // (..) ⋈ lineitem_agg
 
    // S5 (aCOLI) counters — 3-type MI: customer + order + lineitem rows.
    long acoli_customers_scanned        = 0;
@@ -144,29 +154,6 @@ struct Q3IStats {
    long bj_ord_skips      = 0;  // S1 BMJ#2 right — ord_scan (G6 deferred)
    long bj_lin_skips      = 0;  // S1 BMJ#3 right — agg_lin (G6 deferred)
    long hj_groups_skipped = 0;  // S4 HJ chain
-
-   // Stage cardinalities (uniform across S1/S2/S3/S4 — let us compare
-   // intermediate counts row-for-row across paths). Filled in best-effort:
-   // some stages don't exist for some paths (e.g. S2 has no separate join
-   // stage, S3 fuses everything into one walk); those leave the counter
-   // at zero, distinguishable from "intermediate cardinality = 0 rows".
-   long customers_passing_filter = 0;  // post c_mktsegment filter
-   long orders_passing_filter    = 0;  // post o_orderdate filter
-   long lineitems_passing_filter = 0;  // post l_shipdate filter
-   long invoices_passing_filter  = 0;  // post i_status='O' filter
-   long join1_output_rows        = 0;  // customer ⋈ open_due (or hashmap probe)
-   long join2_output_rows        = 0;  // (..) ⋈ orders_coli
-   long join3_output_rows        = 0;  // (..) ⋈ lineitem_agg
-   long topN_candidates          = 0;  // rows entering apply_topN
-
-   // Per-stage wall-clock (microseconds). Filled by std::chrono brackets
-   // around the matching stage. Sum may exceed total query time slightly
-   // because pipelined paths (S1/S3) have overlapping stages — these are
-   // best-effort attribution, not strict accounting.
-   long stage_us_scan_filter = 0;
-   long stage_us_aggregator  = 0;
-   long stage_us_join        = 0;
-   long stage_us_topN        = 0;
 
    // RocksDB PerfContext / IOStatsContext totals (RocksDB backend only).
    // Populated only when --micro_perf=true; zero otherwise.
