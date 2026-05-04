@@ -106,6 +106,19 @@ if (APPLE)
         random_standalone
     )
 
+    # --- test_views_acoli: unit tests for aCOLI tagged-key encoding ---
+    add_executable(test_views_acoli tpch/tests/test_views_acoli.cpp)
+    target_compile_definitions(test_views_acoli PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_views_acoli PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_views_acoli PUBLIC
+        config_standalone
+        random_standalone
+    )
+
     # --- geo_lsm executable ---
     add_executable(geo_lsm geo/executable_rocksdb.cpp)
     target_compile_definitions(geo_lsm PRIVATE ROCKSDB_ONLY)
