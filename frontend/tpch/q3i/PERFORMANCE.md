@@ -70,8 +70,101 @@ A/Bs but not the active code path.
 | H10| Compression masks locality              | **REFUTED** | Cross-backend disk-bound TX/s consistent |
 | H11| S3 vs S1 is the wrong baseline          | **REFUTED on BOTH backends (post-A3)** | LeanStore S3-vs-S4 at SF=40 is +100×; RocksDB S3 lifts +64% disk-bound. Merged-index pitch lives on both engines. |
 | H12| Load-amortized cost is the real metric  | **OPEN** | Crossover (queries vs total time) is the right axis |
+| H13| S5 revenue accumulator dominates pre_open_due win | **OPEN** | See §A1 |
+| H14| S2 view rows fatter than S3's narrowed records  | **OPEN** | See §A1 |
+| H15| Top-10 sort fixed-cost dominates at SF=15       | **OPEN** | See §A1 |
 
 Full evidence: archive `PERFORMANCE-2026-05-03b.md` §3.
+
+---
+
+## §A1 — ANOMALY (2026-05-03): S3 > S2 > S5 ordering at SF=15 production
+
+**Observed** (full `q3i_*` sweeps, SF=15, dram=0.1, fused_emit, post-G8
+projections, both backends, this session's commits `55546eec` /
+`fa892c69`):
+
+| Structure                | LSM TX/s | Btree TX/s |
+|--------------------------|---------:|-----------:|
+| S1 base_merge_join       | 27.88    | 62.35      |
+| S2 pipeline_view         | 56.40    | 90.11      |
+| **S3 mi_coli_walk**      | **95.44**| **198.50** |
+| S4 base_hash_join        | 17.12    | 39.64      |
+| **S5 acoli_aggregated**  | **37.41**| **67.72**  |
+
+So on **both** backends the ordering is **S3 > S2 > S5** at SF=15
+cache-resident. This is **anomalous** against the design intent:
+
+- S5 is supposed to be **the most pre-computed** (aCOLI MI bakes
+  `pre_open_due` at load time; only revenue is recomputed live), so
+  it should be at least as fast as S3 (which recomputes both
+  `cust_open_due` *and* revenue live from a 4-table walk).
+- S2 is supposed to sit between S1 and S5 on the pre-computation
+  spectrum (per `q3i/CLAUDE.md §Phase 4`):
+  ```
+  S1/S3 (raw, full recompute) → S5 (invoice pre-aggregated) → S2 (full per-lineitem view)
+  ```
+  S2 should be the fastest because the `q3i_pipeline_view_t` rows
+  carry FD-attached `cust_open_due` / `c_mktsegment` / `o_orderdate` /
+  `o_shippriority` plus the projected lineitem fields, so the entire
+  pipeline collapses to a sequential scan + per-row filter + revenue
+  accumulation.
+
+**Why this is unexpected**:
+
+- S3 winning over S5 contradicts the H6 finding (low filter
+  selectivity → S5 should win because it skips invoice rows
+  entirely). At SF=1 we see `acoli_total=744 vs mi_records_visited≈1547`
+  — S5 visits ≈48% as many records as S3, yet S5 is **2.5× slower** at
+  SF=15.
+- S3 winning over S2 contradicts the family-pre-computation spectrum:
+  S2 should be cheaper than S3 per query, since S2 already paid the
+  inside-pipeline join + FD-attach cost at load time.
+
+**Hypotheses** (not yet investigated):
+
+1. **H13 — S5 revenue accumulator dominates.** Revenue recomputation
+   from `lineitem_acoli_t` may be the actual hot loop in S5, with the
+   pre_open_due win amortised to nothing. Test: compare per-query
+   stage timers `revenue_accum_us` between S3 and S5 — if S5's
+   accumulator runs over the same lineitem cardinality as S3's, the
+   `pre_open_due` saving (1 invoice row per custkey, ~40% of records
+   skipped) is dwarfed by the lineitem-revenue work S3 *also* does.
+   Then S5's only intrinsic advantage over S3 is "no invoice scan",
+   which at low/medium SF is small.
+2. **H14 — S2 view is per-lineitem, not per-order.** Per
+   `q3i/CLAUDE.md` Phase 2, `q3i_pipeline_view_t` is keyed by
+   `(custkey, orderkey, linenumber)` — one row per lineitem (revised
+   2026-05-03 from one-row-per-order). S2 therefore scans ≈|lineitem|
+   rows like S3 does, but each row is a fat FD-attached struct (5
+   ancestor columns + 3 lineitem columns + key). Cache footprint per
+   row is larger than S3's narrowed `lineitem_coli_t`. Test: compare
+   `bytes_scanned/q` for S2 vs S3 at SF=15.
+3. **H15 — top-10 sort cost dominates at SF=15.** All four
+   non-stub paths run `apply_topN(..., 10, revenue DESC, orderdate
+   ASC, orderkey ASC)` over the per-orderkey result vec. If the
+   surviving orderkey count is similar across S2/S3/S5, the
+   `partial_sort_copy` cost per query is the same, so the spread
+   between paths is dominated by the inside-pipeline streaming cost,
+   which now favours `coli_group_walk`'s tight forward scan over both
+   S2's wider rows and S5's revenue accumulator.
+
+**What the anomaly doesn't undermine**:
+
+- S3's win against S1/S4 (the merged-index pitch) — that ordering is
+  consistent with prior SF=15+40 evidence and §1 hypothesis ledger.
+- The post-G8 project-pushdown rule — narrower secondaries
+  unconditionally help (G9 confirmed +90% S3 LSM at iso SF=15).
+
+**Decision**: leave as-is for now. Document so any future S2 / S5
+optimisation work starts from honest priors. None of the three
+hypotheses are paper-blocking; the merged-index pitch is S3 vs
+S1/S4, not S5 vs S3.
+
+**Investigation deferred** under a new H13–H15 ledger entry; status
+**OPEN**. Earliest revisit when (a) reviewer raises "why does the
+'most pre-computed' variant lose?" or (b) we run SF=40 disk-bound
+where the S3 sequential-scan advantage may invert.
 
 ---
 
