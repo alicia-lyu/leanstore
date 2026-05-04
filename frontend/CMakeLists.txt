@@ -121,6 +121,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- test_workload_load_ext: end-to-end load contract for TPCHIWorkload ---
+    add_executable(test_workload_load_ext tpch/tests/test_workload_load_ext.cpp)
+    target_compile_definitions(test_workload_load_ext PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_workload_load_ext PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_workload_load_ext PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
     # --- test_q3_family: unit tests for q3_family/{accumulators,predicates,params}.hpp ---
     add_executable(test_q3_family tpch/tests/test_q3_family.cpp)
     target_compile_definitions(test_q3_family PRIVATE ROCKSDB_ONLY)
