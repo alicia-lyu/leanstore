@@ -14,6 +14,8 @@
 #include <string_view>
 #include <unordered_map>
 
+#include "../q3_family/view_loaders.hpp"
+
 DECLARE_int32(storage_structure);
 DECLARE_int32(load_only_structure);
 DECLARE_string(coli_walker_variant);
@@ -70,43 +72,29 @@ static void populate_q3i_view(
       }
    }
 
-   // Step 3: two-pointer merge over orders (sorted by orderkey) and lineitem
-   // (sorted by (orderkey, linenumber)).  Emit one view row per lineitem —
-   // no shipdate filter here; query_by_view applies it live at query time.
-   auto ord_scan = orders.getScanner();
-   auto lin_scan = lineitem.getScanner();
+   // Step 3: delegate the C×O×L two-pointer merge to the shared family core.
+   // The emit callback closes over the two pre-built maps and attaches
+   // cust_open_due (Q3I-specific) alongside the lineitem fields.
+   q3_family::populate_q3_view_core(
+       orders, lineitem,
+       [&](Integer custkey, Integer orderkey, Integer linenumber,
+           const orders_t& o, const lineitem_i_t& l) {
+          Numeric     open_due = open_due_map.count(custkey)
+                                     ? open_due_map.at(custkey) : Numeric(0);
+          Varchar<10> mktseg   = mktseg_map.count(custkey)
+                                     ? mktseg_map.at(custkey)   : Varchar<10>{};
 
-   std::optional<std::pair<orders_t::Key,     orders_t>>     cur_ord = ord_scan->next();
-   std::optional<std::pair<lineitem_i_t::Key, lineitem_i_t>> cur_lin = lin_scan->next();
-
-   while (cur_ord) {
-      const orders_t& o        = cur_ord->second;
-      Integer         orderkey = cur_ord->first.o_orderkey;
-      Integer         custkey  = o.o_custkey;
-
-      Numeric     open_due = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
-      Varchar<10> mktseg   = mktseg_map.count(custkey)   ? mktseg_map.at(custkey)   : Varchar<10>{};
-
-      // Emit one view row per lineitem under this order.
-      while (cur_lin && cur_lin->first.l_orderkey == orderkey) {
-         const lineitem_i_t& l = cur_lin->second;
-
-         q3i_pipeline_view_t::Key vk{custkey, orderkey, cur_lin->first.l_linenumber};
-         q3i_pipeline_view_t      vv;
-         vv.l_extendedprice = l.l_extendedprice;
-         vv.l_discount      = l.l_discount;
-         vv.l_shipdate      = l.l_shipdate;
-         vv.cust_open_due   = open_due;
-         vv.c_mktsegment    = mktseg;
-         vv.o_orderdate     = o.o_orderdate;
-         vv.o_shippriority  = o.o_shippriority;
-         pipeline_view.insert(vk, vv);
-
-         cur_lin = lin_scan->next();
-      }
-
-      cur_ord = ord_scan->next();
-   }
+          q3i_pipeline_view_t::Key vk{custkey, orderkey, linenumber};
+          q3i_pipeline_view_t      vv;
+          vv.l_extendedprice = l.l_extendedprice;
+          vv.l_discount      = l.l_discount;
+          vv.l_shipdate      = l.l_shipdate;
+          vv.cust_open_due   = open_due;
+          vv.c_mktsegment    = mktseg;
+          vv.o_orderdate     = o.o_orderdate;
+          vv.o_shippriority  = o.o_shippriority;
+          pipeline_view.insert(vk, vv);
+       });
 }
 
 // ---------------------------------------------------------------------------
