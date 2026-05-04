@@ -104,6 +104,21 @@ Shared files (used by all three queries):
   4-case `switch (FLAGS_storage_structure)` block that used to be duplicated
   across all six per-query executables.
 
+Shared scaffolding for the Q3 query family:
+
+- `q3_family/` — building blocks shared by Q3 and Q3I (and future Q3-flavoured
+  queries). Contains three headers: `accumulators.hpp` (`LineitemRevenueAccumulator<P>`
+  templated on the per-query Params type, with overloads for `lineitem_t`,
+  `lineitem_coli_t`, and `lineitem_acoli_t`), `predicates.hpp` (the three
+  spec-shared filters: `q3_predicate_customer`, `q3_predicate_orders`,
+  `q3_predicate_lineitem`, each templated on Params), and `params.hpp` (the
+  10-entry SUBSTITUTION-PARAMETER rotation table covering all 5 segments × 5
+  March-15 dates in [1993, 1997]). Q3I's `query.tpp` aliases
+  `LineitemRevenueAccumulator` from here and delegates its predicate bodies to
+  the family functions; Q3 will wire up at Phase 0.5 when its bodies land.
+  Q3I-only pieces (`CustomerOpenDueAccumulator`, invoice predicates,
+  `COLIGroupWalkVisitor`) remain in `q3i/`.
+
 Per-query subdirectories:
 
 - `q12/` — Shipping Modes and Order Priority (2 tables, 1 join).

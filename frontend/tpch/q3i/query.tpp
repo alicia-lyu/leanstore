@@ -15,6 +15,9 @@
 #include <unordered_map>
 
 #include "../operators.hpp"
+#include "../q3_family/accumulators.hpp"
+#include "../q3_family/params.hpp"
+#include "../q3_family/predicates.hpp"
 #include "../../shared/merge-join/binary_merge_join.hpp"
 #include "../../shared/merge-join/hash_join.hpp"
 #include "../../shared/scanner_helpers.hpp"
@@ -86,33 +89,11 @@ inline Params Params::defaults()
 template <typename Backend>
 void Q3IWorkload<Backend>::set_params_for_iter(long iter)
 {
-   static constexpr Timestamp DATE_1993_03_15 = DATE_1995_03_15 - 365 - 365;
-   static constexpr Timestamp DATE_1994_03_15 = DATE_1995_03_15 - 365;
-   static constexpr Timestamp DATE_1996_03_15 = DATE_1995_03_15 + 366;  // 1996 leap year
-   static constexpr Timestamp DATE_1997_03_15 = DATE_1995_03_15 + 366 + 365;
-
-   struct Entry {
-      const char* segment;
-      Timestamp   date;
-   };
-   // 10 entries: all 5 segments × the two most discriminating years
-   // (1993 vs 1997) plus the validation year (1995) in the middle, and
-   // 1994/1996 flanking — covers the full DATE domain in 10 iterations.
-   static constexpr Entry TABLE[] = {
-       {"BUILDING",    DATE_1995_03_15},  // validation defaults
-       {"AUTOMOBILE",  DATE_1994_03_15},
-       {"FURNITURE",   DATE_1993_03_15},
-       {"HOUSEHOLD",   DATE_1996_03_15},
-       {"MACHINERY",   DATE_1997_03_15},
-       {"AUTOMOBILE",  DATE_1995_03_15},
-       {"BUILDING",    DATE_1993_03_15},
-       {"FURNITURE",   DATE_1997_03_15},
-       {"HOUSEHOLD",   DATE_1994_03_15},
-       {"MACHINERY",   DATE_1996_03_15},
-   };
-   static constexpr long N = static_cast<long>(sizeof(TABLE) / sizeof(TABLE[0]));
-
-   const Entry& e = TABLE[iter % N];
+   // Shared rotation table: all 5 segments × 5 March-15 dates in [1993,1997].
+   // threshold is always 0 (spec validation default; non-zero thresholds shrink
+   // the result set without adding signal for cross-structure comparison).
+   const q3_family::ParamEntry& e =
+       q3_family::PARAM_TABLE[iter % q3_family::PARAM_TABLE_SIZE];
    params = {Varchar<10>(e.segment), e.date, e.date, Numeric(0)};
 }
 
@@ -149,15 +130,17 @@ inline void q3i_agg_row_t::print(std::ostream& os) const
 // Predicate implementations
 
 // Applied to an orders row before joining (S1, S3).
+// Delegates to the family predicate so Q3 and Q3I share identical filter logic.
 inline bool q3i_predicate_orders(const orders_t& o, const Params& p)
 {
-   return o.o_orderdate < p.orderdate;
+   return q3_family::q3_predicate_orders(o, p);
 }
 
 // Applied to a raw lineitem before joining (S1, S3).
+// Delegates to the family predicate for the same reason.
 inline bool q3i_predicate_lineitem(const lineitem_t& l, const Params& p)
 {
-   return l.l_shipdate > p.shipdate;
+   return q3_family::q3_predicate_lineitem(l, p);
 }
 
 // Applied to a fully-assembled joined_ol_t (S2).
@@ -205,26 +188,10 @@ struct CustomerOpenDueAccumulator {
    void reset() { value = 0; }
 };
 
-// Per-orderkey revenue: SUM(l_extendedprice * (1 - l_discount))
+// Per-orderkey revenue accumulator: SUM(l_extendedprice * (1 - l_discount))
 // across same-orderkey lineitems passing the shipdate filter.
-struct LineitemRevenueAccumulator {
-   Numeric revenue = 0;
-
-   // Returns true if the lineitem passed the filter and contributed to revenue.
-   bool consume(const lineitem_t& l, const Params& p) {
-      if (l.l_shipdate <= p.shipdate) return false;
-      revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
-      return true;
-   }
-
-   bool consume(const lineitem_coli_t& l, const Params& p) {
-      if (l.l_shipdate <= p.shipdate) return false;
-      revenue += l.l_extendedprice * (Numeric(1) - l.l_discount);
-      return true;
-   }
-
-   void reset() { revenue = 0; }
-};
+// Instantiated on Q3I's Params; the template body lives in q3_family/accumulators.hpp.
+using LineitemRevenueAccumulator = q3_family::LineitemRevenueAccumulator<Params>;
 
 // ---------------------------------------------------------------------------
 // COLIGroupWalkVisitor — lifted to namespace scope so Phase 2B S1/S2/S4
