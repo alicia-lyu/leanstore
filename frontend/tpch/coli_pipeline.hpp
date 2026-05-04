@@ -28,7 +28,7 @@
 
 #include "backend.hpp"
 #include "views_coli.hpp"
-#include "tpch_tables.hpp"
+#include "tpchi_tables.hpp"
 
 namespace tpch
 {

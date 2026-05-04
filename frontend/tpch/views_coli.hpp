@@ -28,7 +28,7 @@
 
 #include "../shared/Types.hpp"
 #include "../shared/view_templates.hpp"
-#include "tpch_tables.hpp"
+#include "tpchi_tables.hpp"
 
 namespace tpch
 {
@@ -404,11 +404,11 @@ struct lineitem_coli_t {
       return os;
    }
 
-   static lineitem_coli_t from_base(const lineitem_t& l)
+   static lineitem_coli_t from_base(const lineitem_i_t& l)
    {
       return {l.l_extendedprice, l.l_discount, l.l_shipdate};
    }
-   static Key key_from_base(Integer custkey, const lineitem_t::Key& k, const lineitem_t& v)
+   static Key key_from_base(Integer custkey, const lineitem_i_t::Key& k, const lineitem_i_t& v)
    {
       return Key{custkey, k.l_orderkey, v.l_invoicekey, k.l_linenumber};
    }
@@ -556,19 +556,21 @@ struct customer_acoli_t {
    static Key key_from_base(const customerh_t::Key& k) { return Key{k.c_custkey}; }
 };
 
-// orders_acoli_t: orders_t payload only.
-//   Key: (custkey, orderkey) — plain two-field fold; no tagged-path needed.
+// orders_acoli_t: orders payload projected to {o_orderdate, o_shippriority}.
+//   Key: (custkey, orderkey) — plain two-field fold (8 bytes).
+//
+// NOTE: orders_coli_t carries the same payload but uses a COLI tagged-key
+// encoding (12 bytes), which would collide with lineitem_acoli_t's 12-byte
+// plain fold key and break fold-length discrimination in the aCOLI
+// MergedAdapter.  The types are payload-identical but key-shape-different,
+// so collapse is deferred. id=50 reserved.
 //
 // pre_revenue REMOVED (2026-05-03): it was parameterised by l_shipdate and
 // broke correctness for any DATE param other than the validation value.
-// Lineitems are now stored in lineitem_acoli_t (sibling under this
-// orders_acoli_t in the merged adapter); revenue is recomputed at query time.
+// Lineitems are now stored in lineitem_acoli_t; revenue is recomputed at
+// query time.
 //
-// G8b (2026-05-03): payload projected to {o_orderdate, o_shippriority} —
-// the only fields query_by_aggregated reads. Per CLAUDE.md §Project
-// pushdown: aCOLI is a pre-aggregated secondary (customer is the only
-// primary in the S5 storage variant), so non-customer types are projected
-// to query-required columns. Widen in place when a future query needs more.
+// G8b (2026-05-03): payload projected to {o_orderdate, o_shippriority}.
 struct orders_acoli_t {
    static constexpr int id = 50;
 

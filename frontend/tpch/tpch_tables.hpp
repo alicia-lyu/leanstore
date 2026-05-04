@@ -328,7 +328,6 @@ struct lineitem_t {
    Varchar<25> l_shipinstruct;
    Varchar<10> l_shipmode;
    Varchar<44> l_comment;
-   Integer l_invoicekey;  // FK → invoice_t; assigned after invoice generation
 
    ADD_RECORD_TRAITS(lineitem_t)
 
@@ -387,8 +386,7 @@ struct lineitem_t {
                         l_receiptdate,
                         randomFromList<25>(TPCH_INSTRUCTIONS, 4),
                         randomFromList<10>(TPCH_MODES, 7),
-                        randomastring<44>(44, 44),
-                        0}; // l_invoicekey: assigned by loadInvoiceAndLinkLineitem
+                        randomastring<44>(44, 44)};
    }
 
    // Backward-compatibility overload for geo/ code that doesn't supply an order date.
@@ -485,41 +483,3 @@ struct region_t {
    static region_t generateRandomRecord() { return region_t{randomastring<25>(1, 25), randomastring<152>(0, 152)}; }
 };
 
-struct invoice_t {
-   static constexpr int id = 9;
-   struct Key {
-      static constexpr int id = 9;
-      Integer i_invoicekey;
-      ADD_KEY_TRAITS(&Key::i_invoicekey)
-   };
-
-   Integer    i_custkey;      // FK → customerh_t (the MI join key)
-   Timestamp  i_invoicedate;
-   Numeric    i_totaldue;     // Σ l_extendedprice*(1-discount)*(1+tax) over bundled lineitems
-   Varchar<1>  i_status;      // 'P' paid, 'O' open, 'L' late
-   Varchar<25> i_paymentterm;
-   Varchar<79> i_comment;
-
-   ADD_RECORD_TRAITS(invoice_t)
-
-   void print(std::ostream& os) const
-   {
-      os << i_custkey << "," << i_invoicedate << "," << i_totaldue << ","
-         << i_status << "," << i_paymentterm << "," << i_comment;
-   }
-
-   // Caller should pass generate_custkey returning values in [1..num_customers].
-   // i_totaldue is accumulated externally during loadInvoiceAndLinkLineitem.
-   static invoice_t generateRandomRecord(std::function<int()> generate_custkey,
-                                         Timestamp i_invoicedate,
-                                         Numeric   i_totaldue,
-                                         Varchar<1> i_status)
-   {
-      return invoice_t{generate_custkey(),
-                       i_invoicedate,
-                       i_totaldue,
-                       i_status,
-                       randomastring<25>(0, 25),
-                       randomastring<79>(0, 79)};
-   }
-};

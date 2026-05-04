@@ -94,6 +94,12 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_merged()
    }
 
    // --- Pass 2: scan lineitems, resolve custkey from map ---
+   //
+   // Phase 1 note: the base lineitem adapter still holds lineitem_t rows
+   // (l_invoicekey removed from lineitem_t in schema split phase 1).
+   // lineitem_coli_t::key_from_base expects lineitem_i_t; wrap with
+   // l_invoicekey=0 here.  Phase 2 will replace Adapter<lineitem_t> with
+   // Adapter<lineitem_i_t> so the real invoice key is available.
    {
       auto scanner = lineitem.getScanner();
       while (auto kv = scanner->next()) {
@@ -103,9 +109,11 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_merged()
          assert(it != orderkey_to_custkey.end()
                 && "lineitem references unknown orderkey");
          Integer custkey = it->second;
+         lineitem_i_t::Key lik{lk.l_orderkey, lk.l_linenumber};
+         lineitem_i_t li(lv, 0);  // l_invoicekey=0 until Phase 2 swaps adapter
          merged_coli.template insert<lineitem_coli_t>(
-             lineitem_coli_t::key_from_base(custkey, lk, lv),
-             lineitem_coli_t::from_base(lv));
+             lineitem_coli_t::key_from_base(custkey, lik, li),
+             lineitem_coli_t::from_base(li));
       }
    }
 
@@ -151,6 +159,9 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_split()
    }
 
    // --- Pass 1: scan lineitems, resolve custkey from map ---
+   //
+   // Phase 1 note: same l_invoicekey=0 placeholder as in populate_merged.
+   // Phase 2 will replace Adapter<lineitem_t> with Adapter<lineitem_i_t>.
    {
       auto scanner = lineitem.getScanner();
       while (auto kv = scanner->next()) {
@@ -160,9 +171,11 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_split()
          assert(it != orderkey_to_custkey.end()
                 && "lineitem references unknown orderkey");
          Integer custkey = it->second;
+         lineitem_i_t::Key lik{lk.l_orderkey, lk.l_linenumber};
+         lineitem_i_t li(lv, 0);  // l_invoicekey=0 until Phase 2 swaps adapter
          split_lineitem_ref.insert(
-             lineitem_coli_t::key_from_base(custkey, lk, lv),
-             lineitem_coli_t::from_base(lv));
+             lineitem_coli_t::key_from_base(custkey, lik, li),
+             lineitem_coli_t::from_base(li));
       }
    }
 

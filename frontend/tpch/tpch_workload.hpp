@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "tpch_tables.hpp"
+#include "tpchi_tables.hpp"
 
 #include "../shared/logger/logger.hpp"
 
@@ -655,9 +655,11 @@ struct TPCHWorkload {
             if (entry.orderdate > draft.max_orderdate)
                draft.max_orderdate = entry.orderdate;
 
-            // Rewrite lineitem: erase old, insert with assigned invoicekey.
-            lineitem_t updated = entry.rec;
-            updated.l_invoicekey = invoicekey;
+            // Rewrite lineitem: erase old lineitem_t, insert lineitem_i_t with
+            // the assigned invoicekey.  Phase 2 will change the adapter type
+            // from Adapter<lineitem_t> to Adapter<lineitem_i_t>; for now we
+            // use the upgrade constructor lineitem_i_t(base, invoicekey).
+            lineitem_i_t updated(entry.rec, invoicekey);
             lineitem_t::Key lk{entry.orderkey, entry.linenumber};
             lineitem.erase(lk);
             lineitem.insert(lk, updated);
