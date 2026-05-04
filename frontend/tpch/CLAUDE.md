@@ -368,10 +368,13 @@ make -C build/frontend test_load_merged_btree -j$(nproc)
 ./build/frontend/test_views_ol
 
 # Run MI[0] load test
-mkdir -p test_data test_csv
+# Scratch convention: keep all RocksDB/CSV scratch under build/scratch/<tag>/
+# (build*/ is gitignored). Do NOT create test_data*/ test_csv*/ in the project
+# root — they accumulate and pollute the working tree.
+mkdir -p build/scratch/merged_ol/{data,csv}
 ./build/frontend/test_load_merged_lsm \
-    --ssd_path=./test_data \
-    --csv_path=./test_csv \
+    --ssd_path=./build/scratch/merged_ol/data \
+    --csv_path=./build/scratch/merged_ol/csv \
     --tpch_scale_factor=1
 # Expected: prints MI[0] distribution stats with all [OK] tags.
 ```
@@ -383,10 +386,10 @@ make -C build/frontend test_load_coli_lsm -j$(sysctl -n hw.ncpu)
 # Run COLI load test
 # Each invocation needs a fresh --ssd_path (RocksDB does not cleanly
 # overwrite an existing DB; use a new directory or delete the old one).
-mkdir -p test_data_coli test_csv_coli
+mkdir -p build/scratch/coli/{data,csv}
 ./build/frontend/test_load_coli_lsm \
-    --ssd_path=./test_data_coli \
-    --csv_path=./test_csv_coli \
+    --ssd_path=./build/scratch/coli/data \
+    --csv_path=./build/scratch/coli/csv \
     --tpch_scale_factor=1
 # Expected: row-count, FK-resolution, and sentinel-ordering checks,
 # all [OK] at SF=1.
@@ -397,10 +400,10 @@ mkdir -p test_data_coli test_csv_coli
 make -C build/frontend test_load_col_lsm -j$(sysctl -n hw.ncpu)
 
 # Run COL load test (fresh directory required — same RocksDB constraint)
-mkdir -p test_data_col test_csv_col
+mkdir -p build/scratch/col/{data,csv}
 ./build/frontend/test_load_col_lsm \
-    --ssd_path=./test_data_col \
-    --csv_path=./test_csv_col \
+    --ssd_path=./build/scratch/col/data \
+    --csv_path=./build/scratch/col/csv \
     --tpch_scale_factor=1
 # Expected: customer/orders/lineitem counts, FK-resolution, hierarchical
 # order, and split-index checks — all [OK] at SF=1.
@@ -411,6 +414,14 @@ RocksDB writes its info log inside `ssd_path`; the Logger calls
 `create_directories(csv_path)` which fails if `csv_path` collides with
 that log file. Don't reuse `--ssd_path=.` (collides with the default
 `--csv_path=./log`).
+
+**Scratch directory convention**: every RocksDB-backed test/load run
+needs a fresh `--ssd_path` (RocksDB does not cleanly overwrite an
+existing DB). Put scratch under `build/scratch/<tag>/{data,csv}` —
+`build*/` is gitignored, so this never lands in the project root.
+**Do not** create `test_data_*/` or `test_csv_*/` in the project root;
+those have accumulated by the dozen in past sessions and have all
+been moved to `TRASH/`.
 
 ### Per-query test commands
 

@@ -157,10 +157,10 @@ Only after parity is green:
 
 ```
 cd build && make test_query_q3i_lsm -j$(sysctl -n hw.ncpu)
-mkdir -p ../test_data_q3i ../test_csv_q3i
+mkdir -p scratch/q3i/{data,csv}
 ./frontend/test_query_q3i_lsm \
-    --ssd_path=../test_data_q3i \
-    --csv_path=../test_csv_q3i \
+    --ssd_path=./scratch/q3i/data \
+    --csv_path=./scratch/q3i/csv \
     --tpch_scale_factor=1
 ```
 Expected: 4 identical digests, 4 identical row counts, exit 0,

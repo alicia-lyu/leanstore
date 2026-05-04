@@ -1625,10 +1625,11 @@ Run after completing all phases:
 - [ ] `make -C build/frontend test_query_q{N}_lsm -j$(nproc)` — builds clean
 - [ ] Run with fresh `--ssd_path`:
   ```bash
-  mkdir -p test_data_q{N} test_csv_q{N}
+  # Scratch under build/scratch/<tag>/ (gitignored). Never test_data*/ in root.
+  mkdir -p build/scratch/q{N}/{data,csv}
   ./build/frontend/test_query_q{N}_lsm \
-      --ssd_path=./test_data_q{N} \
-      --csv_path=./test_csv_q{N} \
+      --ssd_path=./build/scratch/q{N}/data \
+      --csv_path=./build/scratch/q{N}/csv \
       --tpch_scale_factor=1
   ```
   All `[OK]`, zero `[FAIL]`, exit 0.

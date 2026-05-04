@@ -515,17 +515,19 @@ make -C build/frontend test_load_q12_lsm test_query_q12_lsm \
 make -C build/frontend test_load_q12_btree test_query_q12_btree -j$(nproc)
 
 # Run load test
-mkdir -p test_data2 test_csv2
+# Scratch goes under build/scratch/<tag>/ (gitignored). Don't create
+# test_data*/ test_csv*/ in the project root.
+mkdir -p build/scratch/q12_load/{data,csv}
 ./build/frontend/test_load_q12_lsm \
-    --ssd_path=./test_data2 \
-    --csv_path=./test_csv2 \
+    --ssd_path=./build/scratch/q12_load/data \
+    --csv_path=./build/scratch/q12_load/csv \
     --tpch_scale_factor=1
 
 # Run query test (cross-structure parity over all four query_by_*)
-mkdir -p test_data3 test_csv3
+mkdir -p build/scratch/q12_query/{data,csv}
 ./build/frontend/test_query_q12_lsm \
-    --ssd_path=./test_data3 \
-    --csv_path=./test_csv3 \
+    --ssd_path=./build/scratch/q12_query/data \
+    --csv_path=./build/scratch/q12_query/csv \
     --tpch_scale_factor=1
 # Expected: per-structure shape checks + 4-way XOR parity = [OK].
 # All shape and parity checks [OK] at SF=1 once the load-order bug

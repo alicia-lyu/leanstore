@@ -293,10 +293,10 @@ experiment integration; rerun it to regenerate `targets.mk` after edits.
 make -C build/frontend test_query_q3i_lsm -j$(sysctl -n hw.ncpu)
 
 # Run cross-structure parity test (SF=1)
-mkdir -p test_data_q3i test_csv_q3i
+mkdir -p build/scratch/q3i/{data,csv}
 ./build/frontend/test_query_q3i_lsm \
-    --ssd_path=./test_data_q3i \
-    --csv_path=./test_csv_q3i \
+    --ssd_path=./build/scratch/q3i/data \
+    --csv_path=./build/scratch/q3i/csv \
     --tpch_scale_factor=1
 # Expected: 4 identical digests, 4 × row_count=10, exit 0.
 # Verified: all four digests match within a single run (seed-dependent value
