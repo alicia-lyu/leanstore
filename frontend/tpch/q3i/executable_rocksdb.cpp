@@ -19,8 +19,8 @@
 #include "../../shared/logger/rocksdb_logger.hpp"
 #include <rocksdb/perf_level.h>
 #include "../backend.hpp"
-#include "../tpch_tables.hpp"
-#include "../tpch_workload.hpp"
+#include "../tpchi_tables.hpp"
+#include "../tpchi_workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
@@ -41,16 +41,16 @@ int main(int argc, char** argv)
    RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
    using B = tpch::RocksDBBackend;
 
-   // Base TPC-H tables
-   B::Adapter<part_t>      part(rocks_db);
-   B::Adapter<supplier_t>  supplier(rocks_db);
-   B::Adapter<partsupp_t>  partsupp(rocks_db);
-   B::Adapter<customerh_t> customer(rocks_db);
-   B::Adapter<orders_t>    orders(rocks_db);
-   B::Adapter<lineitem_t>  lineitem(rocks_db);
-   B::Adapter<nation_t>    nation(rocks_db);
-   B::Adapter<region_t>    region(rocks_db);
-   B::Adapter<invoice_t>   invoice(rocks_db);
+   // Base TPC-H tables (lineitem uses invoice-extended variant for Q3I)
+   B::Adapter<part_t>        part(rocks_db);
+   B::Adapter<supplier_t>    supplier(rocks_db);
+   B::Adapter<partsupp_t>    partsupp(rocks_db);
+   B::Adapter<customerh_t>   customer(rocks_db);
+   B::Adapter<orders_t>      orders(rocks_db);
+   B::Adapter<lineitem_i_t>  lineitem(rocks_db);
+   B::Adapter<nation_t>      nation(rocks_db);
+   B::Adapter<region_t>      region(rocks_db);
+   B::Adapter<invoice_t>     invoice(rocks_db);
 
    // Q3I-specific adapters
    B::Adapter<tpch::q3i::q3i_pipeline_view_t> pipeline_view(rocks_db);
@@ -76,8 +76,8 @@ int main(int argc, char** argv)
    }
 
    RocksDBLogger logger(rocks_db);
-   TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                  orders, lineitem, nation, region, invoice, logger);
+   TPCHIWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
+                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
                                    split_orders, split_lineitem, split_invoice, acoli);

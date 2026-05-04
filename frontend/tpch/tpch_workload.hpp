@@ -9,13 +9,20 @@
 #include <unordered_map>
 #include <vector>
 
-#include "tpchi_tables.hpp"
+#include "tpch_tables.hpp"
 
 #include "../shared/logger/logger.hpp"
 
 DECLARE_int32(tpch_scale_factor);
 
-template <template <typename> class AdapterType>
+// TPCHWorkload loads the 8 vanilla TPC-H base tables.
+//
+// LineitemRecord defaults to lineitem_t (vanilla). Invoice-extended workloads
+// (TPCHIWorkload in tpchi_workload.hpp) pass lineitem_i_t so the lineitem
+// adapter stores the FK-bearing variant directly; the initial insert uses
+// l_invoicekey=0 and loadInvoiceAndLinkLineitem() rewrites each row.
+
+template <template <typename> class AdapterType, class LineitemRecord = lineitem_t>
 struct TPCHWorkload {
    Logger& logger;
    AdapterType<part_t>& part;
@@ -23,10 +30,9 @@ struct TPCHWorkload {
    AdapterType<partsupp_t>& partsupp;
    AdapterType<customerh_t>& customer;
    AdapterType<orders_t>& orders;
-   AdapterType<lineitem_t>& lineitem;
+   AdapterType<LineitemRecord>& lineitem;
    AdapterType<nation_t>& nation;
    AdapterType<region_t>& region;
-   AdapterType<invoice_t>& invoice;
 
    // Per-spec §4.2.3: scale factors (counts in thousands, multiplied by SF at runtime)
    inline static Integer PART_SCALE = 200;      // 200K per SF
@@ -35,8 +41,6 @@ struct TPCHWorkload {
    inline static Integer ORDERS_SCALE = 1500;    // 1.5M per SF
    inline static Integer LINEITEM_SCALE = 6000;  // ~6M per SF (avg 4 lineitems per order)
    inline static Integer PARTSUPP_SCALE = 800;   // 800K per SF
-   // Invoice scale: 2 × ORDERS_SCALE — ~3M per SF
-   inline static Integer INVOICE_SCALE = 3000;
    inline static Integer NATION_COUNT = 25;
    inline static Integer REGION_COUNT = 5;
 
@@ -65,10 +69,9 @@ struct TPCHWorkload {
                 AdapterType<partsupp_t>& ps,
                 AdapterType<customerh_t>& c,
                 AdapterType<orders_t>& o,
-                AdapterType<lineitem_t>& l,
+                AdapterType<LineitemRecord>& l,
                 AdapterType<nation_t>& n,
                 AdapterType<region_t>& r,
-                AdapterType<invoice_t>& inv,
                 Logger& logger)
        : logger(logger),
          part(p),
@@ -79,7 +82,6 @@ struct TPCHWorkload {
          lineitem(l),
          nation(n),
          region(r),
-         invoice(inv),
          last_part_id(0),
          last_supplier_id(0),
          last_customer_id(0),
@@ -103,7 +105,6 @@ struct TPCHWorkload {
       prepopulate_order_dates();
       loadPartsuppLineitem();
       loadOrders();
-      loadInvoiceAndLinkLineitem();
       loadNation();
       loadRegion();
    }
@@ -259,9 +260,21 @@ struct TPCHWorkload {
           start, end);
    }
 
+   // Convert a generated lineitem_t to LineitemRecord for insert.
+   // For vanilla TPCHWorkload (LineitemRecord=lineitem_t) this is identity.
+   // For TPCHIWorkload (LineitemRecord=lineitem_i_t) the upgrade ctor sets
+   // l_invoicekey=0; loadInvoiceAndLinkLineitem() rewrites it later.
+   static LineitemRecord to_lineitem_record(const lineitem_t& base)
+   {
+      if constexpr (std::is_same_v<LineitemRecord, lineitem_t>)
+         return base;
+      else
+         return LineitemRecord(base, 0);
+   }
+
    void loadPartsuppLineitem(
        std::function<void(const partsupp_t::Key&, const partsupp_t&)> ps_insert_func,
-       std::function<void(const lineitem_t::Key&, const lineitem_t&)> l_insert_func,
+       std::function<void(const typename LineitemRecord::Key&, const LineitemRecord&)> l_insert_func,
        Integer part_start,
        Integer part_end,
        Integer order_start,
@@ -300,10 +313,11 @@ struct TPCHWorkload {
                auto it = order_dates.find(okey);
                if (it != order_dates.end())
                   o_orderdate = it->second;
-               auto rec = lineitem_t::generateRandomRecord(i, s, o_orderdate,
-                                                          part_t::computeRetailPrice(i));
-               accumulate_for_order(okey, rec);
-               l_insert_func(lineitem_t::Key{okey, lineitem_number}, rec);
+               auto base_rec = lineitem_t::generateRandomRecord(i, s, o_orderdate,
+                                                               part_t::computeRetailPrice(i));
+               accumulate_for_order(okey, base_rec);
+               auto rec = to_lineitem_record(base_rec);
+               l_insert_func(typename LineitemRecord::Key{okey, lineitem_number}, rec);
                lineitem_number++;
                if (lineitem_number > lineitem_cnt_in_order) {
                   lineitem_number = 1;
@@ -341,7 +355,7 @@ struct TPCHWorkload {
    {
       loadPartsuppLineitem(
           [this](const partsupp_t::Key& k, const partsupp_t& v) { this->partsupp.insert(k, v); },
-          [this](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
+          [this](const typename LineitemRecord::Key& k, const LineitemRecord& v) { this->lineitem.insert(k, v); },
           part_start, part_end, order_start, order_end);
    }
 
@@ -350,13 +364,15 @@ struct TPCHWorkload {
                      Integer part_end = PART_SCALE * FLAGS_tpch_scale_factor)
    {
       // Pass an empty range for orders so no lineitems are generated.
-      loadPartsuppLineitem(insert_func, [](const lineitem_t::Key&, const lineitem_t&) {},
+      loadPartsuppLineitem(insert_func,
+                           [](const typename LineitemRecord::Key&, const LineitemRecord&) {},
                            part_start, part_end, last_order_id, last_order_id - 1);
    }
 
-   void loadLineitem(std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_func,
-                     Integer order_start,
-                     Integer order_end)
+   void loadLineitem(
+       std::function<void(const typename LineitemRecord::Key&, const LineitemRecord&)> insert_func,
+       Integer order_start,
+       Integer order_end)
    {
       for (Integer i = order_start; i <= order_end; i++) {
          load_lineitems_1order(insert_func, orderkey_from_index(i));
@@ -364,7 +380,7 @@ struct TPCHWorkload {
    }
 
    int load_lineitems_1order(
-       std::function<void(const lineitem_t::Key&, const lineitem_t&)> insert_func,
+       std::function<void(const typename LineitemRecord::Key&, const LineitemRecord&)> insert_func,
        Integer orderkey)
    {
       // Look up the order date for this orderkey.
@@ -401,10 +417,11 @@ struct TPCHWorkload {
                 []() {});
          }
          assert(found);
-         auto rec = lineitem_t::generateRandomRecord(p, s, o_orderdate,
-                                                     part_t::computeRetailPrice(p));
-         accumulate_for_order(orderkey, rec);
-         insert_func(lineitem_t::Key{orderkey, j}, rec);
+         auto base_rec = lineitem_t::generateRandomRecord(p, s, o_orderdate,
+                                                          part_t::computeRetailPrice(p));
+         accumulate_for_order(orderkey, base_rec);
+         auto rec = to_lineitem_record(base_rec);
+         insert_func(typename LineitemRecord::Key{orderkey, j}, rec);
       }
       return lineitem_cnt;
    }
@@ -413,7 +430,7 @@ struct TPCHWorkload {
                      Integer order_end = ORDERS_SCALE * FLAGS_tpch_scale_factor)
    {
       loadLineitem(
-          [&](const lineitem_t::Key& k, const lineitem_t& v) { this->lineitem.insert(k, v); },
+          [this](const typename LineitemRecord::Key& k, const LineitemRecord& v) { this->lineitem.insert(k, v); },
           order_start, order_end);
    }
 
@@ -508,207 +525,6 @@ struct TPCHWorkload {
       loadRegion([this](const region_t::Key& k, const region_t& v) { this->region.insert(k, v); });
    }
 
-   // Generate invoice records and rewrite each lineitem with its assigned
-   // `l_invoicekey`.  Must be called after `loadOrders` and
-   // `loadPartsuppLineitem` have both committed, since we read back
-   // `order_aggregates` (for per-lineitem revenue) and the lineitem adapter
-   // (for the rewrite pass).
-   //
-   // Algorithm (plan §4):
-   //   1. Scan orders and group by custkey, recording (orderdate, orderkey).
-   //   2. Scan lineitems grouped by orderkey (natural key order), accumulate
-   //      per-order into a per-custkey list of (orderkey, linenumber, lineitem).
-   //   3. For each customer: allocate 2 * N invoice slots.
-   //      Walk lineitems in (orderdate, orderkey, linenumber) order, assigning
-   //      each to the current invoice; close and advance after
-   //      total_lineitems / num_invoices lineitems.
-   //   4. Insert invoice rows; erase+reinsert each lineitem with its invoicekey.
-   //
-   // Secondary indexes for Structure 1 (custkey-sorted Invoice and custkey-
-   // sorted Orders for sibling merge join) are a TODO: no secondary-index
-   // adapter pattern exists yet in this codebase.  When added, populate them
-   // here after inserting each invoice / order record.
-   void loadInvoiceAndLinkLineitem()
-   {
-      std::cout << "Building customer→orders and customer→lineitems maps..." << std::endl;
-
-      // Per-order metadata we need when sorting and closing invoices.
-      struct OrderMeta {
-         Timestamp orderdate;
-         Integer   orderkey;
-      };
-      // Per-lineitem snapshot stored in memory for the rewrite pass.
-      struct LineitemEntry {
-         Integer     orderkey;
-         Integer     linenumber;
-         Timestamp   orderdate;  // copied from parent order for sort key
-         lineitem_t  rec;
-      };
-
-      // custkey → list of orders, sorted later by orderdate
-      std::unordered_map<Integer, std::vector<OrderMeta>> cust_orders;
-      // custkey → list of lineitems (unsorted; we sort inside the loop)
-      std::unordered_map<Integer, std::vector<LineitemEntry>> cust_lineitems;
-
-      // --- Pass 1: scan orders to build cust_orders map ---
-      orders.scan(
-          orders_t::Key{std::numeric_limits<Integer>::min()},
-          [&](const orders_t::Key& ok, const orders_t& o) {
-             cust_orders[o.o_custkey].push_back({o.o_orderdate, ok.o_orderkey});
-             return true;
-          },
-          []() {});
-
-      // --- Pass 2: scan lineitems, joining to order date via cust_orders ---
-      // Build a temporary orderkey→custkey map for O(1) lookup per lineitem.
-      std::unordered_map<Integer, Integer> order_to_cust;
-      order_to_cust.reserve(cust_orders.size());
-      for (auto& [ck, oms] : cust_orders) {
-         for (auto& om : oms)
-            order_to_cust[om.orderkey] = ck;
-      }
-
-      lineitem.scan(
-          lineitem_t::Key{std::numeric_limits<Integer>::min(),
-                          std::numeric_limits<Integer>::min()},
-          [&](const lineitem_t::Key& lk, const lineitem_t& l) {
-             auto it = order_to_cust.find(lk.l_orderkey);
-             if (it == order_to_cust.end())
-                return true;  // orphan lineitem — skip
-             Integer ck = it->second;
-             // Look up orderdate for this orderkey (needed for sort key).
-             Timestamp odate = 0;
-             auto dt = order_dates.find(lk.l_orderkey);
-             if (dt != order_dates.end())
-                odate = dt->second;
-             cust_lineitems[ck].push_back(
-                 {lk.l_orderkey, lk.l_linenumber, odate, l});
-             return true;
-          },
-          []() {});
-
-      // --- Pass 3: per-customer invoice generation ---
-      // Global invoice key counter, 1-based.
-      Integer next_invoicekey = 1;
-
-      long customers_processed = 0;
-      long invoices_inserted   = 0;
-      long lineitems_rewritten = 0;
-
-      for (auto& [custkey, order_metas] : cust_orders) {
-         auto& items = cust_lineitems[custkey];  // may be empty
-         Integer N = static_cast<Integer>(order_metas.size());
-         // 2 invoices per order
-         Integer num_invoices = 2 * N;
-
-         // Sort lineitems by (orderdate, orderkey, linenumber) so that
-         // lineitems from the same order cluster together and earlier orders
-         // appear first — matching the plan §4 traversal order.
-         std::sort(items.begin(), items.end(),
-                   [](const LineitemEntry& a, const LineitemEntry& b) {
-                      if (a.orderdate != b.orderdate) return a.orderdate < b.orderdate;
-                      if (a.orderkey  != b.orderkey)  return a.orderkey  < b.orderkey;
-                      return a.linenumber < b.linenumber;
-                   });
-
-         Integer total_lineitems = static_cast<Integer>(items.size());
-         // Target lineitems per invoice (≥ 1 to avoid division by zero).
-         Integer target_per_invoice =
-             (num_invoices > 0 && total_lineitems > 0)
-                 ? std::max(Integer(1), total_lineitems / num_invoices)
-                 : 1;
-
-         // State for the current open invoice.
-         Integer first_invoice_of_cust = next_invoicekey;
-         Integer inv_idx    = 0;       // which invoice slot we are filling
-         Integer inv_count  = 0;       // lineitems assigned to current invoice
-         Integer invoicekey = next_invoicekey;
-         next_invoicekey   += num_invoices;
-
-         // Collect per-invoice metadata for final insert.
-         struct InvoiceDraft {
-            Integer   invoicekey;
-            Timestamp max_orderdate;
-            Numeric   totaldue;
-         };
-         std::vector<InvoiceDraft> drafts;
-         drafts.reserve(static_cast<size_t>(num_invoices));
-         // Initialise first draft.
-         drafts.push_back({invoicekey, 0, 0.0});
-
-         // Assign lineitems to invoices; rewrite each with its invoicekey.
-         for (auto& entry : items) {
-            // Close current invoice and open next if threshold reached.
-            if (inv_count >= target_per_invoice && inv_idx + 1 < num_invoices) {
-               ++inv_idx;
-               invoicekey = first_invoice_of_cust + inv_idx;
-               drafts.push_back({invoicekey, 0, 0.0});
-               inv_count     = 0;
-            }
-
-            auto& draft = drafts.back();
-            // Accumulate invoice totals.
-            draft.totaldue +=
-                entry.rec.l_extendedprice
-                * (1.0 - static_cast<double>(entry.rec.l_discount))
-                * (1.0 + static_cast<double>(entry.rec.l_tax));
-            if (entry.orderdate > draft.max_orderdate)
-               draft.max_orderdate = entry.orderdate;
-
-            // Rewrite lineitem: erase old lineitem_t, insert lineitem_i_t with
-            // the assigned invoicekey.  Phase 2 will change the adapter type
-            // from Adapter<lineitem_t> to Adapter<lineitem_i_t>; for now we
-            // use the upgrade constructor lineitem_i_t(base, invoicekey).
-            lineitem_i_t updated(entry.rec, invoicekey);
-            lineitem_t::Key lk{entry.orderkey, entry.linenumber};
-            lineitem.erase(lk);
-            lineitem.insert(lk, updated);
-            ++inv_count;
-            ++lineitems_rewritten;
-         }
-
-         // Insert invoice records for all drafts allocated to this customer.
-         // Any trailing invoice slots with no lineitems get zero totaldue and
-         // max_orderdate = 0 (edge case: customer has more invoice slots than
-         // lineitems).  Emit them to satisfy the "every invoicekey reachable"
-         // invariant checked by the load-test.
-         for (Integer slot = 0; slot < num_invoices; ++slot) {
-            Integer ikey = first_invoice_of_cust + slot;
-            Timestamp idate = 0;
-            Numeric   idue  = 0.0;
-            if (slot < static_cast<Integer>(drafts.size())) {
-               idate = drafts[static_cast<size_t>(slot)].max_orderdate;
-               idue  = drafts[static_cast<size_t>(slot)].totaldue;
-            }
-            // i_invoicedate = max(orderdate of bundled orders) + uniform(7,60)
-            idate += urand(7, 60);
-
-            // i_status weighted random: 'P' 70%, 'O' 25%, 'L' 5%
-            Integer roll = urand(1, 100);
-            Varchar<1> status(roll <= 70 ? "P" : (roll <= 95 ? "O" : "L"));
-
-            invoice_t rec{custkey, idate, idue, status,
-                          randomastring<25>(0, 25),
-                          randomastring<79>(0, 79)};
-            invoice.insert(invoice_t::Key{ikey}, rec);
-            ++invoices_inserted;
-
-            // TODO(secondary-index): when a custkey-sorted secondary index on
-            // Invoice is added (needed for Structure 1 sibling merge join),
-            // insert into it here alongside the primary insert.
-         }
-
-         // TODO(secondary-index): when a custkey-sorted secondary index on
-         // Orders is added (needed for Structure 1 sibling merge join), scan
-         // this customer's orders and insert into the secondary index here.
-
-         inspect_produced("customers with invoices", customers_processed);
-      }
-
-      std::cout << "\nInserted " << invoices_inserted << " invoices, rewrote "
-                << lineitems_rewritten << " lineitems." << std::endl;
-   }
-
    void log_sizes()
    {
       std::map<std::string, double> sizes = {{"part", part.size()},
@@ -718,8 +534,7 @@ struct TPCHWorkload {
                                              {"orders", orders.size()},
                                              {"lineitem", lineitem.size()},
                                              {"nation", nation.size()},
-                                             {"region", region.size()},
-                                             {"invoice", invoice.size()}};
+                                             {"region", region.size()}};
       logger.log_sizes(sizes);
    }
 

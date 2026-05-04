@@ -19,8 +19,8 @@
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "leanstore/storage/buffer-manager/BufferFrame.hpp"
 #include "../backend.hpp"
-#include "../tpch_tables.hpp"
-#include "../tpch_workload.hpp"
+#include "../tpchi_tables.hpp"
+#include "../tpchi_workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
@@ -45,7 +45,7 @@ int main(int argc, char** argv)
    B::Adapter<partsupp_t>  partsupp;
    B::Adapter<customerh_t> customer;
    B::Adapter<orders_t>    orders;
-   B::Adapter<lineitem_t>  lineitem;
+   B::Adapter<lineitem_i_t>  lineitem;
    B::Adapter<nation_t>    nation;
    B::Adapter<region_t>    region;
    B::Adapter<invoice_t>   invoice;
@@ -71,7 +71,7 @@ int main(int argc, char** argv)
       partsupp          = B::Adapter<partsupp_t>(db, "partsupp");
       customer          = B::Adapter<customerh_t>(db, "customer");
       orders            = B::Adapter<orders_t>(db, "orders");
-      lineitem          = B::Adapter<lineitem_t>(db, "lineitem");
+      lineitem          = B::Adapter<lineitem_i_t>(db, "lineitem");
       nation            = B::Adapter<nation_t>(db, "nation");
       region            = B::Adapter<region_t>(db, "region");
       invoice           = B::Adapter<invoice_t>(db, "invoice");
@@ -86,8 +86,8 @@ int main(int argc, char** argv)
    });
 
    LeanStoreLogger logger(db);
-   TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                  orders, lineitem, nation, region, invoice, logger);
+   TPCHIWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
+                                   orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
                                    split_orders, split_lineitem, split_invoice, acoli);

@@ -83,10 +83,12 @@ template <typename Backend>
 class CustomerOrdersLineitemInvoicePipeline
 {
    // Non-owning references; lifetime managed by the per-query workload.
-   typename Backend::template Adapter<customerh_t>&  customer;
-   typename Backend::template Adapter<orders_t>&     orders;
-   typename Backend::template Adapter<lineitem_t>&   lineitem;
-   typename Backend::template Adapter<invoice_t>&    invoice;
+   typename Backend::template Adapter<customerh_t>&   customer;
+   typename Backend::template Adapter<orders_t>&      orders;
+   // lineitem_i_t: the FK-bearing variant, provided by TPCHIWorkload after the
+   // invoice linking pass has written real invoicekeys into every row.
+   typename Backend::template Adapter<lineitem_i_t>&  lineitem;
+   typename Backend::template Adapter<invoice_t>&     invoice;
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                             lineitem_coli_t, invoice_coli_t>& merged_coli;
 
@@ -109,10 +111,10 @@ class CustomerOrdersLineitemInvoicePipeline
 
   public:
    CustomerOrdersLineitemInvoicePipeline(
-       typename Backend::template Adapter<customerh_t>&  customer,
-       typename Backend::template Adapter<orders_t>&     orders,
-       typename Backend::template Adapter<lineitem_t>&   lineitem,
-       typename Backend::template Adapter<invoice_t>&    invoice,
+       typename Backend::template Adapter<customerh_t>&   customer,
+       typename Backend::template Adapter<orders_t>&      orders,
+       typename Backend::template Adapter<lineitem_i_t>&  lineitem,
+       typename Backend::template Adapter<invoice_t>&     invoice,
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_coli_t, invoice_coli_t>& merged_coli,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,

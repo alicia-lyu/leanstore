@@ -23,10 +23,10 @@ namespace tpch
 
 template <typename Backend>
 CustomerOrdersLineitemInvoicePipeline<Backend>::CustomerOrdersLineitemInvoicePipeline(
-    typename Backend::template Adapter<customerh_t>& customer,
-    typename Backend::template Adapter<orders_t>& orders,
-    typename Backend::template Adapter<lineitem_t>& lineitem,
-    typename Backend::template Adapter<invoice_t>& invoice,
+    typename Backend::template Adapter<customerh_t>&  customer,
+    typename Backend::template Adapter<orders_t>&     orders,
+    typename Backend::template Adapter<lineitem_i_t>& lineitem,
+    typename Backend::template Adapter<invoice_t>&    invoice,
     typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                              lineitem_coli_t, invoice_coli_t>&
         merged_coli,
@@ -93,26 +93,18 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_merged()
       }
    }
 
-   // --- Pass 2: scan lineitems, resolve custkey from map ---
-   //
-   // Phase 1 note: the base lineitem adapter still holds lineitem_t rows
-   // (l_invoicekey removed from lineitem_t in schema split phase 1).
-   // lineitem_coli_t::key_from_base expects lineitem_i_t; wrap with
-   // l_invoicekey=0 here.  Phase 2 will replace Adapter<lineitem_t> with
-   // Adapter<lineitem_i_t> so the real invoice key is available.
+   // --- Pass 2: scan lineitem_i_t rows (real invoicekeys after TPCHIWorkload load) ---
    {
       auto scanner = lineitem.getScanner();
       while (auto kv = scanner->next()) {
-         const lineitem_t::Key& lk = kv->first;
-         const lineitem_t& lv      = kv->second;
+         const lineitem_i_t::Key& lk = kv->first;
+         const lineitem_i_t& li      = kv->second;
          auto it = orderkey_to_custkey.find(lk.l_orderkey);
          assert(it != orderkey_to_custkey.end()
                 && "lineitem references unknown orderkey");
          Integer custkey = it->second;
-         lineitem_i_t::Key lik{lk.l_orderkey, lk.l_linenumber};
-         lineitem_i_t li(lv, 0);  // l_invoicekey=0 until Phase 2 swaps adapter
          merged_coli.template insert<lineitem_coli_t>(
-             lineitem_coli_t::key_from_base(custkey, lik, li),
+             lineitem_coli_t::key_from_base(custkey, lk, li),
              lineitem_coli_t::from_base(li));
       }
    }
@@ -158,23 +150,18 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_split()
       }
    }
 
-   // --- Pass 1: scan lineitems, resolve custkey from map ---
-   //
-   // Phase 1 note: same l_invoicekey=0 placeholder as in populate_merged.
-   // Phase 2 will replace Adapter<lineitem_t> with Adapter<lineitem_i_t>.
+   // --- Pass 1: scan lineitem_i_t rows (real invoicekeys after TPCHIWorkload load) ---
    {
       auto scanner = lineitem.getScanner();
       while (auto kv = scanner->next()) {
-         const lineitem_t::Key& lk = kv->first;
-         const lineitem_t& lv      = kv->second;
+         const lineitem_i_t::Key& lk = kv->first;
+         const lineitem_i_t& li      = kv->second;
          auto it = orderkey_to_custkey.find(lk.l_orderkey);
          assert(it != orderkey_to_custkey.end()
                 && "lineitem references unknown orderkey");
          Integer custkey = it->second;
-         lineitem_i_t::Key lik{lk.l_orderkey, lk.l_linenumber};
-         lineitem_i_t li(lv, 0);  // l_invoicekey=0 until Phase 2 swaps adapter
          split_lineitem_ref.insert(
-             lineitem_coli_t::key_from_base(custkey, lik, li),
+             lineitem_coli_t::key_from_base(custkey, lk, li),
              lineitem_coli_t::from_base(li));
       }
    }
@@ -269,18 +256,23 @@ void CustomerOrdersLineitemInvoicePipeline<Backend>::populate_aggregated()
       }
    }
 
-   // Sub-pass C3: scan lineitems, resolve custkey, insert lineitem_acoli_t.
+   // Sub-pass C3: scan lineitem_i_t rows, resolve custkey, insert lineitem_acoli_t.
+   // lineitem_acoli_t::key_from_base and from_base accept lineitem_t (base) fields;
+   // lineitem_i_t inherits lineitem_t so implicit slicing applies.
    {
       auto lin_scan = lineitem.getScanner();
       while (auto kv = lin_scan->next()) {
-         const lineitem_t::Key& lk = kv->first;
-         const lineitem_t&      lv = kv->second;
+         const lineitem_i_t::Key& lk = kv->first;
+         const lineitem_i_t&      lv = kv->second;
          auto it = orderkey_to_custkey.find(lk.l_orderkey);
          assert(it != orderkey_to_custkey.end() && "lineitem references unknown orderkey");
          Integer custkey = it->second;
-         lineitem_acoli_t::Key ak = lineitem_acoli_t::key_from_base(custkey, lk);
+         // Construct a lineitem_t::Key from the lineitem_i_t::Key fields for
+         // key_from_base, which takes the vanilla key type.
+         lineitem_t::Key base_lk{lk.l_orderkey, lk.l_linenumber};
+         lineitem_acoli_t::Key ak = lineitem_acoli_t::key_from_base(custkey, base_lk);
          acoli_adapter_ref.template insert<lineitem_acoli_t>(
-             ak, lineitem_acoli_t::from_base(lv));
+             ak, lineitem_acoli_t::from_base(static_cast<const lineitem_t&>(lv)));
       }
    }
 }

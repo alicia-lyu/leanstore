@@ -22,8 +22,8 @@
 #include "../../shared/logger/rocksdb_logger.hpp"
 #include "../backend.hpp"
 #include "../coli_pipeline.hpp"
-#include "../tpch_tables.hpp"
-#include "../tpch_workload.hpp"
+#include "../tpchi_tables.hpp"
+#include "../tpchi_workload.hpp"
 #include "../views_coli.hpp"
 
 #define TPCH_DEFINE_FLAGS
@@ -227,7 +227,7 @@ int main(int argc, char** argv)
    B::Adapter<partsupp_t>  partsupp(rocks_db);
    B::Adapter<customerh_t> customer(rocks_db);
    B::Adapter<orders_t>    orders(rocks_db);
-   B::Adapter<lineitem_t>  lineitem(rocks_db);
+   B::Adapter<lineitem_i_t>  lineitem(rocks_db);
    B::Adapter<nation_t>    nation(rocks_db);
    B::Adapter<region_t>    region(rocks_db);
    B::Adapter<invoice_t>   invoice(rocks_db);
@@ -248,8 +248,8 @@ int main(int argc, char** argv)
    rocks_db.open();
 
    RocksDBLogger logger(rocks_db);
-   TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                  orders, lineitem, nation, region, invoice, logger);
+   TPCHIWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
+                                   orders, lineitem, nation, region, invoice, logger);
    tpch.load();
 
    tpch::CustomerOrdersLineitemInvoicePipeline<B> coli_pipe(

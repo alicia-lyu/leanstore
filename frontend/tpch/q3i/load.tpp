@@ -44,10 +44,10 @@ namespace tpch::q3i
 
 template <typename Backend>
 static void populate_q3i_view(
-    typename Backend::template Adapter<customerh_t>& customer,
-    typename Backend::template Adapter<orders_t>&    orders,
-    typename Backend::template Adapter<lineitem_t>&  lineitem,
-    typename Backend::template Adapter<invoice_t>&   invoice,
+    typename Backend::template Adapter<customerh_t>&  customer,
+    typename Backend::template Adapter<orders_t>&     orders,
+    typename Backend::template Adapter<lineitem_i_t>& lineitem,
+    typename Backend::template Adapter<invoice_t>&    invoice,
     typename Backend::template Adapter<q3i_pipeline_view_t>& pipeline_view)
 {
    // Step 1: build per-custkey open-due map from invoice (i_status='O' filter).
@@ -76,20 +76,20 @@ static void populate_q3i_view(
    auto ord_scan = orders.getScanner();
    auto lin_scan = lineitem.getScanner();
 
-   std::optional<std::pair<orders_t::Key, orders_t>>     cur_ord = ord_scan->next();
-   std::optional<std::pair<lineitem_t::Key, lineitem_t>> cur_lin = lin_scan->next();
+   std::optional<std::pair<orders_t::Key,     orders_t>>     cur_ord = ord_scan->next();
+   std::optional<std::pair<lineitem_i_t::Key, lineitem_i_t>> cur_lin = lin_scan->next();
 
    while (cur_ord) {
       const orders_t& o        = cur_ord->second;
       Integer         orderkey = cur_ord->first.o_orderkey;
       Integer         custkey  = o.o_custkey;
 
-      Numeric     open_due   = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
-      Varchar<10> mktseg     = mktseg_map.count(custkey)   ? mktseg_map.at(custkey)   : Varchar<10>{};
+      Numeric     open_due = open_due_map.count(custkey) ? open_due_map.at(custkey) : Numeric(0);
+      Varchar<10> mktseg   = mktseg_map.count(custkey)   ? mktseg_map.at(custkey)   : Varchar<10>{};
 
       // Emit one view row per lineitem under this order.
       while (cur_lin && cur_lin->first.l_orderkey == orderkey) {
-         const lineitem_t& l = cur_lin->second;
+         const lineitem_i_t& l = cur_lin->second;
 
          q3i_pipeline_view_t::Key vk{custkey, orderkey, cur_lin->first.l_linenumber};
          q3i_pipeline_view_t      vv;
@@ -113,11 +113,11 @@ static void populate_q3i_view(
 
 template <typename Backend>
 Q3IWorkload<Backend>::Q3IWorkload(
-    TPCHWorkload<Backend::template Adapter>& tpch,
-    typename Backend::template Adapter<customerh_t>& customer,
-    typename Backend::template Adapter<orders_t>& orders,
-    typename Backend::template Adapter<lineitem_t>& lineitem,
-    typename Backend::template Adapter<invoice_t>& invoice,
+    TPCHIWorkload<Backend::template Adapter>& tpch,
+    typename Backend::template Adapter<customerh_t>&  customer,
+    typename Backend::template Adapter<orders_t>&     orders,
+    typename Backend::template Adapter<lineitem_i_t>& lineitem,
+    typename Backend::template Adapter<invoice_t>&    invoice,
     typename Backend::template Adapter<q3i_pipeline_view_t>& pipeline_view,
     typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                              lineitem_coli_t, invoice_coli_t>& merged_coli,

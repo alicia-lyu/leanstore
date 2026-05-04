@@ -40,8 +40,8 @@
 #include "../../../shared/logger/rocksdb_logger.hpp"
 #include "../../backend.hpp"
 #include "../../coli_pipeline.hpp"
-#include "../../tpch_tables.hpp"
-#include "../../tpch_workload.hpp"
+#include "../../tpchi_tables.hpp"
+#include "../../tpchi_workload.hpp"
 #include "../../q3i/workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
@@ -93,7 +93,7 @@ int main(int argc, char** argv)
    B::Adapter<partsupp_t>  partsupp(rocks_db);
    B::Adapter<customerh_t> customer(rocks_db);
    B::Adapter<orders_t>    orders(rocks_db);
-   B::Adapter<lineitem_t>  lineitem(rocks_db);
+   B::Adapter<lineitem_i_t>  lineitem(rocks_db);
    B::Adapter<nation_t>    nation(rocks_db);
    B::Adapter<region_t>    region(rocks_db);
    B::Adapter<invoice_t>   invoice(rocks_db);
@@ -127,8 +127,8 @@ int main(int argc, char** argv)
    rocks_db.open();
 
    RocksDBLogger logger(rocks_db);
-   TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
-                                  orders, lineitem, nation, region, invoice, logger);
+   TPCHIWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
+                                   orders, lineitem, nation, region, invoice, logger);
 
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
                                    pipeline_view, merged_coli,
@@ -294,7 +294,7 @@ int main(int argc, char** argv)
    // directly so the ground truth matches what populate_split copies.
    long n_customers     = count_typed(customer, customerh_t{});
    long n_orders        = count_typed(orders,   orders_t{});
-   long n_lineitems_ref = count_typed(lineitem, lineitem_t{});
+   long n_lineitems_ref = count_typed(lineitem, lineitem_i_t{});
    long n_invoices_ref  = count_typed(invoice,  invoice_t{});
 
    auto check = [](const char* label, bool ok, long got, const std::string& expected) {

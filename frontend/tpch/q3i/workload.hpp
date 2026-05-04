@@ -19,7 +19,7 @@
 
 #include "../backend.hpp"
 #include "../coli_pipeline.hpp"
-#include "../tpch_workload.hpp"
+#include "../tpchi_workload.hpp"
 #include "views.hpp"
 
 namespace tpch::q3i
@@ -217,14 +217,14 @@ struct Q3IStats {
 template <typename Backend>
 class Q3IWorkload
 {
-   // The full TPC-H base-table workload (owns part, supplier, etc.).
-   TPCHWorkload<Backend::template Adapter>& tpch;
+   // The invoice-extended TPC-H workload (owns all 8 base tables + invoice).
+   TPCHIWorkload<Backend::template Adapter>& tpch;
 
    // Direct references to the base adapters needed at query time.
-   typename Backend::template Adapter<customerh_t>& customer;
-   typename Backend::template Adapter<orders_t>&    orders;
-   typename Backend::template Adapter<lineitem_t>&  lineitem;
-   typename Backend::template Adapter<invoice_t>&   invoice;
+   typename Backend::template Adapter<customerh_t>&  customer;
+   typename Backend::template Adapter<orders_t>&     orders;
+   typename Backend::template Adapter<lineitem_i_t>& lineitem;  // FK-bearing variant
+   typename Backend::template Adapter<invoice_t>&    invoice;
 
    // COLI 4-table pipeline: owns MI(customer_coli_t, orders_coli_t,
    // lineitem_coli_t, invoice_coli_t).
@@ -244,11 +244,11 @@ class Q3IWorkload
    CustomerOrdersLineitemInvoicePipeline<Backend>& coli_pipeline() { return coli; }
 
    Q3IWorkload(
-       TPCHWorkload<Backend::template Adapter>& tpch,
-       typename Backend::template Adapter<customerh_t>& customer,
-       typename Backend::template Adapter<orders_t>& orders,
-       typename Backend::template Adapter<lineitem_t>& lineitem,
-       typename Backend::template Adapter<invoice_t>& invoice,
+       TPCHIWorkload<Backend::template Adapter>& tpch,
+       typename Backend::template Adapter<customerh_t>&  customer,
+       typename Backend::template Adapter<orders_t>&     orders,
+       typename Backend::template Adapter<lineitem_i_t>& lineitem,
+       typename Backend::template Adapter<invoice_t>&    invoice,
        typename Backend::template Adapter<q3i_pipeline_view_t>& pipeline_view,
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_coli_t, invoice_coli_t>& merged_coli,

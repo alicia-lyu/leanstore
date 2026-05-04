@@ -1112,7 +1112,7 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
                       kv->first.l_orderkey);
                   if (sit == surviving_orderkeys.end()) break;  // no more
                   if (stats) stats->hj_groups_skipped++;
-                  lin_scan->seek(lineitem_t::Key{*sit, Integer(0)});
+                  lin_scan->seek(lineitem_i_t::Key{*sit, Integer(0)});
                }
                continue;
             }
