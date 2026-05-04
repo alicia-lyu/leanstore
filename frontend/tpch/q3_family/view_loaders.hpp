@@ -17,8 +17,7 @@
 //        emit(custkey, orderkey, linenumber, order, lineitem)
 //      The callback is responsible for assembling and inserting the view row.
 
-#include <optional>
-#include <utility>
+#include "../../shared/Types.hpp"
 
 namespace tpch::q3_family
 {

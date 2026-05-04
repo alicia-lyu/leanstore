@@ -114,21 +114,38 @@ Shared files (used by all three queries):
 Shared scaffolding for the Q3 query family:
 
 - `q3_family/` — building blocks shared by Q3 and Q3I (and future Q3-flavoured
-  queries). Contains four headers: `accumulators.hpp` (`LineitemRevenueAccumulator<P>`
-  templated on the per-query Params type, with overloads for `lineitem_t`,
-  `lineitem_coli_t`, and `lineitem_acoli_t`), `predicates.hpp` (the three
-  spec-shared filters: `q3_predicate_customer`, `q3_predicate_orders`,
-  `q3_predicate_lineitem`, each templated on Params), `params.hpp` (the
-  10-entry SUBSTITUTION-PARAMETER rotation table covering all 5 segments × 5
-  March-15 dates in [1993, 1997]), and `agg_row.hpp` (`q3_agg_row_base_t`:
-  the four base output fields `o_orderkey`, `revenue`, `o_orderdate`,
-  `o_shippriority` plus `print_base()`, `print()`, and the `cmp` comparator
-  for `apply_topN`; Q3 aliases this directly, Q3I derives `q3i_agg_row_t`
-  from it to add `cust_open_due`). Q3I's `query.tpp` aliases
-  `LineitemRevenueAccumulator` from here and delegates its predicate bodies to
-  the family functions; Q3 will wire up at Phase 0.5 when its bodies land.
-  Q3I-only pieces (`CustomerOpenDueAccumulator`, invoice predicates,
-  `COLIGroupWalkVisitor`) remain in `q3i/`.
+  queries). Full symbol inventory in [`q3_family/CLAUDE.md`](q3_family/CLAUDE.md).
+  Contains seven headers:
+
+  - `accumulators.hpp` — `LineitemRevenueAccumulator<P>` templated on the
+    per-query Params type, with overloads for `lineitem_t`, `lineitem_coli_t`,
+    and `lineitem_acoli_t`.
+  - `predicates.hpp` — the three spec-shared filters: `q3_predicate_customer`,
+    `q3_predicate_orders`, `q3_predicate_lineitem`, each templated on Params.
+  - `params.hpp` — 10-entry SUBSTITUTION-PARAMETER rotation table covering all
+    5 segments × 5 March-15 dates in [1993, 1997]; `set_params_for_iter`
+    consumer pattern.
+  - `agg_row.hpp` — `q3_agg_row_base_t`: the four base output fields
+    `o_orderkey`, `revenue`, `o_orderdate`, `o_shippriority` plus
+    `print_base()`, `print()`, and the `cmp` comparator for `apply_topN`.
+    Q3 aliases this directly; Q3I derives `q3i_agg_row_t` from it to add
+    `cust_open_due`. Hoisted Phase A2.
+  - `stats.hpp` — `Q3FamilyStats`: cardinality and timing counters shared by
+    Q3 and Q3I. Q3 uses it directly; Q3I's `Q3IStats` derives from it and
+    adds invoice-specific counters. Hoisted Phase A3.
+  - `coli_visitors.hpp` — `Q3FamilyVisitor<Derived, Params, LineitemType,
+    AggRow, Stats>`: CRTP base implementing the C×O×L core of the group-walk
+    visitor. Three customisation hooks (`per_order_admit_check`,
+    `extra_emit_fields`, `on_record_visited_hook`) let Q3I overlay
+    invoice/threshold logic while Q3 uses base no-op defaults. Hoisted Phase A4.
+  - `view_loaders.hpp` — `populate_q3_view_core<…>`: two-pointer merge kernel
+    over orders × lineitem; caller provides an emit callback. Q3I's callback
+    attaches `cust_open_due`; Q3's callback omits it. Hoisted Phase A5.
+
+  Q3I's `query.tpp` aliases `LineitemRevenueAccumulator` from here and
+  delegates its predicate bodies to the family functions; Q3 will wire up at
+  Phase 0.5 when its bodies land. Q3I-only pieces (`CustomerOpenDueAccumulator`,
+  invoice predicates, `COLIGroupWalkVisitor`) remain in `q3i/`.
 
 Per-query subdirectories:
 

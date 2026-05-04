@@ -47,7 +47,6 @@
 #include <string_view>
 #include <vector>
 
-#include "../tpch_tables.hpp"
 #include "../views_coli.hpp"
 #include "accumulators.hpp"
 

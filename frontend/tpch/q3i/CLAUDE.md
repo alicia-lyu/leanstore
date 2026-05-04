@@ -241,7 +241,9 @@ revenue DESC + truncate to 10).
   per order. Carries `revenue`, `cust_open_due`, `c_mktsegment`, `o_orderdate`,
   `o_shippriority`. Fully implemented (Phase 2).
 - `q3i_agg_row_t` — final output row: `o_orderkey`, `revenue`, `o_orderdate`,
-  `o_shippriority`, `cust_open_due`.
+  `o_shippriority`, `cust_open_due`. Derives from `q3_family::q3_agg_row_base_t`
+  (now in `q3_family/agg_row.hpp`) which owns the four base fields and the
+  `cmp` comparator; Q3I adds `cust_open_due` and overrides `print()`.
 - `customer_acoli_t` / `orders_coli_t` (reused) / `lineitem_acoli_t` — S5
   aCOLI MI record types; defined in `views_coli.hpp`. IDs 49 / 1 / 53.
   `orders_acoli_t` (id=50) was retired Step 4b (2026-05-03): after switching
@@ -259,10 +261,10 @@ revenue DESC + truncate to 10).
 | File | Status |
 |------|--------|
 | `views.hpp` | Complete — `q3i_pipeline_view_t`, `cust_open_due_t`, `lineitem_agg_t`, join result types `q3i_jr{1,2,3}_t`, `q3i_agg_row_t`; `SKBuilder` specializations for both join key types |
-| `workload.hpp` | Complete — `Q3IWorkload<Backend>` with all adapter members, `coli_pipeline()` accessor, `Q3IStats`, all `query_by_*` declarations |
+| `workload.hpp` | Complete — `Q3IWorkload<Backend>` with all adapter members, `coli_pipeline()` accessor, `Q3IStats` (derives from `q3_family::Q3FamilyStats` — now in `q3_family/stats.hpp`), all `query_by_*` declarations |
 | `per_structure_workload.hpp` | Complete — alias-only (`BaseQ3I`, `ViewQ3I`, `MergedQ3I`, `HashQ3I`) |
-| `load.tpp` | Complete — ctor, `load()`, `get_size()`, `populate_q3i_view` free function |
-| `query.tpp` | Complete — all four `query_by_*` bodies, accumulators, `COLIGroupWalkVisitor`, predicates, `print()` |
+| `load.tpp` | Complete — ctor, `load()`, `get_size()`, `populate_q3i_view` free function (wraps `q3_family::populate_q3_view_core` — now in `q3_family/view_loaders.hpp`) |
+| `query.tpp` | Complete — all four `query_by_*` bodies, accumulators, `COLIGroupWalkVisitor` (subclass of `q3_family::Q3FamilyVisitor` — now in `q3_family/coli_visitors.hpp`), predicates, `print()` |
 | `executable_rocksdb.cpp` | Complete — full `main()`, dispatches all five storage structures via `TpchExecutableHelper` |
 | `executable_leanstore.cpp` | Complete — same as above for LeanStore backend (`#ifndef ROCKSDB_ONLY`) |
 | `CLAUDE.md` | This file |

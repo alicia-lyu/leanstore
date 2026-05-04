@@ -14,7 +14,7 @@
 
 #include <ostream>
 
-#include "../tpch_tables.hpp"
+#include "../../shared/Types.hpp"
 
 namespace tpch::q3_family
 {
