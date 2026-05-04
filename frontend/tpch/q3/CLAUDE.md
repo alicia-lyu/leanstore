@@ -207,23 +207,38 @@ view scan: filters apply live, a per-orderkey
 `LineitemRevenueAccumulator` rolls up revenue, then sort + limit.
 The view is reusable across all SEGMENT and DATE param sets.
 
-**S4 (HashJoin chain baseline)** uses the standard plan because
-nothing is custkey-sorted. Mktsegment fuses with the CUSTOMER
-scan immediately, before the hash build; orderdate fuses with
-ORDERS pre-build; shipdate fuses with LINEITEM pre-build. Probe
-output flows into a SortedAggregate by `(orderkey, orderdate,
-shippriority)`, then sort by `(revenue DESC, orderdate ASC)` +
-LIMIT 10. S4 measures the no-merged-index baseline that the
-family is compared against.
+**S4 (HashJoin chain baseline)** uses base tables only (nothing
+is custkey-sorted). Filter pushdown: mktsegment fuses with the
+CUSTOMER scan before the hash build; orderdate fuses with ORDERS
+pre-build; shipdate fuses with LINEITEM pre-scan. **Aggregation
+push-down mirrors the family logical plan**: revenue per
+orderkey is computed directly above the filtered LINEITEM scan
+via a `HashAggregate` (lineitem stream is unsorted in S4, so
+not a SortedAggregate), shrinking the join input from ~4
+lineitems/order to one partial-revenue tuple/order. The HashJoin
+chain then runs over the aggregated stream — `HashJoin(o_orderkey
+= l_orderkey)` attaches `o_orderdate / o_shippriority /
+o_custkey`, then `HashJoin(c_custkey = o_custkey)` gates by
+mktsegment. Output flows directly into the shared `apply_top10`
+(sort by `(revenue DESC, orderdate ASC)` + LIMIT 10). S4 differs
+from S1/S3 only in physical operators (HashAggregate +
+HashJoin instead of SortedAggregate + walker/BMJ); the logical
+shape — aggregate-first, join-up — is identical, preserving
+OPERATORS.md §6.1 comparison-integrity. S4 measures the
+no-merged-index baseline that the family is compared against.
 
 ### Comparison axis summary
 
-| Approach | Inside-pipeline physical | Filters resolved by |
-|----------|--------------------------|---------------------|
-| S1 (merge family) | 3-way custkey BMJ chain over secondaries | Visitor `on_*` hooks (same code as S3) |
-| S2 (merge family) | sequential per-lineitem view scan | All filters live at query time (no filter baking — view is param-reusable) |
-| S3 (merge family) | `col_group_walk` over MI[COL] | Visitor `on_*` hooks (same code as S1) |
-| S4 (baseline) | HashJoin chain | TableScan-time filters (mktsegment, orderdate, shipdate) all pushed below the corresponding hash build/probe |
+All four plans share the same logical shape (aggregate-first,
+join-up); they differ only in physical operators and filter
+substrate.
+
+| Approach | Inside-pipeline physical | Aggregate | Filters resolved by |
+|----------|--------------------------|-----------|---------------------|
+| S1 (merge family) | 3-way custkey BMJ chain over secondaries | SortedAggregate per orderkey (Visitor `flush_order`) | Visitor `on_*` hooks (same code as S3) |
+| S2 (merge family) | sequential per-lineitem view scan | SortedAggregate per orderkey (view rows are `(custkey, orderkey, linenumber)`-sorted) | All filters live at query time (no filter baking — view is param-reusable) |
+| S3 (merge family) | `col_group_walk` over MI[COL] | SortedAggregate per orderkey (Visitor `flush_order`, same code as S1) | Visitor `on_*` hooks (same code as S1) |
+| S4 (baseline) | HashJoin chain over base tables | HashAggregate per orderkey, **above the LINEITEM scan, below both joins** | TableScan-time filters (mktsegment, orderdate, shipdate) all pushed below the corresponding hash build/probe |
 
 All four agree on what's outside the pipeline: `apply_top10` (sort
 by `(revenue DESC, orderdate ASC)` + truncate to 10).
