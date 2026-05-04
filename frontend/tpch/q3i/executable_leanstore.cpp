@@ -111,35 +111,35 @@ int main(int argc, char** argv)
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q3i::BaseQ3I<B> w{q3i};
-         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "base_merge_join");
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "base_merge_join");
          helper.run();
          tx_count = helper.tx_count();
          break;
       }
       case 2: {
          tpch::q3i::ViewQ3I<B> w{q3i};
-         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "pipeline_view");
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "pipeline_view");
          helper.run();
          tx_count = helper.tx_count();
          break;
       }
       case 3: {
          tpch::q3i::MergedQ3I<B> w{q3i};
-         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "mi_coli_walk");
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "mi_coli_walk");
          helper.run();
          tx_count = helper.tx_count();
          break;
       }
       case 4: {
          tpch::q3i::HashQ3I<B> w{q3i};
-         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "base_hash_join");
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "base_hash_join");
          helper.run();
          tx_count = helper.tx_count();
          break;
       }
       case 5: {
          tpch::AggregatedStructure<tpch::q3i::Q3IWorkload<B>, AggRow> w{q3i};
-         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "acoli_aggregated");
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "acoli_aggregated");
          helper.run();
          tx_count = helper.tx_count();
          break;

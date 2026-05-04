@@ -17,16 +17,17 @@ namespace tpch
 {
 
 template <typename PerStructureWrapper, typename AggRow,
-          template <typename> class AdapterType>
+          template <typename> class AdapterType,
+          class LineitemRecord = lineitem_t>
 struct TpchExecutableHelper {
    std::unique_ptr<DBTraits> db_traits;
    PerStructureWrapper wrapper;
-   TPCHWorkload<AdapterType>& tpch;
+   TPCHWorkload<AdapterType, LineitemRecord>& tpch;
    std::string structure_name;
    long last_count = 0;  // TX count from the most recent tput_tx() call
 
    TpchExecutableHelper(RocksDB& rocks_db, PerStructureWrapper wrapper,
-                        TPCHWorkload<AdapterType>& tpch, std::string name)
+                        TPCHWorkload<AdapterType, LineitemRecord>& tpch, std::string name)
        : db_traits(std::make_unique<RocksDBTraits>(rocks_db)),
          wrapper(std::move(wrapper)),
          tpch(tpch),
@@ -36,7 +37,7 @@ struct TpchExecutableHelper {
 
 #ifndef ROCKSDB_ONLY
    TpchExecutableHelper(leanstore::cr::CRManager& crm, PerStructureWrapper wrapper,
-                        TPCHWorkload<AdapterType>& tpch, std::string name)
+                        TPCHWorkload<AdapterType, LineitemRecord>& tpch, std::string name)
        : db_traits(std::make_unique<LeanStoreTraits>(crm)),
          wrapper(std::move(wrapper)),
          tpch(tpch),
