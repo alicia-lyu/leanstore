@@ -344,10 +344,14 @@ cardinality (no invoice/lineitem rows in the MI), but loses reusability for
 the baked-in filter. Sits between raw co-location (S3) and full
 materialisation (S2) on the pre-computation spectrum.
 
-**Reference implementation**: Q3I S5 (`customer_acoli_t` / `orders_acoli_t`
-in `views_coli.hpp`; `populate_aggregated()` in `coli_pipeline.tpp`;
-`query_by_aggregated` in `q3i/query.tpp`). Full design rationale in
-`PLAYBOOK.md §7.4`.
+**Reference implementation (deferred from paper sweep)**: Q3I S5
+(`customer_acoli_t` / `lineitem_acoli_t` in `views_coli.hpp` —
+`orders_acoli_t` was retired Step 4b 2026-05-03 and reuses
+`orders_coli_t`; `populate_aggregated()` in `coli_pipeline.tpp`;
+`query_by_aggregated` in `q3i/query.tpp`). Full design rationale and
+deferral rationale in [`PLAYBOOK.md §S5`](PLAYBOOK.md) and
+[`PLAYBOOK.md §7.4`](PLAYBOOK.md). Retained as a working design
+reference; not reported in paper figures.
 
 ## 7. Comparison-Integrity Rules
 

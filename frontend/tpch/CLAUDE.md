@@ -153,9 +153,11 @@ Per-query subdirectories:
 - `q3/`  — Shipping Priority (3 tables, 2 joins; adds CUSTOMER adapter).
 - `q9/`  — Product Type Profit Measure (6 tables, 5 joins; adds NATION,
   SUPPLIER, PART, PARTSUPP adapters).
-- `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; all five
-  storage structures complete — S1–S4 parity verified, S5 aCOLI MI
-  implemented and verified; see `q3i/CLAUDE.md §Implementation Phases`).
+- `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; S1–S4
+  are the paper-reported axis and parity-verified. S5 aCOLI MI is
+  implemented and parity-verified but **deferred from the paper
+  sweep** — see [`PLAYBOOK.md §S5`](PLAYBOOK.md). Full status in
+  `q3i/CLAUDE.md §Implementation Phases`).
 - `q5i/` — Q5 + Invoice payment-status split (design doc only; no skeleton yet).
 - `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
 
@@ -317,7 +319,7 @@ expected ranges derived from the TPC-H spec).
 | 2 | `ViewQ{N}` | Intermediate pipeline view (materialized `joined_ol_t` rows) |
 | 3 | `MergedQ{N}` | `MI[0]` only — `PremergedJoin` at query time |
 | 4 | `HashQ{N}` | Traditional indexes + hash join |
-| 5 | `AggregatedQ{N}` | aCOLI MI (`MergedAdapter<customer_acoli_t, orders_acoli_t, lineitem_acoli_t>`) — `pre_open_due` read directly; revenue recomputed from unaggregated lineitems (Q3I only) |
+| 5 | `AggregatedQ{N}` | aCOLI MI (`MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>`) — `pre_open_due` read directly; revenue recomputed from unaggregated lineitems (Q3I only). **Deferred from paper sweep** — see [`PLAYBOOK.md §S5`](PLAYBOOK.md). |
 
 Structure 0 (data reload) is handled before the switch in each executable.
 
@@ -794,7 +796,10 @@ Q3I is a §3.1.2 sibling-aggregate showcase, not a true 4-way M:N join — see
 [q3i/CLAUDE.md §Cardinality structure](q3i/CLAUDE.md#cardinality-structure-not-a-true-4-way-mn).
 
 Q3I S3 perf investigation tracked in
-[q3i/PERFORMANCE.md](q3i/PERFORMANCE.md). Post-A2c + A3: S3 on
-LeanStore beats S1/S4 in both cache-resident and disk-bound regimes
-(+356% SF=15, +116× SF=40). RocksDB SF=40 disk-bound is the remaining
-open question (A6 dram sweep).
+[q3i/PERFORMANCE.md](q3i/PERFORMANCE.md). Post-A2c + A3 the paper's
+pitch — **S3 ≥ S2 > S1/S4** — holds at SF=15 on both backends (S3
+matches/beats the fully-materialised view S2 without paying its
+storage / maintenance cost, while comfortably beating S1 split-merge
+and S4 hash baselines; A3 alone delivered +356% at SF=15 and +116× at
+SF=40 disk-bound on LeanStore). RocksDB SF=40 disk-bound is the
+remaining open question (A6 dram sweep).

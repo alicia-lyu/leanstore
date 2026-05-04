@@ -12,7 +12,7 @@ concerns to current queries.
 
 | Query | Status | Structures | Canonical doc |
 |-------|--------|------------|---------------|
-| **Q3I** | Active showcase; all five structures complete and verified at SF=1 (single digest across S1–S5) | S1–S5 | [`q3i/CLAUDE.md`](frontend/tpch/q3i/CLAUDE.md) + [`q3i/PERFORMANCE.md`](frontend/tpch/q3i/PERFORMANCE.md) |
+| **Q3I** | Active showcase; S1–S4 are the paper-reported axis (cross-structure parity verified at SF=1). S5 (aCOLI MI) is implemented and parity-verified but **deferred from paper sweep** — see [`PLAYBOOK §S5`](frontend/tpch/PLAYBOOK.md) | S1–S4 (S5 in tree, deferred) | [`q3i/CLAUDE.md`](frontend/tpch/q3i/CLAUDE.md) + [`q3i/PERFORMANCE.md`](frontend/tpch/q3i/PERFORMANCE.md) |
 | **Q12** | Proof-of-concept; all four structures pass XOR parity at SF=1 (`0x9000007000003c`); production targets wired | S1–S4 | [`q12/CLAUDE.md`](frontend/tpch/q12/CLAUDE.md) |
 | **Q3**  | Skeleton present; `query_by_*` bodies and `load.tpp` still TODO | (S1–S4 planned) | [`q3/CLAUDE.md`](frontend/tpch/q3/CLAUDE.md) |
 | **Q9**  | Skeleton present; `query_by_*` bodies and `load.tpp` still TODO | (S1–S4 planned) | [`q9/CLAUDE.md`](frontend/tpch/q9/CLAUDE.md) |
@@ -28,9 +28,12 @@ until the COLI showcase is complete.
 
 ## Storage-Structure Conventions
 
-Two distinct schemes — Q12/Q3/Q9 share one mapping; Q3I extends it with
-S5. See per-query CLAUDE.md for filter pushdown, comparison axis, and
-operator details.
+All paper-reported queries use a four-structure mapping (S1–S4). Q3I
+also has an S5 (aCOLI MI) variant in tree, but it is **deferred from
+the paper sweep** across all queries — see
+[`frontend/tpch/PLAYBOOK.md §S5`](frontend/tpch/PLAYBOOK.md). See
+per-query CLAUDE.md for filter pushdown, comparison axis, and operator
+details.
 
 ### Q12 / Q3 / Q9 (4 structures)
 
@@ -41,7 +44,7 @@ operator details.
 | 3 | `MergedQ{N}` | `MI[0]` (`MergedAdapter<orders_t, lineitem_t>`) + `PremergedJoin` |
 | 4 | `HashQ{N}`   | Traditional indexes + `HashJoin`(O ⋈ L) |
 
-### Q3I (5 structures)
+### Q3I (4 paper-reported structures + S5 deferred)
 
 | # | Strategy | Substrate |
 |---|----------|-----------|
@@ -49,13 +52,18 @@ operator details.
 | 2 | Sequential view scan | `q3i_pipeline_view_t` (post-aggregate, mktsegment/threshold hoisted out) |
 | 3 | `coli_group_walk` over MI[COLI] | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` |
 | 4 | HashJoin chain baseline | Base tables + two probe hashmaps |
-| 5 | Direct field reads (no accumulator) | `MergedAdapter<customer_acoli_t, orders_acoli_t>` with `pre_open_due` / `pre_revenue` baked at load time |
+| ~~5~~ | ~~Direct field reads (no accumulator)~~ | ~~`MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` with `pre_open_due` baked at load time~~ — **deferred from paper sweep** (see [`PLAYBOOK §S5`](frontend/tpch/PLAYBOOK.md)) |
 
-S5 demonstrates MI-as-aggregate-store: 22× scan reduction vs S3 at SF=1
-(486 vs 10918 records visited) while remaining reusable across
-mktsegment/threshold/orderdate parameter sets. See
+S5 (aCOLI MI) is implemented and parity-verified at SF=1 but excluded
+from paper figures: post-G8 measurements show **S3 > S5** at SF=15 on
+both backends, traced to S5 lacking the hand-tuned `coli_group_walk`
+(A2c fused-emit + A3 customer-level Seek-skip). Closing the gap is
+infrastructure work, not per-query, and out of scope for the current
+paper. See
 [`q3i/CLAUDE.md §Storage Structure Options`](frontend/tpch/q3i/CLAUDE.md)
-for the full comparison axis.
+for the full comparison axis and
+[`q3i/PERFORMANCE.md §A1`](frontend/tpch/q3i/PERFORMANCE.md) for the
+anomaly investigation.
 
 Storage structure 0 forces a data reload (no recovery).
 
@@ -69,9 +77,13 @@ so per-customer sub-aggregates (e.g. open-invoice totals) finalise
 before the bulk O × L records stream by — the §3.1.2 sibling +
 §3.1.3 hierarchical hybrid pattern.
 
-The aCOLI MI is the 2-type pre-aggregated variant
-(`customer_acoli_t` adds `pre_open_due`; `orders_acoli_t` adds
-`pre_revenue`) used by Q3I S5.
+The aCOLI MI is the pre-aggregated 3-type variant
+(`MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>`,
+with `customer_acoli_t.pre_open_due` baked at load time;
+`orders_acoli_t` was retired Step 4b 2026-05-03 once tagged-key
+adoption made its bytes identical to `orders_coli_t`). Built and
+parity-tested for Q3I S5; **deferred from the paper sweep** — see
+[`frontend/tpch/PLAYBOOK.md §S5`](frontend/tpch/PLAYBOOK.md).
 
 Substrate lives in:
 - `frontend/tpch/views_coli.hpp` — record types and tagged-key encoding.
@@ -117,7 +129,7 @@ in the mapping below.
 
 | Concern | Experiment |
 |---------|------------|
-| "Evaluate on standard benchmarks" | Q3I (5 structures) + Q12 (4 structures) end-to-end; Q3/Q9 once their bodies land |
+| "Evaluate on standard benchmarks" | Q3I + Q12 end-to-end across S1–S4; Q3/Q9 once their bodies land |
 | "Show generality beyond geo" | Complexity gradient: Q12 (2 tables, OL pipeline) → Q3I (4 tables, COLI MI) |
 
 ### Reviewer 2 — Honest Trade-offs
@@ -150,13 +162,15 @@ These do not require new query implementations:
 Targets are emitted by `generate_targets.py`. Sweeps:
 
 ```bash
-# Sweep all structures for one query (Q3I now covers S1..S5)
+# Sweep paper-reported structures (S1..S4) for one query
 make q3i_lsm scale=15
 make q12_btree scale=15
 
 # Single structure
-make q3i_lsm_5 dram=0.1
+make q3i_lsm_3 dram=0.1
 make q12_btree_3 dram=0.1
+# Q3I S5 (aCOLI) target exists (`make q3i_lsm_5`) but is deferred
+# from the paper sweep — see PLAYBOOK §S5.
 
 # LLDB debug
 make q12_btree_lldb_3

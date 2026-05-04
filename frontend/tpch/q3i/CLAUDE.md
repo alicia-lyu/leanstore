@@ -126,7 +126,7 @@ no 3-stage join chain, just one fused walk.
 | 2 | Intermediate pipeline view | `q3i_pipeline_view_t` (joined\_ol\_t rows) | Pre-build cust\_open\_due map; view scan + CUSTOMER hash filter |
 | 3 | MI\[COLI\] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | PremergedJoin over 4-table tagged-key MI; cust\_open\_due computed in same pass |
 | 4 | Traditional indexes + hash join | None | Pre-build cust\_open\_due map; HashJoin(OL) + CUSTOMER hash lookup |
-| 5 | aCOLI MI (pre-aggregated) | `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` (`orders_acoli_t` retired Step 4b — collapsed into `orders_coli_t`) | Scan 3-type MI; pre\_open\_due read directly; revenue recomputed from unaggregated lineitems |
+| 5 | aCOLI MI (pre-aggregated) — **deferred from paper sweep** ([`PLAYBOOK §S5`](../PLAYBOOK.md)) | `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` (`orders_acoli_t` retired Step 4b — collapsed into `orders_coli_t`) | Scan 3-type MI; pre\_open\_due read directly; revenue recomputed from unaggregated lineitems |
 
 ---
 
@@ -228,10 +228,12 @@ no-merged-index baseline that the family is compared against.
 | S2 (merge family) | sequential view scan | TableScan-time filters baked into view; mktsegment / threshold per-row at query time |
 | S3 (merge family) | `coli_group_walk` over MI[COLI] | Visitor `on_*` hooks (same code as S1) |
 | S4 (baseline)     | HashJoin(O ⋈ L) + 2 probe hashmaps | TableScan + per-aggregate; probe lookups encode the rest |
-| S5 (aCOLI MI)     | scan `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` (`orders_acoli_t` retired Step 4b) | pre\_open\_due read directly; revenue recomputed live; mktsegment / threshold / orderdate / shipdate per-row |
+| S5 (aCOLI MI) — **deferred** | scan `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` (`orders_acoli_t` retired Step 4b) | pre\_open\_due read directly; revenue recomputed live; mktsegment / threshold / orderdate / shipdate per-row |
 
-All five agree on what's outside the pipeline: `apply_top10` (sort by
-revenue DESC + truncate to 10).
+S5 is implemented and parity-verified at SF=1 but **deferred from
+the paper sweep** across all queries — see
+[`PLAYBOOK.md §S5`](../PLAYBOOK.md). All five agree on what's outside
+the pipeline: `apply_top10` (sort by revenue DESC + truncate to 10).
 
 ---
 
@@ -308,9 +310,12 @@ mkdir -p test_data_q3i test_csv_q3i
 Two remediations have landed: A2c (`--coli_walker_variant=fused_emit`)
 closed the per-record dispatch gap at SF=15 across both backends; A3
 (Backend-trait customer-level Seek-skip) lifts LeanStore S3 +356% at
-SF=15 and +116× at SF=40 disk-bound. **S3 on LeanStore now beats S1/S4
-in both regimes.** RocksDB SF=40 disk-bound is the remaining open
-question (A6 dram sweep). Active worklist:
+SF=15 and +116× at SF=40 disk-bound. **The paper's pitch — S3 ≥ S2 >
+S1/S4 — holds at SF=15 on both backends** (S3 matches/beats the
+fully-materialised view S2 without paying its storage / maintenance
+cost, while comfortably beating S1 split-merge and S4 hash baselines).
+RocksDB SF=40 disk-bound is the remaining open question (A6 dram
+sweep). Active worklist:
 [`PERFORMANCE.md`](PERFORMANCE.md). Historical evidence:
 [`archive/PERFORMANCE-2026-05-03b.md`](archive/PERFORMANCE-2026-05-03b.md)
 and
@@ -508,7 +513,17 @@ make q3i_lsm_3 dram=0.1
 
 ### Phase 4 — S5: aCOLI MI with pre-aggregated fields
 
-**Status (2026-05-02): complete. Revised 2026-05-03: revenue de-bake.**
+**Status (2026-05-04): implementation complete and parity-verified, but
+deferred from the paper sweep across all queries.** S5 (aCOLI MI) is
+retained in tree as a working design reference — `q3i_lsm_5` /
+`q3i_btree_5` build and parity-pass — but is not part of any reported
+figure. See [`../PLAYBOOK.md §S5`](../PLAYBOOK.md) for the deferral
+rationale (S3 > S5 anomaly traced to S5 lacking the hand-tuned
+`coli_group_walk` — closing it is infrastructure, not per-query). The
+phase notes below remain accurate as design / implementation history;
+do not stand up new aCOLI MIs as part of paper work.
+
+Earlier status: complete 2026-05-02; revised 2026-05-03 (revenue de-bake).
 
 **Goal**: implement and verify the "MI-as-aggregate-store" research variant
 (REVIEWS.md §1.1, R2-D1): a merged index that stores pre-computed aggregates

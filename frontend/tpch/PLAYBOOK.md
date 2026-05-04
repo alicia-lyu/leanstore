@@ -118,11 +118,15 @@ split adapter.
 **Building the COL pipeline is a separate infrastructure task, not part
 of per-query implementation.** This playbook assumes the pipeline exists.
 
-### S5 (aCOLI / pre-aggregated MI) — DEFERRED for the current paper
+### S5 (aCOLI / pre-aggregated MI) — DEFERRED for the current paper (all queries)
 
 The aCOLI MI (`MergedAdapter<customer_acoli_t, orders_coli_t,
 lineitem_acoli_t>` with `pre_open_due` baked at load time) is
-**deferred indefinitely**. New queries should land **S1–S4 only**.
+**deferred indefinitely** from the paper sweep, **for all queries
+including Q3I**. The Q3I S5 implementation stays in tree (it builds,
+parity-passes, and remains useful as a working aCOLI design
+reference), but it is not part of any reported figure or sweep.
+New queries should land **S1–S4 only**.
 
 **Reason** (`q3i/PERFORMANCE.md §A1`, hypothesis ledger H13/H15):
 post-G8 measurements show S3 > S5 on both backends at SF=15
@@ -159,12 +163,15 @@ cannot serve.
 - Storage-structure dispatch in executables and `load()` covers
   cases 1–4.
 - The aCOLI record types (`customer_acoli_t`, `lineitem_acoli_t`)
-  remain in `views_coli.hpp` for Q3I's existing S5 path; new queries
-  do not reference them.
+  remain in `views_coli.hpp` for Q3I's existing S5 path (kept as a
+  working design reference, not reported); new queries do not
+  reference them.
 
 When S5 is later revisited, the work item is "build aCOLI walker as
 a tuned analogue of `coli_group_walk`," not "wire S5 into a new
-query." Track that as infrastructure, not per-query.
+query." Track that as infrastructure, not per-query. Re-enabling S5
+in the paper sweep would also require re-running the Q3I S5
+measurements end-to-end against the new walker.
 
 ---
 
@@ -1112,6 +1119,13 @@ long Q{{N}}Workload<Backend>::query_by_view(std::vector<q{{N}}_agg_row_t>& out)
 ---
 
 ### §7.4 — S5: aCOLI MI (Pre-Aggregated Variant)
+
+> **Status (2026-05-04): deferred from paper sweep across all queries.**
+> The Q3I S5 implementation is retained as design + working code for
+> future revisit, but is excluded from reported figures. The "When to
+> use" guidance below still applies *as a future-work design note*; do
+> not stand up an aCOLI MI for a new query as part of paper work. See
+> §S5 deferral above for rationale.
 
 **When to use**: the query has per-custkey aggregates whose filter predicates
 are constants hardcoded by the TPC-H spec (e.g. `i_status='O'` for Q3I's

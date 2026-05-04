@@ -60,16 +60,19 @@ The COLI 4-table merged index (`customer_coli_t`, `orders_coli_t`,
 Q5I, Q10I — are the active showcase for the §3.1.2 sibling sub-aggregate
 pattern: Invoice attaches under Customer as a sibling of Orders, and the COLI
 MI co-locates all four record types per `custkey` so a single `PremergedJoin`
-pass computes per-customer invoice aggregates alongside the O×L join. **Q3I
-is fully complete across all five storage structures** — S1 (custkey-sorted
-split indexes), S2 (pipeline view), S3 (COLI MI), S4 (hash baseline), and
-S5 (aCOLI MI: `MergedAdapter<customer_acoli_t, orders_acoli_t>` with
-pre-aggregated `pre_open_due` / `pre_revenue` baked at load time). S5
-demonstrates MI-as-aggregate-store: 22× scan reduction vs S3 (486 vs 10918
-records at SF=1) while remaining reusable across mktsegment/threshold/orderdate
-param sets. Production `q3i_lsm` / `q3i_btree` targets are wired into CMake
-and `generate_targets.py`. Q5I and Q10I are design-doc only. See
-`frontend/tpch/q3i/CLAUDE.md §Implementation Phases` for full detail.
+pass computes per-customer invoice aggregates alongside the O×L join. **Q3I's
+paper-reported axis is S1–S4** — S1 (custkey-sorted split indexes), S2
+(pipeline view), S3 (COLI MI), S4 (hash baseline). The pitch is **S3 ≥ S2 >
+S1/S4**: raw co-location matches full materialisation without paying its
+storage / maintenance cost, while comfortably beating split-merge-join (S1)
+and hash (S4) baselines. S5 (aCOLI MI with `pre_open_due` baked at load time)
+is implemented and parity-verified but **deferred from the paper sweep**
+across all queries — see `frontend/tpch/PLAYBOOK.md §S5` for rationale (S3 >
+S5 anomaly traced to S5 lacking the hand-tuned COLI walker; closing it is
+infrastructure work, not per-query). Production `q3i_lsm` / `q3i_btree`
+targets are wired into CMake and `generate_targets.py`. Q5I and Q10I are
+design-doc only. See `frontend/tpch/q3i/CLAUDE.md §Implementation Phases` for
+full detail.
 
 ### TPC-H Q12 Implementation (In Progress)
 

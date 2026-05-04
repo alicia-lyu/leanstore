@@ -260,7 +260,9 @@ Each should print `[OK]` lines for every check and exit 0.
 ```
 
 Expect: identical `Q12Stats` / `Q3IStats` digests within each backend
-across all storage structures (S1–S4 for Q12; S1–S5 for Q3I), and
+across all paper-reported storage structures (S1–S4 for Q12 and Q3I;
+Q3I S5 is implemented but deferred from the paper sweep — see
+`frontend/tpch/PLAYBOOK.md §S5`), and
 identical per-storage-structure digests across the two backends at
 the same SF.
 
