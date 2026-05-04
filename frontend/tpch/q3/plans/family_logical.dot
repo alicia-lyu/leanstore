@@ -86,12 +86,15 @@
 //        across all SEGMENT and DATE param sets (resolved
 //        2026-05-03; same audit as Q3I S2). Query-time replays the
 //        family logical plan with the view scan substituting for
-//        the base LINEITEM scan: all 3 filters apply live on view
-//        rows, the per-orderkey SortedAggregate fires (view rows
-//        are already (custkey, orderkey, linenumber)-sorted, so
-//        within a custkey block they cluster by orderkey), and the
-//        FD-attached order/customer columns satisfy the joinB/joinA
-//        attaches without rescanning ORDERS/CUSTOMER.
+//        the entire CUSTOMER/ORDERS/LINEITEM input subtree (both
+//        joinA and joinB collapse into the view, since each row
+//        already carries c_mktsegment, o_orderdate, o_shippriority
+//        alongside l_extendedprice, l_discount, l_shipdate via the
+//        custkey/orderkey FD chain). All 3 filters apply live on
+//        view rows; the per-orderkey SortedAggregate fires above
+//        the view scan (view rows are already (custkey, orderkey,
+//        linenumber)-sorted, so within a custkey block they
+//        cluster by orderkey).
 //   S3 → col_group_walk over the 3-table COL MergedAdapter
 //
 // Outside-pipeline operators are byte-identical across the three.
