@@ -336,6 +336,7 @@ point. Run from the repo root.
 | `test_load_merged_btree` | this dir | LeanStore (Linux only) | `tests/test_load_merged_leanstore.cpp` |
 | `test_load_coli_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_coli_rocksdb.cpp` |
 | `test_load_col_lsm` | `q3/` | RocksDB (mac+Linux) | `tests/q3/test_load_col_lsm.cpp` |
+| `test_load_col_btree` | `q3/` | LeanStore (Linux only) | `tests/q3/test_load_col_leanstore.cpp` |
 | `test_views_acoli` | this dir | RocksDB (mac+Linux) | `tests/test_views_acoli.cpp` |
 | `test_projection_widths` | this dir | RocksDB (mac+Linux) | `tests/test_projection_widths.cpp` |
 | `test_q3_family` | this dir | RocksDB (mac+Linux) | `tests/test_q3_family.cpp` |
