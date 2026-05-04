@@ -1,80 +1,89 @@
 #pragma once
 
-// Q3-specific record types layered on top of the shared ORDERS x LINEITEM
-// pipeline types in ../views_ol.hpp.
+// Q3-specific record types for the COL pipeline (CUSTOMER × ORDERS × LINEITEM).
 //
 // Three types are defined here:
-//   - Params              : TPC-H §2.4.3 substitution parameters.
-//   - q3_pipeline_view_t  : structure 2 intermediate view (aliases joined_ol_t).
-//   - q3_agg_row_t        : final aggregate output row (one row per orderkey group).
+//   - q3_pipeline_view_t  : Structure 2 intermediate view — one row per
+//                           (custkey, orderkey, linenumber), unaggregated
+//                           lineitem fields + FD-attached order/customer cols.
+//   - q3_agg_row_t        : aliases q3_family::q3_agg_row_base_t directly
+//                           (Q3 has no invoice extension; the four base fields
+//                           are everything Q3 needs).
 //
-// Predicate function declarations live here; bodies are in query.tpp.
+// Params struct and predicate declarations live in workload.hpp.
+// SKBuilder specialisation for q3_pipeline_view_t::Key lives below.
 
-#include "../views_ol.hpp"
+#include "../q3_family/agg_row.hpp"
+#include "../views_col.hpp"
 
 namespace tpch::q3
 {
 
 // ---------------------------------------------------------------------------
-// Substitution parameters (TPC-H §2.4.3).
-// Defaults: SEGMENT=BUILDING, DATE=1995-03-15 (days since epoch: 9205).
+// Structure 2 pipeline view row: per-(custkey, orderkey, linenumber) row.
+//
+// Schema: one row per lineitem, carrying unaggregated lineitem fields so
+// query_by_view can apply the shipdate filter live and accumulate revenue
+// per orderkey at query time.  No filters are baked in — predicate hoisting
+// keeps the view reusable across all SEGMENT / DATE param sets.
+//
+// FD-attached customer / order columns (c_mktsegment, o_orderdate,
+// o_shippriority) are copied into every lineitem row — the same
+// "schema-faithful secondary" policy as the COL MI.
 
-struct Params {
-   Varchar<10> mktsegment;    // default "BUILDING"
-   Timestamp   orderdate_hi;  // default 1995-03-15; orders with o_orderdate < this pass
-   Timestamp   shipdate_lo;   // default 1995-03-15; lineitems with l_shipdate > this pass
-
-   static Params defaults();
-};
-
-// ---------------------------------------------------------------------------
-// Structure 2 pipeline view row — PLACEHOLDER.
-// OPERATORS.md §4: Q3's view stores post-SortedAggregate rows (one per
-// orderkey with summed revenue + FD-attached o_orderdate, o_shippriority,
-// o_custkey). This alias MUST be replaced with a proper q3_pipeline_view_t
-// record type during implementation. See OPERATORS.md §4 for the schema.
-using q3_pipeline_view_t = ::tpch::joined_ol_t;  // TODO: replace with aggregated type
-
-// ---------------------------------------------------------------------------
-// Final aggregate output row: one per (l_orderkey, o_orderdate, o_shippriority).
-
-struct q3_agg_row_t {
-   static constexpr int id = 32;
+struct q3_pipeline_view_t {
+   static constexpr int id = 35;
 
    struct Key {
-      static constexpr int id = 32;
-      Integer   l_orderkey;
-      Timestamp o_orderdate;
-      Integer   o_shippriority;
-      ADD_KEY_TRAITS(&Key::l_orderkey, &Key::o_orderdate, &Key::o_shippriority)
+      static constexpr int id = 35;
+      Integer custkey;     // primary sort — groups custkey partitions
+      Integer orderkey;    // secondary sort — unique within a custkey group
+      Integer linenumber;  // tertiary sort — unique within an order
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
    };
 
-   Integer   l_orderkey;
-   Timestamp o_orderdate;
-   Integer   o_shippriority;
-   Numeric   revenue;  // SUM(l_extendedprice * (1 - l_discount))
+   // Unaggregated lineitem fields — revenue computed at query time.
+   Numeric   l_extendedprice;
+   Numeric   l_discount;
+   Timestamp l_shipdate;
 
-   ADD_RECORD_TRAITS(q3_agg_row_t)
+   // FD-attached customer / order columns (parameter-independent at load time).
+   Varchar<10> c_mktsegment;    // customer market segment (filter at query time)
+   Timestamp   o_orderdate;     // order date (filter at query time)
+   Integer     o_shippriority;  // output column
+
+   ADD_RECORD_TRAITS(q3_pipeline_view_t)
 
    void print(std::ostream& os) const;
 };
 
 // ---------------------------------------------------------------------------
-// Predicate declarations. Bodies live in query.tpp.
+// Final aggregate output row: Q3 uses the base type directly (no extension).
 
-// Applied to a raw orders_t before joining (structures 1 and 4).
-// Encodes: o_orderdate < p.orderdate_hi
-// See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 1.
-bool q3_predicate_orders(const orders_t& o, const Params& p);
-
-// Applied to a raw lineitem_t before joining (structures 1 and 4).
-// Encodes: l_shipdate > p.shipdate_lo
-// See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 1.
-bool q3_predicate_lineitem(const lineitem_t& l, const Params& p);
-
-// Applied to a fully-assembled joined_ol_t (structures 2 and 3).
-// Encodes: o_orderdate < p.orderdate_hi AND l_shipdate > p.shipdate_lo
-// See: frontend/tpch/q3/CLAUDE.md §Plan Descriptions, Structure 3.
-bool q3_predicate_joined(const joined_ol_t& j, const Params& p);
+using q3_agg_row_t = q3_family::q3_agg_row_base_t;
 
 }  // namespace tpch::q3
+
+// ---------------------------------------------------------------------------
+// SKBuilder specialisation for q3_pipeline_view_t::Key.
+//
+// Required by BinaryMergeJoin / PremergedJoin callers that derive join keys
+// from this record type.  Q3's view is not used in a join directly — the
+// Phase-0.5 query_by_view is a stub — but the specialisation must exist for
+// the template to instantiate cleanly when Q3Workload is compiled.
+
+template <>
+struct SKBuilder<tpch::q3::q3_pipeline_view_t::Key> {
+   using JK = tpch::q3::q3_pipeline_view_t::Key;
+
+   static JK create(const JK& k, const tpch::q3::q3_pipeline_view_t&)
+   {
+      return k;
+   }
+
+   template <typename R>
+   static JK project(const JK& k) { return k; }
+
+   template <typename R>
+   static JK to_key(const JK& k) { return k; }
+};

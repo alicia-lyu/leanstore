@@ -347,6 +347,8 @@ point. Run from the repo root.
 | `test_query_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_query_q12_leanstore.cpp` |
 | `test_query_q3i_lsm` | `q3i/` | RocksDB (mac+Linux) | `tests/q3i/test_query_q3i_rocksdb.cpp` |
 | `test_query_q3i_btree` | `q3i/` | LeanStore (Linux only) | `tests/q3i/test_query_q3i_leanstore.cpp` |
+| `test_query_q3_lsm` | `q3/` | RocksDB (mac+Linux) | `tests/q3/test_query_q3_rocksdb.cpp` |
+| `test_query_q3_btree` | `q3/` | LeanStore (Linux only) | `tests/q3/test_query_q3_leanstore.cpp` |
 | Q9 tests | `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
@@ -411,7 +413,8 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
 
 - Q12 — see [`q12/CLAUDE.md §Tests`](q12/CLAUDE.md#tests)
 - Q3 load — `test_load_col_lsm` (see commands above)
-- Q3 query, Q9 — none yet
+- Q3 query — `test_query_q3_lsm` (Phase-0.5: digests all 0x0, `[OK]` parity)
+- Q9 — none yet (load/query bodies TODO)
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
 ## Completed (post-skeleton)
@@ -660,8 +663,13 @@ that log file. Don't reuse `--ssd_path=.` (collides with the default
   Performance ordering `base ≈ hash < merged < view` is stable.
   **Remaining**: `q12_lsm` / `q12_btree` flag-dispatch executables,
   CMake targets, and `generate_targets.py` Makefile entries.
-- **Q3/Q9**: `load.tpp` ctor/`load()`/`get_size()` bodies (still reference
-  removed pipeline methods — fix first). Then `query_by_*` bodies, predicate
+- **Q3**: Phase 0.5 skeleton landed (2026-05-03). `load.tpp` fully implemented
+  (COL pipeline, view population). `query.tpp` has real predicates and
+  `Params::defaults()`; `query_by_*` are Phase-0.5 stubs returning empty.
+  `test_query_q3_lsm` passes with all-zero digest. Next: Phase 1
+  (`query_by_merged` real body using `col_group_walk` + `Q3FamilyVisitor`).
+- **Q9**: `load.tpp` ctor/`load()`/`get_size()` bodies still reference
+  removed pipeline methods — fix first. Then `query_by_*` bodies, predicate
   implementations, and `Params::defaults()`.
 - Per-query predicate / projection / aggregator bodies inside `query.tpp` for
   Q3 and Q9.

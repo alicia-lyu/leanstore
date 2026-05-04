@@ -356,46 +356,26 @@ shareable surface.
 
 ---
 
-## Implementation Phases (preview — full detail in Phase 0.5 plan)
+## Implementation Phases
 
-- **Phase 0** (this doc) — design.
-- **Pre-Phase-0.5 dependency**: build COL pipeline infrastructure
-  (`views_col.hpp` + `col_pipeline.{hpp,tpp}`). This is a
-  **separate task** that must land before Q3 Phase 0.5 can begin.
-  Cleanest delivery: build COL infra and Q3 skeleton in the same
-  PR family.
-- **Phase 0.5** — skeleton commit. Replace OL-pipeline references
-  in `q3/views.hpp`, `workload.hpp`, `load.tpp`, `query.tpp`,
-  `per_structure_workload.hpp` with COL types. Refresh DOT files.
-  No real `query_by_*` bodies yet — stubs only.
-- **Phase 1** — minimal end-to-end S3 (`query_by_merged`) +
-  `test_query_q3_lsm` digest seed.
+- **Phase 0** (2026-05-03) — design doc.
+- **Phase 0.5** (2026-05-03; **complete**) — skeleton over COL
+  pipeline. `views.hpp` defines `q3_pipeline_view_t` and aliases
+  `q3_agg_row_t`. `workload.hpp` composes
+  `CustomerOrdersLineitemPipeline<Backend> col`. `load.tpp` has
+  real `populate_q3_view` / `populate_split` / `populate_merged`
+  bodies. `query.tpp` has real `Params::defaults()`,
+  `set_params_for_iter`, all four predicate implementations, and
+  Phase-0.5 stub `query_by_*` returning empty vectors. All four
+  storage structures wire cleanly; `test_query_q3_lsm` loads and
+  reports `[OK]` parity at digest 0x0. CMake targets `q3_lsm` /
+  `q3_btree` and `test_query_q3_lsm` / `test_query_q3_btree` wired
+  in `frontend/CMakeLists.txt`. `generate_targets.py` updated.
+- **Phase 1** — minimal end-to-end S3 (`query_by_merged`) using
+  `col_group_walk` + `Q3FamilyVisitor`; `test_query_q3_lsm` digest
+  seed non-zero.
 - **Phase 2** — S1, S2, S4 baselines + cross-structure parity.
-- **Phase 3** — production `q3_lsm` / `q3_btree` executables,
-  CMake targets, `generate_targets.py` entries.
-- **Phase 4** — defer pending S5 viability decision (§Open Q).
-
-Mirror Q3I's [Implementation Phases](../q3i/CLAUDE.md#implementation-phases)
-for full structure once Phase 0.5 starts.
-
----
-
-## Stale skeleton — to be replaced in Phase 0.5
-
-The current `q3/` skeleton predates the COL-pipeline pivot. It
-will be rewritten, not merely patched, in Phase 0.5:
-
-- `q3/views.hpp` includes `views_ol.hpp` and aliases
-  `q3_pipeline_view_t = ::tpch::joined_ol_t`. Both lines go away.
-- `q3/workload.hpp` composes `OrdersLineitemPipeline<Backend> ol`.
-  Replace with `CustomerOrdersLineitemPipeline<Backend> col`.
-- `q3/load.tpp` references `ol.populate_view` /
-  `ol.get_view_size` (already noted as TODO debt in
-  `frontend/tpch/CLAUDE.md`). Both go away.
-- `q3/query.tpp` predicate signatures take `joined_ol_t` —
-  replace with the COL join-result type or with the visitor
-  hook signatures from `col_group_walk`.
-- `q3/plans/*.dot` — refresh to reflect COL pipeline.
-
-Cross-cutting refactor (operator drivers, view loading, build
-wiring): see [`frontend/tpch/CLAUDE.md`](../CLAUDE.md).
+- **Phase 3** — production `q3_lsm` / `q3_btree` executables
+  already wired (Phase 0.5); verify throughput and enable in
+  `generate_targets.py` experiment sweep.
+- **Phase 4** — S5 omitted (see §Open Questions).

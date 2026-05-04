@@ -5,6 +5,10 @@
 // Aliases to the shared tpch::BaseStructure / ViewStructure / MergedStructure /
 // HashStructure templates in frontend/tpch/per_structure_workload.hpp.
 // Method bodies (pure forwarders to w.query_by_*) live in that shared header.
+//
+// S5 (AggregatedStructure) is deliberately omitted — Q3 has no invoice table
+// and therefore no parameter-independent aggregate to pre-bake.  See
+// q3/CLAUDE.md §Open Questions — S5: omit (resolved).
 
 #include "../per_structure_workload.hpp"
 #include "workload.hpp"

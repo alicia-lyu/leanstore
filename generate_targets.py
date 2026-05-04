@@ -16,7 +16,7 @@ vscode_launch_obj = {
 }
 
 build_dirs = ["build", "build-debug"]
-exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm", "q3i_btree", "q3i_lsm"]
+exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm", "q3i_btree", "q3i_lsm", "q3_btree", "q3_lsm"]
 data_disk = Path("$(data_disk)")
 IS_MACOS = platform.system() == "Darwin"
 shared_flags: dict[str, str] = {
@@ -455,6 +455,8 @@ DIFF_DIRS = {
  "q12_btree": "tpch/q12",
  "q3i_lsm": "tpch/q3i",
  "q3i_btree": "tpch/q3i",
+ "q3_lsm": "tpch/q3",
+ "q3_btree": "tpch/q3",
 }
 
 STRUCTURE_OPTIONS = {
@@ -464,6 +466,8 @@ STRUCTURE_OPTIONS = {
     "q12_lsm": [1, 2, 3, 4],
     "q3i_btree": [1, 2, 3, 4, 5],
     "q3i_lsm": [1, 2, 3, 4, 5],
+    "q3_btree": [1, 2, 3, 4],
+    "q3_lsm": [1, 2, 3, 4],
 }
 
 def main() -> None:

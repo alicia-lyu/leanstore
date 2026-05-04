@@ -312,6 +312,36 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- test_query_q3_lsm: Q3 all-four query_by_* cross-structure parity test (RocksDB) ---
+    add_executable(test_query_q3_lsm tpch/tests/q3/test_query_q3_rocksdb.cpp)
+    target_compile_definitions(test_query_q3_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_query_q3_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_query_q3_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
+    # --- q3_lsm executable (RocksDB) ---
+    add_executable(q3_lsm tpch/q3/executable_rocksdb.cpp)
+    target_compile_definitions(q3_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(q3_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(q3_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
 else()
     # =========================================================================
     # Linux build: full leanstore + RocksDB (original behavior)
@@ -389,5 +419,17 @@ else()
 
     add_executable(q3i_lsm tpch/q3i/executable_rocksdb.cpp)
     target_link_libraries(q3i_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_query_q3_lsm tpch/tests/q3/test_query_q3_rocksdb.cpp)
+    target_link_libraries(test_query_q3_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_query_q3_btree tpch/tests/q3/test_query_q3_leanstore.cpp)
+    target_link_libraries(test_query_q3_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(q3_lsm tpch/q3/executable_rocksdb.cpp)
+    target_link_libraries(q3_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(q3_btree tpch/q3/executable_leanstore.cpp)
+    target_link_libraries(q3_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 
 endif()
