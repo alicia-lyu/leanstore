@@ -106,6 +106,21 @@ if (APPLE)
         random_standalone
     )
 
+    # --- test_lineitem_i_upgrade: unit tests for tpchi_tables.hpp::lineitem_i_t ---
+    add_executable(test_lineitem_i_upgrade tpch/tests/test_lineitem_i_upgrade.cpp)
+    target_compile_definitions(test_lineitem_i_upgrade PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_lineitem_i_upgrade PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_lineitem_i_upgrade PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
     # --- test_q3_family: unit tests for q3_family/{accumulators,predicates,params}.hpp ---
     add_executable(test_q3_family tpch/tests/test_q3_family.cpp)
     target_compile_definitions(test_q3_family PRIVATE ROCKSDB_ONLY)
