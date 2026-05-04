@@ -20,6 +20,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   cross-structure parity. Only after all three are green should an
   end-to-end executable run. Performance numbers from a binary that
   hasn't passed parity are noise.
+- **Reload eagerly when load-path files change.** Each
+  `q*_{lsm,btree}_iso_N` Makefile target depends on the persisted
+  `$(data_disk)/<query>_iso/iso_N/build/$(scale).json`, which in
+  turn depends on `frontend/tpch/tpch_workload.hpp`,
+  `frontend/tpch/tpchi_workload.hpp`, and the per-query
+  `frontend/tpch/<q>/load.tpp`. Any commit (yours or an upstream
+  merge) that bumps the mtime of those files invalidates the
+  persisted image, and the *next* `make q*_iso_N` invocation pays
+  full reload cost (minutes at SF=15+, dominating the 15s TX run).
+  After editing or merging any of those load-path files — and
+  *before* you next need a clean perf number — kick off a
+  background reload by running each affected target once with
+  `--load_only_structure=N` (or just `make q3i_lsm_iso scale=15
+  dram=0.1` to refresh all structures in one pass). Subsequent
+  perf runs then reuse the fresh .json and pay only the 15s query
+  cost. If you skip this step, the first perf run after a merge
+  will be deceptively long and the slowdown will look like a
+  regression in the binary itself rather than scheduled reload.
 
 ## Project Overview
 
