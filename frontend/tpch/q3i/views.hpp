@@ -15,6 +15,7 @@
 #include <functional>
 #include <limits>
 
+#include "../q3_family/agg_row.hpp"
 #include "../views_coli.hpp"
 #include "../views_ol.hpp"
 
@@ -254,23 +255,18 @@ struct q3i_jr3_t : public joined_t<48, lineitem_agg_t::Key, false,
 // Final aggregate output row: one per (orderkey, orderdate, shippriority,
 // cust_open_due) group, ordered by revenue DESC LIMIT 10.
 
-struct q3i_agg_row_t {
-   static constexpr int id = 42;
+// q3i_agg_row_t derives from q3_agg_row_base_t (shared with Q3) and adds the
+// invoice-specific field cust_open_due.  All four base fields (o_orderkey,
+// revenue, o_orderdate, o_shippriority) and the comparator live in the base
+// so Q3 can alias q3_agg_row_base_t directly without duplication.
+//
+// This is a pure in-memory result type — never stored in a B-tree or
+// RocksDB adapter — so derivation introduces no fold/byte-layout risk.
+struct q3i_agg_row_t : q3_family::q3_agg_row_base_t {
+   Numeric cust_open_due;  // SUM(i_totaldue) WHERE i_status='O' per custkey
 
-   struct Key {
-      static constexpr int id = 42;
-      Integer o_orderkey;
-      ADD_KEY_TRAITS(&Key::o_orderkey)
-   };
-
-   Integer   o_orderkey;
-   Numeric   revenue;        // SUM(l_extendedprice * (1 - l_discount))
-   Timestamp o_orderdate;
-   Integer   o_shippriority;
-   Numeric   cust_open_due;  // SUM(i_totaldue) WHERE i_status='O' per custkey
-
-   ADD_RECORD_TRAITS(q3i_agg_row_t)
-
+   // print() overrides the base to append cust_open_due after the four
+   // base columns (tab-separated, newline at end).
    void print(std::ostream& os) const;
 };
 

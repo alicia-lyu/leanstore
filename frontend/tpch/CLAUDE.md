@@ -114,13 +114,17 @@ Shared files (used by all three queries):
 Shared scaffolding for the Q3 query family:
 
 - `q3_family/` — building blocks shared by Q3 and Q3I (and future Q3-flavoured
-  queries). Contains three headers: `accumulators.hpp` (`LineitemRevenueAccumulator<P>`
+  queries). Contains four headers: `accumulators.hpp` (`LineitemRevenueAccumulator<P>`
   templated on the per-query Params type, with overloads for `lineitem_t`,
   `lineitem_coli_t`, and `lineitem_acoli_t`), `predicates.hpp` (the three
   spec-shared filters: `q3_predicate_customer`, `q3_predicate_orders`,
-  `q3_predicate_lineitem`, each templated on Params), and `params.hpp` (the
+  `q3_predicate_lineitem`, each templated on Params), `params.hpp` (the
   10-entry SUBSTITUTION-PARAMETER rotation table covering all 5 segments × 5
-  March-15 dates in [1993, 1997]). Q3I's `query.tpp` aliases
+  March-15 dates in [1993, 1997]), and `agg_row.hpp` (`q3_agg_row_base_t`:
+  the four base output fields `o_orderkey`, `revenue`, `o_orderdate`,
+  `o_shippriority` plus `print_base()`, `print()`, and the `cmp` comparator
+  for `apply_topN`; Q3 aliases this directly, Q3I derives `q3i_agg_row_t`
+  from it to add `cust_open_due`). Q3I's `query.tpp` aliases
   `LineitemRevenueAccumulator` from here and delegates its predicate bodies to
   the family functions; Q3 will wire up at Phase 0.5 when its bodies land.
   Q3I-only pieces (`CustomerOpenDueAccumulator`, invoice predicates,

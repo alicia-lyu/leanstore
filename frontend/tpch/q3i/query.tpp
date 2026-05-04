@@ -122,8 +122,8 @@ inline void lineitem_agg_t::print(std::ostream& os) const
 
 inline void q3i_agg_row_t::print(std::ostream& os) const
 {
-   os << o_orderkey << "\t" << revenue << "\t" << o_orderdate << "\t"
-      << o_shippriority << "\t" << cust_open_due << "\n";
+   print_base(os);
+   os << "\t" << cust_open_due << "\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -644,11 +644,7 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
    // ordering differs (view scan vs. hash-map iteration vs. merged scan).
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-         if (a.revenue    != b.revenue)    return a.revenue    > b.revenue;
-         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-         return a.o_orderkey < b.o_orderkey;
-      });
+      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
    }
    return static_cast<long>(out.size());
 }
@@ -807,11 +803,7 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
    }
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
-         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-         return a.o_orderkey < b.o_orderkey;
-      });
+      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
    }
    return static_cast<long>(out.size());
 }
@@ -919,11 +911,7 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
    }
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
-         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-         return a.o_orderkey < b.o_orderkey;
-      });
+      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
    }
    return static_cast<long>(out.size());
 }
@@ -1128,11 +1116,7 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    }
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
-         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-         return a.o_orderkey < b.o_orderkey;
-      });
+      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
    }
    return static_cast<long>(out.size());
 }
@@ -1248,11 +1232,7 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
    }
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
-         if (a.revenue     != b.revenue)     return a.revenue     > b.revenue;
-         if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;
-         return a.o_orderkey < b.o_orderkey;
-      });
+      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
    }
    return static_cast<long>(out.size());
 }
