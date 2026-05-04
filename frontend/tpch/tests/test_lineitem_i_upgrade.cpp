@@ -19,6 +19,7 @@
 #include <gflags/gflags.h>
 #include <cassert>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 
 #include "../../shared/RocksDB.hpp"
@@ -26,6 +27,7 @@
 #include "../tpchi_tables.hpp"
 
 DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping");
+DECLARE_string(ssd_path);
 
 thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 
@@ -138,20 +140,23 @@ static void test_slice()
 // ---------------------------------------------------------------------------
 // Test 5: adapter compatibility — insert + scan via RocksDB adapter.
 
-static void test_adapter_roundtrip(RocksDB& rocks_db)
+// The adapter must be constructed BEFORE rocks_db.open() so its
+// get_handle callback runs during open() and populates cf_handle.
+template <typename Adapter>
+static void test_adapter_roundtrip(RocksDB& rocks_db, Adapter& lineitem_adapter)
 {
-   using B = tpch::RocksDBBackend;
-   B::Adapter<lineitem_i_t> lineitem_adapter(rocks_db);
-
    lineitem_t base = make_base_lineitem();
    constexpr Integer INV_KEY = 55;
    lineitem_i_t li(base, INV_KEY);
-
    lineitem_i_t::Key k{1000, 1};
+
+   rocks_db.startTX();
    lineitem_adapter.insert(k, li);
+   rocks_db.commitTX();
 
    // Scan forward and find the inserted record.
    int matches = 0;
+   rocks_db.startTX();
    auto sc = lineitem_adapter.getScanner();
    while (auto kv = sc->next()) {
       if (kv->first.l_orderkey == 1000 && kv->first.l_linenumber == 1) {
@@ -165,6 +170,8 @@ static void test_adapter_roundtrip(RocksDB& rocks_db)
          break;
       }
    }
+   sc.reset();
+   rocks_db.commitTX();
    if (matches != 1) { std::cerr << "FAIL: lineitem_i_t record not found after insert\n"; std::abort(); }
 
    std::cerr << "  PASS: test_adapter_roundtrip\n";
@@ -185,10 +192,21 @@ int main(int argc, char** argv)
    test_key_round_trip();
    test_slice();
 
-   // Adapter test requires RocksDB.
+   // Adapter test requires RocksDB. Use a unit-scoped scratch dir
+   // (default ./leanstore is the LeanStore source tree, not a DB).
+   if (FLAGS_ssd_path == "./leanstore") {
+      FLAGS_ssd_path = "./test_data_unit/test_lineitem_i_upgrade";
+   }
+   std::filesystem::create_directories(FLAGS_ssd_path);
    RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
+
+   // Adapter must be declared before open() so its get_handle callback
+   // fires during open() and populates cf_handle.
+   using B = tpch::RocksDBBackend;
+   B::Adapter<lineitem_i_t> lineitem_adapter(rocks_db);
+
    rocks_db.open();
-   test_adapter_roundtrip(rocks_db);
+   test_adapter_roundtrip(rocks_db, lineitem_adapter);
 
    std::cerr << "All tests passed.\n";
    return 0;
