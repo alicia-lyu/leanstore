@@ -12,6 +12,10 @@
 
 #pragma once
 
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+
 #include "../col_pipeline.hpp"
 #include "../operators.hpp"
 #include "../q3_family/accumulators.hpp"
@@ -130,10 +134,77 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
 template <typename Backend>
 long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
 {
-   // TODO Phase 4 §7.3: scan pipeline_view; apply q3_predicate_view live;
-   // accumulate revenue per (orderkey, orderdate, shippriority); apply_topN.
+   // S2: sequential scan over q3_pipeline_view_t (per-lineitem rows).
+   //
+   // Scan order is (custkey, orderkey, linenumber).  Mktsegment + orderdate
+   // filters are evaluated once per orderkey transition (constant within an
+   // order); l_shipdate is applied per-lineitem inside the accumulator.
+   // At each orderkey boundary we emit the agg row if revenue > 0.
+   //
+   // OPERATORS.md §4 / §6: all parameterised filters applied live at query
+   // time; none baked into the view at load time.
    out.clear();
-   return 0;
+
+   Integer   cur_orderkey     = -1;
+   Timestamp cur_orderdate    = 0;
+   Integer   cur_shippriority = 0;
+   bool      cur_order_ok     = false;  // passes mktsegment + orderdate
+   q3_family::LineitemRevenueAccumulator<Params> rev;
+
+   auto flush_order = [&]() {
+      if (!cur_order_ok || cur_orderkey < 0) return;
+      if (rev.revenue <= Numeric(0)) { rev.reset(); return; }
+      if (stats) stats->join_callbacks++;
+      out.push_back({cur_orderkey, rev.revenue, cur_orderdate, cur_shippriority});
+      rev.reset();
+   };
+
+   auto vs = pipeline_view.getScanner();
+   while (auto kv = vs->next()) {
+      const q3_pipeline_view_t::Key& k   = kv->first;
+      const q3_pipeline_view_t&      row = kv->second;
+      if (stats) stats->lineitems_scanned++;
+
+      if (k.orderkey != cur_orderkey) {
+         flush_order();
+         cur_orderkey     = k.orderkey;
+         cur_orderdate    = row.o_orderdate;
+         cur_shippriority = row.o_shippriority;
+         cur_order_ok     = false;
+
+         // Mktsegment filter.
+         auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
+         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+         if (sm != psm) continue;
+         if (stats) stats->customers_passing_filter++;
+
+         // Orderdate filter.
+         if (row.o_orderdate >= params.orderdate) continue;
+         if (stats) stats->orders_passing_filter++;
+         cur_order_ok = true;
+      }
+
+      if (!cur_order_ok) continue;
+
+      // Reuse the LineitemRevenueAccumulator (OPERATORS.md §6.1: identical
+      // per-record arithmetic across S1/S2/S3).  Bridge through a lineitem_t
+      // proxy carrying only the three fields the accumulator reads.
+      lineitem_t proxy;
+      proxy.l_shipdate      = row.l_shipdate;
+      proxy.l_extendedprice = row.l_extendedprice;
+      proxy.l_discount      = row.l_discount;
+      if (rev.consume(proxy, params)) {
+         if (stats) stats->lineitems_passing_filter++;
+      }
+   }
+   flush_order();
+
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
+   }
+   apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
@@ -169,10 +240,81 @@ long Q3Workload<Backend>::query_by_merged(std::vector<q3_agg_row_t>& out)
 template <typename Backend>
 long Q3Workload<Backend>::query_by_hash(std::vector<q3_agg_row_t>& out)
 {
-   // TODO Phase 2: HashJoin chain over base tables; build customer / orders
-   // hashmaps filtered by mktsegment / orderdate; probe lineitems by shipdate.
+   // S4: HashJoin chain baseline (no merged index, no custkey ordering).
+   //
+   //   1. Build qualifying-customer set (mktsegment filter pushed down).
+   //   2. Build orders map (orderdate filter + custkey membership pushed
+   //      down before the hashmap insert).
+   //   3. Probe lineitems (shipdate filter pushed down); accumulate revenue
+   //      into the OrderSlot directly.
+   //   4. Emit non-zero slots, then apply_topN.
+   //
+   // S4 is the *only* path allowed hash-aggregates inside the pipeline
+   // (PLAYBOOK §7.5 pitfall — the hashmap tax S4 pays for not having a
+   // merged index).
    out.clear();
-   return 0;
+
+   std::unordered_set<Integer> cust_set;
+   {
+      auto sc = customer.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->customers_scanned++;
+         if (!q3_predicate_customer(kv->second, params)) continue;
+         if (stats) stats->customers_passing_filter++;
+         cust_set.insert(kv->first.c_custkey);
+      }
+   }
+
+   struct OrderSlot {
+      Timestamp orderdate;
+      Integer   shippriority;
+      Numeric   revenue = 0;
+   };
+   std::unordered_map<Integer, OrderSlot> orders_map;
+   {
+      auto sc = orders.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->orders_scanned++;
+         if (!q3_predicate_orders(kv->second, params)) continue;
+         if (cust_set.find(kv->second.o_custkey) == cust_set.end()) continue;
+         if (stats) stats->orders_passing_filter++;
+         orders_map.emplace(kv->first.o_orderkey,
+                            OrderSlot{kv->second.o_orderdate,
+                                      kv->second.o_shippriority,
+                                      Numeric(0)});
+      }
+   }
+
+   {
+      auto sc = lineitem.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->lineitems_scanned++;
+         if (!q3_predicate_lineitem(kv->second, params)) continue;
+         auto it = orders_map.find(kv->first.l_orderkey);
+         if (it == orders_map.end()) continue;
+         if (stats) stats->lineitems_passing_filter++;
+         // Reuse LineitemRevenueAccumulator for the per-record arithmetic
+         // (OPERATORS.md §6.1 comparison-integrity).  Reset so each
+         // accumulate() folds exactly one row's revenue into the slot.
+         q3_family::LineitemRevenueAccumulator<Params> acc;
+         acc.consume(kv->second, params);
+         it->second.revenue += acc.revenue;
+      }
+   }
+
+   for (auto& [ok, slot] : orders_map) {
+      if (slot.revenue > Numeric(0)) {
+         if (stats) stats->join_callbacks++;
+         out.push_back({ok, slot.revenue, slot.orderdate, slot.shippriority});
+      }
+   }
+
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
+   }
+   apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+   return static_cast<long>(out.size());
 }
 
 }  // namespace tpch::q3
