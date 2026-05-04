@@ -24,18 +24,15 @@ struct LeanStoreAdapter : Adapter<Record> {
    }
    LeanStoreAdapter(LeanStore& db, string name) : produced(0), name(name)
    {
-      if (FLAGS_vi) {
-         if (FLAGS_recover) {
-            btree = &db.retrieveBTreeVI(name);
-         } else {
-            btree = &db.registerBTreeVI(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
-         }
+      // Always use BTreeLL. The geo / TPC-H workloads run with FLAGS_vi=false
+      // and BTreeVI's MVCC erase-then-reinsert path hits an unimplemented
+      // branch (BTreeVI.cpp:412 "Not implemented: maybe it has been removed
+      // but no GCed") that surfaces in `loadInvoiceAndLinkLineitem`'s
+      // lineitem rewrite pass. BTreeLL has no such limitation.
+      if (FLAGS_recover) {
+         btree = &db.retrieveBTreeLL(name);
       } else {
-         if (FLAGS_recover) {
-            btree = &db.retrieveBTreeLL(name);
-         } else {
-            btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
-         }
+         btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
       }
    }
    // -------------------------------------------------------------------------------------
