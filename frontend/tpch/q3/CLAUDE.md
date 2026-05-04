@@ -397,8 +397,27 @@ shareable surface.
   `mi_records_visited` / `mi_groups_skipped` were hoisted from
   `Q3IStats` to `q3_family::Q3FamilyStats` since the shared visitor
   bumps them and Q3 had no equivalent declarations.
-- **Phase 4 §7.2 / §7.3 / §7.5** — S1, S2, S4 baselines + flip the
-  harness from per-path `[SKIP]` to strict cross-structure XOR parity.
+- **Phase 4 §7.3 + §7.5** (2026-05-04; **complete**) — S2 view scan and
+  S4 hash baselines.  S2 streams `q3_pipeline_view_t` per-lineitem,
+  evaluates mktsegment + orderdate once per orderkey transition, and
+  applies shipdate per-lineitem via the shared
+  `LineitemRevenueAccumulator` (with a `lineitem_t` proxy carrying the
+  three fields it reads, mirroring Q3I).  S4 builds a qualifying-customer
+  set, then an orders map gated by `(orderdate ∧ custkey ∈ cust_set)`,
+  then probes lineitems and folds revenue into the OrderSlot.  Both
+  paths reach `apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp)`.
+- **Phase 4 §7.2** (2026-05-04; **complete**) — S1 BMJ chain over
+  custkey-sorted COL split indexes (Track 1 — 2 BMJs vs Q3I's 3, no
+  invoice).  `LineitemRevenueAggregator` and `lineitem_agg_t` were
+  hoisted from `q3i/` to `q3_family/` (templated on `LineitemType`)
+  so Q3 (`lineitem_col_t`) and Q3I (`lineitem_coli_t`) share one
+  scanner-wrapper implementation.  Q3-specific `q3_cust_jk_t::Key`,
+  `q3_jr1_t`, `q3_jr2_t` join-result types live in `q3/views.hpp`
+  with their `SKBuilder` and `std::hash` specialisations.
+  `test_query_q3_{lsm,btree}` harness flipped from `[SKIP]` tolerance
+  to strict cross-structure XOR parity.  SF=1: all four paths produce
+  identical digest, rows=10, exit 0.  Q3I parity preserved post-hoist
+  (test_query_q3i_lsm rows=9, all five S1–S5 `[OK]`).
 - **Phase 3** — production `q3_lsm` / `q3_btree` executables
   already wired (Phase 0.5); verify throughput and enable in
   `generate_targets.py` experiment sweep.

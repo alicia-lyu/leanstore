@@ -16,6 +16,7 @@
 #include <limits>
 
 #include "../q3_family/agg_row.hpp"
+#include "../q3_family/lineitem_agg.hpp"
 #include "../views_coli.hpp"
 #include "../views_ol.hpp"
 
@@ -110,48 +111,11 @@ struct cust_open_due_t {
    void print(std::ostream& os) const;
 };
 
-// Per-(custkey, orderkey) lineitem revenue aggregate: output of the
-// LineitemRevenueAggregator scanner-wrapper (OPERATORS.md §3 op 6).
-// One row per orderkey after SUM(l_extendedprice * (1 - l_discount)).
-struct lineitem_agg_t {
-   static constexpr int id = 45;
-
-   struct Key {
-      static constexpr int id = 45;
-      Integer custkey;
-      Integer orderkey;
-      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
-
-      // Match on (custkey, orderkey). The left side of BMJ #3 is JR2 whose
-      // join key is cust_open_due_t::Key (custkey only); BMJ uses the
-      // SKBuilder::create overloads to derive a lineitem_agg_t::Key from JR2,
-      // so the two-field key always has both components set at match time.
-      int match(const Key& other) const
-      {
-         if (custkey  != other.custkey)  return custkey  < other.custkey  ? -1 : 1;
-         if (orderkey != other.orderkey) return orderkey < other.orderkey ? -1 : 1;
-         return 0;
-      }
-
-      static Key max()
-      {
-         return Key{std::numeric_limits<Integer>::max(),
-                    std::numeric_limits<Integer>::max()};
-      }
-
-      std::vector<Key> matching_keys() const { return {*this}; }
-
-      auto operator<=>(const Key&) const = default;
-
-      friend int operator%(const Key& k, int n) { return static_cast<int>(k.custkey) % n; }
-   };
-
-   Numeric revenue;  // SUM(l_extendedprice * (1 - l_discount))
-
-   ADD_RECORD_TRAITS(lineitem_agg_t)
-
-   void print(std::ostream& os) const;
-};
+// Per-(custkey, orderkey) lineitem revenue aggregate: hoisted to q3_family
+// so Q3 and Q3I share the same type (Phase 4 §7.2).  Re-exported here so
+// existing q3i/* sites referring to `tpch::q3i::lineitem_agg_t` keep
+// resolving without churn.
+using lineitem_agg_t = ::tpch::q3_family::lineitem_agg_t;
 
 // ---------------------------------------------------------------------------
 // Explicit join result types for the S1 3-BMJ chain.
@@ -286,16 +250,8 @@ struct hash<tpch::q3i::cust_open_due_t::Key> {
    }
 };
 
-template <>
-struct hash<tpch::q3i::lineitem_agg_t::Key> {
-   std::size_t operator()(const tpch::q3i::lineitem_agg_t::Key& k) const
-   {
-      // Combine custkey and orderkey via the standard xor-shift pattern.
-      std::size_t h = std::hash<int>{}(static_cast<int>(k.custkey));
-      h ^= std::hash<int>{}(static_cast<int>(k.orderkey)) + 0x9e3779b9 + (h << 6) + (h >> 2);
-      return h;
-   }
-};
+// std::hash for lineitem_agg_t::Key now lives in
+// q3_family/lineitem_agg.hpp (the type was hoisted Phase 4 §7.2).
 
 }  // namespace std
 

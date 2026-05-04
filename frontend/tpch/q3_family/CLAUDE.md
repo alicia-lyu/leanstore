@@ -128,6 +128,39 @@ visitor lived in `q3i/query.tpp`; hoisted Phase A4.
 
 ---
 
+### `lineitem_agg.hpp` — `lineitem_agg_t`
+
+Per-(custkey, orderkey) lineitem revenue aggregate row: the output type of
+`LineitemRevenueAggregator`.  Carries `Numeric revenue`, keyed by
+`(custkey, orderkey)`.  `Key::match` orders custkey-major, orderkey-minor.
+Includes `std::hash` specialisation for HashJoin.
+
+**Consumers**: Q3I S1 BMJ #3 (right side); Q3 S1 BMJ #2 (right side).
+
+**Rationale**: both queries' S1 chain feeds the same scanner-wrapper output
+shape into the final BMJ — hoisted Phase 4 §7.2.  Previously inline in
+`q3i/views.hpp` (where `tpch::q3i::lineitem_agg_t` is now an alias).
+
+---
+
+### `lineitem_revenue_aggregator.hpp` — `LineitemRevenueAggregator<Backend, LineitemType, Params>`
+
+Scanner-wrapper aggregator (OPERATORS.md §3 op 6) that drives a
+custkey-sorted split-lineitem adapter and emits one
+`(lineitem_agg_t::Key, lineitem_agg_t)` per `(custkey, orderkey)` group.
+The `l_shipdate` filter is fused at consume time via
+`LineitemRevenueAccumulator`.
+
+**Consumers**: Q3I S1 with `LineitemType = lineitem_coli_t`; Q3 S1 with
+`LineitemType = lineitem_col_t`.
+
+**Rationale**: identical group-flush logic for both queries, only the row
+type differs; the type parameter `LineitemType` lets each query supply its
+own COLI / COL projection.  Previously a Q3I-only class in
+`q3i/query.tpp`; hoisted Phase 4 §7.2.
+
+---
+
 ### `view_loaders.hpp` — `populate_q3_view_core<OrdersAdapter, LineitemAdapter, EmitFn>`
 
 Two-pointer merge over orders (sorted by orderkey) and lineitem (sorted by

@@ -21,8 +21,10 @@
 #include "../q3_family/accumulators.hpp"
 #include "../q3_family/agg_row.hpp"
 #include "../q3_family/coli_visitors.hpp"
+#include "../q3_family/lineitem_revenue_aggregator.hpp"
 #include "../q3_family/params.hpp"
 #include "../q3_family/predicates.hpp"
+#include "../../shared/merge-join/binary_merge_join.hpp"
 
 namespace tpch::q3
 {
@@ -124,11 +126,76 @@ struct COLGroupWalkVisitor
 template <typename Backend>
 long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
 {
-   // TODO Phase 4 §7.2: drive col.split_orders / split_lineitem BMJ chain
-   // with the shared Q3FamilyVisitor; apply q3_predicate_{customer,orders,
-   // lineitem}.
+   // S1: 2-BMJ chain over custkey-sorted COL split indexes (Track 1 — no
+   // invoice; Q3I has 3 BMJs because of the cust_open_due aggregator).
+   //
+   //   BMJ #1: customerh_t ⋈ orders_coli_t   on custkey
+   //   BMJ #2: q3_jr1_t    ⋈ lineitem_agg_t  on (custkey, orderkey)
+   //
+   // Filters:
+   //   • mktsegment fused into fetch_cust (filter pushdown).
+   //   • orderdate fused into fetch_ord.
+   //   • shipdate  fused inside LineitemRevenueAggregator at consume time.
+   //
+   // OPERATORS.md §6.1: the per-record arithmetic (LineitemRevenueAccumulator)
+   // is the same as S3 — only the physical scan substrate differs.
    out.clear();
-   return 0;
+
+   q3_family::LineitemRevenueAggregator<Backend, lineitem_col_t, Params>
+       agg_lin(col.split_lineitem(), params);
+
+   auto cust_scan = customer.getScanner();
+   auto ord_scan  = col.split_orders().getScanner();
+
+   auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
+      while (auto kv = cust_scan->next()) {
+         if (stats) stats->customers_scanned++;
+         if (!q3_predicate_customer(kv->second, params)) continue;
+         if (stats) stats->customers_passing_filter++;
+         return kv;
+      }
+      return std::nullopt;
+   };
+
+   auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
+      while (auto kv = ord_scan->next()) {
+         if (stats) stats->orders_scanned++;
+         if (kv->second.o_orderdate < params.orderdate) {
+            if (stats) stats->orders_passing_filter++;
+            return kv;
+         }
+      }
+      return std::nullopt;
+   };
+
+   // BMJ #1: customer ⋈ orders on custkey.
+   BinaryMergeJoin<q3_cust_jk_t::Key, q3_jr1_t, customerh_t, orders_coli_t>
+       bmj1(fetch_cust, fetch_ord);
+
+   auto fetch_bmj1 = [&]() { return bmj1.next(); };
+   auto fetch_lin_agg = [&]() { return agg_lin.next(); };
+
+   // BMJ #2: jr1 ⋈ lineitem_agg on (custkey, orderkey).
+   BinaryMergeJoin<q3_family::lineitem_agg_t::Key, q3_jr2_t,
+                   q3_jr1_t, q3_family::lineitem_agg_t>
+       bmj2(fetch_bmj1, fetch_lin_agg);
+
+   while (auto kv = bmj2.next()) {
+      if (stats) stats->join_callbacks++;
+      const q3_jr2_t& jr2 = kv->second;
+      const q3_jr1_t& jr1 = jr2.jr1();
+      const orders_coli_t& o = jr1.order();
+      const q3_family::lineitem_agg_t& lagg = jr2.linagg();
+      Integer orderkey = kv->first.jk.orderkey;
+      out.push_back({orderkey, lagg.revenue, o.o_orderdate, o.o_shippriority});
+   }
+
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->topN_candidates     = static_cast<long>(out.size());
+   }
+   apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>

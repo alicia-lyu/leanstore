@@ -1,20 +1,19 @@
-// Unified Phase-0.5 harness for Q3: loads ALL secondary structures once, then
-// runs all four query_by_* paths and asserts cross-structure result parity.
+// Cross-structure parity harness for Q3: loads ALL secondary structures
+// once, runs all four query_by_* paths, and asserts strict XOR-digest
+// parity across S1 / S2 / S3 / S4.
 //
-// Phase-0.5 stub behaviour: all four query_by_* return empty vectors (0 rows).
-// All four digests therefore equal 0 and trivially agree — [OK] parity at
-// Phase 0.5 is expected and correct.  Real correctness signal arrives in
-// Phase 1 when query_by_merged is implemented.
+// Phase 4 complete (2026-05-04): all four paths have real bodies; the
+// harness enforces strict parity (no [SKIP] tolerance).  S5 is omitted
+// for Q3 by design (q3/CLAUDE.md §Open Questions — S5: omit).
 //
 // Usage:
-//   mkdir -p test_data_q3 test_csv_q3
+//   mkdir -p build/scratch/q3/{data,csv}
 //   ./build/frontend/test_query_q3_lsm \
-//       --ssd_path=./test_data_q3 \
-//       --csv_path=./test_csv_q3 \
+//       --ssd_path=./build/scratch/q3/data \
+//       --csv_path=./build/scratch/q3/csv \
 //       --tpch_scale_factor=1
 //
-// Expected (Phase 0.5): 4 digests all 0x0, 4 × row_count=0, [OK] agreement,
-// exit 0.
+// Expected: 4 identical digests, 4 × row_count > 0, exit 0.
 //
 // IMPORTANT: wipes --ssd_path before opening the DB (same rationale as
 // test_query_q3i_rocksdb.cpp — RocksDB does not cleanly overwrite).
@@ -176,22 +175,17 @@ int main(int argc, char** argv)
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
    // ------------------------------------------------------------------
-   // Parity check: all four digests must agree.
+   // Strict parity check: all four digests must agree (Phase 4 complete).
    std::cout << "\n=== Parity check ===\n";
-   uint64_t ref  = d_merged;  // S3 is the oracle (first to be implemented)
+   uint64_t ref = d_merged;  // S3 is the canonical oracle.
 
-   // Phase 4 §7.1 relaxation: only S3 has a real body; S1/S2/S4 still stubbed.
-   // A stubbed path (rows=0, digest=0) is treated as [SKIP]; it converts to a
-   // hard parity check once §7.2/§7.3/§7.5 land non-empty bodies.
-   auto status = [&](uint64_t d, long n) -> const char* {
-      if (n == 0 && d == 0)  return "[SKIP] ";  // stub
-      if (d == ref)          return "[OK]   ";
-      return "[FAIL] ";
+   auto status = [&](uint64_t d) -> const char* {
+      return d == ref ? "[OK]   " : "[FAIL] ";
    };
    auto parity_line = [&](const char* tag, uint64_t d, long n) {
-      const char* s = status(d, n);
+      const char* s = status(d);
       std::ostringstream ss; ss << std::hex << ref;
-      bool show_expected = (s[1] == 'F');  // "[FAIL]"
+      bool show_expected = (s[1] == 'F');
       std::cout << s << tag
                 << " rows=" << std::dec << n
                 << " digest=0x" << std::hex << d << std::dec
@@ -203,18 +197,10 @@ int main(int argc, char** argv)
    parity_line("S3 merged", d_merged, (long)r_merged.size());
    parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
 
-   // Phase 4 §7.1 exit gate: S3 must be non-empty + deterministic.  Stubbed
-   // paths get [SKIP].  Real bodies that disagree with S3 are [FAIL].
-   bool s3_real = (r_merged.size() > 0);
-   bool no_fail =
-       (status(d_base,   (long)r_base.size())[1]   != 'F') &&
-       (status(d_view,   (long)r_view.size())[1]   != 'F') &&
-       (status(d_hash,   (long)r_hash.size())[1]   != 'F');
-   if (!s3_real) {
+   if (r_merged.empty()) {
       std::cout << "\n[FAIL] S3 returned 0 rows — query_by_merged body broken.\n";
       return 1;
    }
-   std::cout << "\n[note] Phase 4 §7.1: only query_by_merged has a real body; "
-                "S1/S2/S4 are [SKIP] until §7.2/§7.3/§7.5 land.\n";
-   return no_fail ? 0 : 1;
+   bool all_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref);
+   return all_ok ? 0 : 1;
 }

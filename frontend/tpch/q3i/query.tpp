@@ -17,6 +17,7 @@
 #include "../operators.hpp"
 #include "../q3_family/accumulators.hpp"
 #include "../q3_family/coli_visitors.hpp"
+#include "../q3_family/lineitem_revenue_aggregator.hpp"
 #include "../q3_family/params.hpp"
 #include "../q3_family/predicates.hpp"
 #include "../../shared/merge-join/binary_merge_join.hpp"
@@ -113,10 +114,8 @@ inline void cust_open_due_t::print(std::ostream& os) const
    os << "open_due(" << cust_open_due << ")\n";
 }
 
-inline void lineitem_agg_t::print(std::ostream& os) const
-{
-   os << "lineitem_agg(" << revenue << ")\n";
-}
+// lineitem_agg_t::print is defined inline in q3_family/lineitem_agg.hpp
+// (the type was hoisted Phase 4 §7.2).
 
 // ---------------------------------------------------------------------------
 // q3i_agg_row_t::print — tab-separated output.
@@ -401,110 +400,12 @@ class CustomerOpenDueAggregator
    }
 };
 
-// LineitemRevenueAggregator: emits one (lineitem_agg_t::Key, lineitem_agg_t)
-// per (custkey, orderkey) group from custkey-sorted split_lineitem records.
-// l_shipdate filter fused at consume time.
+// LineitemRevenueAggregator hoisted to q3_family/lineitem_revenue_aggregator.hpp
+// (Phase 4 §7.2) so Q3 (lineitem_col_t) and Q3I (lineitem_coli_t) share one
+// implementation.  Aliased here for callers below.
 template <typename Backend>
-class LineitemRevenueAggregator
-{
-   using Scanner = decltype(std::declval<typename Backend::template Adapter<lineitem_coli_t>>().getScanner());
-   Scanner scanner_;
-   const Params& params_;
-
-   std::optional<std::pair<lineitem_agg_t::Key, lineitem_agg_t>> pending_;
-
-   Integer cur_custkey_  = -1;
-   Integer cur_orderkey_ = -1;
-   LineitemRevenueAccumulator acc_;
-
-   std::optional<std::pair<lineitem_coli_t::Key, lineitem_coli_t>> lookahead_;
-   bool exhausted_ = false;
-
-   void flush_group()
-   {
-      if (cur_custkey_ < 0) return;
-      // Emit only groups with non-zero revenue (no revenue means all lineitems
-      // were filtered out; suppress so downstream BMJ skips the orderkey).
-      if (acc_.revenue > Numeric(0)) {
-         pending_ = {lineitem_agg_t::Key{cur_custkey_, cur_orderkey_},
-                     lineitem_agg_t{acc_.revenue}};
-      }
-      acc_.reset();
-   }
-
-  public:
-   explicit LineitemRevenueAggregator(
-       typename Backend::template Adapter<lineitem_coli_t>& adapter,
-       const Params& params)
-       : scanner_(adapter.getScanner()), params_(params)
-   {
-      lookahead_ = scanner_->next();
-      if (!lookahead_) exhausted_ = true;
-   }
-
-   // Forward-only seek to the first lineitem with custkey >= K. Drops any
-   // partial-group accumulation for custkeys < K. See
-   // CustomerOpenDueAggregator::seek_to_custkey for the rationale (G1 S1).
-   bool seek_to_custkey(Integer K)
-   {
-      if (cur_custkey_ >= K) return false;
-      if (lookahead_ && lookahead_->first.custkey >= K) return false;
-      pending_ = std::nullopt;
-      acc_.reset();
-      cur_custkey_  = -1;
-      cur_orderkey_ = -1;
-      typename lineitem_coli_t::Key seek_key{K, 0, 0, 0};
-      scanner_->seek(seek_key);
-      lookahead_ = scanner_->next();
-      if (!lookahead_) exhausted_ = true;
-      return true;
-   }
-
-   std::optional<std::pair<lineitem_agg_t::Key, lineitem_agg_t>> next()
-   {
-      if (pending_) {
-         auto out = std::move(pending_);
-         pending_ = std::nullopt;
-         return out;
-      }
-      if (exhausted_ && cur_custkey_ < 0) return std::nullopt;
-
-      for (;;) {
-         if (lookahead_) {
-            auto& [k, v] = *lookahead_;
-            bool same_group = (k.custkey == cur_custkey_ && k.orderkey == cur_orderkey_);
-            if (!same_group) {
-               bool had_group = (cur_custkey_ >= 0);
-               flush_group();
-               cur_custkey_  = k.custkey;
-               cur_orderkey_ = k.orderkey;
-               acc_.consume(v, params_);
-               lookahead_ = scanner_->next();
-               if (!lookahead_) exhausted_ = true;
-               if (had_group && pending_) {
-                  auto out = std::move(pending_);
-                  pending_ = std::nullopt;
-                  return out;
-               }
-               continue;
-            }
-            acc_.consume(v, params_);
-            lookahead_ = scanner_->next();
-            if (!lookahead_) exhausted_ = true;
-         } else {
-            if (cur_custkey_ < 0) return std::nullopt;
-            flush_group();
-            cur_custkey_ = -1;
-            if (pending_) {
-               auto out = std::move(pending_);
-               pending_ = std::nullopt;
-               return out;
-            }
-            return std::nullopt;
-         }
-      }
-   }
-};
+using LineitemRevenueAggregator =
+    q3_family::LineitemRevenueAggregator<Backend, lineitem_coli_t, Params>;
 
 // ---------------------------------------------------------------------------
 // Q3IWorkload query methods

@@ -130,17 +130,13 @@ int main(int argc, char** argv)
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
    std::cout << "\n=== Parity check ===\n";
-   uint64_t ref  = d_merged;  // S3 is the oracle (first to be implemented).
+   uint64_t ref = d_merged;  // S3 is the canonical oracle.
 
-   // Phase 4 §7.1 relaxation: only S3 has a real body; S1/S2/S4 still stubbed.
-   // Stub (rows=0, digest=0) → [SKIP]; real-body disagreement → [FAIL].
-   auto status = [&](uint64_t d, long n) -> const char* {
-      if (n == 0 && d == 0)  return "[SKIP] ";
-      if (d == ref)          return "[OK]   ";
-      return "[FAIL] ";
+   auto status = [&](uint64_t d) -> const char* {
+      return d == ref ? "[OK]   " : "[FAIL] ";
    };
    auto parity_line = [&](const char* tag, uint64_t d, long n) {
-      const char* s = status(d, n);
+      const char* s = status(d);
       std::ostringstream ss; ss << std::hex << ref;
       bool show_expected = (s[1] == 'F');
       std::cout << s << tag
@@ -158,13 +154,8 @@ int main(int argc, char** argv)
       std::cout << "\n[FAIL] S3 returned 0 rows — query_by_merged body broken.\n";
       return 1;
    }
-   std::cout << "\n[note] Phase 4 §7.1: only query_by_merged has a real body; "
-                "S1/S2/S4 are [SKIP] until §7.2/§7.3/§7.5 land.\n";
-   bool no_fail =
-       (status(d_base, (long)r_base.size())[1] != 'F') &&
-       (status(d_view, (long)r_view.size())[1] != 'F') &&
-       (status(d_hash, (long)r_hash.size())[1] != 'F');
-   return no_fail ? 0 : 1;
+   bool all_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref);
+   return all_ok ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY
