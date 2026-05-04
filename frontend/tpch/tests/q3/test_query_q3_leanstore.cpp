@@ -130,29 +130,41 @@ int main(int argc, char** argv)
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
    std::cout << "\n=== Parity check ===\n";
-   uint64_t ref  = d_merged;
-   bool     ok_b = (d_base   == ref);
-   bool     ok_v = (d_view   == ref);
-   bool     ok_m = (d_merged == ref);
-   bool     ok_h = (d_hash   == ref);
+   uint64_t ref  = d_merged;  // S3 is the oracle (first to be implemented).
 
-   auto parity_line = [&](const char* tag, bool ok, uint64_t d) {
-      std::ostringstream ss;
-      ss << std::hex << ref;
-      std::cout << (ok ? "[OK]   " : "[FAIL] ") << tag
+   // Phase 4 §7.1 relaxation: only S3 has a real body; S1/S2/S4 still stubbed.
+   // Stub (rows=0, digest=0) → [SKIP]; real-body disagreement → [FAIL].
+   auto status = [&](uint64_t d, long n) -> const char* {
+      if (n == 0 && d == 0)  return "[SKIP] ";
+      if (d == ref)          return "[OK]   ";
+      return "[FAIL] ";
+   };
+   auto parity_line = [&](const char* tag, uint64_t d, long n) {
+      const char* s = status(d, n);
+      std::ostringstream ss; ss << std::hex << ref;
+      bool show_expected = (s[1] == 'F');
+      std::cout << s << tag
+                << " rows=" << std::dec << n
                 << " digest=0x" << std::hex << d << std::dec
-                << (ok ? "" : "  (expected 0x" + ss.str() + ")")
+                << (show_expected ? "  (expected 0x" + ss.str() + ")" : "")
                 << "\n";
    };
-   parity_line("S1 base  ", ok_b, d_base);
-   parity_line("S2 view  ", ok_v, d_view);
-   parity_line("S3 merged", ok_m, d_merged);
-   parity_line("S4 hash  ", ok_h, d_hash);
+   parity_line("S1 base  ", d_base,   (long)r_base.size());
+   parity_line("S2 view  ", d_view,   (long)r_view.size());
+   parity_line("S3 merged", d_merged, (long)r_merged.size());
+   parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
 
-   std::cout << "\n[note] Phase-0.5: all stubs return 0 rows — "
-             << "digest=0 and [OK] agreement is expected.\n";
-
-   return (ok_b && ok_v && ok_m && ok_h) ? 0 : 1;
+   if (r_merged.empty()) {
+      std::cout << "\n[FAIL] S3 returned 0 rows — query_by_merged body broken.\n";
+      return 1;
+   }
+   std::cout << "\n[note] Phase 4 §7.1: only query_by_merged has a real body; "
+                "S1/S2/S4 are [SKIP] until §7.2/§7.3/§7.5 land.\n";
+   bool no_fail =
+       (status(d_base, (long)r_base.size())[1] != 'F') &&
+       (status(d_view, (long)r_view.size())[1] != 'F') &&
+       (status(d_hash, (long)r_hash.size())[1] != 'F');
+   return no_fail ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY

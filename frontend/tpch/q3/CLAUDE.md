@@ -386,10 +386,19 @@ shareable surface.
   reports `[OK]` parity at digest 0x0. CMake targets `q3_lsm` /
   `q3_btree` and `test_query_q3_lsm` / `test_query_q3_btree` wired
   in `frontend/CMakeLists.txt`. `generate_targets.py` updated.
-- **Phase 1** — minimal end-to-end S3 (`query_by_merged`) using
-  `col_group_walk` + `Q3FamilyVisitor`; `test_query_q3_lsm` digest
-  seed non-zero.
-- **Phase 2** — S1, S2, S4 baselines + cross-structure parity.
+- **Phase 4 §7.1** (2026-05-04; **complete**) — minimal end-to-end S3
+  (`query_by_merged`) using `col_group_walk` + a trivial
+  `COLGroupWalkVisitor` subclass of `q3_family::Q3FamilyVisitor`
+  (Q3 uses all base no-op CRTP defaults). `apply_topN` enforces
+  `revenue DESC, o_orderdate ASC, o_orderkey ASC` per shared
+  `q3_family::q3_agg_row_base_t::cmp`. `test_query_q3_lsm` at SF=1
+  reports S3 rows=7, deterministic digest, S1/S2/S4 stubs reported
+  as `[SKIP]` until §7.2/§7.3/§7.5 land. Exit 0. As a side effect,
+  `mi_records_visited` / `mi_groups_skipped` were hoisted from
+  `Q3IStats` to `q3_family::Q3FamilyStats` since the shared visitor
+  bumps them and Q3 had no equivalent declarations.
+- **Phase 4 §7.2 / §7.3 / §7.5** — S1, S2, S4 baselines + flip the
+  harness from per-path `[SKIP]` to strict cross-structure XOR parity.
 - **Phase 3** — production `q3_lsm` / `q3_btree` executables
   already wired (Phase 0.5); verify throughput and enable in
   `generate_targets.py` experiment sweep.

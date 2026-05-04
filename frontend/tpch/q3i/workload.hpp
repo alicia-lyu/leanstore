@@ -136,14 +136,12 @@ struct Q3IStats : q3_family::Q3FamilyStats {
    long acoli_lineitems_scanned        = 0;  // lineitem rows visited in aCOLI walk
    long acoli_lineitems_passing        = 0;  // passed l_shipdate filter
 
-   // S3 (mi_coli_walk) — bytes-of-work proxy. `mi_records_visited` counts
-   // every kv emitted by the merged scanner during a walk; `mi_groups_skipped`
-   // counts custkey groups whose customer record failed the mktsegment gate
-   // and thus triggered a physical custkey-skip in coli_group_walk.
+   // S3 (mi_coli_walk) — bytes-of-work proxy.
+   // `mi_records_visited` and `mi_groups_skipped` are inherited from
+   // Q3FamilyStats and bumped by Q3FamilyVisitor::on_record_visited /
+   // on_group_skipped during coli_group_walk / col_group_walk.
    // mi_records_visited / |MI rows| ≈ 1.0 means the walker reads the whole MI;
    // a healthy ratio is closer to mktsegment selectivity (~0.2 for BUILDING).
-   long mi_records_visited = 0;
-   long mi_groups_skipped  = 0;
 
    // S1 / S4 customer-level Seek-skip counters (G1/G2 A/B). Mirror
    // mi_groups_skipped: count custkey groups physically skipped on the

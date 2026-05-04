@@ -42,6 +42,12 @@ struct Q3FamilyStats {
    long topN_candidates     = 0;  // rows entering apply_topN (= aggregator_rows_out)
 
    // -----------------------------------------------------------------------
+   // MI walk counters — bumped by Q3FamilyVisitor::on_record_visited /
+   // on_group_skipped during S3 (col_group_walk / coli_group_walk).
+   long mi_records_visited = 0;
+   long mi_groups_skipped  = 0;
+
+   // -----------------------------------------------------------------------
    // Per-stage wall-clock (microseconds).  Filled by std::chrono brackets
    // around the matching stage; zero for stages that do not exist on a path.
    long stage_us_scan_filter = 0;
