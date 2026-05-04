@@ -34,9 +34,9 @@ ViewStats dump_view_stats(
    auto scanner = view.getScanner();
    while (auto kv = scanner->next()) {
       stats.row_count++;
-      // The view key is joined_ol_t::Key; the join key orderkey sits in
-      // the constituent lineitem_t::Key (jk.orderkey via ol_sort_key_t).
-      const Integer ok = kv->first.jk.orderkey;
+      // After G8d the view key is q12_pipeline_view_t::Key{o_orderkey,
+      // l_linenumber}; orderkey sits directly in the key.
+      const Integer ok = kv->first.o_orderkey;
       stats.min_orderkey = std::min(stats.min_orderkey, ok);
       stats.max_orderkey = std::max(stats.max_orderkey, ok);
    }

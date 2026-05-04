@@ -52,9 +52,13 @@ struct Params {
 //          AND l_receiptdate IN [p.receiptdate_lo, p.receiptdate_hi).
 bool q12_predicate_lineitem(const lineitem_t& l, const Params& p);
 
-// Applied to a fully-assembled joined_ol_t (structures 2 and 3).
+// Applied to a fully-assembled joined_ol_t (structure 3 — PremergedJoin).
 // Same five conditions expressed over joined_ol_t fields.
 bool q12_predicate_joined(const joined_ol_t& j, const Params& p);
+
+// Applied to a projected pipeline-view row (structure 2). Same five
+// conditions, expressed over the projected fields directly.
+bool q12_predicate_view(const q12_pipeline_view_t& v, const Params& p);
 
 // ---------------------------------------------------------------------------
 // Optional per-query intermediate cardinality counters. When non-null on the

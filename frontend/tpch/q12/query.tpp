@@ -94,6 +94,16 @@ inline void q12_agg_row_t::print(std::ostream& os) const
       << low_line_count << "\n";
 }
 
+inline void q12_pipeline_view_t::print(std::ostream& os) const
+{
+   os << "view(mode="
+      << std::string_view(l_shipmode.data, l_shipmode.length)
+      << ",prio="
+      << std::string_view(o_orderpriority.data, o_orderpriority.length)
+      << ",ship=" << l_shipdate << ",commit=" << l_commitdate
+      << ",receipt=" << l_receiptdate << ")\n";
+}
+
 // ---------------------------------------------------------------------------
 // Predicate implementations
 
@@ -111,12 +121,27 @@ inline bool q12_predicate_lineitem(const lineitem_t& l, const Params& p)
        && l.l_receiptdate <  p.receiptdate_hi;
 }
 
-// Applied to a fully-assembled joined_ol_t (structures 2 and 3).
+// Applied to a fully-assembled joined_ol_t (structure 3 — PremergedJoin).
 // Delegates to q12_predicate_lineitem to keep both paths semantically identical
 // (defends OPERATORS.md §6.1: same predicate across S1–S4).
 inline bool q12_predicate_joined(const joined_ol_t& j, const Params& p)
 {
    return q12_predicate_lineitem(j.line(), p);
+}
+
+// Applied to a projected pipeline-view row (structure 2). Same five filter
+// conditions as q12_predicate_lineitem, expressed over the five projected
+// fields carried by q12_pipeline_view_t after G8d (project pushdown).
+inline bool q12_predicate_view(const q12_pipeline_view_t& v, const Params& p)
+{
+   auto sm  = std::string_view(v.l_shipmode.data, v.l_shipmode.length);
+   auto sm1 = std::string_view(p.shipmode1.data, p.shipmode1.length);
+   auto sm2 = std::string_view(p.shipmode2.data, p.shipmode2.length);
+   return (sm == sm1 || sm == sm2)
+       && v.l_shipdate    < v.l_commitdate
+       && v.l_commitdate  < v.l_receiptdate
+       && v.l_receiptdate >= p.receiptdate_lo
+       && v.l_receiptdate <  p.receiptdate_hi;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,10 +251,16 @@ long Q12Workload<Backend>::query_by_view(std::vector<q12_agg_row_t>& out)
    auto vs = pipeline_view.getScanner();
    while (auto kv = vs->next()) {
       if (stats) stats->lineitems_scanned++;
-      const joined_ol_t& jr = kv->second;
-      if (!q12_predicate_joined(jr, params)) continue;
+      const q12_pipeline_view_t& v = kv->second;
+      if (!q12_predicate_view(v, params)) continue;
       if (stats) { stats->lineitems_passed++; stats->join_callbacks++; }
-      bump(jr.order(), jr.line());
+      // bump() reads only o.o_orderpriority and l.l_shipmode; synthesise
+      // throw-away wrapper records pointing at the projected fields.
+      orders_t   o_proxy{};
+      lineitem_t l_proxy{};
+      o_proxy.o_orderpriority = v.o_orderpriority;
+      l_proxy.l_shipmode      = v.l_shipmode;
+      bump(o_proxy, l_proxy);
    }
    return emit_and_sort();
 }

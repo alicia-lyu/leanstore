@@ -51,8 +51,12 @@ static void populate_q12_view(
          continue;  // orphan lineitem — should not happen in well-formed data
       }
 
-      joined_ol_t row(cur_order->second, cur_line->second);
-      joined_ol_t::Key key(cur_order->first, cur_line->first);
+      const orders_t&   o = cur_order->second;
+      const lineitem_t& l = cur_line->second;
+      q12_pipeline_view_t::Key key{cur_order->first.o_orderkey,
+                                   cur_line->first.l_linenumber};
+      q12_pipeline_view_t row{l.l_shipmode, o.o_orderpriority,
+                              l.l_shipdate, l.l_commitdate, l.l_receiptdate};
       view.insert(key, row);
    }
 }

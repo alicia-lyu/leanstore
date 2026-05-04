@@ -15,9 +15,34 @@ namespace tpch::q12
 // ---------------------------------------------------------------------------
 // Structure 2 pipeline view row: ORDERS x LINEITEM join output, unfiltered.
 // Predicate is hoisted to query time so the view is reusable across param sets.
-// Aliases joined_ol_t — no narrower projection needed for Q12.
+//
+// G8d (2026-05-03): q12_pipeline_view_t was previously a `using` alias for
+// joined_ol_t (full O × L payloads). Per CLAUDE.md §Project pushdown, this
+// is a pre-aggregated secondary (S2's per-query view) and should carry only
+// the columns query_by_view + q12_predicate_joined read. Promoted to a real
+// struct keyed by (o_orderkey, l_linenumber) carrying the five Q12-relevant
+// fields. Widen in place if a future Q12 variant needs more columns.
 
-using q12_pipeline_view_t = ::tpch::joined_ol_t;
+struct q12_pipeline_view_t {
+   static constexpr int id = 34;
+
+   struct Key {
+      static constexpr int id = 34;
+      Integer o_orderkey;
+      Integer l_linenumber;
+      ADD_KEY_TRAITS(&Key::o_orderkey, &Key::l_linenumber)
+   };
+
+   Varchar<10> l_shipmode;
+   Varchar<15> o_orderpriority;
+   Timestamp   l_shipdate;
+   Timestamp   l_commitdate;
+   Timestamp   l_receiptdate;
+
+   ADD_RECORD_TRAITS(q12_pipeline_view_t)
+
+   void print(std::ostream& os) const;
+};
 
 // ---------------------------------------------------------------------------
 // Final aggregate output row: one per shipmode group.
