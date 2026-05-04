@@ -309,6 +309,11 @@ point. Run from the repo root.
 | `test_load_merged_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_merged_rocksdb.cpp` |
 | `test_load_merged_btree` | this dir | LeanStore (Linux only) | `tests/test_load_merged_leanstore.cpp` |
 | `test_load_coli_lsm` | this dir | RocksDB (mac+Linux) | `tests/test_load_coli_rocksdb.cpp` |
+| `test_views_acoli` | this dir | RocksDB (mac+Linux) | `tests/test_views_acoli.cpp` |
+| `test_projection_widths` | this dir | RocksDB (mac+Linux) | `tests/test_projection_widths.cpp` |
+| `test_q3_family` | this dir | RocksDB (mac+Linux) | `tests/test_q3_family.cpp` |
+| `test_lineitem_i_upgrade` | this dir | RocksDB (mac+Linux) | `tests/test_lineitem_i_upgrade.cpp` |
+| `test_workload_load_ext` | this dir | RocksDB (mac+Linux) | `tests/test_workload_load_ext.cpp` |
 | `test_load_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_load_q12_rocksdb.cpp` |
 | `test_load_q12_btree` | `q12/` | LeanStore (Linux only) | `tests/q12/test_load_q12_leanstore.cpp` |
 | `test_query_q12_lsm` | `q12/` | RocksDB (mac+Linux) | `tests/q12/test_query_q12_rocksdb.cpp` |
