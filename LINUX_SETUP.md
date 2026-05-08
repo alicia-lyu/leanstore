@@ -94,16 +94,29 @@ Three options, in descending order of preference:
 ### 3a. Partition unallocated NVMe space (preferred when available)
 
 CloudLab and many cloud nodes ship with the root partition occupying
-only part of the disk. Check:
+only part of the disk, OR with one or more entire NVMe devices left
+unallocated. Check:
 
 ```
 lsblk
 sudo parted /dev/nvme0n1 unit MiB print free
+sudo wipefs -n /dev/nvme0n1                 # confirm the device is empty
 ```
 
-If `lsblk` reports the disk is larger than the largest partition, and
-the `parted ... print free` output shows a free-space row, partition
-it:
+Three sub-cases:
+
+**(i) Entire NVMe device is blank** (`lsblk` shows no `nvmeXnYp*`
+partitions for the device, and `wipefs -n` is empty). This is the
+common CloudLab case where the node has multiple unused NVMe disks
+alongside an `sda` root. Skip `parted` entirely — format the whole
+device:
+
+```
+sudo mkfs.ext4 -F -L leanstore-ssd /dev/nvme0n1
+```
+
+**(ii) Existing partition table with a free-space row** (root takes
+only part of the disk). Carve a partition out of the free range:
 
 ```
 # Replace 65794MiB / 236006MiB with the actual free range from `print free`.
@@ -111,8 +124,16 @@ sudo parted -s /dev/nvme0n1 mkpart leanstore-ssd ext4 65794MiB 236006MiB
 sudo partprobe /dev/nvme0n1
 sudo parted /dev/nvme0n1 unit MiB print     # confirm new partition number
 
-# Format and mount (substitute pN with the new partition number, usually p4):
+# Format (substitute pN with the new partition number, usually p4):
 sudo mkfs.ext4 -F -L leanstore-ssd /dev/nvme0n1p4
+```
+
+**(iii) No free space available** — go to §3b or §3c.
+
+Then mount (same for all three sub-cases — `LABEL=leanstore-ssd`
+makes fstab device-name agnostic):
+
+```
 sudo mkdir -p /mnt/ssd
 grep -q "leanstore-ssd" /etc/fstab \
   || echo 'LABEL=leanstore-ssd /mnt/ssd ext4 defaults,noatime 0 2' \
@@ -237,18 +258,39 @@ mkdir -p /mnt/ssd/lq_btree && touch /mnt/ssd/lq_btree/db.image
 
 Each should print `[OK]` lines for every check and exit 0.
 
-> **Known issue (2026-05-02): LeanStore `_btree` loads abort during
-> `loadInvoiceAndLinkLineitem`** with `ensure(false)` at
-> `backend/leanstore/storage/btree/BTreeVI.cpp:412`
-> (`Not implemented: maybe it has been removed but no GCed`).
-> The TPC-H loader's invoice step rewrites each lineitem with a
-> populated `l_invoicekey` by calling `insert()` on the existing key;
-> LeanStore's `BTreeVI::insert` returns `DUPLICATE` on this path and
-> falls through to an unimplemented branch. RocksDB silently
-> overwrites and is unaffected. This is the deferred LeanStore
-> background-insert / re-insert limitation noted in
-> `SESSION_PROGRESS.md:115`. All `_btree` load + query smoke tests
-> currently abort here.
+> **Known issue (2026-05-08, observed on this Linux bring-up): all
+> `_btree` smoke tests SEGV during the TPC-H load phase.** Symptoms
+> seen on Ubuntu 22.04, clang 14, branch `calcite-integration` at
+> commit 7115cc76:
+>
+> - `test_load_merged_btree`, `test_load_q12_btree`,
+>   `test_query_q12_btree` — SIGSEGV (exit 139) right after
+>   `Loaded 1500 orders records.` No assertion message, no
+>   stderr; the process is killed by signal.
+> - `test_query_q3i_btree` — gets *past* the prior known
+>   `loadInvoiceAndLinkLineitem` issue (prints
+>   `Inserted 3000 invoices, rewrote 6112 lineitems.`) and then
+>   SIGSEGVs at `customer→orders / customer→lineitems` map
+>   build, with multiple
+>   `JUMP in backend/leanstore/storage/btree/core/BTreeGenericIterator.hpp:369`
+>   lines preceding the crash.
+>
+> The previous documented symptom (`ensure(false)` abort in
+> `BTreeVI.cpp` from `loadInvoiceAndLinkLineitem`) appears to be
+> superseded — q3i now walks past that path and crashes elsewhere.
+> The disposition is unchanged: `_lsm` is the source of truth for
+> correctness, `_btree` smoke tests are deferred. RocksDB
+> equivalents pass cleanly (see §5b results below).
+>
+> **Tracking**: this should be folded into `LINUX_PENDING.md` once
+> someone has a chance to triage the new SEGV — keep that file as
+> the live worklist; this section just warns the next bring-up.
+
+> **Pitfall when running smoke tests:** `cmd | tail` makes `$?`
+> report `tail`'s exit code, not the binary's, so a SEGV looks like
+> success. Either redirect to a file (`cmd > /tmp/x.log 2>&1; echo
+> $?`) or use `${PIPESTATUS[0]}`. Several `_btree` SEGVs in this
+> bring-up were initially missed because of this.
 
 ### 5b. Query parity (Q12 + Q3I, both backends)
 
