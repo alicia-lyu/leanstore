@@ -418,7 +418,14 @@ shareable surface.
   to strict cross-structure XOR parity.  SF=1: all four paths produce
   identical digest, rows=10, exit 0.  Q3I parity preserved post-hoist
   (test_query_q3i_lsm rows=9, all five S1–S5 `[OK]`).
-- **Phase 3** — production `q3_lsm` / `q3_btree` executables
-  already wired (Phase 0.5); verify throughput and enable in
-  `generate_targets.py` experiment sweep.
-- **Phase 4** — S5 omitted (see §Open Questions).
+- **Phase 5–8** (2026-05-03/04; **complete**) — `per_structure_workload.hpp`
+  alias-only file, `executable_rocksdb.cpp` / `executable_leanstore.cpp`,
+  `test_query_q3_{lsm,btree}` harness (strict parity), and CMake +
+  `generate_targets.py` entries (`q3_lsm` / `q3_btree`, structures 1–4)
+  are all wired and verified.
+- **Phase 9** (in progress) — documentation refresh propagating Phase 4
+  completion across project docs; cross-link to project-wide S5
+  deferral in `frontend/tpch/PLAYBOOK.md §S5`.
+- **S5** — omitted by design (see §Open Questions); aligned with the
+  project-wide deferral documented in `PLAYBOOK §S5`.
+- **Linux perf sweep** — pending, tracked in `LINUX_PENDING.md`.

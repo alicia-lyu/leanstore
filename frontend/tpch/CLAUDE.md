@@ -220,10 +220,12 @@ Operator drivers and view loading depend on per-query types and belong in
 - `hash_join_base` — Structure 4 HashJoin driver
 - `populate_view` / `get_view_size` — view row type is per-query
 
-> **TODO debt (Q3/Q9 only)**: `q3/load.tpp` and `q9/load.tpp` still reference
-> `ol.populate_view` and `ol.get_view_size`, which were removed from the
-> pipeline. These will be fixed when Q3/Q9 per-query load bodies land.
-> Q12 load.tpp is fully implemented and no longer has this debt.
+> **TODO debt (Q9 only)**: `q9/load.tpp` still references `ol.populate_view`
+> and `ol.get_view_size`, which were removed from the pipeline. This will
+> be fixed when Q9 per-query load bodies land. Q12 and Q3 `load.tpp` are
+> fully implemented and no longer have this debt (Q3 uses
+> `CustomerOrdersLineitemPipeline` instead of OL; its view loader
+> `populate_q3_view` lives in `q3/load.tpp`).
 
 ### Secondary indexes for Structure 1
 
@@ -281,8 +283,8 @@ Each `q{N}/` directory contains:
 | `views.hpp` | Row-shape types only: `q{N}_pipeline_view_t` alias and `q{N}_agg_row_t` with key and payload. `Params` struct and predicate declarations live in `workload.hpp`. |
 | `workload.hpp` | `Q{N}Workload<Backend>`: adapter members, `OrdersLineitemPipeline<Backend> ol`, private `orders`/`lineitem` reference members, `Params` struct with `defaults()`, predicate declarations, `query_by_*` / `load` / `get_size` declarations. Ends with `#include "load.tpp"` and `#include "query.tpp"`. |
 | `per_structure_workload.hpp` | **Alias-only**: `using BaseQ{N} = ::tpch::BaseStructure<Q{N}Workload<Backend>, q{N}_agg_row_t>` and siblings. All forwarder bodies are in the shared `per_structure_workload.hpp`. |
-| `load.tpp` | `Q{N}Workload` ctor, `load()`, `get_size()` template bodies. Q12 is fully implemented; Q3/Q9 remain TODO stubs. |
-| `query.tpp` | `query_by_*` bodies, `Params::defaults()` body, `q{N}_agg_row_t::print()` body, and predicate inline implementations. Q12 `Params::defaults()` and `print()` are done; `query_by_*` bodies are TODO. |
+| `load.tpp` | `Q{N}Workload` ctor, `load()`, `get_size()` template bodies. Q12 and Q3 are fully implemented; Q9 remains TODO stubs. |
+| `query.tpp` | `query_by_*` bodies, `Params::defaults()` body, `q{N}_agg_row_t::print()` body, and predicate inline implementations. Q12, Q3, and Q3I are fully implemented (cross-structure XOR parity verified at SF=1); Q9 `query_by_*` bodies remain TODO. |
 | `executable_rocksdb.cpp` | `main()` for RocksDB backend. Declares all needed adapters, constructs workload, dispatches on `FLAGS_storage_structure`. |
 | `executable_leanstore.cpp` | Same as above, guarded by `#ifndef ROCKSDB_ONLY`, uses `LeanStoreBackend`. |
 | `CLAUDE.md` | Per-query SQL, plan descriptions, execution style analysis, column index mappings, and an "Implementation Status (skeleton)" section appended when the skeleton was created. |
@@ -668,35 +670,26 @@ been moved to `TRASH/`.
 - **Q3I**: production `q3i_lsm` / `q3i_btree` executables wired into
   `frontend/CMakeLists.txt` and `generate_targets.py`. Builds clean on
   macOS; full Phase 3 done.
-- **Q12**: `query_by_*` bodies, predicates, F1 admission filter
-  (`PremergedJoin` admit callback plumbed through `query_by_merged`),
-  and `Q12Stats` cardinality counters all implemented and tested.
-  XOR-parity test (`test_query_q12_lsm` / `_btree`) passes at SF=1;
-  `[card]` output confirmed: 6004 lineitems scanned, 30 admitted/passed,
-  30 join callbacks, 2 aggregator rows across all four paths.
-  Performance ordering `base ≈ hash < merged < view` is stable.
-  **Remaining**: `q12_lsm` / `q12_btree` flag-dispatch executables,
-  CMake targets, and `generate_targets.py` Makefile entries.
-- **Q3**: Phase 0.5 skeleton landed (2026-05-03). `load.tpp` fully implemented
-  (COL pipeline, view population). `query.tpp` has real predicates and
-  `Params::defaults()`; `query_by_*` are Phase-0.5 stubs returning empty.
-  `test_query_q3_lsm` passes with all-zero digest. Next: Phase 1
-  (`query_by_merged` real body using `col_group_walk` + `Q3FamilyVisitor`).
+- **Q12**: complete. Bodies, predicates, F1 admission filter, and
+  `Q12Stats` counters all in place. `test_query_q12_{lsm,btree}` parity
+  passes at SF=1. Production `q12_lsm` / `q12_btree` targets wired in
+  `frontend/CMakeLists.txt`; `generate_targets.py` lists structures
+  1–4. Performance ordering `base ≈ hash < merged < view` stable.
+- **Q3**: complete (Phase 4 done 2026-05-04). All four `query_by_*`
+  paths land with strict cross-structure XOR parity at SF=1 (rows=10,
+  identical digest). `LineitemRevenueAggregator` and `lineitem_agg_t`
+  hoisted into `q3_family/` (templated on `LineitemType`); shared with
+  Q3I S1. Production `q3_lsm` / `q3_btree` targets wired with
+  structures 1–4 in `generate_targets.py`. **Remaining**: Phase 9 doc
+  refresh and Linux perf sweep — see [`q3/CLAUDE.md
+  §Implementation Phases`](q3/CLAUDE.md#implementation-phases).
 - **Q9**: `load.tpp` ctor/`load()`/`get_size()` bodies still reference
-  removed pipeline methods — fix first. Then `query_by_*` bodies, predicate
-  implementations, and `Params::defaults()`.
-- Per-query predicate / projection / aggregator bodies inside `query.tpp` for
-  Q3 and Q9.
-- Q3-specific: CUSTOMER merge join (sort by `o_custkey`, two-pointer scan of
-  filtered CUSTOMER) after the OL aggregate, then top-10 sort.
-- Q9-specific: NATION and SUPPLIER hashmap construction before the OL scan;
-  PART and PARTSUPP merge joins inside the per-row callback; LIKE filter on
-  `p_name` applied immediately after PART lookup.
-- CMake targets: `q12_lsm`, `q12_btree`, `q3_lsm`, `q3_btree`, `q9_lsm`,
-  `q9_btree` — add to `frontend/CMakeLists.txt` following the `geo_lsm` /
-  `geo_btree` pattern. (Load-test targets `test_load_q12_lsm` /
-  `test_load_q12_btree` are already added.)
-- `generate_targets.py` Makefile entries for the new targets.
+  removed pipeline methods — fix first. Then `query_by_*` bodies,
+  predicate implementations, and `Params::defaults()`.
+  Q9-specific: NATION and SUPPLIER hashmap construction before the OL
+  scan; PART and PARTSUPP merge joins inside the per-row callback;
+  LIKE filter on `p_name` applied immediately after PART lookup.
+  CMake targets and `generate_targets.py` entries also pending.
 
 ## Project pushdown — primary indexes are full, secondaries are projected
 

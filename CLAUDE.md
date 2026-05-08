@@ -38,6 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   cost. If you skip this step, the first perf run after a merge
   will be deceptively long and the slowdown will look like a
   regression in the binary itself rather than scheduled reload.
+- When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree.
 
 ## Project Overview
 

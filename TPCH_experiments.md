@@ -14,7 +14,7 @@ concerns to current queries.
 |-------|--------|------------|---------------|
 | **Q3I** | Active showcase; S1–S4 are the paper-reported axis (cross-structure parity verified at SF=1). S5 (aCOLI MI) is implemented and parity-verified but **deferred from paper sweep** — see [`PLAYBOOK §S5`](frontend/tpch/PLAYBOOK.md) | S1–S4 (S5 in tree, deferred) | [`q3i/CLAUDE.md`](frontend/tpch/q3i/CLAUDE.md) + [`q3i/PERFORMANCE.md`](frontend/tpch/q3i/PERFORMANCE.md) |
 | **Q12** | Proof-of-concept; all four structures pass XOR parity at SF=1 (`0x9000007000003c`); production targets wired | S1–S4 | [`q12/CLAUDE.md`](frontend/tpch/q12/CLAUDE.md) |
-| **Q3**  | Skeleton present; `query_by_*` bodies and `load.tpp` still TODO | (S1–S4 planned) | [`q3/CLAUDE.md`](frontend/tpch/q3/CLAUDE.md) |
+| **Q3**  | Phase 4 complete; all four `query_by_*` paths pass strict cross-structure XOR parity at SF=1 (rows=10); production targets wired | S1–S4 | [`q3/CLAUDE.md`](frontend/tpch/q3/CLAUDE.md) |
 | **Q9**  | Skeleton present; `query_by_*` bodies and `load.tpp` still TODO | (S1–S4 planned) | [`q9/CLAUDE.md`](frontend/tpch/q9/CLAUDE.md) |
 | **Q5I** | Design doc only | — | [`q5i/CLAUDE.md`](frontend/tpch/q5i/CLAUDE.md) |
 | **Q10I**| Design doc only | — | [`q10i/CLAUDE.md`](frontend/tpch/q10i/CLAUDE.md) |
@@ -23,8 +23,9 @@ concerns to current queries.
 
 Q3I is the active showcase because the COLI 4-table merged index
 substrate it exercises is what the §3.1.2 + §3.1.3 hybrid pattern needs
-to demonstrate. Q12 is the simpler proof-of-concept. Q3/Q9 are deferred
-until the COLI showcase is complete.
+to demonstrate. Q12 is the simpler proof-of-concept. Q3 is the
+no-sibling-aggregate baseline of the COL family (Phase 4 complete);
+Q9 remains deferred.
 
 ## Storage-Structure Conventions
 
