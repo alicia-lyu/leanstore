@@ -35,24 +35,6 @@ CMAKE_REL_ENV: str = "$(CMAKE_RELWITHDEBINFO) $(CMAKE_OPTIONS)"
 DRAM_ENV: str = "$(dram)"
 SCALE_ENV: str = "$(scale)"
 
-# Per-query-family persistence format version. Each family
-# (`geo`, `q12`, `q3`, `q3i`) gets its own `<family>_format_version`
-# Makefile variable (default: $(format_version), itself default `v0`).
-# Bump only the families whose record-type byte layout changed in a
-# given commit; unchanged families keep their existing image dirs and
-# don't pay reload cost. Eventually all families converge on a shared
-# "wide" version (the union of every secondary's column requirements)
-# so secondaries can be cross-query-shared at load time. Until then
-# they tune independently.
-# Tags: q3-q3i-stable-v0 (2026-05-08) — last commit before per-family
-# split, all families at v0.
-def format_version_var(exec_fname: str) -> str:
-    """Make var holding the format-version segment for this exec.
-    Family is the exec_fname minus its `_lsm` / `_btree` suffix —
-    the on-disk record layout doesn't depend on the storage backend."""
-    family = exec_fname.replace("_lsm", "").replace("_btree", "")
-    return f"$({family}_format_version)"
-
 def kv_to_str(kv_dict: dict[str, str]) -> str:
     """Converts a dictionary of key-value pairs to a string."""
     return " ".join([f"--{k}={v}" for k, v in kv_dict.items()])
@@ -62,14 +44,11 @@ def get_build_vars(build_dir: Path):
     
 def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, Path]:
     exec_path = build_dir / "frontend" / exec_fname
-    # Format-version segment isolates each persistence layout under its
-    # own subtree, scoped per query family. See format_version_var note.
-    fv = format_version_var(exec_fname)
     if "lsm" in exec_fname:
-        image_path = data_disk / exec_fname / fv / f"{SCALE_ENV}"
+        image_path = data_disk / exec_fname / f"{SCALE_ENV}"
     else:
-        image_path = data_disk / exec_fname / fv / f"{SCALE_ENV}.image"
-    recover_file = data_disk / exec_fname / fv / build_dir / f"{SCALE_ENV}.json" # do recover
+        image_path = data_disk / exec_fname / f"{SCALE_ENV}.image"
+    recover_file = data_disk / exec_fname / build_dir / f"{SCALE_ENV}.json" # do recover
     runtime_dir = build_dir / exec_fname / f"{SCALE_ENV}-in-{DRAM_ENV}"
     return (
         exec_path,
@@ -173,10 +152,9 @@ class Experiment:
         # under build/{exec}_iso/, not the inherited non-iso runtime_dir.
         iso_class_flags = self.class_flags.copy()
         iso_class_flags["csv_path"] = str(iso_runtime)
-        fv = format_version_var(self.exec_fname)
         for n in STRUCTURE_OPTIONS[self.exec_fname]:
-            iso_image = data_disk / f"{self.exec_fname}_iso" / fv / f"iso_{n}" / f"{SCALE_ENV}"
-            iso_recover = data_disk / f"{self.exec_fname}_iso" / fv / f"iso_{n}" / "build" / f"{SCALE_ENV}.json"
+            iso_image = data_disk / f"{self.exec_fname}_iso" / f"iso_{n}" / f"{SCALE_ENV}"
+            iso_recover = data_disk / f"{self.exec_fname}_iso" / f"iso_{n}" / "build" / f"{SCALE_ENV}.json"
             iso_image_str = str(iso_image) if is_lsm else f"{iso_image}.image"
             create_cmd, _ = get_image_command(is_lsm, Path(iso_image_str))
 
@@ -354,7 +332,7 @@ class Experiment:
             b = Path(b)
             if b.resolve() == self.build_dir.resolve():
                 continue
-            dest = data_disk / self.exec_fname / format_version_var(self.exec_fname) / b / f'{SCALE_ENV}.json'
+            dest = data_disk / self.exec_fname / b / f'{SCALE_ENV}.json'
             print(f"\tmkdir -p {dest.parent}")
             print(f"\tcp -f {self.recover_file} {dest}")
         print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path} | awk '{{print $1}}'")
@@ -464,7 +442,7 @@ class Experiment:
         print(f"{self.exec_fname}{midfix}_reload:")
         # print(f"\trm -f {self.recover_file}")
         for b in build_dirs:
-            print(f"\trm -f {data_disk / b / self.exec_fname / format_version_var(self.exec_fname) / f'{SCALE_ENV}.json'}")
+            print(f"\trm -f {data_disk / b / self.exec_fname / f'{SCALE_ENV}.json'}")
         print(f"\t$(MAKE) {self.recover_file}")
         print()
 

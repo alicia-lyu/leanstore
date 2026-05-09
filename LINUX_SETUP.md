@@ -208,20 +208,6 @@ macOS.
 For a Debug build use `mkdir -p build-debug && cd build-debug && cmake
 -DCMAKE_BUILD_TYPE=Debug ..` and the same `make` command.
 
-### One-shot: migrate pre-versioning images into `v0/`
-
-If this machine has images at `$(data_disk)/<exec>/<scale>.image` or
-`$(data_disk)/<exec>/<scale>/` (un-versioned, pre-`format_version`
-layout), run once from the repo root:
-
-```
-make migrate-format-v0
-```
-
-Idempotent — folds existing images into `$(data_disk)/<exec>/v0/`.
-The format_version workflow is documented in root `CLAUDE.md`; the
-per-family history table lives in `frontend/tpch/RUNS.md`.
-
 ## Step 5 — Smoke-test parity
 
 Each invocation needs a distinct `--ssd_path` (LeanStore writes to a
