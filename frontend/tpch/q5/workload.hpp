@@ -45,6 +45,46 @@ struct Params {
 };
 
 // ---------------------------------------------------------------------------
+// Q5-specific SUBSTITUTION-PARAMETER rotation table (REGION × DATE).
+// TPC-H §2.4.5 domains:
+//   :1  ∈ {AFRICA, AMERICA, ASIA, EUROPE, MIDDLE EAST}
+//   :d  ∈ {1993-01-01 ... 1997-01-01}
+//
+// Validation defaults (ASIA / 1994-01-01) appear first so the first
+// iteration is always spec-valid.  10 entries cover all 5 regions
+// paired across the 5-year DATE domain.
+
+// Date constants (days since 1970-01-01).  DATE_1994_01_01 and
+// DATE_1995_01_01 ship in tpch_tables.hpp; the rest are local.
+//   1993-01-01 = DATE_1994_01_01 - 365
+//   1996-01-01 = DATE_1995_01_01 + 365 (1995 is non-leap)
+//   1997-01-01 = DATE_1995_01_01 + 365 + 366 (1996 is leap)
+static constexpr Timestamp Q5_DATE_1993_01_01 = DATE_1994_01_01 - 365;
+static constexpr Timestamp Q5_DATE_1996_01_01 = DATE_1995_01_01 + 365;
+static constexpr Timestamp Q5_DATE_1997_01_01 = DATE_1995_01_01 + 365 + 366;
+
+struct ParamEntry {
+   const char* region;
+   Timestamp   date;
+};
+
+static constexpr ParamEntry PARAM_TABLE[] = {
+    {"ASIA",        DATE_1994_01_01},   // validation default first
+    {"AFRICA",      Q5_DATE_1993_01_01},
+    {"AMERICA",     DATE_1995_01_01},
+    {"EUROPE",      Q5_DATE_1996_01_01},
+    {"MIDDLE EAST", Q5_DATE_1997_01_01},
+    {"AFRICA",      DATE_1994_01_01},
+    {"AMERICA",     Q5_DATE_1993_01_01},
+    {"EUROPE",      Q5_DATE_1997_01_01},
+    {"MIDDLE EAST", DATE_1995_01_01},
+    {"ASIA",        Q5_DATE_1996_01_01},
+};
+
+static constexpr long PARAM_TABLE_SIZE =
+    static_cast<long>(sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]));
+
+// ---------------------------------------------------------------------------
 // Predicate declarations. Bodies live in query.tpp (stubbed to true for now).
 
 // Applied to a customer row: c_nationkey is in the in-region nation_set.
@@ -124,7 +164,7 @@ class Q5Workload
    // executable exercises multiple param sets per run.
    // ------------------------------------------------------------------
 
-   void set_params_for_iter(long iter) { params = Params::defaults(); }
+   void set_params_for_iter(long iter);
 
    // ------------------------------------------------------------------
    // Queries — one per storage structure.

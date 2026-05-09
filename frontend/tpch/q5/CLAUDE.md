@@ -424,8 +424,17 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   `l_suppkey` from Phase 0.5. All four tests pass: `test_load_col_lsm`
   all `[OK]`; `test_query_q3_lsm`, `test_query_q3i_lsm` parity
   unchanged; `test_query_q5_lsm` digest 0x0 `[OK]`.
-- **Phase 2** — `workload.hpp` Params + predicate declarations.
-- **Phase 3** — `load.tpp` real bodies for all 4 storage variants.
+- **Phase 1 (cont.)** (2026-05-09; **complete**) — `workload.hpp`
+  Q5 PARAM_TABLE (REGION × DATE rotation, 10 entries),
+  out-of-line `set_params_for_iter` that rotates through it, and
+  real `q5_predicate_orders` body (orderdate window). The
+  `q5_predicate_customer` body stays `return true;` per design
+  (the `c_nationkey ∈ nation_set` gate is a per-query runtime
+  hashmap, applied inline at the call sites in Phase 4 §7.x, not
+  through the predicate signature). `load.tpp` already real in
+  Phase 0.5 (no changes).
+- ~~**Phase 2 / Phase 3**~~ — retired by PLAYBOOK consolidation;
+  contents merged into Phase 1 (cont.) above.
 - **Phase 4 §7.1** — S3 `query_by_merged` via shared
   `col_group_walk` with a Q5-specific Visitor (CRTP subclass of
   the shared `q3_family::Q3FamilyVisitor` if extended for Q5;

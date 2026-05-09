@@ -6,11 +6,16 @@
 // Template method bodies for Q5Workload<Backend> query methods,
 // predicate implementations, Params::defaults(), and agg_row_t::print().
 //
-// Phase 0.5 status:
-//   - Params::defaults()     — real body (ASIA / 1994-01-01).
-//   - query_by_*             — all four stubbed: out.clear(); return 0.
-//   - q5_predicate_*         — stubbed to return true (real bodies Phase 4).
-//   - q5_agg_row_t::print()  — real body.
+// Phase 1 (cont.) status (2026-05-09 follow-up):
+//   - Params::defaults()        — real body (ASIA / 1994-01-01).
+//   - set_params_for_iter()     — real body (rotates Q5 PARAM_TABLE).
+//   - q5_predicate_orders       — real body (orderdate window).
+//   - q5_predicate_customer     — stays `true`; nation_set gate is
+//                                  applied inline in query_by_* bodies.
+//   - q5_predicate_lineitem     — stays `true` (no per-lineitem filter).
+//   - query_by_*                — all four stubbed: out.clear(); return 0
+//                                  (Phase 4 §7.x).
+//   - q5_agg_row_t::print()     — real body.
 //   - q5_pipeline_view_t::print() — real body.
 
 #pragma once
@@ -54,21 +59,38 @@ inline Params Params::defaults()
    };
 }
 
+// Rotate through the Q5 PARAM_TABLE so each TX iteration exercises a
+// distinct (region, date) pair.  Mirrors Q3Workload::set_params_for_iter.
+template <typename Backend>
+void Q5Workload<Backend>::set_params_for_iter(long iter)
+{
+   const auto& e = PARAM_TABLE[iter % PARAM_TABLE_SIZE];
+   params.region       = Varchar<25>(e.region);
+   params.orderdate_lo = e.date;
+}
+
 // ---------------------------------------------------------------------------
 // Predicate bodies — stubbed to return true for Phase 0.5.
 // Real filter logic lands in Phase 4 when query_by_* bodies are implemented.
 
 inline bool q5_predicate_customer(const customerh_t& /*c*/, const Params& /*p*/)
 {
-   // Phase 4: return nation_set.count(c.c_nationkey) > 0;
+   // Q5's spec-only customer predicate is `true` (no single-column
+   // CUSTOMER filter in the SQL).  The runtime `c_nationkey ∈ nation_set`
+   // gate is applied inline in each query_by_* body (Phase 4 §7.x), where
+   // `nation_set` is a per-query in-process hashmap built from
+   // REGION ⋈ NATION — not a Params field.
    return true;
 }
 
-inline bool q5_predicate_orders(const orders_t& /*o*/, const Params& /*p*/)
+inline bool q5_predicate_orders(const orders_t& o, const Params& p)
 {
-   // Phase 4: return o.o_orderdate >= p.orderdate_lo
-   //                && o.o_orderdate <  p.orderdate_lo + ONE_YEAR_DAYS;
-   return true;
+   // o_orderdate ∈ [orderdate_lo, orderdate_lo + 1y).  TPC-H §2.4.5
+   // strict upper bound.  Timestamp is days since 1970-01-01; +365
+   // approximates `INTERVAL '1' YEAR` (off-by-one across leap-year
+   // boundaries; immaterial for SF=1/15 selectivity — see plan note).
+   return o.o_orderdate >= p.orderdate_lo
+       && o.o_orderdate <  p.orderdate_lo + 365;
 }
 
 inline bool q5_predicate_lineitem(const lineitem_t& /*l*/, const Params& /*p*/)
