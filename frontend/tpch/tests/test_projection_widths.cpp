@@ -13,7 +13,7 @@
 // Build:  cmake --build build --target test_projection_widths -j$(sysctl -n hw.ncpu)
 // Run:    ./build/frontend/test_projection_widths
 
-#include "../views_coli.hpp"
+#include "../tpch_family/views_coli.hpp"
 #include "../q12/views.hpp"
 
 #include <cassert>

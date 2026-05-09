@@ -29,9 +29,9 @@
 // so populate_merged resolves it via an in-memory orderkey → custkey map built
 // during the orders pass.
 
-#include "backend.hpp"
+#include "../backend.hpp"
 #include "views_col.hpp"
-#include "tpch_tables.hpp"
+#include "../tpch_tables.hpp"
 
 namespace tpch
 {

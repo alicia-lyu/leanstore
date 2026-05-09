@@ -26,9 +26,9 @@
 #include <cstdint>
 #include <variant>
 
-#include "../shared/Types.hpp"
-#include "../shared/view_templates.hpp"
-#include "tpchi_tables.hpp"
+#include "../../shared/Types.hpp"
+#include "../../shared/view_templates.hpp"
+#include "../tpchi_tables.hpp"
 
 namespace tpch
 {

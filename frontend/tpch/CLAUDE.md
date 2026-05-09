@@ -46,21 +46,21 @@ Shared files (used by all three queries):
   `loadInvoiceAndLinkLineitem()` runs after `loadOrders`: it creates 2
   invoices per order and back-fills `l_invoicekey` on each lineitem
   via a second lineitem pass.
-- `views_ol.hpp` — `ol_sort_key_t`, `joined_ol_t` (the ORDERS × LINEITEM
-  join result type shared by Q12/Q3/Q9), and the `SKBuilder` specialization.
-  `joined_ol_t` is a derived struct (not a `using` alias) with an explicit
-  `unfoldKey` override; the generic `joined_t::unfoldKey(fold_pks=false)`
-  path does not compile for this type. Fully implemented with unit tests.
+- `tpch_family/` — Track-1 vanilla-set-shared substrate (used by all
+  vanilla queries Q3 / Q5 / Q10 / Q12 / Q9, independent of pipeline
+  choice). See [`tpch_family/CLAUDE.md`](tpch_family/CLAUDE.md) for
+  the full membership decision tree and file inventory. Contents:
+  `views_ol.hpp`, `views_col.hpp`, `views_coli.hpp`,
+  `ol_pipeline.{hpp,tpp}`, `col_pipeline.{hpp,tpp}`. Note:
+  `views_coli.hpp` lives here despite its name because half its types
+  (`customer_coli_t`, `orders_coli_t`) are reused by Q3 vanilla; a
+  future Phase-3 split moves the genuinely-extended bits to
+  `tpchi_family/views_invoice.hpp`.
 - `test_views_ol.cpp` — 12 unit tests for sort key ordering, match semantics,
   `SKBuilder` round-trips, `joined_ol_t` construction. CMake target:
   `test_views_ol` (macOS/RocksDB-only build).
 - `backend.hpp` — `RocksDBBackend` and `LeanStoreBackend` traits structs.
-- `ol_pipeline.hpp` / `ol_pipeline.tpp` — `OrdersLineitemPipeline<Backend>`:
-  constructor, `populate_merged` (dual-write replay over base scanners), and
-  `get_merged_size`. Operator drivers and view loading are **not** here — they
-  depend on per-query types and live in `q{N}/query.tpp` and `q{N}/load.tpp`.
-  See §Pipeline Convention below.
-- `views_coli.hpp` — Calcite-style tagged record types for the
+- `tpch_family/views_coli.hpp` — Calcite-style tagged record types for the
   CUSTOMER × ORDERS × LINEITEM × INVOICE 4-table merged index:
   `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t`.
   Also defines the aCOLI (pre-aggregated) 3-type set used by Q3I S5:
@@ -262,17 +262,19 @@ base class to update.
 
 Three pipelines exist:
 
-- `OrdersLineitemPipeline<Backend>` (`ol_pipeline.hpp`) — 2-table OL merged
-  index. Q12, Q3, and Q9 each hold exactly one instance named `ol`.
+- `OrdersLineitemPipeline<Backend>` (`tpch_family/ol_pipeline.hpp`) — 2-table OL
+  merged index. Q12, Q3, and Q9 each hold exactly one instance named `ol`.
 - `COLIPipeline<Backend>` (`coli_pipeline.hpp`) — 4-table COLI merged index
   (CUSTOMER × ORDERS × LINEITEM × INVOICE). Uses tagged-key format with
-  `views_coli.hpp` types. Wired into Q3I; standalone load-test passes at SF=1.
-- `CustomerOrdersLineitemPipeline<Backend>` (`col_pipeline.hpp`) — 3-table
-  COL merged index (CUSTOMER × ORDERS × LINEITEM). Strict subset of COLI:
-  reuses `customer_coli_t` and `orders_coli_t` verbatim; introduces
+  `tpch_family/views_coli.hpp` types. Wired into Q3I; standalone load-test
+  passes at SF=1. **Phase 2 of the family-dirs refactor will move this to
+  `tpchi_family/coli_pipeline.{hpp,tpp}`.**
+- `CustomerOrdersLineitemPipeline<Backend>` (`tpch_family/col_pipeline.hpp`)
+  — 3-table COL merged index (CUSTOMER × ORDERS × LINEITEM). Strict subset
+  of COLI: reuses `customer_coli_t` and `orders_coli_t` verbatim; introduces
   `lineitem_col_t` (no `invoicekey` key segment). Uses tagged-key format with
-  `views_col.hpp` types. Standalone load-test (`test_load_col_lsm`) passes at
-  SF=1. Not yet wired into any per-query workload class (Q3 Phase 0.5).
+  `tpch_family/views_col.hpp` types. Wired into Q3 (full bodies) and Q5
+  (skeleton).
 
 ## Per-query File Convention
 

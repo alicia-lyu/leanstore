@@ -30,7 +30,7 @@
 #include "../shared/adapter-scanner/LeanStoreScanner.hpp"
 #endif
 
-#include "views_ol.hpp"  // joined_ol_t — required by MergedScanner alias
+#include "tpch_family/views_ol.hpp"  // joined_ol_t — required by MergedScanner alias
 
 namespace tpch
 {

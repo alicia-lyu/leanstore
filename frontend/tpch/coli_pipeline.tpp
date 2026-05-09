@@ -8,7 +8,7 @@
 
 #include <gflags/gflags.h>
 
-#include "views_coli.hpp"
+#include "tpch_family/views_coli.hpp"
 
 // A3-Linux re-A/B: runtime override for Backend::USE_PHYSICAL_SEEK_SKIP.
 // Defined in tpch_flags.hpp; declared here to avoid an include-order

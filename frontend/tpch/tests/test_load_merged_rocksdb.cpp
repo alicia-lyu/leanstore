@@ -9,7 +9,7 @@
 #include "../../shared/adapter-scanner/RocksDBMergedAdapter.hpp"
 #include "../../shared/logger/rocksdb_logger.hpp"
 #include "../backend.hpp"
-#include "../ol_pipeline.hpp"
+#include "../tpch_family/ol_pipeline.hpp"
 #include "test_load_merged_stats.hpp"
 #include "../tpch_tables.hpp"
 #include "../tpch_workload.hpp"

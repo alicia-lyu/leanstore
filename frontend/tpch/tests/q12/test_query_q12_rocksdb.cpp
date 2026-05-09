@@ -14,7 +14,7 @@
 #include "../../../shared/adapter-scanner/RocksDBMergedAdapter.hpp"
 #include "../../../shared/logger/rocksdb_logger.hpp"
 #include "../../backend.hpp"
-#include "../../ol_pipeline.hpp"
+#include "../../tpch_family/ol_pipeline.hpp"
 #include "../../tpch_tables.hpp"
 #include "../../tpch_workload.hpp"
 #include "../../q12/workload.hpp"

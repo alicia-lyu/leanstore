@@ -15,9 +15,9 @@
 //     those execute query-specific post-join logic and are instantiated
 //     in `q{N}/query.tpp`.
 
-#include "backend.hpp"
+#include "../backend.hpp"
 #include "views_ol.hpp"
-#include "tpch_tables.hpp"
+#include "../tpch_tables.hpp"
 
 namespace tpch
 {

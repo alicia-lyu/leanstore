@@ -16,7 +16,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "../col_pipeline.hpp"
+#include "../tpch_family/col_pipeline.hpp"
 #include "../operators.hpp"
 #include "../q3_family/accumulators.hpp"
 #include "../q3_family/agg_row.hpp"

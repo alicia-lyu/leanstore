@@ -20,7 +20,7 @@
 #include <functional>
 #include <limits>
 
-#include "../views_col.hpp"
+#include "../tpch_family/views_col.hpp"
 #include "../tpch_tables.hpp"
 
 namespace tpch::q5

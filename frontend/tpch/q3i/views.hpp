@@ -17,8 +17,8 @@
 
 #include "../q3_family/agg_row.hpp"
 #include "../q3_family/lineitem_agg.hpp"
-#include "../views_coli.hpp"
-#include "../views_ol.hpp"
+#include "../tpch_family/views_coli.hpp"
+#include "../tpch_family/views_ol.hpp"
 
 namespace tpch::q3i
 {

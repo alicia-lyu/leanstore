@@ -45,9 +45,9 @@
 #include <cstdint>
 #include <variant>
 
-#include "../shared/Types.hpp"
-#include "../shared/view_templates.hpp"
-#include "tpch_tables.hpp"
+#include "../../shared/Types.hpp"
+#include "../../shared/view_templates.hpp"
+#include "../tpch_tables.hpp"
 #include "views_coli.hpp"  // reuse coli_domain_tag, coli_idx_id, tagged_path helpers,
                            // customer_coli_t, orders_coli_t
 

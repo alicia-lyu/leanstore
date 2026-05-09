@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "../backend.hpp"
-#include "../ol_pipeline.hpp"
+#include "../tpch_family/ol_pipeline.hpp"
 #include "../tpch_workload.hpp"
 #include "views.hpp"
 

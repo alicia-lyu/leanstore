@@ -12,7 +12,7 @@
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "../backend.hpp"
-#include "../ol_pipeline.hpp"
+#include "../tpch_family/ol_pipeline.hpp"
 #include "test_load_merged_stats.hpp"
 #include "../tpch_tables.hpp"
 #include "../tpch_workload.hpp"

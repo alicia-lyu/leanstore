@@ -47,7 +47,7 @@
 #include <string_view>
 #include <vector>
 
-#include "../views_coli.hpp"
+#include "../tpch_family/views_coli.hpp"
 #include "accumulators.hpp"
 
 namespace tpch::q3_family

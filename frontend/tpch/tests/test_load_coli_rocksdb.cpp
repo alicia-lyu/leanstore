@@ -24,7 +24,7 @@
 #include "../coli_pipeline.hpp"
 #include "../tpchi_tables.hpp"
 #include "../tpchi_workload.hpp"
-#include "../views_coli.hpp"
+#include "../tpch_family/views_coli.hpp"
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_flags.hpp"

@@ -29,10 +29,10 @@
 #include "leanstore/concurrency-recovery/Transaction.hpp"
 #include "leanstore/concurrency-recovery/Worker.hpp"
 #include "../../backend.hpp"
-#include "../../col_pipeline.hpp"
+#include "../../tpch_family/col_pipeline.hpp"
 #include "../../tpch_tables.hpp"
 #include "../../tpch_workload.hpp"
-#include "../../views_col.hpp"
+#include "../../tpch_family/views_col.hpp"
 
 #define TPCH_DEFINE_FLAGS
 #include "../../tpch_flags.hpp"

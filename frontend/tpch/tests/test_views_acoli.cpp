@@ -8,7 +8,7 @@
 // Build:  cmake --build build --target test_views_acoli -j$(sysctl -n hw.ncpu)
 // Run:    ./build/frontend/test_views_acoli
 
-#include "../views_coli.hpp"
+#include "../tpch_family/views_coli.hpp"
 
 #include <cassert>
 #include <cstring>

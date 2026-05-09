@@ -12,8 +12,8 @@
 // comparison-integrity).
 
 #include "../tpch_tables.hpp"
-#include "../views_col.hpp"
-#include "../views_coli.hpp"
+#include "../tpch_family/views_col.hpp"
+#include "../tpch_family/views_coli.hpp"
 
 namespace tpch::q3_family
 {

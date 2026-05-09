@@ -4,7 +4,7 @@
 // Build: cd build2/frontend && make test_views_ol
 // Run:   ./test_views_ol
 
-#include "../views_ol.hpp"
+#include "../tpch_family/views_ol.hpp"
 
 #include <algorithm>
 #include <cassert>

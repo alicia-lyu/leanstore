@@ -5,7 +5,7 @@
 // Build:  cd build && make -C frontend test_views_coli -j$(sysctl -n hw.ncpu)
 // Run:    ./frontend/test_views_coli
 
-#include "../views_coli.hpp"
+#include "../tpch_family/views_coli.hpp"
 #include "../../../frontend/shared/variant_utils.hpp"
 
 #include <algorithm>

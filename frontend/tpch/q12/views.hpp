@@ -7,7 +7,7 @@
 // output row. Query-time substitution parameters (Params) and predicate
 // declarations live in workload.hpp alongside Q12Workload.
 
-#include "../views_ol.hpp"
+#include "../tpch_family/views_ol.hpp"
 
 namespace tpch::q12
 {

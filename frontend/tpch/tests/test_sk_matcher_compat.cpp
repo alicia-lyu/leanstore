@@ -9,7 +9,7 @@
 // Build: cd build/frontend && make test_sk_matcher_compat
 // Run:   ./test_sk_matcher_compat
 
-#include "../views_ol.hpp"
+#include "../tpch_family/views_ol.hpp"
 
 #include <cassert>
 #include <iostream>

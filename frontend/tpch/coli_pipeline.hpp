@@ -27,7 +27,7 @@
 // replaying lineitems with the resolved custkey.
 
 #include "backend.hpp"
-#include "views_coli.hpp"
+#include "tpch_family/views_coli.hpp"
 #include "tpchi_tables.hpp"
 
 namespace tpch

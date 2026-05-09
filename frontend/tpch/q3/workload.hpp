@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "../backend.hpp"
-#include "../col_pipeline.hpp"
+#include "../tpch_family/col_pipeline.hpp"
 #include "../q3_family/stats.hpp"
 #include "../tpch_workload.hpp"
 #include "views.hpp"

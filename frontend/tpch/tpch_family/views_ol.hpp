@@ -13,8 +13,8 @@
 #include <tuple>
 #include <vector>
 
-#include "../shared/view_templates.hpp"
-#include "tpch_tables.hpp"
+#include "../../shared/view_templates.hpp"
+#include "../tpch_tables.hpp"
 
 namespace tpch
 {
