@@ -299,12 +299,27 @@ int main(int argc, char** argv)
                 << ", expected " << expected << ")\n";
    }
 
-   std::cout << "[size] pipeline_view=" << std::fixed << std::setprecision(3) << pipeline_view.size() << " MiB"
-             << "  split_orders=" << split_orders.size() << " MiB"
-             << "  split_lineitem=" << split_lineitem.size() << " MiB"
-             << "  split_invoice=" << split_invoice.size() << " MiB"
-             << "  merged_coli=" << merged_coli.size() << " MiB"
-             << "  acoli=" << acoli.size() << " MiB\n";
+   // LeanStore size paths walk inner pages via HybridPageGuard, which
+   // needs a Worker TLS that the main thread does not have. Schedule on
+   // worker 0 so the calls happen inside a Worker context (same fix as
+   // 708daa84 applied to test_load_col_leanstore).
+   double sz_view = 0, sz_so = 0, sz_sl = 0, sz_si = 0, sz_merge = 0, sz_acoli = 0;
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+      sz_view  = pipeline_view.size();
+      sz_so    = split_orders.size();
+      sz_sl    = split_lineitem.size();
+      sz_si    = split_invoice.size();
+      sz_merge = merged_coli.size();
+      sz_acoli = acoli.size();
+      leanstore::cr::Worker::my().commitTX();
+   });
+   std::cout << "[size] pipeline_view=" << std::fixed << std::setprecision(3) << sz_view << " MiB"
+             << "  split_orders=" << sz_so << " MiB"
+             << "  split_lineitem=" << sz_sl << " MiB"
+             << "  split_invoice=" << sz_si << " MiB"
+             << "  merged_coli=" << sz_merge << " MiB"
+             << "  acoli=" << sz_acoli << " MiB\n";
 
    // ------------------------------------------------------------------
    // A7: LeanStore content-walk (leaf-fill diagnostic).
@@ -350,12 +365,14 @@ int main(int argc, char** argv)
                    << "  reported=" << reported_mib << " MiB"
                    << "  ratio=" << std::setprecision(3) << fill(content_mib, reported_mib) << "\n";
       };
-      print_walk("pipeline_view", cw_view.first,  cw_view.second,  pipeline_view.size());
-      print_walk("split_orders",  cw_so.first,    cw_so.second,    split_orders.size());
-      print_walk("split_lineitem",cw_sl.first,    cw_sl.second,    split_lineitem.size());
-      print_walk("split_invoice", cw_si.first,    cw_si.second,    split_invoice.size());
-      print_walk("merged_coli",   cw_merge.first, cw_merge.second, merged_coli.size());
-      print_walk("acoli",         cw_acoli.first, cw_acoli.second, acoli.size());
+      // Reuse the sz_* values computed inside the scheduleJobSync above —
+      // calling .size() here on the main thread crashes (no Worker TLS).
+      print_walk("pipeline_view", cw_view.first,  cw_view.second,  sz_view);
+      print_walk("split_orders",  cw_so.first,    cw_so.second,    sz_so);
+      print_walk("split_lineitem",cw_sl.first,    cw_sl.second,    sz_sl);
+      print_walk("split_invoice", cw_si.first,    cw_si.second,    sz_si);
+      print_walk("merged_coli",   cw_merge.first, cw_merge.second, sz_merge);
+      print_walk("acoli",         cw_acoli.first, cw_acoli.second, sz_acoli);
    }
 
    std::cout << "\n=== merged_coli per-group distribution ===\n";

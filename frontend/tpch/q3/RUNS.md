@@ -36,3 +36,17 @@ consolidating.
   post-bring-up `_btree` SEGV fix sticks (cached SF=15 image,
   full S1–S4 sweep completes in 2 s with a top-10 result printed for
   every structure); throughput comparison waits on `tput_tx` wiring.
+
+### 2026-05-08 22:13 CDT — q3_lsm SF=15 DRAM=0.1 GiB — first throughput sweep
+- **Commit**: `claude/q3-tput-wiring` HEAD (off `calcite-integration`)
+- **TPut.csv**: `build/q3_lsm/TPut.csv` (4 rows: S1–S4)
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S4, Linux (CloudLab `node0`).
+- **Claim check**: **Supports the family claim S3 > S2 > S1 ≈ S4.**
+  Numbers (TX/s): S1 base_merge_join=66.97, S2 pipeline_view=97.54,
+  S3 mi_col_walk=210.52, S4 base_hash_join=65.02. S3 is ~2.2× S2 and
+  ~3.2× S1/S4 — same shape as Q3I §A1 (S3 ≥ S2 > S1/S4) but with the
+  pure §3.1.3 hierarchical-prefix benefit (no §3.1.2 sibling-aggregate),
+  so the absolute S3 gap over S1/S4 is steeper here than in Q3I.
+  Q3 binary now uses `TpchExecutableHelper::run` (mirrors `q3i_lsm` /
+  `q12_lsm` wiring), so `make q3_lsm scale=N dram=M` produces TPut.csv
+  going forward.
