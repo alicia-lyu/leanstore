@@ -1645,6 +1645,37 @@ documented.
 | 25 | Pinning `Params::defaults()` across the entire `helper.run()` loop | (post-2026-05-03 fix in commits `f3573b0f`, `dbcce8d8`, `b9ef4947`) | Bugs that depend on a particular param value (e.g. shipdate-baked aggregate) survive long benchmark runs without ever firing | `wrapper.set_params_for_iter(count)` before each `wrapper.query(out)`; per-query rotation through a deterministic param table covering all SUBSTITUTION-PARAMETER domain values |
 | 26 | `[SKIP X]` parity guards in the cross-structure test harness | Q3I S5 (`tests/q3i/test_query_q3i_leanstore.cpp` guard retired by `8ac423dd`) | A storage variant that diverges at non-default params is excused as "baked-in filter mismatch", masking unsoundness | A `[SKIP]` is a structural-soundness alarm. Treat it as a fix-blocker, not a documented exception. If the variant cannot match parity at all params, the variant's design is wrong — rebuild it (don't bypass the check) |
 | 27 | Reusing one cardinality framing across pure-hierarchical and sibling-aggregate queries | Q3 Phase 0 design draft (commit `dad7ccce` reverted by `d50cc33a`) | "3-way M:N with no sibling shortcut" framing imported into a query that has no sibling at all — undersells the hierarchical-prefix story and confuses reviewers | Use the typology in §3.5 §4: pure hierarchical, hierarchical + sibling sub-aggregate, OR genuine tree. Never import (2)'s "no sibling shortcut" wording into (1) or (3) |
+| 28 | Silently continuing on an illegal hook return instead of throwing | Q5/Q3 walker bring-up (2026-05-09) | Wrong-but-plausible answers: a visitor arm that returns `SkipOrder` when no order is open is a programming error, not a runtime condition; swallowing it silently produces subtly wrong aggregates that still pass non-zero parity | `throw std::logic_error` immediately — see §"Contract violations & fail-fast" below |
+
+---
+
+## §"Contract violations & fail-fast"
+
+**Rule**: any operator that detects a contract violation in its inputs —
+an illegal hook return, a malformed record, a broken structural invariant
+— **must throw** rather than silently continuing.  Silent fallback masks
+bugs and produces wrong-but-plausible answers that may pass non-zero
+parity checks.
+
+The canonical example is the col/coli group-walk walkers
+(`col_pipeline.tpp`, `coli_pipeline.tpp`): when an `on_customer` or
+`on_invoice` arm returns `WalkAction::SkipOrder`, no order is open at
+that point in the byte-lex scan, so `SkipOrder` is semantically
+meaningless.  The walkers throw immediately:
+
+```cpp
+// col_pipeline.tpp — on_customer arm
+if (action == tpch::WalkAction::SkipOrder)
+    throw std::logic_error(
+        "col_group_walk: on_customer returned SkipOrder — "
+        "no order is open; use SkipGroup instead");
+```
+
+The full per-hook contract is documented in
+[`tpch_family/walk_action.hpp`](tpch_family/walk_action.hpp).
+The same principle applies everywhere: a helper that detects a missing
+REGION row, an out-of-range enum, or an impossible join state must throw,
+not return a sentinel or silently skip.
 
 ---
 

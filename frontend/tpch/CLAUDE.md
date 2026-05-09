@@ -781,6 +781,12 @@ all three aCOLI types to `tagged_path` made `orders_acoli_t::Key`
 byte-identical to `orders_coli_t::Key`, enabling the type collapse
 (`using orders_acoli_t = orders_coli_t`).
 
+## Contract violations & fail-fast
+
+Operators that detect a contract violation (illegal hook returns, malformed
+records, broken invariants) **must throw**, not silently continue — see
+[`PLAYBOOK.md §"Contract violations & fail-fast"`](PLAYBOOK.md#contract-violations--fail-fast).
+
 ## Out of Scope (Skeleton)
 
 The following are explicitly deferred and not part of this skeleton:
