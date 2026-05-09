@@ -20,10 +20,76 @@
 
 #pragma once
 
+#include <algorithm>
 #include <ostream>
+#include <unordered_map>
+#include <vector>
+
+#include "../tpch_family/revenue.hpp"
+#include "side_tables.hpp"
+#include "views.hpp"
 
 namespace tpch::q5
 {
+
+// ---------------------------------------------------------------------------
+// NNameRevenueAggregator — per-n_name HashAggregate for Q5.
+//
+// Q5's GROUP BY is keyed on n_name (~5 buckets, one per in-region nation).
+// Unlike Q3's per-orderkey SortedAggregate, there is no natural sort order
+// linking the lineitem stream to n_name, so a hash map is the right choice.
+// Accumulate all qualifying lineitems, then call emit() once at the end.
+
+struct NNameRevenueAggregator {
+   std::unordered_map<std::string, Numeric> by_name;
+
+   // Accumulate one lineitem's revenue into its nation's bucket.
+   // L must expose l_extendedprice and l_discount (lineitem_t,
+   // lineitem_col_t, and q5_pipeline_view_t all qualify).
+   template <typename L>
+   void accumulate(const L& l, const std::string& n_name)
+   {
+      by_name[n_name] += tpch::lineitem_revenue(l);
+   }
+
+   // emit — walk by_name, resolve each n_name back to its n_nationkey via
+   // sides.n_name_map (reverse lookup: iterate the map to find the name),
+   // and push one q5_agg_row_t per bucket into `out`.
+   //
+   // Reverse lookup is O(|nation_set|) per bucket; with ~5 buckets and
+   // ~5 nations the total cost is O(25) — negligible.
+   void emit(std::vector<q5_agg_row_t>& out, const Q5SideTables& sides) const
+   {
+      for (const auto& [name, revenue] : by_name) {
+         // Reverse-lookup n_nationkey: scan n_name_map for matching name.
+         Integer nationkey = -1;
+         for (const auto& [nk, nm] : sides.n_name_map) {
+            if (nm == name) {
+               nationkey = nk;
+               break;
+            }
+         }
+         q5_agg_row_t row;
+         row.n_nationkey = nationkey;
+         row.n_name      = Varchar<25>(name.c_str());
+         row.revenue     = revenue;
+         out.push_back(row);
+      }
+   }
+};
+
+// ---------------------------------------------------------------------------
+// q5_sort_cmp — sort comparator for the final ORDER BY revenue DESC.
+//
+// TPC-H Q5 has no LIMIT; output is ~5 rows (one per in-region nation).
+// n_name ASC is the tiebreaker for deterministic ordering across runs.
+
+constexpr auto q5_sort_cmp = [](const q5_agg_row_t& a, const q5_agg_row_t& b) {
+   if (a.revenue != b.revenue) return a.revenue > b.revenue;
+   auto av = std::string_view(a.n_name.data, a.n_name.length);
+   auto bv = std::string_view(b.n_name.data, b.n_name.length);
+   return av < bv;
+};
 
 // ---------------------------------------------------------------------------
 // q5_pipeline_view_t out-of-line method bodies.

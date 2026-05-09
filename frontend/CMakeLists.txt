@@ -372,6 +372,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- test_q5_side_tables: unit test for build_q5_side_tables (RocksDB) ---
+    add_executable(test_q5_side_tables tpch/tests/q5/test_side_tables.cpp)
+    target_compile_definitions(test_q5_side_tables PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_q5_side_tables PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_q5_side_tables PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
 else()
     # =========================================================================
     # Linux build: full leanstore + RocksDB (original behavior)
@@ -476,5 +491,8 @@ else()
 
     add_executable(q5_btree tpch/q5/executable_leanstore.cpp)
     target_link_libraries(q5_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(test_q5_side_tables tpch/tests/q5/test_side_tables.cpp)
+    target_link_libraries(test_q5_side_tables PUBLIC RocksDBLogger Threads::Threads)
 
 endif()

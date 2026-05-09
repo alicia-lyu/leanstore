@@ -24,6 +24,7 @@
 
 #include "../backend.hpp"
 #include "../tpch_family/col_pipeline.hpp"
+#include "../tpch_family/family_stats.hpp"
 #include "../tpch_workload.hpp"
 #include "views.hpp"
 
@@ -102,15 +103,19 @@ bool q5_predicate_lineitem(const lineitem_t& l, const Params& p);
 
 // ---------------------------------------------------------------------------
 // Q5Stats: cardinality counters for all four query paths.
-// Mirrors Q3FamilyStats shape; Q5-specific names where needed.
-// Declared here so all four query_by_* bodies can increment when stats != nullptr.
+//
+// Base counters (customers/orders/lineitems scanned+passing_filter,
+// join_callbacks, aggregator_rows_out, mi_records_visited,
+// mi_groups_skipped, stage timing) come from TPCHFamilyStats.
+// Q5-specific additions below:
+//   lineitems_admitted — lineitems that passed SUPPLIER probe + cross-equality
+//   agg_buckets        — distinct n_name buckets in the per-n_name HashAggregate
 
-struct Q5Stats {
-   long customers_visited  = 0;
-   long orders_visited     = 0;
-   long lineitems_visited  = 0;
+struct Q5Stats : public ::tpch::TPCHFamilyStats {
    long lineitems_admitted = 0;  // passed SUPPLIER probe + cross-equality
-   long agg_buckets        = 0;  // distinct n_name buckets in the aggregate
+   long agg_buckets        = 0;  // distinct n_name buckets (≤ |nation_set|)
+
+   void reset() { *this = Q5Stats{}; }
 };
 
 // ---------------------------------------------------------------------------
