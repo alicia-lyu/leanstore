@@ -305,10 +305,66 @@ long Q5Workload<Backend>::query_by_base(std::vector<q5_agg_row_t>& out)
 template <typename Backend>
 long Q5Workload<Backend>::query_by_view(std::vector<q5_agg_row_t>& out)
 {
-   // Phase 4 §7.3: sequential scan of q5_pipeline_view_t; per-nation
-   // HashAggregate over post-filter rows.
+   // S2: sequential scan over q5_pipeline_view_t (per-lineitem rows).
+   //
+   // The view is loaded unfiltered (predicate hoisting — no filter baked in
+   // at load time so the view is reusable across all REGION / DATE param sets).
+   // Every parameterised filter is applied live here:
+   //   1. c_nationkey ∈ nation_set     — customer gate (replaces mktsegment)
+   //   2. o_orderdate window           — inline date-range arithmetic
+   //   3. SUPPLIER probe               — supplier_nation hashmap lookup
+   //   4. c_nationkey = s_nationkey    — cross-equality (dominant pruner)
+   //
+   // No per-orderkey flush is needed: the per-n_name aggregate spans all
+   // orders; accumulate all qualifying lineitems, then call agg.emit() once.
    out.clear();
-   return 0;
+
+   Q5SideTables sides;
+   build_q5_side_tables<Backend>(region, nation, supplier, params, sides);
+
+   NNameRevenueAggregator agg;
+
+   auto sc = pipeline_view.getScanner();
+   while (auto kv = sc->next()) {
+      const auto& v = kv->second;
+      if (stats) stats->lineitems_scanned++;
+
+      // Customer gate.
+      if (sides.nation_set.count(v.c_nationkey) == 0) continue;
+
+      // Orderdate window.  Inlined here (not delegated to q5_predicate_orders)
+      // because that predicate takes orders_t and the view row is
+      // q5_pipeline_view_t — same pattern as Q3's S2 inline orderdate check.
+      if (v.o_orderdate < params.orderdate_lo
+          || v.o_orderdate >= params.orderdate_lo + 365) {
+         continue;
+      }
+
+      // SUPPLIER probe.
+      auto sit = sides.supplier_nation.find(v.l_suppkey);
+      if (sit == sides.supplier_nation.end()) continue;
+
+      // Cross-equality: supplier's nation must match customer's nation.
+      if (sit->second != v.c_nationkey) continue;
+
+      if (stats) stats->lineitems_passing_filter++;
+
+      const std::string& n_name = sides.n_name_map.at(sit->second);
+      agg.accumulate(v, n_name);
+
+      if (stats) {
+         stats->join_callbacks++;
+         stats->lineitems_admitted++;
+      }
+   }
+
+   agg.emit(out, sides);
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->agg_buckets         = static_cast<long>(out.size());
+   }
+   std::sort(out.begin(), out.end(), q5_sort_cmp);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
