@@ -1,10 +1,14 @@
 #ifndef ROCKSDB_ONLY
 // LeanStore entry point for Q3 workload.
 //
-// Shared scaffolding (gflags + structure dispatch) lives in
-// `frontend/tpch/tpch_flags.hpp` and `frontend/tpch/tpch_executable.hpp`.
+// Wires gflags, opens a LeanStore instance, declares the adapters Q3 needs,
+// constructs the TPCHWorkload and Q3Workload, then dispatches to the chosen
+// per-structure wrapper via tpch::TpchExecutableHelper, which drives a
+// multi-second throughput loop and emits per-structure TPut.csv rows
+// (parity with q3i_btree wiring).
 
 #include <gflags/gflags.h>
+#include <iostream>
 
 #include "../../shared/adapter-scanner/LeanStoreAdapter.hpp"
 #include "../../shared/adapter-scanner/LeanStoreMergedAdapter.hpp"
@@ -16,7 +20,7 @@
 #include "../tpch_workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
-#include "../tpch_executable.hpp"
+#include "../tpch_executable_helper.hpp"
 
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
@@ -82,10 +86,37 @@ int main(int argc, char** argv)
    }
    tpch.recover_last_ids();
 
-   std::vector<tpch::q3::q3_agg_row_t> result;
-   return tpch::dispatch_storage_structure<
-       tpch::q3::BaseQ3, tpch::q3::ViewQ3,
-       tpch::q3::MergedQ3, tpch::q3::HashQ3, B>(q3, result);
+   using AggRow = tpch::q3::q3_agg_row_t;
+   switch (FLAGS_storage_structure) {
+      case 1: {
+         tpch::q3::BaseQ3<B> w{q3};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "base_merge_join");
+         helper.run();
+         break;
+      }
+      case 2: {
+         tpch::q3::ViewQ3<B> w{q3};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "pipeline_view");
+         helper.run();
+         break;
+      }
+      case 3: {
+         tpch::q3::MergedQ3<B> w{q3};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "mi_col_walk");
+         helper.run();
+         break;
+      }
+      case 4: {
+         tpch::q3::HashQ3<B> w{q3};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "base_hash_join");
+         helper.run();
+         break;
+      }
+      default:
+         std::cerr << "Invalid storage_structure: " << FLAGS_storage_structure << std::endl;
+         return 1;
+   }
+   return 0;
 }
 
 #endif  // ROCKSDB_ONLY

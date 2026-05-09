@@ -5,40 +5,6 @@ that need follow-up on a Linux node (full LeanStore B-tree backend,
 end-to-end perf sweeps).  See [`CLAUDE.md`](CLAUDE.md) Workflow Rules
 for the macOS-vs-Linux discipline.
 
-## Q3 throughput-shape comparison (post-bring-up follow-up)
-
-The 2026-05-08 Linux bring-up confirmed that **q3 produces identical
-top-10 results across S1/S2/S3/S4** at SF=15 on both backends — i.e.
-the cross-structure correctness story holds at production scale on
-both LSM and B-tree. What it did **not** capture is the per-structure
-**throughput** comparison the original entry asked for (the S3 ≥ S2 >
-S1/S4 shape relative to Q3I PERFORMANCE.md §A1).
-
-Reason: `frontend/tpch/q3/executable_{rocksdb,leanstore}.cpp` and the
-shared `tpch::dispatch_storage_structure<…>` helper run the query
-once and print the result rows, with no `--tx_seconds` throughput
-loop and no per-structure CSV. Q3I has its own
-`TpchExecutableHelper::tput_tx` driver wired up in
-`q3i/executable_*.cpp`; Q3 doesn't yet.
-
-- **What's needed**: lift Q3I's `tput_tx` wiring into Q3's two
-  executables (or hoist into a shared helper if both Q3 family
-  members can share it). Then `make q3_{lsm,btree} scale=15
-  dram=0.1` will produce comparable per-structure numbers.
-- **Reference shape** (Q3I, both backends, post-A2c+A3): S3 ≥ S2 >
-  S1/S4 — see `frontend/tpch/q3i/PERFORMANCE.md §A1` (+356% at
-  SF=15, +116× at SF=40 disk-bound on LeanStore).
-- **Expectation for Q3**: S3 should still match/beat S2 and exceed
-  S1/S4, but with smaller absolute gaps than Q3I because the
-  §3.1.2 sibling-aggregate amortisation is invoice-only. Comparing
-  the two ranks isolates §3.1.3 hierarchical-prefix from §3.1.2
-  sibling-aggregate.
-- **Pre-flight**: any merge that bumps the mtime of
-  `frontend/tpch/tpch_workload.hpp` or `frontend/tpch/q3/load.tpp`
-  invalidates the persisted `$(data_disk)/q3_*/build/$(scale).json`
-  image. After such a merge, run `make q3_lsm scale=15 dram=0.1`
-  once to refresh before taking clean numbers.
-
 ## `q3i_btree` COLI tagged-key variant-dispatch failure (2026-05-08)
 
 `test_query_q3i_btree` aborts with an assertion in the merged
