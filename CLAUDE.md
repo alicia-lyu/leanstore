@@ -39,18 +39,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   will be deceptively long and the slowdown will look like a
   regression in the binary itself rather than scheduled reload.
 - When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree.
-- **Bump `format_version` (Makefile) when changing on-disk record layouts.**
-  All persisted images live at
-  `$(data_disk)/<exec>/$(format_version)/...`. Default is `v0`; tag
-  `q3-q3i-stable-v0` (2026-05-08) is the last commit at `v0`. If your
-  commit changes a key/payload byte layout (any `*_col_t`, `*_coli_t`,
-  `*_acoli_t`, view-row type, etc.), bump `format_version` to `v1`
-  (then `v2`, …) in the same commit. The new binary then writes to a
-  fresh subtree; checking out a prior tag still resolves images at its
-  own format-version subtree. Do NOT delete prior-version subtrees —
-  prior tags need them. After the first commit that pulls in this
-  versioning scheme, run `make migrate-format-v0` once to relocate any
-  pre-versioning images into `v0/`.
+- **Bump per-family `format_version` (Makefile) when changing on-disk
+  record layouts.** Persisted images live at
+  `$(data_disk)/<exec>/$(<family>_format_version)/...` where family is
+  `geo` / `q12` / `q3` / `q3i`. Each family has its own
+  `<family>_format_version` Makefile var defaulting to the global
+  `format_version` (default `v0`). Bump **only the families whose
+  record-type byte layout changed** in your commit (e.g. a Q3
+  `lineitem_col_t` rework bumps `q3_format_version`, leaving Q3I /
+  Q12 / geo at v0 — no reload). Tag `q3-q3i-stable-v0` (2026-05-08)
+  is the last commit before per-family divergence; all families
+  shared `v0` then. **Eventual goal**: once tuning settles, converge
+  every family on a single shared "wide" version that carries the
+  union of every query's column requirements, so secondaries can be
+  cross-query-shared at load time. Until then, families tune
+  independently. Do NOT delete prior-version subtrees — prior tags
+  need them. After pulling this scheme for the first time, run
+  `make migrate-format-v0` once to relocate any pre-versioning
+  images into the appropriate `v0/` subtree.
 - **Append a `RUNS.md` entry after every perf run.** Each query
   directory under `frontend/tpch/<q>/` and `frontend/geo/` has a
   `RUNS.md`. After a `make q*_{lsm,btree}` (or `geo_*`) sweep

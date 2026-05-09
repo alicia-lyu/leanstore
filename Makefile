@@ -28,13 +28,21 @@ BUILD_DIR_DEBUG     := $(BUILD_DIR)-debug
 BUILD_DIRS          := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 EXEC_NAMES          := basic_join basic_group basic_group_variant
 
-# Persistence format version. Each value gets its own subtree under
-# $(data_disk)/<exec>/<format_version>/, isolating images written by
-# binaries with different record-type byte layouts (e.g. lineitem_col_t,
-# lineitem_coli_t key/payload changes). Bump in any commit that breaks
-# on-disk compatibility — old images stay readable from the prior tag.
-# Tags: q3-q3i-stable-v0 (2026-05-08) — last commit at v0.
-format_version      ?= v0
+# Persistence format version, **per query family**. Each family gets
+# its own subtree at $(data_disk)/<exec>/<<family>_format_version>/.
+# Bump only the families whose record-type byte layout changed in a
+# given commit; unchanged families keep their existing images and
+# don't pay reload cost. The non-suffixed `format_version` is the
+# default for any family that hasn't been overridden — useful for
+# global "converge to wide secondaries" once we exit the per-query
+# tuning phase.
+# Tags: q3-q3i-stable-v0 (2026-05-08) — all families at v0 + tput
+# wiring complete; the last commit before per-family format diverged.
+format_version       ?= v0
+geo_format_version   ?= $(format_version)
+q12_format_version   ?= $(format_version)
+q3_format_version    ?= $(format_version)
+q3i_format_version   ?= $(format_version)
 
 # Experiment flags
 dram                	:= 0.1
