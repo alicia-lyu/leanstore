@@ -183,11 +183,13 @@ inline bool q5_predicate_lineitem(const lineitem_t& /*l*/, const Params& /*p*/)
 //                  (not per-orderkey revenue flush)
 //   - on_group_end: no-op (no per-group flush; aggregate is global)
 //
-// Skip signals (same protocol as Q3FamilyVisitor):
-//   skip_group_pending — set by on_customer when c_nationkey ∉ nation_set;
-//                        the walker will skip the rest of the custkey group.
-//   skip_order_pending — set by on_order when the orderdate window fails;
-//                        the walker will skip the order's lineitems.
+// Skip protocol (return-bool):
+//   on_customer → false  ⇒ walker skips the entire custkey group (and may
+//                          physically seek-skip past it).
+//   on_order    → false  ⇒ walker skips just this order's lineitems and
+//                          resumes with the next order in the same group.
+//   on_lineitem          ⇒ void (no skip return).
+// The walker owns all skip mechanics; the visitor carries no skip flags.
 
 struct Q5GroupWalkVisitor {
    const Params&             params;
@@ -195,25 +197,10 @@ struct Q5GroupWalkVisitor {
    NNameRevenueAggregator&   agg;
    Q5Stats*                  stats = nullptr;
 
-   // Per-group state.
-   bool    skip_group_pending = false;  // set when c_nationkey ∉ nation_set
-   bool    skip_order_pending = false;  // set when order fails orderdate window
-   Integer cached_c_nationkey = -1;    // carried from on_customer into on_lineitem
-
-   // Walker protocol: one-shot consumption of the skip flags.
-   bool wants_skip_group()
-   {
-      bool s          = skip_group_pending;
-      skip_group_pending = false;
-      return s;
-   }
-
-   bool wants_skip_order()
-   {
-      bool s          = skip_order_pending;
-      skip_order_pending = false;
-      return s;
-   }
+   // Per-group state: customer's nationkey, needed by the cross-equality
+   // (c_nationkey = s_nationkey) check inside on_lineitem.  Cleared in
+   // on_group_end so a stale value never leaks into the next group.
+   Integer cached_c_nationkey = -1;
 
    // on_record_visited: bump MI walk counter.
    void on_record_visited()
@@ -227,31 +214,27 @@ struct Q5GroupWalkVisitor {
    }
 
    // Gate: c_nationkey must be in the in-region nation_set.
-   // Returns false to suppress on_order / on_lineitem for this group.
-   // on_group_end is still called regardless.
+   // Returning false skips the whole custkey group.
    bool on_customer(Integer /*ck*/, const customer_coli_t& c)
    {
       if (stats) stats->customers_scanned++;
-      if (sides.nation_set.count(c.c_nationkey) == 0) {
-         skip_group_pending = true;
-         return false;
-      }
+      if (sides.nation_set.count(c.c_nationkey) == 0) return false;
       cached_c_nationkey = c.c_nationkey;
       if (stats) stats->customers_passing_filter++;
       return true;
    }
 
    // Gate: o_orderdate must fall in [orderdate_lo, orderdate_lo + 365).
-   // Uses orders_coli_t (the MI record type) which carries o_orderdate directly.
-   void on_order(const orders_coli_t::Key& /*k*/, const orders_coli_t& o)
+   // Returning false skips just this order's lineitems (group stays active).
+   bool on_order(const orders_coli_t::Key& /*k*/, const orders_coli_t& o)
    {
       if (stats) stats->orders_scanned++;
       if (o.o_orderdate < params.orderdate_lo
           || o.o_orderdate >= params.orderdate_lo + 365) {
-         skip_order_pending = true;
-         return;
+         return false;
       }
       if (stats) stats->orders_passing_filter++;
+      return true;
    }
 
    // Per-lineitem: probe SUPPLIER hashmap, apply cross-eq, accumulate revenue.

@@ -189,6 +189,12 @@ void col_group_walk(
    Integer cur_orderkey = -1;   // latest orderkey seen; used by wants_skip_order
    bool    group_active = true;
    bool    skip_pending = false;
+   // walker-owned order-skip latch.  Set when bool on_order returns false:
+   // means "skip just this order's lineitems, then resume with the next order
+   // in the same custkey group".  Distinct from group_active (which kills
+   // the rest of the group); distinct from the visitor's optional
+   // wants_skip_order() poll (this latch is set by the bool-return protocol).
+   bool    order_skip_pending = false;
 
    while (auto kv = scanner->next()) {
       if constexpr (requires { visitor.on_record_visited(); }) {
@@ -229,9 +235,11 @@ void col_group_walk(
                    if constexpr (requires {
                                     { visitor.on_order(*ok, val) } -> std::same_as<bool>;
                                  }) {
+                      // bool on_order: return false ⇒ skip this order's
+                      // lineitems only; group stays active for next order.
                       if (ok) {
                          cur_orderkey = ok->orderkey;
-                         group_active = visitor.on_order(*ok, val);
+                         if (!visitor.on_order(*ok, val)) order_skip_pending = true;
                       }
                    } else if constexpr (requires { visitor.on_order(*ok, val); }) {
                       if (ok) {
@@ -244,6 +252,9 @@ void col_group_walk(
                    if constexpr (requires {
                                     { visitor.on_lineitem(*lk, val) } -> std::same_as<bool>;
                                  }) {
+                      // bool on_lineitem: legacy semantic — false kills the
+                      // rest of the group.  New visitors should prefer void
+                      // and rely on bool on_order for order-level skip.
                       if (lk) group_active = visitor.on_lineitem(*lk, val);
                    } else if constexpr (requires { visitor.on_lineitem(*lk, val); }) {
                       if (lk) visitor.on_lineitem(*lk, val);
@@ -264,11 +275,18 @@ void col_group_walk(
          }
       }
 
-      // Visitor-driven order skip: forward-iterate past the rejected order's
-      // lineitems without dispatching on_lineitem.
-      if constexpr (requires { { visitor.wants_skip_order() } -> std::convertible_to<bool>; }) {
-         if (group_active && cur_orderkey >= 0 && visitor.wants_skip_order()) {
-            const Integer skip_orderkey = cur_orderkey;
+      // Order skip: forward-iterate past the rejected order's lineitems
+      // without dispatching on_lineitem.  Triggered by either the walker's
+      // bool-on_order latch (order_skip_pending) or the visitor's optional
+      // wants_skip_order() poll (back-compat with Q3FamilyVisitor).
+      {
+         bool fire_order_skip = order_skip_pending;
+         order_skip_pending = false;
+         if constexpr (requires { { visitor.wants_skip_order() } -> std::convertible_to<bool>; }) {
+            if (visitor.wants_skip_order()) fire_order_skip = true;
+         }
+         if (group_active && cur_orderkey >= 0 && fire_order_skip) {
+            Integer skip_orderkey = cur_orderkey;
             while (auto kv2 = scanner->next()) {
                if constexpr (requires { visitor.on_record_visited(); }) {
                   visitor.on_record_visited();
@@ -308,7 +326,7 @@ void col_group_walk(
                                              }) {
                                   if (ok2) {
                                      cur_orderkey = ok2->orderkey;
-                                     group_active = visitor.on_order(*ok2, val2);
+                                     if (!visitor.on_order(*ok2, val2)) order_skip_pending = true;
                                   }
                                } else if constexpr (requires { visitor.on_order(*ok2, val2); }) {
                                   if (ok2) {
@@ -337,6 +355,14 @@ void col_group_walk(
                            visitor.on_group_skipped(cur_custkey);
                         }
                      }
+                  }
+                  // Chained order-skip: if the re-dispatched on_order also
+                  // rejected its order, retarget the inner forward-skip to
+                  // the new orderkey and keep skipping (don't break out).
+                  if (group_active && order_skip_pending) {
+                     order_skip_pending = false;
+                     skip_orderkey = cur_orderkey;
+                     continue;
                   }
                   break;
                }
