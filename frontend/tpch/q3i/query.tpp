@@ -236,11 +236,13 @@ struct COLIGroupWalkVisitor
    // Accumulate open-due sub-aggregate before any order rows arrive
    // (guaranteed by invoice tag = 2 < orders tag = 3 in COLI byte-lex order).
    // Not part of the base — only the COLI walker dispatches on_invoice.
-   void on_invoice(const invoice_coli_t::Key&, const invoice_coli_t& i) {
+   // Always returns Continue (no per-invoice skip case).
+   ::tpch::WalkAction on_invoice(const invoice_coli_t::Key&, const invoice_coli_t& i) {
       if (stats) stats->invoices_scanned++;
       Numeric before = open_due.value;
       open_due.consume_invoice(i);
       if (open_due.value != before && stats) stats->invoices_passing_filter++;
+      return ::tpch::WalkAction::Continue;
    }
 
    // CRTP hook: called at the first on_order for a custkey group, after all

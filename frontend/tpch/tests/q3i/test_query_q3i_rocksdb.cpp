@@ -241,16 +241,17 @@ int main(int argc, char** argv)
       // orders / lineitems in each group.
       bool customer_seen_in_group = false;
       long sentinel_violations = 0;
-      bool on_customer(Integer, const tpch::customer_coli_t&) {
+      ::tpch::WalkAction on_customer(Integer, const tpch::customer_coli_t&) {
          ++customers; bytes_customer += sizeof(tpch::customer_coli_t);
          customer_seen_in_group = true;
-         return true;
+         return ::tpch::WalkAction::Continue;
       }
-      void on_invoice (const tpch::invoice_coli_t::Key&,  const tpch::invoice_coli_t&)  {
+      ::tpch::WalkAction on_invoice (const tpch::invoice_coli_t::Key&,  const tpch::invoice_coli_t&)  {
          ++invoices; ++g_invoices; bytes_invoice += sizeof(tpch::invoice_coli_t);
          if (!customer_seen_in_group) ++sentinel_violations;
+         return ::tpch::WalkAction::Continue;
       }
-      void on_order   (const tpch::orders_coli_t::Key&,   const tpch::orders_coli_t&)   {
+      ::tpch::WalkAction on_order   (const tpch::orders_coli_t::Key&,   const tpch::orders_coli_t&)   {
          // Close the previous order's lineitem counter.
          if (g_orders > 0) {
             min_l_per_o = std::min(min_l_per_o, o_lineitems);
@@ -261,10 +262,12 @@ int main(int argc, char** argv)
          o_lineitems = 0;
          ++orders; ++g_orders; bytes_order += sizeof(tpch::orders_coli_t);
          if (!customer_seen_in_group) ++sentinel_violations;
+         return ::tpch::WalkAction::Continue;
       }
-      void on_lineitem(const tpch::lineitem_coli_t::Key&, const tpch::lineitem_coli_t&) {
+      ::tpch::WalkAction on_lineitem(const tpch::lineitem_coli_t::Key&, const tpch::lineitem_coli_t&) {
          ++lineitems; ++o_lineitems; bytes_lineitem += sizeof(tpch::lineitem_coli_t);
          if (!customer_seen_in_group) ++sentinel_violations;
+         return ::tpch::WalkAction::Continue;
       }
       void on_group_end(Integer) {
          ++groups;

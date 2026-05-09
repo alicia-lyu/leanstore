@@ -450,8 +450,9 @@ been moved to `TRASH/`.
   `acoli_total=744 (c=150 o=202 l=392)` vs `mi_records_visited~1547`
   (S5 skips all invoice rows). Also landed this session:
   multi-level active markers design (`customer_active` / `order_active`)
-  documented in `PLAYBOOK.md §7.1` — not yet refactored into coli_pipeline
-  (current code still uses `wants_skip_group()` / `wants_skip_order()`);
+  documented in `PLAYBOOK.md §7.1` — superseded 2026-05-09 by the
+  uniform `WalkAction` (`Continue` / `SkipOrder` / `SkipGroup`) hook
+  protocol now used by `col_group_walk` and `coli_group_walk`;
   `RocksDBLogger::capture_baseline()` for SSTWrite baseline-subtract
   (documented in `PLAYBOOK.md §10`); `StageTimer` per-stage attribution and
   per-query averages in production stats output.

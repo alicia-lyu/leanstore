@@ -4,11 +4,13 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <unordered_map>
 
 #include <gflags/gflags.h>
 
 #include "views_col.hpp"
+#include "walk_action.hpp"
 
 // A3-Linux re-A/B: runtime override for Backend::USE_PHYSICAL_SEEK_SKIP.
 // Defined in tpch_flags.hpp; declared here to avoid an include-order
@@ -162,17 +164,19 @@ double CustomerOrdersLineitemPipeline<Backend>::get_split_size() const
 }  // namespace tpch
 
 // ---------------------------------------------------------------------------
-// col_group_walk: free function template outside the tpch namespace so it
-// mirrors the declaration in col_pipeline.hpp.
-//
-// Pure dispatch — owns only:
+// col_group_walk: free function template.  Pure dispatch — owns only:
 //   1. Iterating the merged scanner.
 //   2. Detecting custkey transitions and calling on_group_end.
-//   3. Suppressing on_order/on_lineitem after on_customer→false.
+//   3. Mapping the visitor's WalkAction return values to skip mechanics:
+//      Continue / SkipOrder / SkipGroup (see walk_action.hpp).
 //
-// No on_invoice arm: COL has no invoice records.
-// Mirrors coli_group_walk with the invoice dispatch arm deleted and
-// lineitem_col_t substituted for lineitem_coli_t.
+// Every visitor hook (on_customer / on_order / on_lineitem) MUST return
+// WalkAction.  The optional walker hooks (on_record_visited, on_group_end,
+// on_group_skipped) stay void and are SFINAE-detected.
+//
+// No on_invoice arm: COL has no invoice records.  Mirrors coli_group_walk
+// with the invoice dispatch arm deleted and lineitem_col_t substituted for
+// lineitem_coli_t.
 
 namespace tpch
 {
@@ -186,25 +190,36 @@ void col_group_walk(
    auto scanner = mi.template getScanner<customer_coli_t::Key, customer_coli_t>();
 
    Integer cur_custkey  = -1;
-   Integer cur_orderkey = -1;   // latest orderkey seen; used by wants_skip_order
+   Integer cur_orderkey = -1;
    bool    group_active = true;
-   bool    skip_pending = false;
-   // walker-owned order-skip latch.  Set when bool on_order returns false:
-   // means "skip just this order's lineitems, then resume with the next order
-   // in the same custkey group".  Distinct from group_active (which kills
-   // the rest of the group); distinct from the visitor's optional
-   // wants_skip_order() poll (this latch is set by the bool-return protocol).
-   bool    order_skip_pending = false;
+   bool    skip_pending = false;        // group-skip latch (drives seek-skip)
+   bool    order_skip_pending = false;  // order-skip latch (drives forward-skip)
 
-   while (auto kv = scanner->next()) {
-      if constexpr (requires { visitor.on_record_visited(); }) {
-         visitor.on_record_visited();
+   // Map a WalkAction returned by any visitor hook to walker-local skip state.
+   auto apply = [&](WalkAction a) {
+      switch (a) {
+         case WalkAction::SkipOrder:
+            // Only meaningful once an order is open; otherwise treat as no-op.
+            if (cur_orderkey >= 0) order_skip_pending = true;
+            break;
+         case WalkAction::SkipGroup:
+            group_active = false;
+            skip_pending = true;
+            if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
+               visitor.on_group_skipped(cur_custkey);
+            }
+            break;
+         case WalkAction::Continue:
+            break;
       }
+   };
 
+   // Dispatch a single (key_variant, val_variant) pair through the visitor.
+   // Updates cur_custkey, fires on_group_end on boundaries, calls the
+   // appropriate on_<record> hook (which returns WalkAction → apply()).
+   auto dispatch = [&](const auto& kv) {
       Integer row_custkey = std::visit(
-          [](const auto& k) -> Integer { return k.custkey; }, kv->first);
-
-      // Detect custkey group boundary.
+          [](const auto& k) -> Integer { return k.custkey; }, kv.first);
       if (cur_custkey != -1 && row_custkey != cur_custkey) {
          if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
             visitor.on_group_end(cur_custkey);
@@ -213,161 +228,61 @@ void col_group_walk(
       }
       cur_custkey = row_custkey;
 
-      // Dispatch to the matching Visitor hook.
       std::visit(
           [&](auto&& val) {
              using V = std::decay_t<decltype(val)>;
              if constexpr (std::is_same_v<V, customer_coli_t>) {
-                if constexpr (requires {
-                                 { visitor.on_customer(row_custkey, val) } -> std::same_as<bool>;
-                              }) {
-                   group_active = visitor.on_customer(row_custkey, val);
-                   if (!group_active) {
-                      skip_pending = true;
-                      if constexpr (requires { visitor.on_group_skipped(row_custkey); }) {
-                         visitor.on_group_skipped(row_custkey);
-                      }
-                   }
+                WalkAction a = visitor.on_customer(row_custkey, val);
+                if (a == WalkAction::SkipOrder) {
+                   throw std::logic_error(
+                       "col_group_walk: on_customer returned SkipOrder "
+                       "(no order open — use SkipGroup instead)");
                 }
+                apply(a);
              } else if (group_active) {
                 if constexpr (std::is_same_v<V, orders_coli_t>) {
-                   auto* ok = std::get_if<orders_coli_t::Key>(&kv->first);
-                   if constexpr (requires {
-                                    { visitor.on_order(*ok, val) } -> std::same_as<bool>;
-                                 }) {
-                      // bool on_order: return false ⇒ skip this order's
-                      // lineitems only; group stays active for next order.
-                      if (ok) {
-                         cur_orderkey = ok->orderkey;
-                         if (!visitor.on_order(*ok, val)) order_skip_pending = true;
-                      }
-                   } else if constexpr (requires { visitor.on_order(*ok, val); }) {
-                      if (ok) {
-                         cur_orderkey = ok->orderkey;
-                         visitor.on_order(*ok, val);
-                      }
+                   auto* ok = std::get_if<orders_coli_t::Key>(&kv.first);
+                   if (ok) {
+                      cur_orderkey = ok->orderkey;
+                      apply(visitor.on_order(*ok, val));
                    }
                 } else if constexpr (std::is_same_v<V, lineitem_col_t>) {
-                   auto* lk = std::get_if<lineitem_col_t::Key>(&kv->first);
-                   if constexpr (requires {
-                                    { visitor.on_lineitem(*lk, val) } -> std::same_as<bool>;
-                                 }) {
-                      // bool on_lineitem: legacy semantic — false kills the
-                      // rest of the group.  New visitors should prefer void
-                      // and rely on bool on_order for order-level skip.
-                      if (lk) group_active = visitor.on_lineitem(*lk, val);
-                   } else if constexpr (requires { visitor.on_lineitem(*lk, val); }) {
-                      if (lk) visitor.on_lineitem(*lk, val);
-                   }
+                   auto* lk = std::get_if<lineitem_col_t::Key>(&kv.first);
+                   if (lk) apply(visitor.on_lineitem(*lk, val));
                 }
              }
           },
-          kv->second);
+          kv.second);
+   };
 
-      // Visitor-driven custkey skip.
-      if constexpr (requires { { visitor.wants_skip_group() } -> std::convertible_to<bool>; }) {
-         if (group_active && visitor.wants_skip_group()) {
-            group_active  = false;
-            skip_pending  = true;
-            if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
-               visitor.on_group_skipped(cur_custkey);
-            }
-         }
+   while (auto kv = scanner->next()) {
+      if constexpr (requires { visitor.on_record_visited(); }) {
+         visitor.on_record_visited();
       }
+      dispatch(*kv);
 
-      // Order skip: forward-iterate past the rejected order's lineitems
-      // without dispatching on_lineitem.  Triggered by either the walker's
-      // bool-on_order latch (order_skip_pending) or the visitor's optional
-      // wants_skip_order() poll (back-compat with Q3FamilyVisitor).
-      {
-         bool fire_order_skip = order_skip_pending;
+      // Order-skip: forward-iterate past the rejected order's lineitems.
+      if (group_active && cur_orderkey >= 0 && order_skip_pending) {
          order_skip_pending = false;
-         if constexpr (requires { { visitor.wants_skip_order() } -> std::convertible_to<bool>; }) {
-            if (visitor.wants_skip_order()) fire_order_skip = true;
-         }
-         if (group_active && cur_orderkey >= 0 && fire_order_skip) {
-            Integer skip_orderkey = cur_orderkey;
-            while (auto kv2 = scanner->next()) {
-               if constexpr (requires { visitor.on_record_visited(); }) {
-                  visitor.on_record_visited();
-               }
-               auto* lk = std::get_if<lineitem_col_t::Key>(&kv2->first);
-               if (!lk || lk->custkey != cur_custkey || lk->orderkey != skip_orderkey) {
-                  // Not a lineitem for this order — re-dispatch inline.
-                  Integer row_custkey2 = std::visit(
-                      [](const auto& k) -> Integer { return k.custkey; }, kv2->first);
-                  if (cur_custkey != -1 && row_custkey2 != cur_custkey) {
-                     if constexpr (requires { visitor.on_group_end(cur_custkey); }) {
-                        visitor.on_group_end(cur_custkey);
-                     }
-                     group_active = true;
-                  }
-                  cur_custkey = row_custkey2;
-                  std::visit(
-                      [&](auto&& val2) {
-                         using V2 = std::decay_t<decltype(val2)>;
-                         if constexpr (std::is_same_v<V2, customer_coli_t>) {
-                            if constexpr (requires {
-                                             { visitor.on_customer(row_custkey2, val2) } -> std::same_as<bool>;
-                                          }) {
-                               group_active = visitor.on_customer(row_custkey2, val2);
-                               if (!group_active) {
-                                  skip_pending = true;
-                                  if constexpr (requires { visitor.on_group_skipped(row_custkey2); }) {
-                                     visitor.on_group_skipped(row_custkey2);
-                                  }
-                               }
-                            }
-                         } else if (group_active) {
-                            if constexpr (std::is_same_v<V2, orders_coli_t>) {
-                               auto* ok2 = std::get_if<orders_coli_t::Key>(&kv2->first);
-                               if constexpr (requires {
-                                                { visitor.on_order(*ok2, val2) } -> std::same_as<bool>;
-                                             }) {
-                                  if (ok2) {
-                                     cur_orderkey = ok2->orderkey;
-                                     if (!visitor.on_order(*ok2, val2)) order_skip_pending = true;
-                                  }
-                               } else if constexpr (requires { visitor.on_order(*ok2, val2); }) {
-                                  if (ok2) {
-                                     cur_orderkey = ok2->orderkey;
-                                     visitor.on_order(*ok2, val2);
-                                  }
-                               }
-                            } else if constexpr (std::is_same_v<V2, lineitem_col_t>) {
-                               auto* lk2 = std::get_if<lineitem_col_t::Key>(&kv2->first);
-                               if constexpr (requires {
-                                                { visitor.on_lineitem(*lk2, val2) } -> std::same_as<bool>;
-                                             }) {
-                                  if (lk2) group_active = visitor.on_lineitem(*lk2, val2);
-                               } else if constexpr (requires { visitor.on_lineitem(*lk2, val2); }) {
-                                  if (lk2) visitor.on_lineitem(*lk2, val2);
-                               }
-                            }
-                         }
-                      },
-                      kv2->second);
-                  if constexpr (requires { { visitor.wants_skip_group() } -> std::convertible_to<bool>; }) {
-                     if (group_active && visitor.wants_skip_group()) {
-                        group_active  = false;
-                        skip_pending  = true;
-                        if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
-                           visitor.on_group_skipped(cur_custkey);
-                        }
-                     }
-                  }
-                  // Chained order-skip: if the re-dispatched on_order also
-                  // rejected its order, retarget the inner forward-skip to
-                  // the new orderkey and keep skipping (don't break out).
-                  if (group_active && order_skip_pending) {
-                     order_skip_pending = false;
-                     skip_orderkey = cur_orderkey;
-                     continue;
-                  }
-                  break;
-               }
-               // Same order, lineitem — suppress dispatch and continue forward.
+         Integer skip_orderkey = cur_orderkey;
+         while (auto kv2 = scanner->next()) {
+            if constexpr (requires { visitor.on_record_visited(); }) {
+               visitor.on_record_visited();
             }
+            auto* lk = std::get_if<lineitem_col_t::Key>(&kv2->first);
+            if (!lk || lk->custkey != cur_custkey || lk->orderkey != skip_orderkey) {
+               // Not a lineitem for this order — re-dispatch inline.
+               dispatch(*kv2);
+               // Chained order-skip: re-dispatch produced another SkipOrder?
+               // Retarget the forward-skip and keep skipping.
+               if (group_active && order_skip_pending) {
+                  order_skip_pending = false;
+                  skip_orderkey = cur_orderkey;
+                  continue;
+               }
+               break;
+            }
+            // Same order, lineitem — suppress dispatch and continue forward.
          }
       }
 
@@ -441,13 +356,31 @@ void col_group_walk_fused_emit(
    Integer cur_orderkey = -1;
    bool    group_active = true;
    bool    skip_pending = false;
+   bool    order_skip_pending = false;
 
    // coli_idx_id integer values for the three COL record types.
    constexpr u8 TAG_CUSTOMER = static_cast<u8>(coli_idx_id::customer);         // 0
    constexpr u8 TAG_ORDERS   = static_cast<u8>(coli_idx_id::orders);           // 1
    constexpr u8 TAG_LINEITEM = static_cast<u8>(LINEITEM_COL_IDX_ID);           // 36
 
-   auto dispatch = [&](u8 tag, const u8* key_bytes, size_t key_len,
+   auto apply = [&](WalkAction a) {
+      switch (a) {
+         case WalkAction::SkipOrder:
+            if (cur_orderkey >= 0) order_skip_pending = true;
+            break;
+         case WalkAction::SkipGroup:
+            group_active = false;
+            skip_pending = true;
+            if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
+               visitor.on_group_skipped(cur_custkey);
+            }
+            break;
+         case WalkAction::Continue:
+            break;
+      }
+   };
+
+   auto dispatch = [&](u8 tag, const u8* key_bytes, size_t /*key_len*/,
                         const u8* val_bytes, size_t /*val_len*/) -> void {
       if constexpr (requires { visitor.on_record_visited(); }) {
          visitor.on_record_visited();
@@ -467,17 +400,13 @@ void col_group_walk_fused_emit(
          case TAG_CUSTOMER: {
             customer_coli_t rec;
             std::memcpy(&rec, val_bytes, sizeof(customer_coli_t));
-            if constexpr (requires {
-                             { visitor.on_customer(row_custkey, rec) } -> std::same_as<bool>;
-                          }) {
-               group_active = visitor.on_customer(row_custkey, rec);
-               if (!group_active) {
-                  skip_pending = true;
-                  if constexpr (requires { visitor.on_group_skipped(row_custkey); }) {
-                     visitor.on_group_skipped(row_custkey);
-                  }
-               }
+            WalkAction a = visitor.on_customer(row_custkey, rec);
+            if (a == WalkAction::SkipOrder) {
+               throw std::logic_error(
+                   "col_group_walk_fused_emit: on_customer returned "
+                   "SkipOrder (no order open — use SkipGroup instead)");
             }
+            apply(a);
             break;
          }
          case TAG_ORDERS: {
@@ -486,15 +415,8 @@ void col_group_walk_fused_emit(
             orders_coli_t::unfoldKey(key_bytes, ok);
             orders_coli_t rec;
             std::memcpy(&rec, val_bytes, sizeof(orders_coli_t));
-            if constexpr (requires {
-                             { visitor.on_order(ok, rec) } -> std::same_as<bool>;
-                          }) {
-               cur_orderkey = ok.orderkey;
-               group_active = visitor.on_order(ok, rec);
-            } else if constexpr (requires { visitor.on_order(ok, rec); }) {
-               cur_orderkey = ok.orderkey;
-               visitor.on_order(ok, rec);
-            }
+            cur_orderkey = ok.orderkey;
+            apply(visitor.on_order(ok, rec));
             break;
          }
          case TAG_LINEITEM: {
@@ -503,29 +425,12 @@ void col_group_walk_fused_emit(
             lineitem_col_t::unfoldKey(key_bytes, lk);
             lineitem_col_t rec;
             std::memcpy(&rec, val_bytes, sizeof(lineitem_col_t));
-            if constexpr (requires {
-                             { visitor.on_lineitem(lk, rec) } -> std::same_as<bool>;
-                          }) {
-               group_active = visitor.on_lineitem(lk, rec);
-            } else if constexpr (requires { visitor.on_lineitem(lk, rec); }) {
-               visitor.on_lineitem(lk, rec);
-            }
+            apply(visitor.on_lineitem(lk, rec));
             break;
          }
          default:
             // Unknown tag — skip silently.
             break;
-      }
-
-      // Visitor-driven custkey skip.
-      if constexpr (requires { { visitor.wants_skip_group() } -> std::convertible_to<bool>; }) {
-         if (group_active && visitor.wants_skip_group()) {
-            group_active  = false;
-            skip_pending  = true;
-            if constexpr (requires { visitor.on_group_skipped(cur_custkey); }) {
-               visitor.on_group_skipped(cur_custkey);
-            }
-         }
       }
    };
 
@@ -536,37 +441,41 @@ void col_group_walk_fused_emit(
 
       dispatch(tag, key_bytes, k_slice.size(), val_bytes, v_slice.size());
 
-      // Visitor-driven order skip: forward-iterate past current order's
-      // lineitems without dispatching on_lineitem.
-      if constexpr (requires { { visitor.wants_skip_order() } -> std::convertible_to<bool>; }) {
-         if (group_active && cur_orderkey >= 0 && visitor.wants_skip_order()) {
-            const Integer skip_orderkey = cur_orderkey;
-            while (auto raw2 = scanner->next_raw()) {
-               auto [tag2, k2_slice, v2_slice] = *raw2;
-               const u8* key2 = reinterpret_cast<const u8*>(k2_slice.data());
-               const u8* val2 = reinterpret_cast<const u8*>(v2_slice.data());
+      // Order-skip: forward-iterate past the rejected order's lineitems.
+      if (group_active && cur_orderkey >= 0 && order_skip_pending) {
+         order_skip_pending = false;
+         Integer skip_orderkey = cur_orderkey;
+         while (auto raw2 = scanner->next_raw()) {
+            auto [tag2, k2_slice, v2_slice] = *raw2;
+            const u8* key2 = reinterpret_cast<const u8*>(k2_slice.data());
+            const u8* val2 = reinterpret_cast<const u8*>(v2_slice.data());
 
-               // Check if this is still a lineitem for the same (custkey, orderkey).
-               bool is_same_order_lineitem = false;
-               if (tag2 == TAG_LINEITEM && k2_slice.size() >= 10) {
-                  Integer ck2 = decode_custkey_from_col_key(key2);
-                  // orderkey is at bytes 6-9 (after [t=1][custkey:4][t=3][orderkey:4]).
-                  const u8* op = key2 + 6;
-                  uint32_t ok_raw = (static_cast<uint32_t>(op[0]) << 24)
-                                  | (static_cast<uint32_t>(op[1]) << 16)
-                                  | (static_cast<uint32_t>(op[2]) <<  8)
-                                  | (static_cast<uint32_t>(op[3]));
-                  Integer ok2 = static_cast<Integer>(ok_raw ^ 0x80000000u);
-                  is_same_order_lineitem = (ck2 == cur_custkey && ok2 == skip_orderkey);
-               }
+            // Check if this is still a lineitem for the same (custkey, orderkey).
+            bool is_same_order_lineitem = false;
+            if (tag2 == TAG_LINEITEM && k2_slice.size() >= 10) {
+               Integer ck2 = decode_custkey_from_col_key(key2);
+               // orderkey is at bytes 6-9 (after [t=1][custkey:4][t=3][orderkey:4]).
+               const u8* op = key2 + 6;
+               uint32_t ok_raw = (static_cast<uint32_t>(op[0]) << 24)
+                               | (static_cast<uint32_t>(op[1]) << 16)
+                               | (static_cast<uint32_t>(op[2]) <<  8)
+                               | (static_cast<uint32_t>(op[3]));
+               Integer ok2 = static_cast<Integer>(ok_raw ^ 0x80000000u);
+               is_same_order_lineitem = (ck2 == cur_custkey && ok2 == skip_orderkey);
+            }
 
-               if (!is_same_order_lineitem) {
-                  dispatch(tag2, key2, k2_slice.size(), val2, v2_slice.size());
-                  break;
+            if (!is_same_order_lineitem) {
+               dispatch(tag2, key2, k2_slice.size(), val2, v2_slice.size());
+               // Chained order-skip: re-dispatch produced another SkipOrder?
+               if (group_active && order_skip_pending) {
+                  order_skip_pending = false;
+                  skip_orderkey = cur_orderkey;
+                  continue;
                }
-               if constexpr (requires { visitor.on_record_visited(); }) {
-                  visitor.on_record_visited();
-               }
+               break;
+            }
+            if constexpr (requires { visitor.on_record_visited(); }) {
+               visitor.on_record_visited();
             }
          }
       }

@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "../tpch_family/revenue.hpp"
+#include "../tpch_family/walk_action.hpp"
 #include "side_tables.hpp"
 #include "views.hpp"
 
@@ -183,12 +184,11 @@ inline bool q5_predicate_lineitem(const lineitem_t& /*l*/, const Params& /*p*/)
 //                  (not per-orderkey revenue flush)
 //   - on_group_end: no-op (no per-group flush; aggregate is global)
 //
-// Skip protocol (return-bool):
-//   on_customer → false  ⇒ walker skips the entire custkey group (and may
-//                          physically seek-skip past it).
-//   on_order    → false  ⇒ walker skips just this order's lineitems and
-//                          resumes with the next order in the same group.
-//   on_lineitem          ⇒ void (no skip return).
+// Skip protocol: every walker hook returns tpch::WalkAction.  See
+// tpch_family/walk_action.hpp for the contract.  In Q5:
+//   on_customer  → SkipGroup when c_nationkey ∉ nation_set.
+//   on_order     → SkipOrder when o_orderdate is outside the window.
+//   on_lineitem  → always Continue (no per-lineitem skip case).
 // The walker owns all skip mechanics; the visitor carries no skip flags.
 
 struct Q5GroupWalkVisitor {
@@ -214,40 +214,38 @@ struct Q5GroupWalkVisitor {
    }
 
    // Gate: c_nationkey must be in the in-region nation_set.
-   // Returning false skips the whole custkey group.
-   bool on_customer(Integer /*ck*/, const customer_coli_t& c)
+   ::tpch::WalkAction on_customer(Integer /*ck*/, const customer_coli_t& c)
    {
       if (stats) stats->customers_scanned++;
-      if (sides.nation_set.count(c.c_nationkey) == 0) return false;
+      if (sides.nation_set.count(c.c_nationkey) == 0) return ::tpch::WalkAction::SkipGroup;
       cached_c_nationkey = c.c_nationkey;
       if (stats) stats->customers_passing_filter++;
-      return true;
+      return ::tpch::WalkAction::Continue;
    }
 
    // Gate: o_orderdate must fall in [orderdate_lo, orderdate_lo + 365).
-   // Returning false skips just this order's lineitems (group stays active).
-   bool on_order(const orders_coli_t::Key& /*k*/, const orders_coli_t& o)
+   ::tpch::WalkAction on_order(const orders_coli_t::Key& /*k*/, const orders_coli_t& o)
    {
       if (stats) stats->orders_scanned++;
       if (o.o_orderdate < params.orderdate_lo
           || o.o_orderdate >= params.orderdate_lo + 365) {
-         return false;
+         return ::tpch::WalkAction::SkipOrder;
       }
       if (stats) stats->orders_passing_filter++;
-      return true;
+      return ::tpch::WalkAction::Continue;
    }
 
    // Per-lineitem: probe SUPPLIER hashmap, apply cross-eq, accumulate revenue.
-   void on_lineitem(const lineitem_col_t::Key& /*k*/, const lineitem_col_t& l)
+   ::tpch::WalkAction on_lineitem(const lineitem_col_t::Key& /*k*/, const lineitem_col_t& l)
    {
       if (stats) stats->lineitems_scanned++;
 
       // SUPPLIER probe: supplier must be in the pre-filtered hashmap.
       auto sit = sides.supplier_nation.find(l.l_suppkey);
-      if (sit == sides.supplier_nation.end()) return;
+      if (sit == sides.supplier_nation.end()) return ::tpch::WalkAction::Continue;
 
       // Cross-equality: supplier's nation must match customer's nation.
-      if (sit->second != cached_c_nationkey) return;
+      if (sit->second != cached_c_nationkey) return ::tpch::WalkAction::Continue;
 
       if (stats) stats->lineitems_passing_filter++;
 
@@ -259,6 +257,7 @@ struct Q5GroupWalkVisitor {
          stats->join_callbacks++;
          stats->lineitems_admitted++;
       }
+      return ::tpch::WalkAction::Continue;
    }
 
    // on_group_end: no per-group flush needed — the per-n_name aggregate

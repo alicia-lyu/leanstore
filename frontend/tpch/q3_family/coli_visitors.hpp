@@ -4,23 +4,25 @@
 // merged indexes.
 //
 // Implements the C×O×L core shared by Q3 and Q3I:
-//   on_customer  — gates by c_mktsegment; sets mktsegment_ok for the group
+//   on_customer  — gates by c_mktsegment; SkipGroup on miss
 //   on_order     — gates by o_orderdate; flushes the previous order register
-//                  when a new order boundary is crossed
-//   on_lineitem  — accumulates revenue via LineitemRevenueAccumulator
+//                  when a new order boundary is crossed; SkipOrder on date
+//                  miss; SkipGroup if the first-order admit check fails.
+//   on_lineitem  — accumulates revenue via LineitemRevenueAccumulator;
+//                  always returns Continue
 //   on_group_end — flushes the last open order for the group; resets state
 //
-// Walker skip-signals (consumed by both coli_group_walk and col_group_walk):
-//   wants_skip_group() — visitor-driven custkey skip (set by derived class)
-//   wants_skip_order() — visitor-driven order skip (set by base on orderdate fail)
+// Walker skip protocol: every on_<record> hook returns tpch::WalkAction.
+// See ../tpch_family/walk_action.hpp for the contract.  No wants_skip_*()
+// poll hooks (retired 2026-05-09; PLAYBOOK anti-pattern #19).
 //
 // CRTP customisation points (three total; all have base defaults):
 //
 //   bool per_order_admit_check(const OrdersType&)
 //       Called at the first on_order for a custkey group, BEFORE the
-//       orderdate filter. Return false to skip the entire remaining OL
-//       sub-tree for this group (sets skip_group_pending). Base returns true.
-//       Q3I overrides to gate on cust_open_due > threshold.
+//       orderdate filter. Return false to reject the entire remaining OL
+//       sub-tree (the base on_order then returns SkipGroup to the walker).
+//       Base returns true. Q3I overrides to gate on cust_open_due > threshold.
 //
 //   void extra_emit_fields(AggRow&)
 //       Called just before a row is pushed into `out`, after all base fields
@@ -48,6 +50,7 @@
 #include <vector>
 
 #include "../tpch_family/views_coli.hpp"
+#include "../tpch_family/walk_action.hpp"
 #include "accumulators.hpp"
 
 namespace tpch::q3_family
@@ -59,32 +62,6 @@ struct Q3FamilyVisitor {
    const Params&         params;
    std::vector<AggRow>&  out;
    Stats*                stats = nullptr;  // optional — bumped by walker hooks
-
-   // -------------------------------------------------------------------------
-   // Walker skip-signals.  The walker polls these after each on_* dispatch.
-
-   // Visitor-driven custkey skip: set true to request walker to seek to the
-   // next custkey.  Used when the entire OL sub-tree for a custkey is doomed
-   // (e.g. threshold failed, or mktsegment failed — though the latter is
-   // gated earlier via on_customer returning false).
-   bool skip_group_pending = false;
-   bool wants_skip_group()
-   {
-      bool s         = skip_group_pending;
-      skip_group_pending = false;  // one-shot — consumed by walker
-      return s;
-   }
-
-   // Visitor-driven order skip: set true to request walker to forward-iterate
-   // past the current order's lineitems.  Set when on_order rejects the
-   // orderdate filter — those lineitems are all doomed.
-   bool skip_order_pending = false;
-   bool wants_skip_order()
-   {
-      bool s          = skip_order_pending;
-      skip_order_pending = false;  // one-shot — consumed by walker
-      return s;
-   }
 
    // -------------------------------------------------------------------------
    // Per-group accumulators (factored — S1 reuses these via scanner-wrappers).
@@ -144,61 +121,61 @@ struct Q3FamilyVisitor {
       if (stats) stats->mi_groups_skipped++;
    }
 
-   // Gate predicate: returning false suppresses on_order / on_lineitem for the
-   // entire custkey group.  on_group_end is still called.
-   bool on_customer(Integer /*ck*/, const customer_coli_t& c)
+   // Gate: c_mktsegment must match params.mktsegment.
+   // Returns SkipGroup on miss; on_group_end is still called.
+   ::tpch::WalkAction on_customer(Integer /*ck*/, const customer_coli_t& c)
    {
       if (stats) stats->customers_scanned++;
       auto sm  = std::string_view(c.c_mktsegment.data, c.c_mktsegment.length);
       auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
       mktsegment_ok = (sm == psm);
-      if (mktsegment_ok && stats) stats->customers_passing_filter++;
-      return mktsegment_ok;
+      if (!mktsegment_ok) return ::tpch::WalkAction::SkipGroup;
+      if (stats) stats->customers_passing_filter++;
+      return ::tpch::WalkAction::Continue;
    }
 
    // First on_order call: invoke CRTP per_order_admit_check (derived can gate on
-   // e.g. a per-custkey sub-aggregate computed before any orders arrived).
-   // Subsequent calls: flush the previous order register, open a new one only
-   // when the datefilter passes.
-   void on_order(const orders_coli_t::Key& k, const orders_coli_t& o)
+   // e.g. a per-custkey sub-aggregate computed before any orders arrived) —
+   // returns SkipGroup if rejected.  Subsequent calls: flush the previous
+   // order register, open a new one only when the datefilter passes; SkipOrder
+   // when the date filter fails.
+   ::tpch::WalkAction on_order(const orders_coli_t::Key& k, const orders_coli_t& o)
    {
       if (stats) stats->orders_scanned++;
       if (!order_admitted) {
-         // First order for this custkey — give derived a chance to reject the
-         // entire OL sub-tree based on per-custkey state computed before orders.
          if (!static_cast<Derived*>(this)->per_order_admit_check(o)) {
-            skip_group_pending = true;
-            return;
+            return ::tpch::WalkAction::SkipGroup;
          }
          order_admitted = true;
       } else {
          flush_order();  // close previous order before opening a new one
       }
       if (o.o_orderdate >= params.orderdate) {
-         // Date filter failed: skip this order's lineitems without dispatch.
-         // have_open_order stays false so flush_order() is a no-op.
-         skip_order_pending = true;
-         have_open_order    = false;
-         return;
+         // Date filter failed: skip this order's lineitems.  have_open_order
+         // stays false so flush_order() is a no-op when the next order opens.
+         have_open_order = false;
+         return ::tpch::WalkAction::SkipOrder;
       }
       if (stats) stats->orders_passing_filter++;
       have_open_order  = true;
       cur_orderkey     = k.orderkey;
       cur_orderdate    = o.o_orderdate;
       cur_shippriority = o.o_shippriority;
+      return ::tpch::WalkAction::Continue;
    }
 
    // Accumulate revenue; no-op when the group was not admitted or the order
-   // was filtered by the date predicate.
-   void on_lineitem(const typename LineitemType::Key&, const LineitemType& l)
+   // was filtered by the date predicate.  Returns Continue unconditionally.
+   ::tpch::WalkAction on_lineitem(const typename LineitemType::Key&, const LineitemType& l)
    {
       if (stats) stats->lineitems_scanned++;
-      if (!order_admitted || !have_open_order) return;
+      if (!order_admitted || !have_open_order) return ::tpch::WalkAction::Continue;
       bool passed = rev.consume(l, params);
       if (passed && stats) {
          stats->lineitems_passing_filter++;
          stats->join_callbacks++;
       }
+      return ::tpch::WalkAction::Continue;
    }
 
    // Emit last open order for this group, then reset per-group state.
