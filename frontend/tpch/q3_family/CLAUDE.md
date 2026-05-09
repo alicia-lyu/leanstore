@@ -4,6 +4,23 @@ This directory contains headers that are shared between Q3 and Q3I (and any
 future Q3-flavoured query). Every symbol here must be usable by both queries
 without modification; query-specific logic stays in `q3/` or `q3i/`.
 
+**What lives in `tpch_family/` instead**: three utilities were lifted out of
+this directory when Q5 became a second consumer (2026-05-09 refactor):
+
+- **Revenue arithmetic** — `tpch::lineitem_revenue<L>()` lives in
+  `tpch_family/revenue.hpp`. `LineitemRevenueAccumulator` here calls it;
+  the shipdate gate stays in this file (Q3-family-specific).
+- **Base stats counters** — `tpch::TPCHFamilyStats` (scan/filter/join/MI-walk/
+  stage timing) lives in `tpch_family/family_stats.hpp`. `Q3FamilyStats`
+  derives from it and adds `topN_candidates` / `stage_us_topN`.
+- **COL merge kernel** — `tpch::col_two_pointer_merge` lives in
+  `tpch_family/col_two_pointer_merge.hpp`. `view_loaders.hpp` is now a
+  thin re-export shim; existing callers (`q3/load.tpp`, `q3i/load.tpp`,
+  `q5/load.tpp`) compile unchanged via `populate_q3_view_core`.
+
+Everything else in this directory (predicates, params, agg_row, visitor,
+lineitem aggregator, view-loaders shim) is Q3-pair-specific and stays here.
+
 ## Shared Symbols
 
 ### `accumulators.hpp` — `LineitemRevenueAccumulator<P>`

@@ -49,6 +49,9 @@ Use this when adding a new piece while implementing a query:
 | `views_coli.hpp` | COLI pipeline record types (`customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t`). **Half its types are reused by Q3 vanilla** (the customer/orders pair) — the file lives here despite its name because the reuse spans both tracks. The `lineitem_coli_t` + `invoice_coli_t` portion is genuinely Track-2-only; a future Phase-3 split will move those into a separate `views_invoice.hpp` under `tpchi_family/`. |
 | `ol_pipeline.hpp` / `.tpp` | `OrdersLineitemPipeline<Backend>` — 2-table OL merged index loader. Used by Q12, Q9. |
 | `col_pipeline.hpp` / `.tpp` | `CustomerOrdersLineitemPipeline<Backend>` — 3-table COL merged index loader. Used by Q3, Q5. |
+| `revenue.hpp` | `tpch::lineitem_revenue<L>(const L&)` — pure revenue arithmetic `l_extendedprice * (1 - l_discount)`, generic over any lineitem-shaped record. No date gate (that is Q3-family-specific; see `q3_family/accumulators.hpp`). Used by Q3 (via `LineitemRevenueAccumulator`) and will be used directly by Q5 / Q10 accumulators. |
+| `family_stats.hpp` | `tpch::TPCHFamilyStats` — workload-agnostic cardinality and timing counters (scan/filter/join/MI-walk/stage timing) shared by all COL-family vanilla queries. `q3_family::Q3FamilyStats` derives from it and adds `topN_candidates` / `stage_us_topN` (Q3-specific LIMIT machinery). Q5 will derive `Q5Stats` from it in Phase 4. |
+| `col_two_pointer_merge.hpp` | `tpch::col_two_pointer_merge<OrdersAdapter, LineitemAdapter, EmitFn>` — two-pointer ORDERS × LINEITEM merge kernel keyed by `(custkey, orderkey, linenumber)`. Caller supplies an emit callback; no Q3-specific row construction inside. Used by Q3 / Q3I / Q5 via `q3_family/view_loaders.hpp` (re-export shim) and directly by future Q10. |
 
 ## Future work
 
