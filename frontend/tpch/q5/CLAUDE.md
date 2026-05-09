@@ -412,10 +412,18 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   `test_query_q5_lsm` reports `[OK]` parity at digest 0x0.
   Reuses `CustomerOrdersLineitemPipeline<Backend>` from Q3
   verbatim.
-- **Phase 1** — `views.hpp` real types (`q5_pipeline_view_t`,
-  `q5_agg_row_t`), payload extensions to Q3's `customer_col_t` /
-  `lineitem_col_t` if needed, intermediate join-result types for
-  S1 BMJ chain.
+- **Phase 1** (2026-05-09; **complete**) — `views.hpp` real types
+  (`q5_pipeline_view_t`, `q5_agg_row_t`) were already present in the
+  Phase 0.5 skeleton. This phase adds the S1 BMJ chain intermediate
+  types (`q5_cust_jk_t`, `q5_jr1_t`, `q5_jr2_t`) with `std::hash`
+  and `SKBuilder` specialisations. Key design decision: `q5_jr2_t`'s
+  right side is `lineitem_col_t` (per-lineitem), NOT a pre-aggregate,
+  because each lineitem needs `l_suppkey` for the SUPPLIER probe and
+  the `c_nationkey = s_nationkey` cross-equality. No payload
+  extensions were needed — `lineitem_col_t` already carries
+  `l_suppkey` from Phase 0.5. All four tests pass: `test_load_col_lsm`
+  all `[OK]`; `test_query_q3_lsm`, `test_query_q3i_lsm` parity
+  unchanged; `test_query_q5_lsm` digest 0x0 `[OK]`.
 - **Phase 2** — `workload.hpp` Params + predicate declarations.
 - **Phase 3** — `load.tpp` real bodies for all 4 storage variants.
 - **Phase 4 §7.1** — S3 `query_by_merged` via shared
@@ -437,12 +445,20 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
 
 ---
 
-## Implementation Status (skeleton — 2026-05-08)
+## Implementation Status (Phase 1 — 2026-05-09)
 
 Phase 0.5 landed: all 8 per-query files exist, executable links,
 `test_query_q5_lsm` runs to exit 0 with all four paths agreeing on
 empty results (digest 0x0, vacuous `[OK]` parity). Q3 / Q3I
 regressions clean.
+
+Phase 1 landed: S1 BMJ chain intermediate types added to `views.hpp`
+(`q5_cust_jk_t` id=58, `q5_jr1_t` id=59, `q5_jr2_t` id=60) with
+`std::hash<q5_cust_jk_t::Key>` specialisation and `SKBuilder`
+specialisations for `q5_cust_jk_t::Key` and extended
+`q5_pipeline_view_t::Key`. BMJ #2 right side is `lineitem_col_t`
+(per-lineitem, not pre-aggregated). No payload extensions needed.
+All four tests pass; Q3 / Q3I regressions clean.
 
 **Real bodies**:
 
@@ -455,15 +471,18 @@ regressions clean.
 - `q5_pipeline_view_t::unfoldKey`, `q5_agg_row_t::print`.
 - All four storage-structure dispatch arms in `load.tpp`,
   `get_size`.
+- `q5_cust_jk_t`, `q5_jr1_t`, `q5_jr2_t` — S1 BMJ chain types.
+- `SKBuilder<q5_cust_jk_t::Key>` — `create` overloads for
+  `customerh_t`, `orders_coli_t`, `q5_jr1_t`.
+- `SKBuilder<q5_pipeline_view_t::Key>` — extended with `create`
+  overloads for `q5_jr1_t` and `lineitem_col_t`.
 
-**Stubs** (next commits, Phase 1+):
+**Stubs** (next commits, Phase 2+):
 
 - All four `query_by_*` bodies → return 0 (`out.clear(); return 0;`).
 - Predicate bodies (`q5_predicate_customer/orders/lineitem`) →
   `return true;`.
 - `Q5Stats` counter struct — deferred to Phase 4.
-- Intermediate join-result types for the S1 BMJ chain
-  (`q5_jr1_t`, `q5_jr2_t`) — deferred to Phase 1.
 
 **Record-type ids allocated**: see `q5/views.hpp` header comment.
 Skeleton uses `customer_coli_t` / `orders_coli_t` from
@@ -471,5 +490,4 @@ Skeleton uses `customer_coli_t` / `orders_coli_t` from
 `lineitem_col_t` was extended in place to carry `l_suppkey` and
 `l_returnflag` in commit `bec67300`.
 
-Next commit: Phase 1 — real `views.hpp` types + S1 intermediate
-join-result types.
+Next commit: Phase 2 — `workload.hpp` Params + predicate declarations.
