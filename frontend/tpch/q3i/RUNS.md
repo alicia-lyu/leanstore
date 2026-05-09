@@ -39,6 +39,22 @@ G-series, §A6 memory-pressure sweep). New runs go here.
   S2 slightly slower (probe-side fits, but probe is the same), and S4
   hash regresses from cache contention against the larger probe build.
 
+### 2026-05-08 22:50 CDT — q3i_lsm SF=1500 DRAM=0.4 GiB (large LSM beyond-memory, 5× ratio, mirrors BTree SF=600)
+- **Commit**: `1708cab0` (`calcite-integration`)
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 22–26 (DRAM=0.4, scale=1500).
+- **Config**: SF=1500, DRAM=0.4 GiB, S1–S5, secondaries 1.62–2.00 GiB
+  per structure (predicted ~2 GiB ✓), secondary/DRAM ≈ 5×, beyond
+  memory regime (mirror of BTree SF=600 dram=0.4 disk footprint).
+  Load took 35 min.
+- **Claim check**: Supports the paper claim — shape
+  S3 (0.629) ≈ S2 (0.593) > S5 (0.456) > S1 (0.364) > S4 (0.071) TX/s.
+  S3 ≥ S2 > S1/S4 holds. **S5 < S3 on LSM** (unlike BTree SF=600 where
+  S5 dominated): LSM compression dampens the disk-pressure benefit of
+  pre-aggregation, while BTree's larger 3× per-byte footprint amplifies
+  it. Same operating-point (sec/DRAM=5×, secondary≈2 GiB) — backend is
+  the only variable; the §A1 anomaly inverts on BTree but not on LSM
+  here.
+
 ### 2026-05-08 22:15 CDT — q3i_lsm SF=300 DRAM=0.08 GiB (LSM beyond-memory, 5× ratio)
 - **Commit**: `1708cab0` (`calcite-integration`)
 - **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 17–21 (DRAM=0.08, scale=300).
