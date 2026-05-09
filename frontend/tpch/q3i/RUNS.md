@@ -39,6 +39,25 @@ G-series, §A6 memory-pressure sweep). New runs go here.
   S2 slightly slower (probe-side fits, but probe is the same), and S4
   hash regresses from cache contention against the larger probe build.
 
+### 2026-05-08 22:00 CDT — q3i_btree SF=15 DRAM=0.1 GiB (cache-resident, all 5 structures)
+- **Commit**: `defec568` (`calcite-integration`)
+- **TPut.csv**: `build/q3i_btree/TPut.csv` rows 2–6 (DRAM=0.1, scale=15).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S5, Linux (CloudLab `node0`).
+  Secondary sizes 49–61 MiB / structure (BTree); secondary/DRAM ≈ 5×
+  but each individual structure still cache-resident-ish (DRAM 100 MiB
+  > one-structure 50 MiB). Cache-resident regime — see
+  [`../RUNS.md`](../RUNS.md).
+- **Claim check**: Supports the paper claim — BTree shape
+  S3 (302) > S2 (130) > S5 (105) > S1 (92) > S4 (84) TX/s, same
+  S3 ≥ S2 > S1/S4 ordering as LSM at ~2× the absolute throughput.
+  **Notable**: the LINUX_PENDING-flagged COLI variant-dispatch bug did
+  NOT trigger here — the production `q3i_btree` binary completed all
+  five structures, including S3 (`coli_group_walk`) and S5 (aCOLI MI).
+  The assertion is scoped to `test_query_q3i_btree` (parity test
+  harness), not the production sweep; today's `LeanStoreMergedAdapter`
+  BTreeLL fix likely closed the production-path manifestation. **Size
+  ratio confirmed**: 61/20 ≈ 3.05× LSM at SF=15.
+
 ### 2026-05-08 21:42 CDT — q3i_lsm SF=1 DRAM=0.1 GiB (small, cache-fits-anyway)
 - **Commit**: `edd34a1f` (`calcite-integration`)
 - **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 12–16 (DRAM=0.1, scale=1)
