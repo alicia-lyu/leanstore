@@ -1,0 +1,92 @@
+// Q5 S4 baseline plan — HashJoin chain over base tables, no merged
+// index. The "no co-location" reference point against which S1/S2/S3
+// are compared.
+//
+// Filter pushdown follows the same principles as the family logical
+// plan, with three fusions specific to S4:
+//
+//   • r_name = :1                → fused with TableScan(REGION) before
+//                                   the NATION join's hash build.
+//   • c_nationkey ∈ nation_set    → fused with TableScan(CUSTOMER)
+//                                   before the customer hash build, so
+//                                   the build side is ~5× smaller.
+//   • o_orderdate ∈ window        → fused with TableScan(ORDERS) before
+//                                   the orders hash build.
+//
+// The chain pre-builds three side maps (nation_set, nation_name_map,
+// supplier_nation_map) before the customer scan. Then:
+//
+//   Scan(CUSTOMER) + nation gate
+//     → HashBuild(c_custkey)
+//       ⋈ HashProbe(filtered orders) on o_custkey = c_custkey
+//         → HashBuild(o_orderkey, o_custkey, c_nationkey)
+//           ⋈ HashProbe(LINEITEM) on l_orderkey = o_orderkey
+//             → Probe(supplier_nation_map[l_suppkey])
+//               → Filter(c_nationkey == s_nationkey)
+//                 → HashAggregate(group=[n_name],
+//                       revenue = SUM(l_extendedprice * (1-l_discount)))
+//                   → Sort(revenue DESC)
+//
+// S4 differs from S1/S3 only in physical operators (HashAggregate +
+// HashJoin chain instead of SortedAggregate + walker / BMJ); the
+// logical shape is identical, preserving OPERATORS.md §6.1
+// comparison-integrity. S4 measures the no-merged-index baseline that
+// the family is compared against.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Side reductions ───────────
+  s_reg [label="TableScan(REGION) + Filter(r_name == :1)\n→ 1 regionkey",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_nat [label="TableScan(NATION) + Filter(n_regionkey == reg)\n→ nation_set, nation_name_map",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_sup [label="TableScan(SUPPLIER) + Filter(s_nationkey ∈ nation_set)\n→ supplier_nation_map",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_reg -> s_nat [style=dashed, label="region"];
+  s_nat -> s_sup [style=dashed, label="nation_set"];
+
+  // ─────────── Sources ───────────
+  s_cust [label="TableScan(CUSTOMER)\n+ Filter(c_nationkey ∈ nation_set)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ window)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  // ─────────── Hash join chain ───────────
+  bld_cust [label="HashBuild(c_custkey → c_nationkey)",
+            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  prb_co   [label="HashProbe(o_custkey = c_custkey)",
+            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  bld_co   [label="HashBuild(o_orderkey →\n  c_nationkey)",
+            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  prb_col  [label="HashProbe(l_orderkey = o_orderkey)",
+            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  prb_sup  [label="Probe(supplier_nation_map[l_suppkey])\nSKIP if absent",
+            shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+  cross_eq [label="Filter(c_nationkey == s_nationkey)",
+            shape=box, style=filled, fillcolor="#FFEBEE"];
+
+  agg [label="HashAggregate(group=[n_name],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  s_cust -> bld_cust;
+  bld_cust -> prb_co [label="build"];
+  s_ord    -> prb_co [label="probe"];
+  prb_co   -> bld_co;
+  bld_co   -> prb_col [label="build"];
+  s_lin    -> prb_col [label="probe"];
+
+  prb_col  -> prb_sup;
+  s_sup    -> prb_sup [style=dashed, label="lookup"];
+  prb_sup  -> cross_eq;
+  cross_eq -> agg;
+  s_nat    -> agg [style=dashed, label="n_name"];
+  agg      -> sort;
+}

@@ -1,0 +1,159 @@
+// Q5 family logical plan — shared by S1, S2, S3.
+//
+// Departs from Calcite's vanilla Q5 plan in two key ways, mirroring
+// Q3's COL-family treatment:
+//
+//   1. Pipeline sort key is CUSTKEY, not ORDERKEY. ORDERS and LINEITEM
+//      secondaries are extended with the custkey FD (orders key
+//      `(custkey, orderkey)`, lineitem key `(custkey, orderkey,
+//      linenumber)`) so the COL MI's natural sort key is custkey.
+//      Per OPERATORS.md §1, the family logical plan must match the COL
+//      MI's natural sort key.
+//
+//   2. **Side dimension tables (REGION, NATION, SUPPLIER) reduce
+//      independently of the chain and gate the chain via reduce-side
+//      hash structures**:
+//         • REGION → r_name = SEGMENT → 1 r_regionkey
+//         • NATION ⋈ region → in-region nation_set (~5 entries),
+//           plus nation_name_map (n_nationkey → n_name)
+//         • SUPPLIER ⋈ nation_set → supplier_nation_map
+//           (s_suppkey → s_nationkey, restricted to in-region)
+//      All three structures are computed BEFORE the chain pipeline
+//      starts. They have no chain-position; the chain consumes them
+//      via lookups, not joins-up.
+//
+// The chain itself is identical in shape to Q3's: customer × orders ×
+// lineitem in custkey-byte-lex order. Filter pushdown:
+//
+//   • c_nationkey ∈ nation_set       → fused with TableScan(CUSTOMER)
+//                                       (set membership; ~80% prune)
+//   • o_orderdate ∈ window           → fused with TableScan(ORDERS)
+//   • l_extendedprice * (1-l_discount) → per-lineitem accumulator input
+//   • l_suppkey → SUPPLIER lookup    → per-lineitem; SKIP if not in
+//                                       supplier_nation_map (out-of-region)
+//   • c_nationkey == s_nationkey     → per-lineitem cross-equality;
+//                                       earliest position is right after
+//                                       the SUPPLIER lookup
+//
+// Q5 has NO sibling sub-aggregate. The MI benefit is purely §3.1.3
+// hierarchical-prefix scan locality on the COL chain. (The side tables
+// are dimension lookups, not chain participants; the cross-equality
+// gate is a per-lineitem post-lookup filter, not a fourth join level.)
+//
+// FILTER PUSHDOWN: every parameterised filter is pushed as far down as
+// possible, stopping ONLY at secondary structures. The COL MI, COL
+// secondaries, and pipeline view are all loaded UNFILTERED. None of
+// `r_name`, the resolved nation_set, or the orderdate window may be
+// baked into any secondary (predicate hoisting; PLAYBOOK §3.5 step 7).
+//
+// C++ implementation map (q5/query.tpp + col_pipeline.tpp,
+// to be created in Phase 0.5):
+//
+//   Side reductions (built before pipeline)
+//   ───────────────────────────────────────
+//   • Scan(REGION) + Filter(r_name == :1)        — 5 rows → 1 regionkey
+//   • Scan(NATION) + Filter(n_regionkey == reg)  — 25 rows → ~5 entries
+//                                                  → nation_set,
+//                                                    nation_name_map
+//   • Scan(SUPPLIER) + Filter(s_nationkey ∈ ns)  — ~10K rows → ~2K entries
+//                                                  → supplier_nation_map
+//
+//   Pipeline (custkey-sorted)
+//   ─────────────────────────
+//   • Scan + per-table Filter (fused)             — q5_predicate_customer
+//                                                   (c_nationkey ∈ nation_set)
+//                                                   in on_customer; returns
+//                                                   false to suppress group;
+//                                                   q5_predicate_orders
+//                                                   (orderdate window) in
+//                                                   on_order
+//   • Per-LINEITEM SUPPLIER lookup + cross-eq     — per-lineitem in
+//                                                   on_lineitem; SKIP if
+//                                                   absent or
+//                                                   c_nationkey != s_nationkey
+//   • HashAggregate(group=[n_name],               — per-`n_name`
+//       revenue = SUM(l_extendedprice              accumulator (Visitor
+//                     * (1 - l_discount)))         carries a small map
+//                                                   keyed by n_name)
+//   • Pipeline output                             — q5_pipeline_view_t
+//                                                   (S2 only) or direct
+//                                                   q5_agg_row_t emission
+//                                                   (S1/S3)
+//
+//   Outside-pipeline (constant across S1/S2/S3 per OPERATORS.md §6.4)
+//   ────────────────────────────────────────────────────────────────
+//   • Sort (revenue DESC)                         — std::sort over ~5 rows
+//   • No LIMIT                                    — TPC-H Q5 has no LIMIT
+//
+// Inside-pipeline physical execution (the S1/S2/S3 comparison axis):
+//   S1 → col_secondary_group_walk over CUSTOMER + 2 COL secondaries
+//        (orders_sec keyed by (custkey, orderkey); lineitem_sec keyed
+//        by (custkey, orderkey, linenumber))
+//   S2 → scan q5_pipeline_view_t. The view is loaded UNFILTERED and
+//        per-lineitem (one row per (custkey, orderkey, linenumber)
+//        carrying l_extendedprice, l_discount, l_suppkey,
+//        c_nationkey, o_orderdate). All filters apply live on view
+//        rows; the per-`n_name` HashAggregate fires above the view
+//        scan.
+//   S3 → col_group_walk over the 3-table COL MergedAdapter
+//
+// Outside-pipeline operators are byte-identical across the three.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Side reductions (computed before pipeline) ───────────
+  s_reg [label="TableScan(REGION)\n+ Filter(r_name == :1)\n→ 1 regionkey",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_nat [label="TableScan(NATION)\n+ Filter(n_regionkey == reg)\n→ nation_set, nation_name_map",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_sup [label="TableScan(SUPPLIER)\n+ Filter(s_nationkey ∈ nation_set)\n→ supplier_nation_map",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+
+  s_reg -> s_nat [style=dashed, label="region\nresolved"];
+  s_nat -> s_sup [style=dashed, label="nation_set"];
+
+  // ─────────── Sources with filters fused ───────────
+  s_cust [label="TableScan(CUSTOMER)\n+ Filter(c_nationkey ∈ nation_set)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ window)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  // ─────────── Inside pipeline (custkey-sorted) ───────────
+  joinB [label="Join(ORDERS ⋈ LINEITEM, o_orderkey = l_orderkey)\nstill custkey-sorted (FD via parent)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  joinA [label="Join(CUSTOMER ⋈ <ord-line>, c_custkey = o_custkey)\nsorted on custkey",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  probe_sup [label="Probe(supplier_nation_map[l_suppkey])\nSKIP if absent",
+             shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+  cross_eq  [label="Filter(c_nationkey == s_nationkey)",
+             shape=box, style=filled, fillcolor="#FFEBEE"];
+
+  agg [label="HashAggregate(group=[n_name],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[Q5RevenueByNationAccumulator]",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  proj [label="Project(n_name, revenue)\n→ q5_agg_row_t"];
+
+  // ─────────── Outside pipeline ───────────
+  sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  s_ord -> joinB [label="0"];
+  s_lin -> joinB [label="1"];
+
+  s_cust -> joinA [label="0"];
+  joinB -> joinA  [label="1"];
+
+  joinA   -> probe_sup;
+  s_sup   -> probe_sup [style=dashed, label="lookup"];
+  probe_sup -> cross_eq;
+  cross_eq -> agg;
+  s_nat   -> agg [style=dashed, label="n_name"];
+
+  agg  -> proj;
+  proj -> sort;
+}

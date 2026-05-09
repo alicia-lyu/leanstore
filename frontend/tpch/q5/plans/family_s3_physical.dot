@@ -1,0 +1,93 @@
+// Q5 S3 physical plan — substitutes the family logical plan with a
+// single COLGroupWalk over the 3-table COL MergedAdapter, plus three
+// pre-computed reduce-side hashmaps (REGION, NATION, SUPPLIER).
+//
+// Why one operator replaces five: the COL MI co-locates CUSTOMER,
+// ORDERS, and LINEITEM by custkey using Calcite-style tagged keys.
+// Within a custkey group, byte-lex order is:
+//
+//     customer → (orders → lineitem*)+
+//
+// (sentinel ordering customer=1 < invoice=2 (reserved/unused) <
+// orders=3 < lineitem=4 — COL reuses COLI tag values verbatim.) This
+// means a single forward streaming pass — no buffering, no chain
+// hashmaps — can:
+//
+//   1. Apply the c_nationkey ∈ nation_set gate at the customer record
+//      (suppresses the rest of the group when the gate fails — same
+//      mechanism as Q3's mktsegment gate, with set-membership in place
+//      of equality).
+//   2. Apply o_orderdate ∈ window at on_order; if the order fails,
+//      no lineitems for that orderkey are admitted.
+//   3. Per qualifying lineitem: probe supplier_nation_map[l_suppkey];
+//      SKIP if absent (out-of-region supplier). Apply
+//      c_nationkey == s_nationkey; SKIP if false. Resolve
+//      nation_name_map[s_nationkey] → n_name and accumulate
+//      l_extendedprice * (1 - l_discount) into the per-`n_name`
+//      revenue map carried by the Visitor.
+//
+// Q5 has NO sibling sub-aggregate. The Visitor's per-`n_name`
+// HashAggregate is a small (~5-bucket) map kept across all custkey
+// groups for the entire walk; the walker emits no rows mid-walk and
+// dumps the final map at on_walk_end.
+//
+// FILTER PUSHDOWN STATUS: every filter from family_logical.dot except
+// the cross-equality is fused into the walker. The cross-equality
+// fires per-lineitem after the SUPPLIER probe, which is the earliest
+// physically possible position. None of the 5 filters applies post-walk.
+//
+// C++ implementation map (q5/query.tpp::query_by_merged):
+//
+//   col_group_walk<Backend>(merged_col, Visitor{
+//       nation_set,
+//       nation_name_map,
+//       supplier_nation_map,
+//       params})
+//
+//     Visitor::on_customer  → c_nationkey ∈ nation_set gate;
+//                             returns false to suppress the group
+//     Visitor::on_order     → q5_predicate_orders (orderdate window);
+//                             no per-orderkey state to flush (per-
+//                             order revenue is not the aggregate key)
+//     Visitor::on_lineitem  → supplier_nation_map probe → SKIP if
+//                             absent → cross-equality → SKIP if false
+//                             → resolve n_name → per-n_name accumulate
+//     Visitor::on_walk_end  → emit one q5_agg_row_t per (n_name,
+//                             revenue) entry in the running map
+//
+// PremergedJoin / BinaryMergeJoin are NOT instantiated here — the COL
+// merged adapter's tagged-key encoding makes the Visitor pattern strictly
+// more expressive (3-way custkey grouping with side hashmap lookups,
+// cross-equality, and a 5-bucket per-n_name HashAggregate). This is the
+// operator-level expression of the §3.1.3 hierarchical pattern, with
+// the side-table reductions handled outside the MI.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Pre-pipeline reductions ───────────
+  s_reg [label="TableScan(REGION) + Filter(r_name == :1)\n→ regionkey",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_nat [label="TableScan(NATION) + Filter(n_regionkey == reg)\n→ nation_set, nation_name_map",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_sup [label="TableScan(SUPPLIER) + Filter(s_nationkey ∈ nation_set)\n→ supplier_nation_map",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_reg -> s_nat [style=dashed, label="region"];
+  s_nat -> s_sup [style=dashed, label="nation_set"];
+
+  // ─────────── Pipeline ───────────
+  mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
+      shape=box3d, style=filled, fillcolor="#E8F0FE"];
+
+  walk [label="COLGroupWalk(Visitor)\nsubsumes:\n  • c_nationkey ∈ nation_set gate (on_customer)\n  • o_orderdate window filter (on_order)\n  • supplier_nation_map lookup + cross-eq (on_lineitem)\n  • CUSTOMER ⋈ ORDERS ⋈ LINEITEM\n  • per-n_name HashAggregate (small in-Visitor map)\n  • Project → q5_agg_row_t (emitted at on_walk_end)",
+         shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  s_nat -> walk [style=dashed, label="nation_set,\nnation_name_map"];
+  s_sup -> walk [style=dashed, label="supplier_nation_map"];
+  mi    -> walk;
+  walk  -> sort;
+}
