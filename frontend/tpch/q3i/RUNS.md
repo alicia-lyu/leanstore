@@ -19,6 +19,32 @@ G-series, §A6 memory-pressure sweep). New runs go here.
 
 ## Runs
 
-_(no new runs since this file was created on 2026-05-08; Q3I `_btree`
-perf sweep is blocked on the COLI tagged-key variant-dispatch failure
-tracked in `LINUX_PENDING.md`.)_
+### 2026-05-08 21:38 CDT — q3i_lsm SF=15 DRAM=0.1 GiB sweep (default)
+- **Commit**: `edd34a1f` (`calcite-integration`)
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 2–6 (DRAM=0.1, scale=15)
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S5, Linux (CloudLab `node0`,
+  64 cores, 251 GiB RAM, NVMe `/mnt/ssd`).
+- **Claim check**: Supports the paper claim — measured shape
+  S3 (156.0) > S2 (104.0) > S4 (66.9) ≈ S5 (66.3) > S1 (56.7) TX/s,
+  i.e. S3 ≥ S2 > S1/S4 (S5 sits with S4, confirming the §S5
+  deferral rationale that S5 lacks the hand-tuned `coli_group_walk`).
+
+### 2026-05-08 21:40 CDT — q3i_lsm SF=15 DRAM=4 GiB (cache-resident)
+- **Commit**: `edd34a1f` (`calcite-integration`)
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 7–11 (DRAM=4, scale=15)
+- **Config**: SF=15, DRAM=4 GiB, S1–S5, Linux (CloudLab `node0`).
+- **Claim check**: Supports the paper claim and amplifies it with
+  cache resident — S3 (182.7) > S2 (99.5) > S5 (80.3) > S1 (69.2) >
+  S4 (57.4) TX/s; S3 still leads (+17% over the disk-pressure config),
+  S2 slightly slower (probe-side fits, but probe is the same), and S4
+  hash regresses from cache contention against the larger probe build.
+
+### 2026-05-08 21:42 CDT — q3i_lsm SF=1 DRAM=0.1 GiB (small, cache-fits-anyway)
+- **Commit**: `edd34a1f` (`calcite-integration`)
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 12–16 (DRAM=0.1, scale=1)
+- **Config**: SF=1, DRAM=0.1 GiB, S1–S5, Linux (CloudLab `node0`).
+- **Claim check**: Supports the paper claim at small scale — shape
+  S3 (2632) > S2 (1517) > S4 (1194) > S5 (1025) > S1 (912) TX/s,
+  the same S3 ≥ S2 > S1/S4 ordering at ~17× the absolute throughput;
+  confirms the ordering is structural, not an artefact of the SF=15
+  working-set/DRAM ratio.
