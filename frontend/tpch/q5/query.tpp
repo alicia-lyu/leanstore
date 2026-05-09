@@ -168,6 +168,125 @@ inline bool q5_predicate_lineitem(const lineitem_t& /*l*/, const Params& /*p*/)
 }
 
 // ---------------------------------------------------------------------------
+// Q5GroupWalkVisitor — group-walk visitor for the COL merged index (S3).
+//
+// Walks `customer → (orders → lineitems*)+` groups in byte-lex order.
+// For each qualifying (customer, order, lineitem) triple it probes the
+// SUPPLIER hashmap and applies the c_nationkey = s_nationkey cross-equality,
+// then accumulates revenue into the per-n_name HashAggregate.
+//
+// This is a free struct rather than a Q3FamilyVisitor subclass because Q5's
+// hook semantics differ significantly:
+//   - on_customer: nation_set membership gate (not mktsegment string compare)
+//   - on_order: orderdate window gate (not upper-bound only)
+//   - on_lineitem: SUPPLIER probe + cross-eq + per-n_name accumulate
+//                  (not per-orderkey revenue flush)
+//   - on_group_end: no-op (no per-group flush; aggregate is global)
+//
+// Skip signals (same protocol as Q3FamilyVisitor):
+//   skip_group_pending — set by on_customer when c_nationkey ∉ nation_set;
+//                        the walker will skip the rest of the custkey group.
+//   skip_order_pending — set by on_order when the orderdate window fails;
+//                        the walker will skip the order's lineitems.
+
+struct Q5GroupWalkVisitor {
+   const Params&             params;
+   const Q5SideTables&       sides;
+   NNameRevenueAggregator&   agg;
+   Q5Stats*                  stats = nullptr;
+
+   // Per-group state.
+   bool    skip_group_pending = false;  // set when c_nationkey ∉ nation_set
+   bool    skip_order_pending = false;  // set when order fails orderdate window
+   Integer cached_c_nationkey = -1;    // carried from on_customer into on_lineitem
+
+   // Walker protocol: one-shot consumption of the skip flags.
+   bool wants_skip_group()
+   {
+      bool s          = skip_group_pending;
+      skip_group_pending = false;
+      return s;
+   }
+
+   bool wants_skip_order()
+   {
+      bool s          = skip_order_pending;
+      skip_order_pending = false;
+      return s;
+   }
+
+   // on_record_visited: bump MI walk counter.
+   void on_record_visited()
+   {
+      if (stats) stats->mi_records_visited++;
+   }
+
+   void on_group_skipped(Integer /*ck*/)
+   {
+      if (stats) stats->mi_groups_skipped++;
+   }
+
+   // Gate: c_nationkey must be in the in-region nation_set.
+   // Returns false to suppress on_order / on_lineitem for this group.
+   // on_group_end is still called regardless.
+   bool on_customer(Integer /*ck*/, const customer_coli_t& c)
+   {
+      if (stats) stats->customers_scanned++;
+      if (sides.nation_set.count(c.c_nationkey) == 0) {
+         skip_group_pending = true;
+         return false;
+      }
+      cached_c_nationkey = c.c_nationkey;
+      if (stats) stats->customers_passing_filter++;
+      return true;
+   }
+
+   // Gate: o_orderdate must fall in [orderdate_lo, orderdate_lo + 365).
+   // Uses orders_coli_t (the MI record type) which carries o_orderdate directly.
+   void on_order(const orders_coli_t::Key& /*k*/, const orders_coli_t& o)
+   {
+      if (stats) stats->orders_scanned++;
+      if (o.o_orderdate < params.orderdate_lo
+          || o.o_orderdate >= params.orderdate_lo + 365) {
+         skip_order_pending = true;
+         return;
+      }
+      if (stats) stats->orders_passing_filter++;
+   }
+
+   // Per-lineitem: probe SUPPLIER hashmap, apply cross-eq, accumulate revenue.
+   void on_lineitem(const lineitem_col_t::Key& /*k*/, const lineitem_col_t& l)
+   {
+      if (stats) stats->lineitems_scanned++;
+
+      // SUPPLIER probe: supplier must be in the pre-filtered hashmap.
+      auto sit = sides.supplier_nation.find(l.l_suppkey);
+      if (sit == sides.supplier_nation.end()) return;
+
+      // Cross-equality: supplier's nation must match customer's nation.
+      if (sit->second != cached_c_nationkey) return;
+
+      if (stats) stats->lineitems_passing_filter++;
+
+      // Resolve n_name and accumulate into the per-n_name bucket.
+      const std::string& n_name = sides.n_name_map.at(sit->second);
+      agg.accumulate(l, n_name);
+
+      if (stats) {
+         stats->join_callbacks++;
+         stats->lineitems_admitted++;
+      }
+   }
+
+   // on_group_end: no per-group flush needed — the per-n_name aggregate
+   // spans all groups.  Clear cached state to guard stale reads.
+   void on_group_end(Integer /*ck*/)
+   {
+      cached_c_nationkey = -1;
+   }
+};
+
+// ---------------------------------------------------------------------------
 // Query bodies — all four stubbed for Phase 0.5.
 //
 // Each returns 0 admitted rows (empty result vector).  The XOR digest of an
@@ -195,10 +314,36 @@ long Q5Workload<Backend>::query_by_view(std::vector<q5_agg_row_t>& out)
 template <typename Backend>
 long Q5Workload<Backend>::query_by_merged(std::vector<q5_agg_row_t>& out)
 {
-   // Phase 4 §7.1: col_group_walk over MI[COL] with a Q5-specific Visitor;
-   // SUPPLIER + NATION + REGION side hash builds pre-walk.
+   // S3: col_group_walk over the 3-table COL MI using Q5GroupWalkVisitor.
+   //
+   // Byte-lex order within a custkey group:
+   //   customer → (orders → lineitems*)+
+   //
+   // The visitor:
+   //   • on_customer  — gates by c_nationkey ∈ nation_set; skips group on miss.
+   //                    Caches cached_c_nationkey for the cross-equality check.
+   //   • on_order     — gates by orderdate window; sets skip_order_pending on miss.
+   //   • on_lineitem  — probes SUPPLIER map; applies cross-eq (c_nk == s_nk);
+   //                    resolves n_name; accumulates revenue per n_name bucket.
+   //   • on_group_end — clears cached state (no per-group flush needed).
+   //
+   // After the walk, agg.emit() pushes ~5 rows (one per in-region nation),
+   // then std::sort orders them revenue DESC.
    out.clear();
-   return 0;
+   Q5SideTables sides;
+   build_q5_side_tables<Backend>(region, nation, supplier, params, sides);
+
+   NNameRevenueAggregator agg;
+   Q5GroupWalkVisitor v{params, sides, agg, stats};
+   col_group_walk<Backend>(col.merged_adapter(), v);
+
+   agg.emit(out, sides);
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->agg_buckets         = static_cast<long>(out.size());
+   }
+   std::sort(out.begin(), out.end(), q5_sort_cmp);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>

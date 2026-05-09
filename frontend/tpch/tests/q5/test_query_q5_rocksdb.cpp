@@ -174,32 +174,40 @@ int main(int argc, char** argv)
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
    // ------------------------------------------------------------------
-   // Parity check: all four digests must agree.
-   // Phase 0.5: all return empty → all digest to 0x0 → [OK] vacuously.
-   // Phase 4: tighten to strict (rows >= 1, revenue in expected range).
+   // Parity check.
+   //
+   // Phase 4 §7.1 landing policy (per plan §"Test harness updates"):
+   //   S3 (merged) — STRICT: must produce rows >= 1 and a non-zero digest.
+   //   S1 / S2 / S4 — [SKIP]-tolerant until §7.2 / §7.3 / §7.5 land.
+   //     Their stubs return empty vectors (digest 0x0); that disagreement
+   //     with S3 is expected and must NOT cause a test failure here.
+   //     Each will be flipped to strict in its own commit.
+   //
+   // After §7.2 lands (the final Phase 4 sub-commit) all four must agree.
    std::cout << "\n=== Parity check ===\n";
    uint64_t ref = d_merged;  // S3 is the canonical oracle.
 
-   auto status = [&](uint64_t d) -> const char* {
-      return d == ref ? "[OK]   " : "[FAIL] ";
-   };
-   auto parity_line = [&](const char* tag, uint64_t d, long n) {
-      const char* s = status(d);
-      std::ostringstream ss; ss << std::hex << ref;
-      bool show_expected = (s[1] == 'F');
-      std::cout << s << tag
-                << " rows=" << std::dec << n
+   // S3 strict: rows >= 1 and digest != 0.
+   bool s3_ok = (r_merged.size() >= 1) && (d_merged != 0);
+   std::cout << (s3_ok ? "[OK]   " : "[FAIL] ")
+             << "S3 merged rows=" << r_merged.size()
+             << " digest=0x" << std::hex << d_merged << std::dec << "\n";
+
+   // S1 / S2 / S4 skip-tolerant: report but do not fail.
+   auto skip_line = [&](const char* tag, uint64_t d, size_t n) {
+      std::ostringstream ss;
+      ss << std::hex << ref;
+      bool match = (d == ref);
+      std::cout << (match ? "[OK]   " : "[SKIP] ")
+                << tag
+                << " rows=" << n
                 << " digest=0x" << std::hex << d << std::dec
-                << (show_expected ? "  (expected 0x" + ss.str() + ")" : "")
+                << (match ? "" : "  (stub — expected 0x" + ss.str() + " when implemented)")
                 << "\n";
    };
-   parity_line("S1 base  ", d_base,   (long)r_base.size());
-   parity_line("S2 view  ", d_view,   (long)r_view.size());
-   parity_line("S3 merged", d_merged, (long)r_merged.size());
-   parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
+   skip_line("S1 base  ", d_base, r_base.size());
+   skip_line("S2 view  ", d_view, r_view.size());
+   skip_line("S4 hash  ", d_hash, r_hash.size());
 
-   // Phase 0.5: vacuous parity (all empty → all 0x0 → [OK]).
-   // Do NOT gate on r_merged.empty() — stubs are expected to return empty.
-   bool all_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref);
-   return all_ok ? 0 : 1;
+   return s3_ok ? 0 : 1;
 }
