@@ -245,15 +245,15 @@ struct LeanStoreAdapter : Adapter<Record> {
 
    std::unique_ptr<LeanStoreScanner<Record>> getScanner()
    {
-      std::unique_ptr<LeanStoreScanner<Record>> scanner;
-      if (FLAGS_vi) {
-         scanner = std::make_unique<LeanStoreScanner<Record>>(
-             *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
-      } else {
-         scanner = std::make_unique<LeanStoreScanner<Record>>(
-             *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
-      }
-      return scanner;
+      // The adapter always registers a BTreeLL (see ctor comment on
+      // FLAGS_vi/BTreeVI). Branching on FLAGS_vi here used to cast to
+      // BTreeVI* with the default --vi=true; that dynamic_cast returned
+      // null for our BTreeLL backing tree, the static_cast<BTreeGeneric*>
+      // preserved the null, and *nullptr produced a null reference that
+      // SEGV'd on the first iterator op (BTreeGenericIterator.hpp:295,
+      // btree.dt_id deref). Always cast to BTreeLL to match the ctor.
+      return std::make_unique<LeanStoreScanner<Record>>(
+          *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
    }
 
    u64 estimatePages() final { return btree->estimatePages(); }

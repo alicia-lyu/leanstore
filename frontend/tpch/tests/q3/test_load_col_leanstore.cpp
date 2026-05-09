@@ -300,7 +300,13 @@ int main(int argc, char** argv)
              << " hierarchical order for custkey=" << spot_custkey
              << ": customer,(orders+lineitems)+\n";
 
-   std::cout << "       MI size: " << merged_col.size() << " MiB\n";
+   double mi_size_mib = 0.0;
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+      mi_size_mib = merged_col.size();
+      leanstore::cr::Worker::my().commitTX();
+   });
+   std::cout << "       MI size: " << mi_size_mib << " MiB\n";
 
    // -----------------------------------------------------------------------
    // Split-index check.
@@ -357,7 +363,13 @@ int main(int argc, char** argv)
    std::cout << pass(orders_sec_sorted)
              << " orders secondary is custkey-sorted\n";
 
-   std::cout << "       secondaries size: " << col_pipe.get_split_size() << " MiB\n";
+   double split_size_mib = 0.0;
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+      split_size_mib = col_pipe.get_split_size();
+      leanstore::cr::Worker::my().commitTX();
+   });
+   std::cout << "       secondaries size: " << split_size_mib << " MiB\n";
 
    return 0;
 }

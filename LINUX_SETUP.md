@@ -258,39 +258,32 @@ mkdir -p /mnt/ssd/lq_btree && touch /mnt/ssd/lq_btree/db.image
 
 Each should print `[OK]` lines for every check and exit 0.
 
-> **Known issue (2026-05-08, observed on this Linux bring-up): all
-> `_btree` smoke tests SEGV during the TPC-H load phase.** Symptoms
-> seen on Ubuntu 22.04, clang 14, branch `calcite-integration` at
-> commit 7115cc76:
+> **Status as of 2026-05-08:** the historical
+> `loadInvoiceAndLinkLineitem` `ensure(false)` and the SEGV during
+> orders loading are both resolved. The SEGV root cause was
+> `LeanStoreAdapter::getScanner()` / `LeanStoreMergedAdapter` casting
+> to `BTreeVI*` when `FLAGS_vi=true` (default), even though the
+> adapter ctor has always registered a `BTreeLL`; the dynamic_cast
+> returned null and the first iterator op deref'd `btree.dt_id`.
+> Fix lives in `frontend/shared/adapter-scanner/`. `_btree` smoke
+> tests now run with the same flags as `_lsm` — no `--vi=false`
+> workaround needed.
 >
-> - `test_load_merged_btree`, `test_load_q12_btree`,
->   `test_query_q12_btree` — SIGSEGV (exit 139) right after
->   `Loaded 1500 orders records.` No assertion message, no
->   stderr; the process is killed by signal.
-> - `test_query_q3i_btree` — gets *past* the prior known
->   `loadInvoiceAndLinkLineitem` issue (prints
->   `Inserted 3000 invoices, rewrote 6112 lineitems.`) and then
->   SIGSEGVs at `customer→orders / customer→lineitems` map
->   build, with multiple
->   `JUMP in backend/leanstore/storage/btree/core/BTreeGenericIterator.hpp:369`
->   lines preceding the crash.
+> **Currently passing at SF=1**: `test_load_merged_btree`,
+> `test_load_q12_btree`, `test_load_col_btree`,
+> `test_query_q12_btree`, `test_query_q3_btree` — all `[OK]`
+> with `--wal=true` and the default flags.
 >
-> The previous documented symptom (`ensure(false)` abort in
-> `BTreeVI.cpp` from `loadInvoiceAndLinkLineitem`) appears to be
-> superseded — q3i now walks past that path and crashes elsewhere.
-> The disposition is unchanged: `_lsm` is the source of truth for
-> correctness, `_btree` smoke tests are deferred. RocksDB
-> equivalents pass cleanly (see §5b results below).
->
-> **Tracking**: this should be folded into `LINUX_PENDING.md` once
-> someone has a chance to triage the new SEGV — keep that file as
-> the live worklist; this section just warns the next bring-up.
+> **Still failing**: `test_query_q3i_btree` aborts with a COLI
+> tagged-key variant-dispatch assertion in
+> `views_coli.hpp:110` during `coli_group_walk`. Different bug —
+> tracked in `LINUX_PENDING.md`. Q3I LSM is unaffected.
 
 > **Pitfall when running smoke tests:** `cmd | tail` makes `$?`
 > report `tail`'s exit code, not the binary's, so a SEGV looks like
 > success. Either redirect to a file (`cmd > /tmp/x.log 2>&1; echo
-> $?`) or use `${PIPESTATUS[0]}`. Several `_btree` SEGVs in this
-> bring-up were initially missed because of this.
+> $?`) or use `${PIPESTATUS[0]}`. Several `_btree` SEGVs in the
+> 2026-05-08 bring-up were initially missed because of this.
 
 ### 5b. Query parity (Q12 + Q3I, both backends)
 
