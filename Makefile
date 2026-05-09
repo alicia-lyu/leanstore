@@ -28,6 +28,14 @@ BUILD_DIR_DEBUG     := $(BUILD_DIR)-debug
 BUILD_DIRS          := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 EXEC_NAMES          := basic_join basic_group basic_group_variant
 
+# Persistence format version. Each value gets its own subtree under
+# $(data_disk)/<exec>/<format_version>/, isolating images written by
+# binaries with different record-type byte layouts (e.g. lineitem_col_t,
+# lineitem_coli_t key/payload changes). Bump in any commit that breaks
+# on-disk compatibility — old images stay readable from the prior tag.
+# Tags: q3-q3i-stable-v0 (2026-05-08) — last commit at v0.
+format_version      ?= v0
+
 # Experiment flags
 dram                	:= 0.1
 scale 			    	:= 15
@@ -79,6 +87,31 @@ temp_lsm:
 temp:
 	-$(MAKE) geo_btree_2 dram=0.1
 	-$(MAKE) geo_btree_4 dram=0.1
+
+# One-shot relocation of pre-versioning image dirs into v0/. Run once
+# after upgrading to a Makefile that uses $(format_version) so existing
+# images become reachable at the new versioned path. Idempotent: skips
+# anything already moved. Lists v0 contents at the end.
+.PHONY: migrate-format-v0
+migrate-format-v0:
+	@for exec in geo_btree geo_lsm q12_btree q12_lsm q3_btree q3_lsm q3i_btree q3i_lsm; do \
+	    base=$(data_disk)/$$exec; \
+	    [ -d $$base ] || continue; \
+	    mkdir -p $$base/v0 $$base/v0/build $$base/v0/build-debug; \
+	    for f in $$base/*.image $$base/*.image_temp; do \
+	        [ -e "$$f" ] && mv "$$f" $$base/v0/ 2>/dev/null || true; \
+	    done; \
+	    for d in $$base/[0-9]*; do \
+	        [ -d "$$d" ] || continue; \
+	        mv "$$d" $$base/v0/ 2>/dev/null || true; \
+	    done; \
+	    for b in build build-debug; do \
+	        for f in $$base/$$b/*.json; do \
+	            [ -e "$$f" ] && mv "$$f" $$base/v0/$$b/ 2>/dev/null || true; \
+	        done; \
+	    done; \
+	    echo "[migrated] $$base/v0 ->"; ls -la $$base/v0 2>/dev/null | tail -n +2 | head -10; \
+	done
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
