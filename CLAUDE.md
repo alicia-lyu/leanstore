@@ -39,6 +39,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   will be deceptively long and the slowdown will look like a
   regression in the binary itself rather than scheduled reload.
 - When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree.
+- **Append a `RUNS.md` entry after every perf run.** Each query
+  directory under `frontend/tpch/<q>/` and `frontend/geo/` has a
+  `RUNS.md`. After a `make q*_{lsm,btree}` (or `geo_*`) sweep
+  produces a `TPut.csv` (or finishes without one), append an entry
+  with: date+time, commit SHA + branch, path to the `TPut.csv` (or
+  why it wasn't produced), config (SF / DRAM / structures / host),
+  and **one sentence** stating whether the run supports the query's
+  paper claim and how. If the run is correctness-only (no perf
+  numbers), still log it — say so explicitly. Don't backfill old
+  runs. Keep entries terse: this is a ledger, not a writeup.
 
 ## Project Overview
 
