@@ -34,16 +34,22 @@ Before starting, read (in order):
 ```
 Phase 0   (design doc — REQUIRED before any code)
   → Phase 0.5 (skeleton commit — REQUIRED before Phase 1)
-    → Phase 1 (views.hpp)
-      → Phase 2 (workload.hpp)
-        → Phase 3 (load.tpp)
-          → Phase 4 (query.tpp)   ← the bulk of the work
-            → Phase 5 (per_structure_workload.hpp)
-              → Phase 6 (executables)
-                ├→ Phase 7 (test harness)    ← can start once Phase 5 is done
-                ├→ Phase 8 (CMake + targets) ← can start once Phase 6 files exist
-                └→ Phase 9 (documentation refresh) ← can start once Phase 7 passes
+    → Phase 1   (load path: views.hpp + workload.hpp + load.tpp;
+    │            test_load_*_lsm passes at end)
+      → Phase 4 (query bodies: query.tpp)   ← the bulk of the work
+        → Phase 5 (wiring + tests + docs:
+                   per_structure_workload.hpp, executables,
+                   test harness, CMake/targets, doc refresh)
 ```
+
+> **Phase numbering note (2026-05-09 consolidation).** Phase numbers
+> 2, 3, 6, 7, 8, 9 are intentionally retired — the underlying work
+> is now folded into Phase 1 (load path) and Phase 5 (wiring tail).
+> **Phase 4 is preserved** because per-query docs and code comments
+> reference its sub-§ headings as "Phase 4 §7.1" (S3 merged), "Phase
+> 4 §7.2" (S1 merge join), etc. Renumbering would churn dozens of
+> cross-references for no architectural gain. Sub-section labels
+> "(cont.)" identify continuations of the same phase.
 
 > **Process rule (NON-NEGOTIABLE).** No code change for the new
 > query lands before Phase 0 + Phase 0.5 are committed. Phase 0
@@ -370,7 +376,7 @@ implementation so subsequent phases edit named places.
   wrapper concept uniform so the test harness and
   `TpchExecutableHelper::tput_tx` can call
   `wrapper.set_params_for_iter(count)` before each query. The
-  non-stub body lands in Phase 5 (workload.hpp). See Q12 / Q3I
+  non-stub body lands in Phase 1 (workload.hpp). See Q12 / Q3I
   reference implementations.
 - `executable_{rocksdb,leanstore}.cpp`: full `main()` mirroring Q3I
   — the executable should run end-to-end, load data, and "execute"
@@ -500,7 +506,7 @@ merge-joins on that key, plus `project<R>` and `to_key<R>`. See Q3I
 
 ---
 
-## §5 — Phase 2: `workload.hpp` (Class + Params + Predicates)
+## §5 — Phase 1 (cont.): `workload.hpp` (Class + Params + Predicates)
 
 ### Params
 
@@ -593,7 +599,14 @@ class Q{{N}}Workload {
 
 ---
 
-## §6 — Phase 3: `load.tpp` (Constructor + Load Dispatch)
+## §6 — Phase 1 (cont.): `load.tpp` (Constructor + Load Dispatch)
+
+> **Phase 1 exit criterion**: at the end of §4 + §5 + §6, all storage
+> structures populate cleanly. The corresponding `test_load_*_lsm`
+> binary (or per-query equivalent) reports `[OK]` on every cardinality
+> and shape check. `test_query_q{N}_lsm` still passes vacuously
+> (digest `0x0`) because Phase 4 hasn't filled `query_by_*` bodies
+> yet. Commit boundary: one or more commits ending with this state.
 
 ### Constructor
 
@@ -1245,7 +1258,25 @@ The comparator MUST include a unique tiebreaker field as the final key.
 
 ---
 
-## §8 — Phase 5: `per_structure_workload.hpp`
+## §8 — Phase 5: Wiring + tests + docs
+
+Sections §8–§12 are all **Phase 5**, broken out by file rather than
+by phase. They are typically co-developed in one or two commits
+because each piece is mechanical: per-structure aliases mirror the
+template, executables mirror Q3I's, the test harness mirrors Q3's,
+CMake entries mirror neighbouring queries, and the doc refresh is a
+diff against the design doc. Splitting them into separate phases
+inflated the bring-up commit count without adding review value.
+
+**Phase 5 exit criterion**: production binaries build clean (`q{N}_lsm`
+/ `q{N}_btree`); `test_query_q{N}_lsm` passes with strict
+cross-structure XOR parity at SF=1 (and at least one off-default
+param set per §10 "Off-default param verification"); `q{N}/CLAUDE.md`
+reflects the implemented state; `frontend/tpch/CLAUDE.md` "Completed"
+section gains an entry; `RUNS.md` is appended after the first Linux
+perf sweep.
+
+### `per_structure_workload.hpp`
 
 Alias-only file. Copy from Q3I and change names:
 
@@ -1270,7 +1301,7 @@ using HashQ{{N}}   = ::tpch::HashStructure  <Q{{N}}Workload<Backend>, q{{N}}_agg
 
 ---
 
-## §9 — Phase 6: Executables
+## §9 — Phase 5 (cont.): Executables
 
 ### `executable_rocksdb.cpp`
 
@@ -1291,7 +1322,7 @@ Same structure, `#ifndef ROCKSDB_ONLY` guarded. Uses `LeanStoreBackend`.
 
 ---
 
-## §10 — Phase 7: Test Harness
+## §10 — Phase 5 (cont.): Test Harness
 
 > **SSTWrite baseline-subtract**: `RocksDB::SST_WRITE_MICROS` histogram
 > accumulates over DB lifetime, including post-load compaction. For
@@ -1524,7 +1555,7 @@ root-cause when a stale-cache bug misreported one CF's size.
 
 ---
 
-## §11 — Phase 8: CMake + Makefile Targets
+## §11 — Phase 5 (cont.): CMake + Makefile Targets
 
 ### `frontend/CMakeLists.txt`
 
@@ -1562,7 +1593,7 @@ This also refreshes `.vscode/launch.json`.
 
 ---
 
-## §12 — Phase 9: Documentation
+## §12 — Phase 5 (cont.): Documentation
 
 ### `q{N}/CLAUDE.md`
 
