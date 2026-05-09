@@ -28,37 +28,6 @@ BUILD_DIR_DEBUG     := $(BUILD_DIR)-debug
 BUILD_DIRS          := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 EXEC_NAMES          := basic_join basic_group basic_group_variant
 
-# Persistence format version, **per query family**. Each family default
-# below = the newest format-version this commit's binary writes/reads.
-# Bump in the same commit that adds columns to that family's
-# col/coli/acoli record types. New binaries cannot read old images
-# (additive byte changes break the layout); old `vN/` subtrees stay on
-# disk indefinitely, reachable by checking out the corresponding git
-# tag whose Makefile pinned that family at vN.
-# Image-version labels are sequential vN, **decoupled from git tag
-# names**. Git tags are descriptive (e.g. q3-q3i-stable-v0); image
-# labels are just whatever string the maintainer picks (vN by
-# convention). See root CLAUDE.md "format_version workflow rule".
-# History table: frontend/tpch/RUNS.md §"format_version history".
-geo_format_version   ?= v0
-q12_format_version   ?= v0
-q3_format_version    ?= v1
-q3i_format_version   ?= v0
-q5_format_version    ?= v0
-
-# Convenience override: pass `format_version=vK` on the make command
-# line to force ALL four families onto the same version, for the
-# eventual "wide" / paper-ready convergence milestone. Default-empty
-# so the per-family defaults above win unless explicitly collapsed.
-format_version ?=
-ifneq ($(strip $(format_version)),)
-  geo_format_version   := $(format_version)
-  q12_format_version   := $(format_version)
-  q3_format_version    := $(format_version)
-  q3i_format_version   := $(format_version)
-  q5_format_version    := $(format_version)
-endif
-
 # Experiment flags
 dram                	:= 0.1
 scale 			    	:= 15
@@ -110,31 +79,6 @@ temp_lsm:
 temp:
 	-$(MAKE) geo_btree_2 dram=0.1
 	-$(MAKE) geo_btree_4 dram=0.1
-
-# One-shot relocation of pre-versioning image dirs into v0/. Run once
-# after upgrading to a Makefile that uses $(format_version) so existing
-# images become reachable at the new versioned path. Idempotent: skips
-# anything already moved. Lists v0 contents at the end.
-.PHONY: migrate-format-v0
-migrate-format-v0:
-	@for exec in geo_btree geo_lsm q12_btree q12_lsm q3_btree q3_lsm q3i_btree q3i_lsm; do \
-	    base=$(data_disk)/$$exec; \
-	    [ -d $$base ] || continue; \
-	    mkdir -p $$base/v0 $$base/v0/build $$base/v0/build-debug; \
-	    for f in $$base/*.image $$base/*.image_temp; do \
-	        [ -e "$$f" ] && mv "$$f" $$base/v0/ 2>/dev/null || true; \
-	    done; \
-	    for d in $$base/[0-9]*; do \
-	        [ -d "$$d" ] || continue; \
-	        mv "$$d" $$base/v0/ 2>/dev/null || true; \
-	    done; \
-	    for b in build build-debug; do \
-	        for f in $$base/$$b/*.json; do \
-	            [ -e "$$f" ] && mv "$$f" $$base/v0/$$b/ 2>/dev/null || true; \
-	        done; \
-	    done; \
-	    echo "[migrated] $$base/v0 ->"; ls -la $$base/v0 2>/dev/null | tail -n +2 | head -10; \
-	done
 
 tmux:
 	tmux new-session -s s1 || tmux attach-session -t s1
