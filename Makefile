@@ -28,21 +28,34 @@ BUILD_DIR_DEBUG     := $(BUILD_DIR)-debug
 BUILD_DIRS          := $(BUILD_DIR) $(BUILD_DIR_DEBUG)
 EXEC_NAMES          := basic_join basic_group basic_group_variant
 
-# Persistence format version, **per query family**. Each family gets
-# its own subtree at $(data_disk)/<exec>/<<family>_format_version>/.
-# Bump only the families whose record-type byte layout changed in a
-# given commit; unchanged families keep their existing images and
-# don't pay reload cost. The non-suffixed `format_version` is the
-# default for any family that hasn't been overridden — useful for
-# global "converge to wide secondaries" once we exit the per-query
-# tuning phase.
-# Tags: q3-q3i-stable-v0 (2026-05-08) — all families at v0 + tput
-# wiring complete; the last commit before per-family format diverged.
-format_version       ?= v0
-geo_format_version   ?= $(format_version)
-q12_format_version   ?= $(format_version)
-q3_format_version    ?= $(format_version)
-q3i_format_version   ?= $(format_version)
+# Persistence format version, **per query family**. Each family default
+# below = the newest format-version this commit's binary writes/reads.
+# Bump in the same commit that adds columns to that family's
+# col/coli/acoli record types. New binaries cannot read old images
+# (additive byte changes break the layout); old `vN/` subtrees stay on
+# disk indefinitely, reachable by checking out the corresponding git
+# tag whose Makefile pinned that family at vN.
+# Image-version labels are sequential vN, **decoupled from git tag
+# names**. Git tags are descriptive (e.g. q3-q3i-stable-v0); image
+# labels are just whatever string the maintainer picks (vN by
+# convention). See root CLAUDE.md "format_version workflow rule".
+# History table: frontend/tpch/RUNS.md §"format_version history".
+geo_format_version   ?= v0
+q12_format_version   ?= v0
+q3_format_version    ?= v0
+q3i_format_version   ?= v0
+
+# Convenience override: pass `format_version=vK` on the make command
+# line to force ALL four families onto the same version, for the
+# eventual "wide" / paper-ready convergence milestone. Default-empty
+# so the per-family defaults above win unless explicitly collapsed.
+format_version ?=
+ifneq ($(strip $(format_version)),)
+  geo_format_version   := $(format_version)
+  q12_format_version   := $(format_version)
+  q3_format_version    := $(format_version)
+  q3i_format_version   := $(format_version)
+endif
 
 # Experiment flags
 dram                	:= 0.1

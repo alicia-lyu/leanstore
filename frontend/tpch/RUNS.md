@@ -74,6 +74,26 @@ load time; 20 GiB targets are out of reach without TB-class SSDs.
 6. Append an entry to the relevant `q*/RUNS.md` recording
    `secondary / DRAM` ratio and observed shape.
 
+## format_version history
+
+Each TPC-H query family carries its own `<family>_format_version`
+Makefile var (see root `CLAUDE.md`). When a column is added to a
+family's record types, the family bumps to the next `vN` and a
+descriptive git tag is dropped at the prior commit. Old images stay
+on disk under their `vN/` subtree so the matching tag stays runnable.
+
+| Family | Version | Date       | Commit     | Tag                  | Schema delta from prior version |
+|--------|---------|------------|------------|----------------------|---------------------------------|
+| geo    | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — no prior version |
+| q12    | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — no prior version |
+| q3     | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — `customer_col_t`, `orders_col_t`, `lineitem_col_t` (Q3 baseline projections); `q3_pipeline_view_t` per-lineitem rows |
+| q3i    | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t` + aCOLI variants (Q3I baseline projections); `q3i_pipeline_view_t` per-lineitem rows |
+
+**Future entries** belong in the same commit that bumps the family
+default. Append a row, don't rewrite history. Convergence to a shared
+"wide" version (all families on vK) gets one row per family with
+`tag=<convergence-tag>`.
+
 ## When the rule doesn't apply
 
 - **Smoke / parity runs**: cache-resident SF=1 (or SF=15 dram=4) is fine

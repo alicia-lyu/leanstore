@@ -39,24 +39,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   will be deceptively long and the slowdown will look like a
   regression in the binary itself rather than scheduled reload.
 - When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree.
-- **Bump per-family `format_version` (Makefile) when changing on-disk
-  record layouts.** Persisted images live at
-  `$(data_disk)/<exec>/$(<family>_format_version)/...` where family is
-  `geo` / `q12` / `q3` / `q3i`. Each family has its own
-  `<family>_format_version` Makefile var defaulting to the global
-  `format_version` (default `v0`). Bump **only the families whose
-  record-type byte layout changed** in your commit (e.g. a Q3
-  `lineitem_col_t` rework bumps `q3_format_version`, leaving Q3I /
-  Q12 / geo at v0 — no reload). Tag `q3-q3i-stable-v0` (2026-05-08)
-  is the last commit before per-family divergence; all families
-  shared `v0` then. **Eventual goal**: once tuning settles, converge
-  every family on a single shared "wide" version that carries the
-  union of every query's column requirements, so secondaries can be
-  cross-query-shared at load time. Until then, families tune
-  independently. Do NOT delete prior-version subtrees — prior tags
-  need them. After pulling this scheme for the first time, run
-  `make migrate-format-v0` once to relocate any pre-versioning
-  images into the appropriate `v0/` subtree.
+- **`format_version` workflow** (per query family). Persisted images
+  live at `$(data_disk)/<exec>/$(<family>_format_version)/...` where
+  family is `geo` / `q12` / `q3` / `q3i`. Each family carries its
+  own `<family>_format_version` Makefile default; that default
+  **always reflects the newest format this commit's binary writes**.
+  New binaries cannot read old images (record-type changes are
+  additive byte appends — breaking the layout); old `vN/` subtrees
+  stay on disk indefinitely so the matching git tag stays runnable.
+
+  **Image-version labels are sequential `vN` (v0, v1, …) and
+  decoupled from git tag names.** Tag names can be descriptive
+  (`q3-q3i-stable-v0`, `pre-q5-column-bump`, …); the on-disk label
+  is just `vN`.
+
+  **When you add a column to a `*_col_t` / `*_coli_t` / `*_acoli_t` /
+  view-row type for a new query**, do all of the following in one
+  commit (or a tightly-scoped pair):
+  1. Drop a descriptive git tag at the *prior* commit
+     (`git tag -a <family>-format-v<N>-YYYY-MM-DD <prior-sha>
+     -m "Last commit at <family> format v<N>"`). The tag pins
+     the binary that owns the existing `vN/` images.
+  2. In the new commit, bump `<family>_format_version ?= v<N+1>` in
+     the Makefile.
+  3. Append the schema delta and provenance to the
+     [format_version history table](frontend/tpch/RUNS.md) under
+     `frontend/tpch/RUNS.md`.
+  4. Don't change the other families' defaults; their binaries are
+     unchanged and keep their existing images.
+  5. Background-load the new `v<N+1>` images at the SF/DRAM combos
+     you care about — `make <exec> scale=… dram=…` (the first run
+     pays the load; subsequent runs reuse the persisted JSON).
+     Pre-existing perf tuning against the prior version continues
+     unblocked: just run from a checkout of the prior tag.
+
+  **Convergence override**: pass `format_version=vK` on the make
+  command line to force *all four* families onto the same vK. This
+  is the eventual "shared wide secondary" milestone; until then,
+  families tune independently.
+
+  **Never delete `vN/` subtrees** — they back the old git tags. A
+  one-shot `make migrate-format-v0` exists for the first machine
+  to pull this scheme (folds any pre-versioning images into `v0/`).
 - **Append a `RUNS.md` entry after every perf run.** Each query
   directory under `frontend/tpch/<q>/` and `frontend/geo/` has a
   `RUNS.md`. After a `make q*_{lsm,btree}` (or `geo_*`) sweep

@@ -37,6 +37,43 @@ consolidating.
   full S1–S4 sweep completes in 2 s with a top-10 result printed for
   every structure); throughput comparison waits on `tput_tx` wiring.
 
+### 2026-05-08 23:24 CDT — q3_lsm SF=1500 DRAM=0.4 GiB (large LSM beyond-memory, 5× ratio)
+- **Commit**: `c500b747` (`calcite-integration`); images at `v0/`.
+- **TPut.csv**: `build/q3_lsm/TPut.csv` rows 10–13 (DRAM=0.4, scale=1500).
+- **Config**: SF=1500, DRAM=0.4 GiB, S1–S4, secondaries 1.22–1.50 GiB
+  per structure (predicted ~2 GiB; LSM compression brings actual ~25%
+  lower), secondary/DRAM ≈ 3.5×, beyond memory regime — see
+  [`../RUNS.md`](../RUNS.md).
+- **Claim check**: Supports the family claim — shape
+  S3 mi_col_walk (0.840) > S2 pipeline_view (0.549) > S1 base_merge_join
+  (0.450) > S4 base_hash_join (0.243) TX/s. S3 ≥ S2 > S1/S4 holds at
+  large scale. S3 ~3.5× S4 — still pure-§3.1.3 hierarchical-prefix
+  benefit dominating; no §3.1.2 sibling confound.
+
+### 2026-05-08 23:01 CDT — q3_btree SF=600 DRAM=0.4 GiB (BTree beyond-memory, 5× ratio)
+- **Commit**: `c500b747` (`calcite-integration`); images at `v0/`.
+- **TPut.csv**: `build/q3_btree/TPut.csv` rows 6–9 (DRAM=0.4, scale=600).
+- **Config**: SF=600, DRAM=0.4 GiB, S1–S4, secondaries 1.32–1.75 GiB
+  per structure (predicted ~2 GiB ✓), secondary/DRAM ≈ 4×, beyond
+  memory regime.
+- **Claim check**: Mixed — S3 (3.71) leads strongly but **S2 collapses
+  to 0.21** (worse than S1 = 1.27). Shape: S3 (3.71) > S1 (1.27) > S2
+  (0.21) > S4 (0.04) TX/s. S3 ≥ S1 > S2/S4 — paper claim "S3 dominates"
+  holds; "S2 ≥ S1" ordering breaks under BTree disk pressure (Q3 view
+  is per-lineitem with FD-attached order columns; the per-lineitem
+  fanout cost dominates when scans hit disk, mirroring Q3I §A1's
+  H14 hypothesis).
+
+### 2026-05-08 22:55 CDT — q3_lsm SF=300 DRAM=0.08 GiB (small LSM beyond-memory, 5× ratio)
+- **Commit**: `c500b747` (`calcite-integration`); images at `v0/`.
+- **TPut.csv**: `build/q3_lsm/TPut.csv` rows 6–9 (DRAM=0.08, scale=300).
+- **Config**: SF=300, DRAM=0.08 GiB, S1–S4, secondaries 244–299 MiB
+  per structure (predicted ~390 MiB; LSM compression brings actual
+  ~30% lower), secondary/DRAM ≈ 3.5×, beyond memory regime.
+- **Claim check**: Supports the family claim — shape
+  S3 (3.26) > S2 (2.90) > S1 (2.18) > S4 (1.28) TX/s.
+  S3 ≥ S2 > S1/S4 holds at small beyond-memory scale.
+
 ### 2026-05-08 22:55 CDT — q3_btree SF=15 DRAM=0.1 GiB — post-tput-wiring baseline
 - **Commit**: `87f01426` (`calcite-integration`)
 - **TPut.csv**: `build/q3_btree/TPut.csv` row 2–5
