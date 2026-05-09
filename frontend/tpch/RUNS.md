@@ -87,7 +87,9 @@ on disk under their `vN/` subtree so the matching tag stays runnable.
 | geo    | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — no prior version |
 | q12    | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — no prior version |
 | q3     | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — `customer_col_t`, `orders_col_t`, `lineitem_col_t` (Q3 baseline projections); `q3_pipeline_view_t` per-lineitem rows |
-| q3i    | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t` + aCOLI variants (Q3I baseline projections); `q3i_pipeline_view_t` per-lineitem rows |
+| q3     | v1      | 2026-05-08 | `bec67300` | (none — uses tag above for v0) | `lineitem_col_t` extended with `l_suppkey` (Q5 prep) + `l_returnflag` (Q10 placeholder). Existing offsets preserved (fields appended); but the wider record means new binary cannot read v0 images. |
+| q3i    | v0      | 2026-05-08 | `9ef92e6b` | `q3-q3i-stable-v0`   | initial — `customer_coli_t`, `orders_coli_t`, `lineitem_coli_t`, `invoice_coli_t` + aCOLI variants (Q3I baseline projections); `q3i_pipeline_view_t` per-lineitem rows. Unaffected by 2026-05-08 lineitem_col_t widening — Q3I uses the separate `lineitem_coli_t` type. |
+| q5     | v0      | 2026-05-08 | `913049ad` | (none)               | initial — Q5 Phase 0.5 skeleton; uses widened `lineitem_col_t` schema (l_suppkey + l_returnflag included from day one). |
 
 **Future entries** belong in the same commit that bumps the family
 default. Append a row, don't rewrite history. Convergence to a shared

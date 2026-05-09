@@ -37,6 +37,19 @@ consolidating.
   full S1–S4 sweep completes in 2 s with a top-10 result printed for
   every structure); throughput comparison waits on `tput_tx` wiring.
 
+## Format-version note (2026-05-08, post-merge)
+
+All entries below predate `bec67300`, which extended `lineitem_col_t`
+with `l_suppkey` (Q5 prep) + `l_returnflag` (Q10 placeholder). Q3's
+default Makefile var has bumped to `q3_format_version = v1`; new
+binaries write/read `/mnt/ssd/q3_*/v1/` images. The v0 results below
+remain valid for the **q3-q3i-stable-v0** tag only — `git checkout
+q3-q3i-stable-v0` flips the Makefile back to `v0` and uses the
+existing `/mnt/ssd/q3_*/v0/` images. Future `q3_*` v1 entries should
+explicitly note `images at v1/`.
+
+---
+
 ### 2026-05-08 23:24 CDT — q3_lsm SF=1500 DRAM=0.4 GiB (large LSM beyond-memory, 5× ratio)
 - **Commit**: `c500b747` (`calcite-integration`); images at `v0/`.
 - **TPut.csv**: `build/q3_lsm/TPut.csv` rows 10–13 (DRAM=0.4, scale=1500).

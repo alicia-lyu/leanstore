@@ -42,8 +42,9 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 # History table: frontend/tpch/RUNS.md §"format_version history".
 geo_format_version   ?= v0
 q12_format_version   ?= v0
-q3_format_version    ?= v0
+q3_format_version    ?= v1
 q3i_format_version   ?= v0
+q5_format_version    ?= v0
 
 # Convenience override: pass `format_version=vK` on the make command
 # line to force ALL four families onto the same version, for the
@@ -55,6 +56,7 @@ ifneq ($(strip $(format_version)),)
   q12_format_version   := $(format_version)
   q3_format_version    := $(format_version)
   q3i_format_version   := $(format_version)
+  q5_format_version    := $(format_version)
 endif
 
 # Experiment flags
