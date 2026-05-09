@@ -169,6 +169,49 @@ inline bool q5_predicate_lineitem(const lineitem_t& /*l*/, const Params& /*p*/)
 }
 
 // ---------------------------------------------------------------------------
+// q5_admit_lineitem — shared per-lineitem callback for S1, S3, and S4.
+//
+// Probes the SUPPLIER hashmap, applies the c_nationkey = s_nationkey
+// cross-equality, resolves n_name, and accumulates revenue into the per-n_name
+// bucket.  Returns WalkAction::Continue unconditionally so the caller (visitor
+// or BMJ/hash loop) can return its result directly.
+//
+// `cached_c_nationkey` is the calling customer's nationkey, cached from the
+// on_customer arm (S3) or extracted from the join result (S1/S4).
+//
+// lineitems_scanned is NOT incremented here: in the visitor (S3) the walker
+// already tracks records_visited, and in the S1/S4 fetch loops the per-scan
+// counter increments naturally at the fetch site.  Keeping the counter out of
+// this helper avoids double-counting on any future code path.
+
+inline ::tpch::WalkAction q5_admit_lineitem(
+    const lineitem_col_t&    l,
+    Integer                  cached_c_nationkey,
+    const Q5SideTables&      sides,
+    NNameRevenueAggregator&  agg,
+    Q5Stats*                 stats)
+{
+   // SUPPLIER probe: supplier must be in the pre-filtered hashmap.
+   auto sit = sides.supplier_nation.find(l.l_suppkey);
+   if (sit == sides.supplier_nation.end()) return ::tpch::WalkAction::Continue;
+
+   // Cross-equality: supplier's nation must match customer's nation.
+   if (sit->second != cached_c_nationkey) return ::tpch::WalkAction::Continue;
+
+   if (stats) stats->lineitems_passing_filter++;
+
+   // Resolve n_name and accumulate into the per-n_name bucket.
+   const std::string& n_name = sides.n_name_map.at(sit->second);
+   agg.accumulate(l, n_name);
+
+   if (stats) {
+      stats->join_callbacks++;
+      stats->lineitems_admitted++;
+   }
+   return ::tpch::WalkAction::Continue;
+}
+
+// ---------------------------------------------------------------------------
 // Q5GroupWalkVisitor — group-walk visitor for the COL merged index (S3).
 //
 // Walks `customer → (orders → lineitems*)+` groups in byte-lex order.
@@ -235,29 +278,11 @@ struct Q5GroupWalkVisitor {
       return ::tpch::WalkAction::Continue;
    }
 
-   // Per-lineitem: probe SUPPLIER hashmap, apply cross-eq, accumulate revenue.
+   // Per-lineitem: delegate to q5_admit_lineitem (shared with S1 / S4).
    ::tpch::WalkAction on_lineitem(const lineitem_col_t::Key& /*k*/, const lineitem_col_t& l)
    {
       if (stats) stats->lineitems_scanned++;
-
-      // SUPPLIER probe: supplier must be in the pre-filtered hashmap.
-      auto sit = sides.supplier_nation.find(l.l_suppkey);
-      if (sit == sides.supplier_nation.end()) return ::tpch::WalkAction::Continue;
-
-      // Cross-equality: supplier's nation must match customer's nation.
-      if (sit->second != cached_c_nationkey) return ::tpch::WalkAction::Continue;
-
-      if (stats) stats->lineitems_passing_filter++;
-
-      // Resolve n_name and accumulate into the per-n_name bucket.
-      const std::string& n_name = sides.n_name_map.at(sit->second);
-      agg.accumulate(l, n_name);
-
-      if (stats) {
-         stats->join_callbacks++;
-         stats->lineitems_admitted++;
-      }
-      return ::tpch::WalkAction::Continue;
+      return q5_admit_lineitem(l, cached_c_nationkey, sides, agg, stats);
    }
 
    // on_group_end: no per-group flush needed — the per-n_name aggregate
