@@ -163,7 +163,8 @@ class Experiment:
             print(f"\t{create_cmd}")
             print()
             # persist target
-            print(f"{iso_recover}: ./frontend/tpch/tpch_workload.hpp ./frontend/tpch/q3i/load.tpp | {iso_image_str}")
+            iso_loading_files_str = " ".join(get_loading_files(self.exec_fname))
+            print(f"{iso_recover}: {LOADING_META_FILE} {iso_loading_files_str} | {iso_image_str}")
             self.console_print_subsection(f"Persisting isolated structure {n} → {iso_recover}")
             print(f"\tmkdir -p {iso_recover.parent}")
             persist_flags = self.remaining_flags(
@@ -446,7 +447,25 @@ class Experiment:
         print(f"\t$(MAKE) {self.recover_file}")
         print()
 
-LOADING_META_FILE = "./frontend/tpch/tpch_workload.hpp"
+# Files whose mtime change must invalidate every persisted recovery
+# image (`$(data_disk)/<exec>/build/$(scale).json`). The CLAUDE.md
+# "Reload eagerly" workflow rule documents this list. If you add a
+# field to a record type, edit a populate_*() body, or otherwise
+# change on-disk byte layout / load logic, touching one of these
+# files (or the per-query `<q>/load.{tpp,hpp,cpp}`) is what tells
+# Make to re-derive the image. Keep this list in sync with anything
+# that affects what bytes get written during load.
+LOADING_META_FILES = [
+    "./frontend/tpch/tpch_workload.hpp",
+    "./frontend/tpch/tpchi_family/tpchi_workload.hpp",
+    "./frontend/tpch/tpch_family/views_ol.hpp",
+    "./frontend/tpch/tpch_family/views_col.hpp",
+    "./frontend/tpch/tpch_family/views_coli.hpp",
+    "./frontend/tpch/tpch_family/ol_pipeline.tpp",
+    "./frontend/tpch/tpch_family/col_pipeline.tpp",
+    "./frontend/tpch/tpchi_family/coli_pipeline.tpp",
+]
+LOADING_META_FILE = " ".join(LOADING_META_FILES)
 
 DIFF_DIRS = {
  "geo_lsm": "geo",
