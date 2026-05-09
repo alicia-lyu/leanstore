@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   `q*_{lsm,btree}_iso_N` Makefile target depends on the persisted
   `$(data_disk)/<query>_iso/iso_N/build/$(scale).json`, which in
   turn depends on `frontend/tpch/tpch_workload.hpp`,
-  `frontend/tpch/tpchi_workload.hpp`, and the per-query
+  `frontend/tpch/tpchi_family/tpchi_workload.hpp`, and the per-query
   `frontend/tpch/<q>/load.tpp`. Any commit (yours or an upstream
   merge) that bumps the mtime of those files invalidates the
   persisted image, and the *next* `make q*_iso_N` invocation pays

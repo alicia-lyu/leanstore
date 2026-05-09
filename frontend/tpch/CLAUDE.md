@@ -87,12 +87,15 @@ Shared files (used by all three queries):
   records stream by (§3.1.2 sibling pattern). Twelve explicit
   `SKMatcher<R1,R2>` specializations cover all 16 ordered pairs (10 unique +
   reverse delegations).
-- `coli_pipeline.hpp` / `coli_pipeline.tpp` —
-  `COLIPipeline<Backend>`: owns `MergedAdapter<customer_coli_t,
-  orders_coli_t, lineitem_coli_t, invoice_coli_t>`. `populate_merged()`
-  does a dual-write replay across customer/orders/lineitem/invoice base
-  adapters, resolving each lineitem's `custkey` via an in-memory
-  orderkey→custkey map built during the orders pass.
+- `tpchi_family/` — Track-2 invoice-extended-set-shared substrate
+  (used by Q3I, Q5I, Q10I — composes on top of `tpch_family/`).
+  See [`tpchi_family/CLAUDE.md`](tpchi_family/CLAUDE.md). Contents:
+  `tpchi_tables.hpp` (invoice schema), `tpchi_workload.hpp`
+  (`TPCHIWorkload` with `loadInvoiceAndLinkLineitem`), and
+  `coli_pipeline.{hpp,tpp}` (`COLIPipeline<Backend>` —
+  `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t,
+  invoice_coli_t>`, dual-write replay resolving `custkey` via an
+  in-memory orderkey→custkey map built during the orders pass).
 - `per_structure_workload.hpp` — shared `BaseStructure` / `ViewStructure` /
   `MergedStructure` / `HashStructure` templates parametrized by
   `<typename Workload, typename AggRow>` with inline forwarder bodies. Each
@@ -264,11 +267,10 @@ Three pipelines exist:
 
 - `OrdersLineitemPipeline<Backend>` (`tpch_family/ol_pipeline.hpp`) — 2-table OL
   merged index. Q12, Q3, and Q9 each hold exactly one instance named `ol`.
-- `COLIPipeline<Backend>` (`coli_pipeline.hpp`) — 4-table COLI merged index
-  (CUSTOMER × ORDERS × LINEITEM × INVOICE). Uses tagged-key format with
-  `tpch_family/views_coli.hpp` types. Wired into Q3I; standalone load-test
-  passes at SF=1. **Phase 2 of the family-dirs refactor will move this to
-  `tpchi_family/coli_pipeline.{hpp,tpp}`.**
+- `COLIPipeline<Backend>` (`tpchi_family/coli_pipeline.hpp`) — 4-table
+  COLI merged index (CUSTOMER × ORDERS × LINEITEM × INVOICE). Uses
+  tagged-key format with `tpch_family/views_coli.hpp` types. Wired into
+  Q3I; standalone load-test passes at SF=1.
 - `CustomerOrdersLineitemPipeline<Backend>` (`tpch_family/col_pipeline.hpp`)
   — 3-table COL merged index (CUSTOMER × ORDERS × LINEITEM). Strict subset
   of COLI: reuses `customer_coli_t` and `orders_coli_t` verbatim; introduces

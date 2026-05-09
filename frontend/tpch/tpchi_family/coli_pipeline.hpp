@@ -26,8 +26,8 @@
 // by scanning orders first and building an orderkey → custkey map, then
 // replaying lineitems with the resolved custkey.
 
-#include "backend.hpp"
-#include "tpch_family/views_coli.hpp"
+#include "../backend.hpp"
+#include "../tpch_family/views_coli.hpp"
 #include "tpchi_tables.hpp"
 
 namespace tpch

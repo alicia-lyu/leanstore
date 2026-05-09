@@ -24,7 +24,7 @@
 
 #include "../../shared/RocksDB.hpp"
 #include "../backend.hpp"
-#include "../tpchi_tables.hpp"
+#include "../tpchi_family/tpchi_tables.hpp"
 
 DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping");
 DECLARE_string(ssd_path);

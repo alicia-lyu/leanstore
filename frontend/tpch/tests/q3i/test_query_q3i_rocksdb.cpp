@@ -39,9 +39,9 @@
 #include "../../../shared/adapter-scanner/RocksDBMergedAdapter.hpp"
 #include "../../../shared/logger/rocksdb_logger.hpp"
 #include "../../backend.hpp"
-#include "../../coli_pipeline.hpp"
-#include "../../tpchi_tables.hpp"
-#include "../../tpchi_workload.hpp"
+#include "../../tpchi_family/coli_pipeline.hpp"
+#include "../../tpchi_family/tpchi_tables.hpp"
+#include "../../tpchi_family/tpchi_workload.hpp"
 #include "../../q3i/workload.hpp"
 
 #define TPCH_DEFINE_FLAGS

@@ -28,8 +28,8 @@
 #include "../../shared/adapter-scanner/RocksDBAdapter.hpp"
 #include "../../shared/logger/rocksdb_logger.hpp"
 #include "../backend.hpp"
-#include "../tpchi_tables.hpp"
-#include "../tpchi_workload.hpp"
+#include "../tpchi_family/tpchi_tables.hpp"
+#include "../tpchi_family/tpchi_workload.hpp"
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_flags.hpp"

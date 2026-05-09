@@ -12,7 +12,7 @@
 // Vanilla code (Q12, Q3, Q9, geo) includes only tpch_tables.hpp and never
 // sees invoice_t or l_invoicekey.  Invoice-extended code includes this header.
 
-#include "tpch_tables.hpp"
+#include "../tpch_tables.hpp"
 
 // -------------------------------------------------------------------------------------
 // invoice_t — INVOICE base table.

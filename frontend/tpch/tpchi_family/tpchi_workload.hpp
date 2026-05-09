@@ -22,7 +22,7 @@
 #include <vector>
 
 #include "tpchi_tables.hpp"
-#include "tpch_workload.hpp"
+#include "../tpch_workload.hpp"
 
 // TPCHIWorkload is a type alias for TPCHWorkload<AdapterType, lineitem_i_t>
 // plus an invoice adapter and a derived load().  We use inheritance to add the
