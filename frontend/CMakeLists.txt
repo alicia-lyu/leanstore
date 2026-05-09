@@ -342,6 +342,36 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- test_query_q5_lsm: Q5 all-four query_by_* cross-structure parity test (RocksDB) ---
+    add_executable(test_query_q5_lsm tpch/tests/q5/test_query_q5_rocksdb.cpp)
+    target_compile_definitions(test_query_q5_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_query_q5_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_query_q5_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
+    # --- q5_lsm executable (RocksDB) ---
+    add_executable(q5_lsm tpch/q5/executable_rocksdb.cpp)
+    target_compile_definitions(q5_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(q5_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(q5_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
 else()
     # =========================================================================
     # Linux build: full leanstore + RocksDB (original behavior)
@@ -434,5 +464,17 @@ else()
 
     add_executable(q3_btree tpch/q3/executable_leanstore.cpp)
     target_link_libraries(q3_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(test_query_q5_lsm tpch/tests/q5/test_query_q5_rocksdb.cpp)
+    target_link_libraries(test_query_q5_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_query_q5_btree tpch/tests/q5/test_query_q5_leanstore.cpp)
+    target_link_libraries(test_query_q5_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(q5_lsm tpch/q5/executable_rocksdb.cpp)
+    target_link_libraries(q5_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(q5_btree tpch/q5/executable_leanstore.cpp)
+    target_link_libraries(q5_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 
 endif()

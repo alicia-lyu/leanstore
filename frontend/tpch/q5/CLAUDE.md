@@ -434,3 +434,42 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
 - **S5** — omitted by design (no parameter-independent aggregate
   to bake; see §Storage Structure Options).
 - **Linux perf sweep** — pending; tracked in `LINUX_PENDING.md`.
+
+---
+
+## Implementation Status (skeleton — 2026-05-08)
+
+Phase 0.5 landed: all 8 per-query files exist, executable links,
+`test_query_q5_lsm` runs to exit 0 with all four paths agreeing on
+empty results (digest 0x0, vacuous `[OK]` parity). Q3 / Q3I
+regressions clean.
+
+**Real bodies**:
+
+- `Params::defaults()` — `{"ASIA", DATE_1994_01_01}`.
+- `set_params_for_iter(long)` — stubbed to `params = Params::defaults()`
+  (PLAYBOOK §3.6 wrapper-uniformity requirement; non-stub body in
+  Phase 5).
+- `populate_q5_view` — 3-way custkey-sorted manual merge; loaded
+  unfiltered, param-reusable.
+- `q5_pipeline_view_t::unfoldKey`, `q5_agg_row_t::print`.
+- All four storage-structure dispatch arms in `load.tpp`,
+  `get_size`.
+
+**Stubs** (next commits, Phase 1+):
+
+- All four `query_by_*` bodies → return 0 (`out.clear(); return 0;`).
+- Predicate bodies (`q5_predicate_customer/orders/lineitem`) →
+  `return true;`.
+- `Q5Stats` counter struct — deferred to Phase 4.
+- Intermediate join-result types for the S1 BMJ chain
+  (`q5_jr1_t`, `q5_jr2_t`) — deferred to Phase 1.
+
+**Record-type ids allocated**: see `q5/views.hpp` header comment.
+Skeleton uses `customer_coli_t` / `orders_coli_t` from
+`views_col.hpp` directly (per the design-doc correction);
+`lineitem_col_t` was extended in place to carry `l_suppkey` and
+`l_returnflag` in commit `bec67300`.
+
+Next commit: Phase 1 — real `views.hpp` types + S1 intermediate
+join-result types.

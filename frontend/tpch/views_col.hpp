@@ -66,9 +66,9 @@ namespace tpch
 // (0-3, 49, 53), guaranteeing clean merged-scanner accepts_key dispatch.
 //
 // Project-pushdown classification: co-located secondary in the COL MI (S3)
-// and split adapter (S1). Carries only the columns required by Q3 consumers
-// (the LineitemRevenueAccumulator read set). Widen in place when Q5/Q9 join
-// this family.
+// and split adapter (S1). Carries the union of columns required by all
+// Track-1 COL-family queries (Q3, Q5, Q10). Extended in place 2026-05-08
+// to add l_suppkey (Q5) and l_returnflag (Q10 placeholder).
 
 // Register idx=36 in the coli_idx_id enum range.  Rather than extending the
 // enum (which lives in views_coli.hpp), we define the value as a constexpr
@@ -114,12 +114,23 @@ struct lineitem_col_t {
       }
    };
 
-   // Payload: Q3-projected fields only (project-pushdown rule).
-   // Matches the LineitemRevenueAccumulator read set.
+   // Payload: COL-family projected fields (project-pushdown rule).
+   //
+   // Q3 read set: l_extendedprice, l_discount, l_shipdate.
+   // Q5 read set: adds l_suppkey (nation-revenue accumulator join key).
+   // Q10 read set: adds l_returnflag (return filter — currently unused,
+   //   placeholder so we do not pay the on-disk-reload cost twice when Q10
+   //   is implemented; l_returnflag is NOT dead code).
+   //
+   // New fields are appended after existing ones so existing field offsets
+   // are preserved and Q3/Q3I digests remain identical after the extension.
+   //
    // l_orderkey and l_linenumber are in the Key; l_custkey is derived via FK.
    Numeric   l_extendedprice;
    Numeric   l_discount;
    Timestamp l_shipdate;
+   Integer   l_suppkey;    // Q5: supplier join key for per-nation revenue
+   Varchar<1> l_returnflag; // Q10 placeholder: return status filter (unused until Q10)
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -128,7 +139,9 @@ struct lineitem_col_t {
    void print(std::ostream& os) const
    {
       os << "lineitem_col(extprice=" << l_extendedprice
-         << ",disc=" << l_discount << ")";
+         << ",disc=" << l_discount
+         << ",suppkey=" << l_suppkey
+         << ",returnflag=" << l_returnflag << ")";
    }
 
    friend std::ostream& operator<<(std::ostream& os, const lineitem_col_t& r)
@@ -139,7 +152,8 @@ struct lineitem_col_t {
 
    static lineitem_col_t from_base(const lineitem_t& l)
    {
-      return {l.l_extendedprice, l.l_discount, l.l_shipdate};
+      return {l.l_extendedprice, l.l_discount, l.l_shipdate,
+              l.l_suppkey, l.l_returnflag};
    }
 
    static Key key_from_base(Integer custkey, const lineitem_t::Key& lk)
