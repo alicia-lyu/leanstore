@@ -66,12 +66,24 @@ struct NNameRevenueAggregator {
    {
       for (const auto& [name, revenue] : by_name) {
          // Reverse-lookup n_nationkey: scan n_name_map for matching name.
+         // by_name's keys came from sides.n_name_map.at(...) inside
+         // q5_admit_lineitem, so a miss here is structurally impossible.
+         // Fail fast (PLAYBOOK §"Contract violations & fail-fast") rather
+         // than silently emit nationkey=-1: any future caller path that
+         // inserts through a different route gets a loud signal instead
+         // of corrupted output.
          Integer nationkey = -1;
          for (const auto& [nk, nm] : sides.n_name_map) {
             if (nm == name) {
                nationkey = nk;
                break;
             }
+         }
+         if (nationkey == -1) {
+            throw std::logic_error("NNameRevenueAggregator::emit: n_name '"
+                                   + name + "' not present in n_name_map; "
+                                   "aggregator and side-table built from "
+                                   "different sources?");
          }
          q5_agg_row_t row;
          row.n_nationkey = nationkey;
@@ -175,19 +187,35 @@ inline bool q5_predicate_lineitem(const lineitem_t& /*l*/, const Params& /*p*/)
 // q5_admit_lineitem — shared per-lineitem callback for S1, S3, and S4.
 //
 // Probes the SUPPLIER hashmap, applies the c_nationkey = s_nationkey
-// cross-equality, resolves n_name, and accumulates revenue into the per-n_name
-// bucket.  Returns WalkAction::Continue unconditionally so the caller (visitor
-// or BMJ/hash loop) can return its result directly.
+// cross-equality, resolves n_name, and accumulates revenue into the
+// per-n_name bucket.  Returns `void`: Q5 has no per-lineitem skip case
+// (skip semantics live at on_customer for nation_set membership and at
+// on_order for the date window — see Q5GroupWalkVisitor below), so the
+// callers always continue.  The S3 visitor wraps this call with an
+// explicit `return WalkAction::Continue;` to make the no-skip contract
+// visible at the call site rather than buried in this helper's
+// signature.  S1 / S4 callers are void per-emit lambdas that simply
+// invoke this helper.
 //
-// `cached_c_nationkey` is the calling customer's nationkey, cached from the
-// on_customer arm (S3) or extracted from the join result (S1/S4).
+// `cached_c_nationkey` is the calling customer's nationkey, cached from
+// the on_customer arm (S3) or extracted from the join result (S1/S4).
 //
-// lineitems_scanned is NOT incremented here: in the visitor (S3) the walker
-// already tracks records_visited, and in the S1/S4 fetch loops the per-scan
-// counter increments naturally at the fetch site.  Keeping the counter out of
-// this helper avoids double-counting on any future code path.
+// `lineitems_scanned` accounting convention (audit B.2 from the original
+// Q5 Phase 4 review): the counter is bumped per **raw fetch (pre-filter)**
+// at four sites that must stay in sync so the metric is comparable
+// across paths:
+//   - S2 view scan loop          — q5/query.tpp:~424 (every view row)
+//   - S3 visitor on_lineitem     — q5/query.tpp:~287 (every walker emit)
+//   - S1 BMJ fetch_lin lambda    — q5/query.tpp:~372 (every scanner row)
+//   - S4 HJ  fetch_lin lambda    — q5/query.tpp:~573 (every scanner row)
+// Do NOT bump the counter inside q5_admit_lineitem: the helper runs
+// post-SUPPLIER-probe, after the cross-equality, so bumping here would
+// double-count for S1/S3/S4 (which already bumped at fetch time) and
+// also gate the count on filters the metric is supposed to be agnostic
+// of.  `lineitems_passing_filter` (incremented below) is the post-filter
+// counter; both together let the test harness print the funnel.
 
-inline ::tpch::WalkAction q5_admit_lineitem(
+inline void q5_admit_lineitem(
     const lineitem_col_t&    l,
     Integer                  cached_c_nationkey,
     const Q5SideTables&      sides,
@@ -196,10 +224,10 @@ inline ::tpch::WalkAction q5_admit_lineitem(
 {
    // SUPPLIER probe: supplier must be in the pre-filtered hashmap.
    auto sit = sides.supplier_nation.find(l.l_suppkey);
-   if (sit == sides.supplier_nation.end()) return ::tpch::WalkAction::Continue;
+   if (sit == sides.supplier_nation.end()) return;
 
    // Cross-equality: supplier's nation must match customer's nation.
-   if (sit->second != cached_c_nationkey) return ::tpch::WalkAction::Continue;
+   if (sit->second != cached_c_nationkey) return;
 
    if (stats) stats->lineitems_passing_filter++;
 
@@ -211,7 +239,6 @@ inline ::tpch::WalkAction q5_admit_lineitem(
       stats->join_callbacks++;
       stats->lineitems_admitted++;
    }
-   return ::tpch::WalkAction::Continue;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,10 +309,13 @@ struct Q5GroupWalkVisitor {
    }
 
    // Per-lineitem: delegate to q5_admit_lineitem (shared with S1 / S4).
+   // q5_admit_lineitem returns void — Q5 has no per-lineitem skip case;
+   // skip semantics live at on_customer / on_order.  Always continue.
    ::tpch::WalkAction on_lineitem(const lineitem_col_t::Key& /*k*/, const lineitem_col_t& l)
    {
       if (stats) stats->lineitems_scanned++;
-      return q5_admit_lineitem(l, cached_c_nationkey, sides, agg, stats);
+      q5_admit_lineitem(l, cached_c_nationkey, sides, agg, stats);
+      return ::tpch::WalkAction::Continue;
    }
 
    // on_group_end: no per-group flush needed — the per-n_name aggregate
