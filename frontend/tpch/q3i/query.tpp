@@ -218,15 +218,21 @@ using LineitemRevenueAccumulator = q3_family::LineitemRevenueAccumulator<Params>
 //   • (invoice→customer is 1:1 after the sub-aggregate; this is not a
 //     4-way M:N — see q3i/CLAUDE.md §Cardinality structure.)
 
+template <typename Sink>
 struct COLIGroupWalkVisitor
-    : q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor, Params,
-                                  lineitem_coli_t, q3i_agg_row_t, Q3IStats> {
-   // Forwarding constructor — base fields (params, out, stats) live in the base.
-   COLIGroupWalkVisitor(const Params& p, std::vector<q3i_agg_row_t>& o,
-                        Q3IStats* s = nullptr)
-       : q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor, Params,
-                                     lineitem_coli_t, q3i_agg_row_t,
-                                     Q3IStats>{p, o, s}
+    : q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor<Sink>, Params,
+                                  lineitem_coli_t, q3i_agg_row_t, Q3IStats, Sink> {
+   using Base = q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor<Sink>, Params,
+                                            lineitem_coli_t, q3i_agg_row_t,
+                                            Q3IStats, Sink>;
+   // Bring dependent-base members into scope for unqualified use.
+   using Base::params;
+   using Base::stats;
+   using Base::sink;
+
+   // Forwarding constructor — base fields (params, sink, stats) live in the base.
+   COLIGroupWalkVisitor(const Params& p, Sink& s, Q3IStats* st = nullptr)
+       : Base{p, s, st}
    {}
 
    // Per-custkey invoice sub-aggregate: SUM(i_totaldue WHERE i_status='O').
@@ -262,9 +268,7 @@ struct COLIGroupWalkVisitor
    // We override on_group_end to also reset open_due.
    void on_group_end(Integer ck) {
       // Delegate to base to flush the last open order and reset OL state.
-      q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor, Params,
-                                  lineitem_coli_t, q3i_agg_row_t,
-                                  Q3IStats>::on_group_end(ck);
+      Base::on_group_end(ck);
       open_due.reset();
    }
 };
@@ -429,7 +433,14 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
    // the SortedAggregate, never a post-walk Filter node).
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
-   COLIGroupWalkVisitor v(params, out, stats);
+   // Streaming top-K sink — bounded memory (K = 10), same role as
+   // Q5's NNameRevenueAggregator and the Q3 sinks: visitor pushes
+   // rows in via flush_order → sink.offer; final drain sorts.
+   auto cmp = [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3i_agg_row_t, decltype(cmp)> sink(10, cmp);
+   COLIGroupWalkVisitor<decltype(sink)> v(params, sink, stats);
    {
       // S3 fuses scan / aggregator / join into a single walk; attribute
       // the whole walk to the join stage for cross-path comparison.
@@ -443,19 +454,14 @@ long Q3IWorkload<Backend>::query_by_merged(std::vector<q3i_agg_row_t>& out)
          coli_group_walk<Backend>(coli.merged_adapter(), v);
       }
    }
-   // Mirror the aggregator_rows_out semantics from the other paths so the
-   // [card] table reports a non-zero `agg` column for S3.
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
-   // Apply top-10 ordered by revenue DESC outside the pipeline
-   // (OPERATORS.md §3 op 8–9).  o_orderdate ASC, then o_orderkey ASC as
-   // tiebreakers keep partial_sort deterministic across paths whose input
-   // ordering differs (view scan vs. hash-map iteration vs. merged scan).
+   // Drain the sink's top-10 into `out` ordered by revenue DESC outside
+   // the pipeline (OPERATORS.md §3 op 8–9).  o_orderdate ASC, then
+   // o_orderkey ASC as tiebreakers keep ordering deterministic across
+   // paths whose input ordering differs (view scan vs. hash-map iteration
+   // vs. merged scan); cmp is the same q3_agg_row_base_t::cmp.
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+      sink.drain_sorted(out);
    }
    return static_cast<long>(out.size());
 }
@@ -478,6 +484,11 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
    // per OPERATORS.md §6.1 comparison-integrity.
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
+
+   auto cmp = [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3i_agg_row_t, decltype(cmp)> sink(10, cmp);
 
    // --- scanner-wrapper aggregators ---
    // These drive the custkey-sorted COLI split adapters and emit aggregated
@@ -603,18 +614,18 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
          const orders_coli_t&  o   = jr2.order();
          const cust_open_due_t& due = jr2.jr1().due();
          Integer orderkey = kv->first.jk.orderkey;
-         out.push_back({orderkey, lagg.revenue, o.o_orderdate,
-                        o.o_shippriority, due.cust_open_due});
+         if (stats) {
+            stats->aggregator_rows_out++;
+            stats->topN_candidates++;
+         }
+         sink.offer({orderkey, lagg.revenue, o.o_orderdate,
+                     o.o_shippriority, due.cust_open_due});
       }
    }
 
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+      sink.drain_sorted(out);
    }
    return static_cast<long>(out.size());
 }
@@ -643,6 +654,11 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
+   auto cmp = [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3i_agg_row_t, decltype(cmp)> sink(10, cmp);
+
    // Per-orderkey accumulator state — tracks the currently-open order group.
    Integer   cur_orderkey    = -1;
    Timestamp cur_orderdate   = 0;
@@ -658,9 +674,11 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
       if (stats) {
          stats->join_callbacks++;
          stats->join3_output_rows++;
+         stats->aggregator_rows_out++;
+         stats->topN_candidates++;
       }
-      out.push_back({cur_orderkey, rev.revenue, cur_orderdate,
-                     cur_shippriority, cur_open_due});
+      sink.offer({cur_orderkey, rev.revenue, cur_orderdate,
+                  cur_shippriority, cur_open_due});
       rev.reset();
    };
 
@@ -716,13 +734,9 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
       flush_order();
    }
 
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+      sink.drain_sorted(out);
    }
    return static_cast<long>(out.size());
 }
@@ -917,17 +931,24 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
       }
    }  // end StageTimer: entire HJ chain attributed to stage_us_join
 
-   for (auto& [_, row] : per_order) {
-      if (row.revenue > Numeric(0)) out.push_back(row);
-   }
-
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
    {
-      StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+      auto cmp = [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+         return q3_family::q3_agg_row_base_t::cmp(a, b);
+      };
+      TopNSink<q3i_agg_row_t, decltype(cmp)> sink(10, cmp);
+      for (auto& [_, row] : per_order) {
+         if (row.revenue > Numeric(0)) {
+            if (stats) {
+               stats->aggregator_rows_out++;
+               stats->topN_candidates++;
+            }
+            sink.offer(std::move(row));
+         }
+      }
+      {
+         StageTimer t(stats ? &stats->stage_us_topN : nullptr);
+         sink.drain_sorted(out);
+      }
    }
    return static_cast<long>(out.size());
 }
@@ -956,6 +977,11 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
    out.clear();
    Q3IPerfCapture<Backend> _pc(MICRO_PERF_STATS(*this));
 
+   auto cmp = [](const q3i_agg_row_t& a, const q3i_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3i_agg_row_t, decltype(cmp)> sink(10, cmp);
+
    {
       StageTimer t(stats ? &stats->stage_us_join : nullptr);
 
@@ -978,9 +1004,13 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
          if (!order_open) return;
          order_open = false;
          if (rev.revenue > Numeric(0)) {
-            if (stats) stats->acoli_orders_emitted++;
-            out.push_back({cur_orderkey, rev.revenue,
-                           cur_orderdate, cur_shippriority, cur_open_due});
+            if (stats) {
+               stats->acoli_orders_emitted++;
+               stats->aggregator_rows_out++;
+               stats->topN_candidates++;
+            }
+            sink.offer({cur_orderkey, rev.revenue,
+                        cur_orderdate, cur_shippriority, cur_open_due});
          }
          rev.reset();
       };
@@ -1037,13 +1067,9 @@ long Q3IWorkload<Backend>::query_by_aggregated(std::vector<q3i_agg_row_t>& out)
       flush_order();
    }
 
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
    {
       StageTimer t(stats ? &stats->stage_us_topN : nullptr);
-      apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+      sink.drain_sorted(out);
    }
    return static_cast<long>(out.size());
 }
