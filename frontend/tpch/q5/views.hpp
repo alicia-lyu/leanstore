@@ -65,24 +65,15 @@ namespace tpch::q5
 // probe and cross-equality check (c_nationkey = s_nationkey) without
 // re-joining base tables.
 //
-// Key design — linenumber wildcard convention:
-//   linenumber is a sort-key suffix on the primary view, not a true join
-//   field.  jr1 (the result of customer ⋈ orders) has no intrinsic
-//   linenumber; it is stored/hashed at linenumber=0 as a "prefix anchor".
-//   The wildcard convention (linenumber=0 means "any linenumber") lets
-//   HashJoin find the jr1 anchor when probing with a real lineitem row:
-//     • match()         — treats linenumber=0 on either side as a prefix
-//                         wildcard so BMJ's seek/compare path accepts
-//                         every concrete lineitem against a jr1 anchor.
-//     • matching_keys() — returns both the anchor (linenumber=0) and self
-//                         when linenumber>0, so HashJoin's equal_range
-//                         hits the bucket where jr1 lives.
-//     • operator<=>     — stays default (strict ordering for hash bucket
-//                         bookkeeping; hash-join correctness depends on it).
-//     • std::hash       — hashes the full 3-field tuple so anchors and
-//                         concrete lineitems land in different buckets;
-//                         matching_keys() bridges the gap by enumerating
-//                         the anchor explicitly.
+// q5_pipeline_view_t::Key is the *primary key* of the S2 view, not a
+// join key.  S2 only sequentially scans the view; S1 BMJ chain and S4
+// HashJoin chain both use q5_co_jk_t::Key (custkey+orderkey) for the
+// jr1⋈lineitem stage — see 105b66a7 which carved out q5_co_jk_t after
+// the original "reuse the 3-field view key as a join key with a
+// linenumber-wildcard placeholder" approach was found broken.  Therefore
+// match() / matching_keys() / operator% on this Key are the trivial
+// strict-equality forms; if a future consumer needs prefix-anchor
+// enumeration here, re-add it then with WILDCARD_KEY rather than bare 0.
 
 struct q5_pipeline_view_t {
    static constexpr int id = 56;
@@ -94,55 +85,12 @@ struct q5_pipeline_view_t {
       Integer linenumber;  // tertiary sort — unique within an order; 0 = anchor
       ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
 
-      // match() — used by BMJ seek/compare and HashJoin probe-side lookup.
-      // linenumber=0 on either side is a prefix wildcard: a jr1 anchor at
-      // linenumber=0 matches any concrete lineitem (linenumber>0) within the
-      // same (custkey, orderkey) group, and vice versa.
-      int match(const Key& other) const
-      {
-         if (custkey  != other.custkey)  return custkey  < other.custkey  ? -1 : 1;
-         if (orderkey != other.orderkey) return orderkey < other.orderkey ? -1 : 1;
-         // linenumber=0 on either side is a prefix wildcard (jr1 has no
-         // linenumber; matches any concrete lineitem within the order).
-         if (linenumber == 0 || other.linenumber == 0) return 0;
-         if (linenumber != other.linenumber) return linenumber < other.linenumber ? -1 : 1;
-         return 0;
-      }
-
-      static Key max()
-      {
-         return Key{std::numeric_limits<Integer>::max(),
-                    std::numeric_limits<Integer>::max(),
-                    std::numeric_limits<Integer>::max()};
-      }
-
-      // matching_keys() — used by HashJoin to enumerate the hash-bucket keys
-      // a probe-side row must look up.  A concrete lineitem (linenumber>0)
-      // must also look up the anchor (linenumber=0) where jr1 lives.  A jr1
-      // anchor (linenumber=0) maps only to itself.
-      std::vector<Key> matching_keys() const
-      {
-         std::vector<Key> result;
-         if (linenumber != 0) {
-            result.push_back(Key{custkey, orderkey, Integer(0)});
-         }
-         if (orderkey != 0) {
-            result.push_back(Key{custkey, Integer(0), Integer(0)});
-         }
-         result.push_back(*this);
-         return result;
-      }
-
+      // No match() / max() / matching_keys() / operator% here — those exist
+      // only to support join operators, and no consumer joins on this Key.
+      // S2 is a sequential scan; S1/S4 join on q5_co_jk_t::Key.  Adding a
+      // strict-equality stub would mislead future readers into thinking this
+      // Key is join-ready when it isn't.
       auto operator<=>(const Key&) const = default;
-
-      friend int operator%(const Key& k, int n)
-      {
-         // Hash on the 3-field tuple; mix all three components.
-         std::size_t h = std::hash<int>{}(static_cast<int>(k.custkey));
-         h ^= std::hash<int>{}(static_cast<int>(k.orderkey))  + 0x9e3779b9u + (h << 6) + (h >> 2);
-         h ^= std::hash<int>{}(static_cast<int>(k.linenumber)) + 0x9e3779b9u + (h << 6) + (h >> 2);
-         return static_cast<int>(h % static_cast<std::size_t>(n));
-      }
    };
 
    // Unaggregated lineitem fields — revenue computed at query time.
@@ -367,16 +315,9 @@ struct hash<tpch::q5::q5_cust_jk_t::Key> {
    }
 };
 
-template <>
-struct hash<tpch::q5::q5_pipeline_view_t::Key> {
-   std::size_t operator()(const tpch::q5::q5_pipeline_view_t::Key& k) const
-   {
-      std::size_t h = std::hash<int>{}(static_cast<int>(k.custkey));
-      h ^= std::hash<int>{}(static_cast<int>(k.orderkey))   + 0x9e3779b9u + (h << 6) + (h >> 2);
-      h ^= std::hash<int>{}(static_cast<int>(k.linenumber))  + 0x9e3779b9u + (h << 6) + (h >> 2);
-      return h;
-   }
-};
+// No std::hash<q5_pipeline_view_t::Key> — the view Key is the primary key
+// of the S2 view adapter (folded for storage, not hashed for joins).  The
+// only HashJoin in the Q5 plan keys on q5_co_jk_t (see below).
 
 template <>
 struct hash<tpch::q5::q5_co_jk_t::Key> {
@@ -390,48 +331,9 @@ struct hash<tpch::q5::q5_co_jk_t::Key> {
 
 }  // namespace std
 
-// ---------------------------------------------------------------------------
-// SKBuilder specialisation for q5_pipeline_view_t::Key.
-//
-// Used for the view adapter (S2) and for any hash-join path that keys on
-// the 3-field (custkey, orderkey, linenumber) tuple.
-//
-// The lineitem_col_t overload projects linenumber to 0 rather than
-// forwarding k.linenumber.  The build-side (q5_jr1_t) also projects
-// linenumber=0 (there is no per-lineitem component on the build side),
-// so both sides land on the same hashmap bucket per (custkey, orderkey).
-// The cartesian fan-out across multiple lineitems per order then happens
-// via HashJoin's per-probe emit: each lineitem with the same JK produces
-// a separate joined row against the single jr1 entry.  Using k.linenumber
-// here would give every lineitem a distinct bucket and produce zero matches
-// against the single linenumber=0 jr1 entry.
-
-template <>
-struct SKBuilder<tpch::q5::q5_pipeline_view_t::Key> {
-   using JK = tpch::q5::q5_pipeline_view_t::Key;
-
-   // q5_pipeline_view_t: primary key is the full 3-field tuple.
-   static JK create(const JK& k, const tpch::q5::q5_pipeline_view_t&)
-   {
-      return k;
-   }
-
-   // lineitem_col_t (probe side): linenumber is the sort-key suffix on the
-   // primary view; for join purposes it is projected to 0 so both build
-   // (q5_jr1_t) and probe (lineitem_col_t) sides land on the same hashmap
-   // bucket per (custkey, orderkey).
-   static JK create(const tpch::lineitem_col_t::Key& k,
-                    const tpch::lineitem_col_t&)
-   {
-      return JK{k.custkey, k.orderkey, Integer(0)};
-   }
-
-   template <typename R>
-   static JK project(const JK& k) { return k; }
-
-   template <typename R>
-   static JK to_key(const JK& k) { return k; }
-};
+// No SKBuilder<q5_pipeline_view_t::Key> — SKBuilder exists to extract a
+// join key from a record, and no consumer joins on this Key.  The view is
+// stored via fold/unfold from ADD_KEY_TRAITS, not via SKBuilder.
 
 // ---------------------------------------------------------------------------
 // SKBuilder specialisation for q5_co_jk_t::Key.

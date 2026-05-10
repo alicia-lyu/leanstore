@@ -1,0 +1,49 @@
+#pragma once
+
+#include "Types.hpp"
+
+// Sentinel value for a key field that does not constrain a join match.
+//
+// Motivation:
+//   Both the TPC-H and geo workloads use multi-field hierarchical keys
+//   (e.g. (custkey, orderkey, linenumber) for the COL pipeline,
+//   (nationkey, statekey, countykey, citykey, custkey) for geo) where a
+//   coarser-prefix "anchor" row leaves the trailing fields unset, and
+//   match() / matching_keys() treat those unset fields as wildcards so
+//   probe-side rows find their build-side anchors.
+//
+//   Both schemas allocate IDs starting at 1, so 0 is safe as the sentinel.
+//   But that convention is invisible at call sites: a literal `0` in a Key
+//   constructor or `field == 0` in match() looks like a real value.  This
+//   has misled at least two builders in q5/views.hpp (BMJ #2 join key bug
+//   fixed in 105b66a7, then re-introduced in dead form by 2591c5d8).
+//
+// Use WILDCARD_KEY whenever a key field is intentionally left unset to
+// signal a prefix anchor or wildcard match.  Never write a bare `0` in a
+// Key{...} constructor or in a match()/matching_keys() comparison.
+//
+// Type-safe constexpr (not a #define) so it composes with constexpr
+// constructors and respects scope.
+
+inline constexpr Integer WILDCARD_KEY = 0;
+
+// 3-way comparison helper for a single key field with wildcard semantics.
+// Returns 0 (match) if either side is the WILDCARD_KEY sentinel; otherwise
+// returns -1 / 0 / +1 in the usual a-vs-b ordering.
+//
+// Use inside match() implementations on hierarchical keys.  The pattern is:
+//
+//   int match(const Key& other) const {
+//       if (int c = wildcard_match(parent_field, other.parent_field); c) return c;
+//       if (int c = wildcard_match(child_field,  other.child_field);  c) return c;
+//       ...
+//       return 0;
+//   }
+//
+// This encapsulates the "if (a == 0 || b == 0) return 0;" branch so a builder
+// copying a match() implementation cannot silently drop the wildcard handling.
+inline int wildcard_match(Integer a, Integer b)
+{
+   if (a == WILDCARD_KEY || b == WILDCARD_KEY) return 0;
+   return a < b ? -1 : (a > b ? 1 : 0);
+}

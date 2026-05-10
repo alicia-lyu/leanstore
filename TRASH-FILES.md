@@ -53,3 +53,4 @@ build/q3i_btree_iso{1..5} - moved to TRASH/ - replaced by build/q3i_btree_iso/ u
 build/q3i_lsm_iso3 - moved to TRASH/ - replaced by build/q3i_lsm_iso/ unified tree
 /mnt/ssd/q3i_{btree,lsm}_iso{1..5} - left in place (out-of-project; permission-blocked) - stale per-N image dirs replaced by /mnt/ssd/q3i_{btree,lsm}_iso/iso_N/; safe to delete manually
 test_data_*/ test_csv_*/ (60 dirs total, project root) - moved to TRASH/scratch-2026-05-04/ - leftover scratch from per-tag test/load runs (`_a1`/`_a2c`/`_p1b`/`_v8`/`_baseline`/`_prod`/`_s1..s4`/etc.); convention now puts scratch under build/scratch/<tag>/{data,csv} (gitignored via build*/) so it never lands in the project root again
+build/scratch/q5_parity/ - moved to TRASH/ - stale RocksDB scratch from prior parity test run; rebuilding fresh for wildcard-key cleanup verification

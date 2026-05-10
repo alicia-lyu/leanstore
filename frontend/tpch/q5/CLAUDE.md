@@ -456,9 +456,11 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   orders_coli_t` on `custkey` (→ `q5_jr1_t`), stage 2 joins
   `q5_jr1_t ⋈ lineitem_col_t` on `(custkey, orderkey)` via
   `q5_co_jk_t::Key` (→ `q5_jr2_t`). Per-emit callback invokes
-  `q5_admit_lineitem`. `q5_pipeline_view_t::Key::matching_keys()`
-  returns `(custkey,orderkey,0)` and `(custkey,0,0)` prefix anchors
-  plus self so HashJoin probe finds jr1 anchors correctly.
+  `q5_admit_lineitem`. The 2-field `q5_co_jk_t` was minted in
+  commit 105b66a7 specifically because the prior attempt to reuse
+  the 3-field `q5_pipeline_view_t::Key` as a join key required a
+  `linenumber=WILDCARD_KEY` placeholder that never matched real
+  lineitems — see `frontend/shared/wildcard_key.hpp`.
 - **Phase 4 §7.2** (2026-05-09; **complete**) — S1 `query_by_base`
   via 2-BMJ chain over custkey-sorted COL split indexes: BMJ #1
   joins `customerh_t ⋈ orders_coli_t` on `custkey` (→ `q5_jr1_t`),
@@ -490,11 +492,12 @@ regressions clean.
 Phase 1 landed: S1 BMJ chain intermediate types added to `views.hpp`
 (`q5_cust_jk_t` id=58, `q5_jr1_t` id=59, `q5_jr2_t` id=60,
 `q5_co_jk_t` id=61) with `std::hash` and `SKBuilder` specialisations.
-`q5_pipeline_view_t::Key` gains canonical `matching_keys()` and
-wildcard `match()`. BMJ #2 right side is `lineitem_col_t`
-(per-lineitem, not pre-aggregated — needed for per-lineitem SUPPLIER
-probe). No payload extensions needed. All four tests pass; Q3 / Q3I
-regressions clean.
+`q5_pipeline_view_t::Key` is the primary key of the S2 view; it has
+no `match()` / `matching_keys()` because no consumer joins on it
+(S2 scans sequentially; S1/S4 join on `q5_co_jk_t::Key`). BMJ #2
+right side is `lineitem_col_t` (per-lineitem, not pre-aggregated —
+needed for per-lineitem SUPPLIER probe). No payload extensions
+needed. All four tests pass; Q3 / Q3I regressions clean.
 
 Phase 1 (cont.) landed: `workload.hpp` PARAM_TABLE (REGION × DATE,
 10 entries), real `set_params_for_iter`, real `q5_predicate_orders`
