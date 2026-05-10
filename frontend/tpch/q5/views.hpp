@@ -65,15 +65,18 @@ namespace tpch::q5
 // probe and cross-equality check (c_nationkey = s_nationkey) without
 // re-joining base tables.
 //
-// q5_pipeline_view_t::Key is the *primary key* of the S2 view, not a
-// join key.  S2 only sequentially scans the view; S1 BMJ chain and S4
-// HashJoin chain both use q5_co_jk_t::Key (custkey+orderkey) for the
-// jr1⋈lineitem stage — see 105b66a7 which carved out q5_co_jk_t after
-// the original "reuse the 3-field view key as a join key with a
-// linenumber-wildcard placeholder" approach was found broken.  Therefore
-// match() / matching_keys() / operator% on this Key are the trivial
-// strict-equality forms; if a future consumer needs prefix-anchor
-// enumeration here, re-add it then with WILDCARD_KEY rather than bare 0.
+// q5_pipeline_view_t::Key is the primary key of the S2 view.  No current
+// consumer joins on it: S2 is a sequential scan; S1 BMJ chain and S4
+// HashJoin both join on q5_co_jk_t::Key (custkey+orderkey) — see
+// 105b66a7, which minted q5_co_jk_t to side-step a confused attempt to
+// use the 3-field view key with a "linenumber=0 placeholder on the
+// build side" trick.  With wildcard_match() (frontend/shared/wildcard_key.hpp)
+// the 3-field key would in fact join correctly — the linenumber slot
+// would be WILDCARD_KEY on jr1 and a real value on lineitem rows, and
+// match()/matching_keys() would do the right thing.  Nothing about the
+// type prevents future joining on this Key; the join-API methods were
+// dropped because no current consumer needs them, not because they're
+// inappropriate.  Reinstate them via wildcard_match() if a consumer arrives.
 
 struct q5_pipeline_view_t {
    static constexpr int id = 56;
@@ -82,14 +85,14 @@ struct q5_pipeline_view_t {
       static constexpr int id = 56;
       Integer custkey;     // primary sort — groups custkey partitions
       Integer orderkey;    // secondary sort — unique within a custkey group
-      Integer linenumber;  // tertiary sort — unique within an order; 0 = anchor
+      Integer linenumber;  // tertiary sort — unique within an order; WILDCARD_KEY = anchor
       ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
 
-      // No match() / max() / matching_keys() / operator% here — those exist
-      // only to support join operators, and no consumer joins on this Key.
-      // S2 is a sequential scan; S1/S4 join on q5_co_jk_t::Key.  Adding a
-      // strict-equality stub would mislead future readers into thinking this
-      // Key is join-ready when it isn't.
+      // No match() / max() / matching_keys() / operator% here — no current
+      // consumer joins on this Key.  See header comment above for how to
+      // reinstate them (use wildcard_match for the linenumber field).  Until
+      // then, omitting the join-API methods avoids shipping a strict-equality
+      // stub that would silently produce wrong results if used as a join key.
       auto operator<=>(const Key&) const = default;
    };
 
@@ -315,9 +318,11 @@ struct hash<tpch::q5::q5_cust_jk_t::Key> {
    }
 };
 
-// No std::hash<q5_pipeline_view_t::Key> — the view Key is the primary key
-// of the S2 view adapter (folded for storage, not hashed for joins).  The
-// only HashJoin in the Q5 plan keys on q5_co_jk_t (see below).
+// No std::hash<q5_pipeline_view_t::Key> — no current consumer hash-joins
+// on this Key.  The only HashJoin in today's Q5 plan keys on q5_co_jk_t
+// (see below).  Add a specialisation here if a future consumer arrives;
+// it should hash on (custkey, orderkey) only — see the matching note on
+// SKBuilder below for why linenumber must be excluded from the hash.
 
 template <>
 struct hash<tpch::q5::q5_co_jk_t::Key> {
@@ -331,9 +336,14 @@ struct hash<tpch::q5::q5_co_jk_t::Key> {
 
 }  // namespace std
 
-// No SKBuilder<q5_pipeline_view_t::Key> — SKBuilder exists to extract a
-// join key from a record, and no consumer joins on this Key.  The view is
-// stored via fold/unfold from ADD_KEY_TRAITS, not via SKBuilder.
+// No SKBuilder<q5_pipeline_view_t::Key> — SKBuilder is a join-time JK
+// extractor and no current consumer joins on this Key.  The view is
+// stored via fold/unfold from ADD_KEY_TRAITS, not via SKBuilder.  If a
+// consumer arrives, the build-side overload (e.g. for q5_jr1_t) must
+// project linenumber to WILDCARD_KEY so the build-side JK and the
+// probe-side lineitem JK collide into the same hash bucket — analogous
+// to how SKBuilder<ol_sort_key_t>::create projects ORDERS rows with
+// linenumber=WILDCARD_KEY in views_ol.hpp.
 
 // ---------------------------------------------------------------------------
 // SKBuilder specialisation for q5_co_jk_t::Key.

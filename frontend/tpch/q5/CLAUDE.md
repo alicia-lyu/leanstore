@@ -457,10 +457,12 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   `q5_jr1_t ⋈ lineitem_col_t` on `(custkey, orderkey)` via
   `q5_co_jk_t::Key` (→ `q5_jr2_t`). Per-emit callback invokes
   `q5_admit_lineitem`. The 2-field `q5_co_jk_t` was minted in
-  commit 105b66a7 specifically because the prior attempt to reuse
-  the 3-field `q5_pipeline_view_t::Key` as a join key required a
-  `linenumber=WILDCARD_KEY` placeholder that never matched real
-  lineitems — see `frontend/shared/wildcard_key.hpp`.
+  commit 105b66a7 as a workaround when a prior attempt to reuse the
+  3-field `q5_pipeline_view_t::Key` as a join key tripped on the
+  wildcard convention. With `wildcard_match`
+  (`frontend/shared/wildcard_key.hpp`) in place, the 3-field key
+  could be used directly — `q5_co_jk_t` is a convenient narrowing,
+  not a structural necessity.
 - **Phase 4 §7.2** (2026-05-09; **complete**) — S1 `query_by_base`
   via 2-BMJ chain over custkey-sorted COL split indexes: BMJ #1
   joins `customerh_t ⋈ orders_coli_t` on `custkey` (→ `q5_jr1_t`),
@@ -492,9 +494,13 @@ regressions clean.
 Phase 1 landed: S1 BMJ chain intermediate types added to `views.hpp`
 (`q5_cust_jk_t` id=58, `q5_jr1_t` id=59, `q5_jr2_t` id=60,
 `q5_co_jk_t` id=61) with `std::hash` and `SKBuilder` specialisations.
-`q5_pipeline_view_t::Key` is the primary key of the S2 view; it has
-no `match()` / `matching_keys()` because no consumer joins on it
-(S2 scans sequentially; S1/S4 join on `q5_co_jk_t::Key`). BMJ #2
+`q5_pipeline_view_t::Key` is the primary key of the S2 view. The
+join-API methods (`match()`, `matching_keys()`, `operator%`,
+`std::hash`, `SKBuilder`) are intentionally absent because no
+*current* consumer joins on this Key — S2 scans sequentially, and
+S1/S4 join on `q5_co_jk_t::Key`. Nothing about the type prevents
+future joining; reinstate the methods using `wildcard_match` (see
+`frontend/shared/wildcard_key.hpp`) when a consumer arrives. BMJ #2
 right side is `lineitem_col_t` (per-lineitem, not pre-aggregated —
 needed for per-lineitem SUPPLIER probe). No payload extensions
 needed. All four tests pass; Q3 / Q3I regressions clean.
