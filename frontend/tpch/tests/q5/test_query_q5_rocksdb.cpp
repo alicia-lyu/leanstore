@@ -174,40 +174,28 @@ int main(int argc, char** argv)
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
    // ------------------------------------------------------------------
-   // Parity check.
+   // Parity check — strict 4-way parity (Phase 4 complete).
    //
-   // Phase 4 §7.1 landing policy (per plan §"Test harness updates"):
-   //   S3 (merged) — STRICT: must produce rows >= 1 and a non-zero digest.
-   //   S1 / S2 / S4 — [SKIP]-tolerant until §7.2 / §7.3 / §7.5 land.
-   //     Their stubs return empty vectors (digest 0x0); that disagreement
-   //     with S3 is expected and must NOT cause a test failure here.
-   //     Each will be flipped to strict in its own commit.
-   //
-   // After §7.2 lands (the final Phase 4 sub-commit) all four must agree.
+   // All four paths must produce rows >= 1, non-zero digest, and identical
+   // digest values.  S3 (merged) is the canonical oracle; S1/S2/S4 must
+   // agree with it exactly.
    std::cout << "\n=== Parity check ===\n";
    uint64_t ref = d_merged;  // S3 is the canonical oracle.
 
-   // S3 strict: rows >= 1 and digest != 0.
-   bool s3_ok = (r_merged.size() >= 1) && (d_merged != 0);
-   std::cout << (s3_ok ? "[OK]   " : "[FAIL] ")
-             << "S3 merged rows=" << r_merged.size()
-             << " digest=0x" << std::hex << d_merged << std::dec << "\n";
+   bool all_ok = true;
 
-   // S1 / S2 / S4 skip-tolerant: report but do not fail.
-   auto skip_line = [&](const char* tag, uint64_t d, size_t n) {
-      std::ostringstream ss;
-      ss << std::hex << ref;
-      bool match = (d == ref);
-      std::cout << (match ? "[OK]   " : "[SKIP] ")
+   auto strict_line = [&](const char* tag, uint64_t d, size_t n) {
+      bool match = (d == ref) && (n >= 1) && (d != 0);
+      if (!match) all_ok = false;
+      std::cout << (match ? "[OK]   " : "[FAIL] ")
                 << tag
                 << " rows=" << n
-                << " digest=0x" << std::hex << d << std::dec
-                << (match ? "" : "  (stub — expected 0x" + ss.str() + " when implemented)")
-                << "\n";
+                << " digest=0x" << std::hex << d << std::dec << "\n";
    };
-   skip_line("S1 base  ", d_base, r_base.size());
-   skip_line("S2 view  ", d_view, r_view.size());
-   skip_line("S4 hash  ", d_hash, r_hash.size());
+   strict_line("S1 base  ", d_base,   r_base.size());
+   strict_line("S2 view  ", d_view,   r_view.size());
+   strict_line("S3 merged", d_merged, r_merged.size());
+   strict_line("S4 hash  ", d_hash,   r_hash.size());
 
-   return s3_ok ? 0 : 1;
+   return all_ok ? 0 : 1;
 }

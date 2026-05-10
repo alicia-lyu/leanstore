@@ -306,10 +306,92 @@ struct Q5GroupWalkVisitor {
 template <typename Backend>
 long Q5Workload<Backend>::query_by_base(std::vector<q5_agg_row_t>& out)
 {
-   // Phase 4 §7.2: 2-way BMJ chain over COL split indexes
-   // (customer ⋈ orders_sec ⋈ lineitem_sec), same visitor as S3.
+   // S1: 2-BMJ chain over custkey-sorted COL split indexes.
+   //
+   //   BMJ #1: customerh_t  ⋈ orders_coli_t   on custkey       → q5_jr1_t
+   //   BMJ #2: q5_jr1_t     ⋈ lineitem_col_t  on (custkey,
+   //                                               orderkey)    → q5_jr2_t
+   //
+   // Per emit: q5_admit_lineitem probes SUPPLIER, applies the
+   //   c_nationkey = s_nationkey cross-equality, and accumulates
+   //   revenue into the per-n_name HashAggregate.
+   //
+   // Unlike Q3, we do NOT pre-aggregate lineitems per (custkey, orderkey)
+   // because each lineitem needs l_suppkey for the SUPPLIER probe.
+   // The 2-field join key q5_co_jk_t (custkey, orderkey) lets every
+   // lineitem within an order match the single jr1 entry via cartesian
+   // product — no linenumber on the build side is required.
+   //
+   // OPERATORS.md §6.1: same predicate logic as S3 — apples-to-apples.
    out.clear();
-   return 0;
+
+   Q5SideTables sides;
+   build_q5_side_tables<Backend>(region, nation, supplier, params, sides);
+
+   NNameRevenueAggregator agg;
+
+   auto cust_sc = customer.getScanner();
+   auto ord_sc  = col.split_orders().getScanner();
+
+   // fetch_cust: scan customers, gate by c_nationkey ∈ nation_set.
+   auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
+      while (auto kv = cust_sc->next()) {
+         if (stats) stats->customers_scanned++;
+         if (sides.nation_set.count(kv->second.c_nationkey) == 0) continue;
+         if (stats) stats->customers_passing_filter++;
+         return kv;
+      }
+      return std::nullopt;
+   };
+
+   // fetch_ord: scan custkey-sorted orders split index, gate by orderdate window.
+   auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
+      while (auto kv = ord_sc->next()) {
+         if (stats) stats->orders_scanned++;
+         const Timestamp od = kv->second.o_orderdate;
+         if (od < params.orderdate_lo || od >= params.orderdate_lo + 365) continue;
+         if (stats) stats->orders_passing_filter++;
+         return kv;
+      }
+      return std::nullopt;
+   };
+
+   // BMJ #1: customer ⋈ split_orders on custkey → q5_jr1_t.
+   BinaryMergeJoin<q5_cust_jk_t::Key, q5_jr1_t, customerh_t, orders_coli_t>
+       bmj1(fetch_cust, fetch_ord);
+
+   auto lin_sc = col.split_lineitem().getScanner();
+
+   auto fetch_bmj1 = [&]() { return bmj1.next(); };
+
+   // fetch_lin: scan custkey-sorted lineitem split index (no pre-filter;
+   // SUPPLIER probe and cross-equality fire inside q5_admit_lineitem).
+   auto fetch_lin = [&]() -> std::optional<std::pair<lineitem_col_t::Key, lineitem_col_t>> {
+      auto kv = lin_sc->next();
+      if (kv && stats) stats->lineitems_scanned++;
+      return kv;
+   };
+
+   // BMJ #2: jr1 ⋈ split_lineitem on (custkey, orderkey) → q5_jr2_t.
+   // q5_co_jk_t::Key is the 2-field key; SKBuilder<q5_co_jk_t::Key>
+   // extracts (custkey, orderkey) from both q5_jr1_t and lineitem_col_t.
+   BinaryMergeJoin<q5_co_jk_t::Key, q5_jr2_t, q5_jr1_t, lineitem_col_t>
+       bmj2(fetch_bmj1, fetch_lin,
+            [&](const q5_jr2_t::Key&, const q5_jr2_t& jr2) {
+               // q5_admit_lineitem: SUPPLIER probe + cross-eq + accumulate.
+               q5_admit_lineitem(jr2.lineitem(),
+                                 jr2.jr1().cust().c_nationkey,
+                                 sides, agg, stats);
+            });
+   bmj2.run();
+
+   agg.emit(out, sides);
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->agg_buckets         = static_cast<long>(out.size());
+   }
+   std::sort(out.begin(), out.end(), q5_sort_cmp);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
