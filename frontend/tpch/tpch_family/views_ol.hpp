@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "../../shared/view_templates.hpp"
+#include "../../shared/wildcard_key.hpp"
 #include "../tpch_tables.hpp"
 
 namespace tpch
@@ -25,7 +26,7 @@ namespace tpch
 
 struct ol_sort_key_t {
    Integer orderkey;
-   Integer linenumber;  // 0 for ORDERS-only granularity, >0 for LINEITEM rows
+   Integer linenumber;  // WILDCARD_KEY for ORDERS-only granularity, >0 for LINEITEM rows
 
    using Key = ol_sort_key_t;
    ADD_KEY_TRAITS(&ol_sort_key_t::orderkey, &ol_sort_key_t::linenumber)
@@ -40,26 +41,25 @@ struct ol_sort_key_t {
    friend int operator%(const ol_sort_key_t& k, const int& n) { return static_cast<int>(k.orderkey) % n; }
 
    // Returns all sort keys that should match during a hash probe.
-   // An ORDERS row (linenumber == 0) matches only itself; a LINEITEM row
-   // (linenumber > 0) also needs to match the enclosing order-level key.
+   // An ORDERS row (linenumber == WILDCARD_KEY) matches only itself; a
+   // LINEITEM row (linenumber > 0) also needs to match the enclosing
+   // order-level key.
    std::vector<ol_sort_key_t> matching_keys() const
    {
-      if (linenumber > 0) {
-         return {{orderkey, Integer(0)}, *this};
+      if (linenumber != WILDCARD_KEY) {
+         return {{orderkey, WILDCARD_KEY}, *this};
       }
       return {*this};
    }
 
-   // Hierarchical prefix comparison. linenumber == 0 acts as a wildcard that
-   // matches any linenumber under the same orderkey.
+   // Hierarchical prefix comparison. linenumber == WILDCARD_KEY on either
+   // side acts as a prefix wildcard matching any linenumber under the same
+   // orderkey — see frontend/shared/wildcard_key.hpp.
    int match(const ol_sort_key_t& other) const
    {
       if (orderkey != other.orderkey)
          return static_cast<int>(orderkey) - static_cast<int>(other.orderkey);
-      // Either side being 0 means "order-level" — treat as prefix match.
-      if (linenumber == 0 || other.linenumber == 0)
-         return 0;
-      return static_cast<int>(linenumber) - static_cast<int>(other.linenumber);
+      return wildcard_match(linenumber, other.linenumber);
    }
 
    // Returns the index of the first differing field, the other's value at

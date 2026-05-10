@@ -8,17 +8,20 @@
 #include "views.hpp"
 #include "workload.hpp"
 
+// Copy each non-wildcard field of found_k into sk; WILDCARD_KEY fields in
+// sk stay as wildcards.  Used by the seek-completion path to fill in
+// concrete values from a hit while preserving the prefix-anchor shape.
 inline void update_sk(sort_key_t& sk, const sort_key_t& found_k)
 {
-   if (sk.nationkey != 0)
+   if (sk.nationkey != WILDCARD_KEY)
       sk.nationkey = found_k.nationkey;
-   if (sk.statekey != 0)
+   if (sk.statekey != WILDCARD_KEY)
       sk.statekey = found_k.statekey;
-   if (sk.countykey != 0)
+   if (sk.countykey != WILDCARD_KEY)
       sk.countykey = found_k.countykey;
-   if (sk.citykey != 0)
+   if (sk.citykey != WILDCARD_KEY)
       sk.citykey = found_k.citykey;
-   if (sk.custkey != 0)
+   if (sk.custkey != WILDCARD_KEY)
       sk.custkey = found_k.custkey;
 }
 

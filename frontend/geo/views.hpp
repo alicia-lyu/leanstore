@@ -3,6 +3,7 @@
 #include <variant>
 #include "../shared/variant_tuple_utils.hpp"
 #include "../shared/view_templates.hpp"
+#include "../shared/wildcard_key.hpp"
 #include "tpch_tables.hpp"
 
 // id range: 10s + 20s (only one such namespace are included in each executable)
@@ -27,20 +28,23 @@ struct sort_key_t {
 
    friend int operator%(const sort_key_t& jk, const int& n) { return (jk.nationkey + jk.statekey + jk.countykey + jk.citykey) % n; }
 
+   // Enumerate prefix-anchor keys for HashJoin probe lookup.  Each trailing
+   // field is replaced with WILDCARD_KEY one level at a time, walking up the
+   // hierarchy from custkey to nationkey.  See frontend/shared/wildcard_key.hpp.
    std::vector<sort_key_t> matching_keys()
    {
       std::vector<sort_key_t> result;
-      if (custkey != 0) {
-         result.push_back(sort_key_t{nationkey, statekey, countykey, citykey, 0});
+      if (custkey != WILDCARD_KEY) {
+         result.push_back(sort_key_t{nationkey, statekey, countykey, citykey, WILDCARD_KEY});
       }
-      if (citykey != 0) {
-         result.push_back(sort_key_t{nationkey, statekey, countykey, 0, 0});
+      if (citykey != WILDCARD_KEY) {
+         result.push_back(sort_key_t{nationkey, statekey, countykey, WILDCARD_KEY, WILDCARD_KEY});
       }
-      if (countykey != 0) {
-         result.push_back(sort_key_t{nationkey, statekey, 0, 0, 0});
+      if (countykey != WILDCARD_KEY) {
+         result.push_back(sort_key_t{nationkey, statekey, WILDCARD_KEY, WILDCARD_KEY, WILDCARD_KEY});
       }
-      if (statekey != 0) {
-         result.push_back(sort_key_t{nationkey, 0, 0, 0, 0});
+      if (statekey != WILDCARD_KEY) {
+         result.push_back(sort_key_t{nationkey, WILDCARD_KEY, WILDCARD_KEY, WILDCARD_KEY, WILDCARD_KEY});
       }
       result.push_back(*this);
       return result;
@@ -48,24 +52,20 @@ struct sort_key_t {
 
    int match(const sort_key_t& other) const
    {
-      // {0, 0, 0, 0, 0} cannot be used as wildcard
-      if (*this == sort_key_t{} && other == sort_key_t{})
-         return 0;
-      else if (*this == sort_key_t{})
-         return -1;
-      else if (other == sort_key_t{})
-         return 1;
+      // All-WILDCARD_KEY sort_key_t{} is a sentinel min, not a "matches
+      // everything" wildcard — anchor it before any concrete key for
+      // ordering purposes.
+      if (*this == sort_key_t{} && other == sort_key_t{}) return 0;
+      else if (*this == sort_key_t{})                     return -1;
+      else if (other == sort_key_t{})                     return 1;
 
-      if (nationkey != 0 && other.nationkey != 0 && nationkey != other.nationkey)
-         return nationkey - other.nationkey;
-      if (statekey != 0 && other.statekey != 0 && statekey != other.statekey)
-         return statekey - other.statekey;
-      if (countykey != 0 && other.countykey != 0 && countykey != other.countykey)
-         return countykey - other.countykey;
-      if (citykey != 0 && other.citykey != 0 && citykey != other.citykey)
-         return citykey - other.citykey;
-      if (custkey != 0 && other.custkey != 0 && custkey != other.custkey)
-         return custkey - other.custkey;
+      // Per-field hierarchical comparison; WILDCARD_KEY on either side of a
+      // single field is treated as a prefix match for that field.
+      if (int c = wildcard_match(nationkey, other.nationkey); c) return c;
+      if (int c = wildcard_match(statekey,  other.statekey);  c) return c;
+      if (int c = wildcard_match(countykey, other.countykey); c) return c;
+      if (int c = wildcard_match(citykey,   other.citykey);   c) return c;
+      if (int c = wildcard_match(custkey,   other.custkey);   c) return c;
       return 0;
    }
 
