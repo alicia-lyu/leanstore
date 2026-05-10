@@ -25,6 +25,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "../../shared/merge-join/binary_merge_join.hpp"
+#include "../../shared/merge-join/hash_join.hpp"
+#include "../tpch_family/col_pipeline.hpp"
 #include "../tpch_family/revenue.hpp"
 #include "../tpch_family/walk_action.hpp"
 #include "side_tables.hpp"
@@ -412,9 +415,96 @@ long Q5Workload<Backend>::query_by_merged(std::vector<q5_agg_row_t>& out)
 template <typename Backend>
 long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
 {
-   // Phase 4 §7.5: HashJoin chain over base tables (S4 baseline).
+   // S4: 2-stage HashJoin chain over base tables (S4 baseline).
+   //
+   // Stage 1: HashJoin<q5_cust_jk_t::Key, q5_jr1_t, customerh_t, orders_coli_t>
+   //   build  = customer scan, filter c_nationkey ∈ nation_set
+   //   probe  = col.split_orders() scan, filter orderdate window
+   //   output = q5_jr1_t  (custkey → (customer, order))
+   //
+   // Stage 2: HashJoin<q5_co_jk_t::Key, q5_jr2_t, q5_jr1_t, lineitem_col_t>
+   //   build  = stage-1 output (drained via next())
+   //   probe  = col.split_lineitem() scan (no pre-filter; SUPPLIER probe is post-join)
+   //   per-emit: q5_admit_lineitem(jr2.lineitem(), jr2.jr1().cust().c_nationkey, sides, agg, stats)
+   //
+   // seek_jk = JK::max() for both stages (unbounded full scan).
+   // OPERATORS.md §6.1: same predicate logic as S1/S3 — apples-to-apples comparison.
    out.clear();
-   return 0;
+
+   Q5SideTables sides;
+   build_q5_side_tables<Backend>(region, nation, supplier, params, sides);
+
+   NNameRevenueAggregator agg;
+
+   // ------------------------------------------------------------------
+   // Stage 1: HashJoin customer ⋈ split_orders on custkey.
+
+   auto cust_sc  = customer.getScanner();
+   auto ord_sc   = col.split_orders().getScanner();
+
+   auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
+      while (auto kv = cust_sc->next()) {
+         if (stats) stats->customers_scanned++;
+         if (sides.nation_set.count(kv->second.c_nationkey) == 0) continue;
+         if (stats) stats->customers_passing_filter++;
+         return kv;
+      }
+      return std::nullopt;
+   };
+
+   auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
+      while (auto kv = ord_sc->next()) {
+         if (stats) stats->orders_scanned++;
+         // q5_predicate_orders reads only o_orderdate; apply the same check inline
+         // using orders_coli_t's o_orderdate field (no full orders_t needed).
+         const Timestamp od = kv->second.o_orderdate;
+         if (od < params.orderdate_lo || od >= params.orderdate_lo + 365) continue;
+         if (stats) stats->orders_passing_filter++;
+         return kv;
+      }
+      return std::nullopt;
+   };
+
+   HashJoin<q5_cust_jk_t::Key, q5_jr1_t, customerh_t, orders_coli_t>
+       hj1(fetch_cust, fetch_ord, q5_cust_jk_t::Key::max());
+
+   // ------------------------------------------------------------------
+   // Stage 2: HashJoin jr1 ⋈ split_lineitem on (custkey, orderkey).
+   //
+   // Using q5_co_jk_t::Key (2-field) rather than q5_pipeline_view_t::Key
+   // (3-field): the build side (jr1) has no inherent linenumber, so a
+   // 3-field key would require a linenumber=0 placeholder that matches
+   // only linenumber=0 rows — missing all real lineitems.  The 2-field
+   // key lets every lineitem in an order match the jr1 entry for that order.
+
+   auto lin_sc = col.split_lineitem().getScanner();
+
+   auto fetch_jr1 = [&]() -> std::optional<std::pair<q5_jr1_t::Key, q5_jr1_t>> {
+      return hj1.next();
+   };
+
+   auto fetch_lin = [&]() -> std::optional<std::pair<lineitem_col_t::Key, lineitem_col_t>> {
+      auto kv = lin_sc->next();
+      if (kv && stats) stats->lineitems_scanned++;
+      return kv;
+   };
+
+   HashJoin<q5_co_jk_t::Key, q5_jr2_t, q5_jr1_t, lineitem_col_t>
+       hj2(fetch_jr1, fetch_lin, q5_co_jk_t::Key::max(),
+           [&](const q5_jr2_t::Key&, const q5_jr2_t& jr2) {
+              // q5_admit_lineitem handles SUPPLIER probe, cross-eq, and accumulate.
+              q5_admit_lineitem(jr2.lineitem(), jr2.jr1().cust().c_nationkey,
+                                sides, agg, stats);
+           });
+   hj2.run();
+
+   agg.emit(out, sides);
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->agg_buckets         = static_cast<long>(out.size());
+   }
+   std::sort(out.begin(), out.end(), q5_sort_cmp);
+   return static_cast<long>(out.size());
 }
 
 }  // namespace tpch::q5
