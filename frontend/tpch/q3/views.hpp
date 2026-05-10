@@ -98,6 +98,13 @@ struct q3_cust_jk_t {
 
       static Key max() { return Key{std::numeric_limits<Integer>::max()}; }
 
+      // Latent assumption: `{*this}` is sufficient only because no current
+      // consumer extends the hierarchy beyond `custkey` (this Key mirrors
+      // q3i's `cust_open_due_t::Key`).  If a future consumer probes with
+      // a `(custkey, *)`-style anchor, widen the Key with the canonical
+      // wildcard wiring from `frontend/tpch/q5/views.hpp::q5_sort_key_t`
+      // (per-field `wildcard_match` + full prefix-anchor enumeration).
+      // See `frontend/shared/wildcard_key.hpp` for the principle.
       std::vector<Key> matching_keys() const { return {*this}; }
 
       auto operator<=>(const Key&) const = default;

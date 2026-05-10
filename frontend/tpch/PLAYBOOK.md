@@ -598,6 +598,25 @@ retirement; do not mirror it in new code.
 prefix-anchor enumeration, wildcard-blind hash) plus their
 `SKBuilder` projections.
 
+**Layering principle — don't bake query semantics into record-type
+defaults.**  A record-type definition predates its consumers.  A
+`match()` / `matching_keys()` design that relies on "current callers
+happen to project to the same granularity" is a **latent assumption**,
+not a correct minimal design — the failure mode (silent miss when a
+new consumer probes with a coarser anchor) looks like a query bug,
+not a record-type design debt.  When you choose
+`matching_keys() = {*this}` deliberately, write the assumption inline
+with a pointer to `frontend/shared/wildcard_key.hpp` and the canonical
+wildcard-aware impls so the next maintainer gets a hint instead of a
+silent miss.
+
+Currently load-bearing examples (Q3-family aggregate keys; the strict
+default is sound today only because both BMJ sides project to the
+full key):
+`tpch::q3_family::lineitem_agg_t::Key`,
+`tpch::q3i::cust_open_due_t::Key`,
+`tpch::q3::q3_cust_jk_t::Key`.
+
 > **PITFALL — `joined_ol_t::unfoldKey`** (commit `be8b9bba`): The generic
 > `joined_t::unfoldKey(fold_pks=false)` path assumes each constituent
 > type has a `Key(JK)` constructor. If yours doesn't, you must add an

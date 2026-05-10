@@ -51,3 +51,25 @@ inline int wildcard_match(Integer a, Integer b)
    if (a == WILDCARD_KEY || b == WILDCARD_KEY) return 0;
    return a < b ? -1 : (a > b ? 1 : 0);
 }
+
+// Record-type vs query-time responsibility.
+//
+// Wildcard handling belongs to the *record type's* match() / matching_keys(),
+// not to individual queries.  A record-type author who picks
+// `matching_keys() = {*this}` because today's queries don't need anchors is
+// encoding a query-shape assumption into a layer that should predate
+// queries — record types live alongside the schema, queries come and go.
+//
+// The strict-default shortcut is fine when the consumer set is small and
+// well-known; what's not fine is leaving it implicit.  If you choose
+// `{*this}` deliberately, document the assumption in a comment alongside a
+// pointer to the canonical wildcard-aware reference impls
+// (`frontend/tpch/q5/views.hpp::q5_sort_key_t`,
+//  `frontend/geo/views.hpp::sort_key_t`) so a future correctness incident
+// has a written hint pointing at the right file.
+//
+// Concrete examples of keys whose strict default is currently load-bearing:
+//   - `tpch::q3_family::lineitem_agg_t::Key` — see comment above the struct.
+//   - `tpch::q3i::cust_open_due_t::Key`      — single-field, hierarchy not
+//                                              extensible without widening.
+//   - `tpch::q3::q3_cust_jk_t::Key`          — same as above.

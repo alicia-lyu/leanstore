@@ -158,6 +158,15 @@ Includes `std::hash` specialisation for HashJoin.
 shape into the final BMJ — hoisted Phase 4 §7.2.  Previously inline in
 `q3i/views.hpp` (where `tpch::q3i::lineitem_agg_t` is now an alias).
 
+**Latent join-semantics assumption**: `Key::match` and
+`matching_keys() = {*this}` are correctness-sufficient today only because
+every current BMJ consumer projects both sides to the full
+`(custkey, orderkey)` JK via per-side `SKBuilder::create` overloads — no
+slot is ever left as `WILDCARD_KEY` at probe time.  See the inline comment
+above the `Key` struct in `lineitem_agg.hpp` and the layering principle in
+`PLAYBOOK.md §4` (and `frontend/shared/wildcard_key.hpp`) before adding a
+consumer that probes with a coarser anchor.
+
 ---
 
 ### `lineitem_revenue_aggregator.hpp` — `LineitemRevenueAggregator<Backend, LineitemType, Params>`
