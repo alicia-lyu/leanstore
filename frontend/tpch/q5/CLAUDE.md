@@ -241,7 +241,8 @@ secondary keys (`(custkey, orderkey)` for orders,
 in the order required by the BMJ chain. Implemented as a 2-BMJ
 chain: BMJ #1 joins `customerh_t ⋈ orders_coli_t` on custkey
 (→ `q5_jr1_t`), BMJ #2 joins `q5_jr1_t ⋈ lineitem_col_t` on
-`(custkey, orderkey)` using `q5_co_jk_t::Key` (→ `q5_jr2_t`).
+`(custkey, orderkey, linenumber)` using `q5_sort_key_t`
+(linenumber=`WILDCARD_KEY` on the build side; → `q5_jr2_t`).
 Per-emit the same `q5_admit_lineitem` free helper is called as in
 S3/S4. Unlike Q3's S1, no `LineitemRevenueAggregator` pre-aggregate
 is used — Q5 needs per-lineitem `l_suppkey` for the SUPPLIER probe.
@@ -455,19 +456,23 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   via 2-stage HashJoin chain: stage 1 joins `customerh_t ⋈
   orders_coli_t` on `custkey` (→ `q5_jr1_t`), stage 2 joins
   `q5_jr1_t ⋈ lineitem_col_t` on `(custkey, orderkey)` via
-  `q5_co_jk_t::Key` (→ `q5_jr2_t`). Per-emit callback invokes
-  `q5_admit_lineitem`. The 2-field `q5_co_jk_t` was minted in
-  commit 105b66a7 as a workaround when a prior attempt to reuse the
-  3-field `q5_pipeline_view_t::Key` as a join key tripped on the
-  wildcard convention. With `wildcard_match`
-  (`frontend/shared/wildcard_key.hpp`) in place, the 3-field key
-  could be used directly — `q5_co_jk_t` is a convenient narrowing,
-  not a structural necessity.
+  `q5_sort_key_t` (→ `q5_jr2_t`). Per-emit callback invokes
+  `q5_admit_lineitem`. `q5_sort_key_t` is a dedicated shared
+  sort-key abstraction (mirrors `geo::sort_key_t`): all wildcard
+  semantics live in its `match()` and `matching_keys()`, hash is
+  wildcard-blind, and `SKBuilder::project<q5_jr1_t>` strips
+  linenumber to `WILDCARD_KEY` so `join_state::join_and_clear`
+  preserves the jr1 buffer across per-lineitem cartesian flushes.
+  Replaces a 2-field `q5_co_jk_t` workaround minted in commit
+  105b66a7 to side-step a confused attempt to reuse the S2 view's
+  primary key as a join key.
 - **Phase 4 §7.2** (2026-05-09; **complete**) — S1 `query_by_base`
   via 2-BMJ chain over custkey-sorted COL split indexes: BMJ #1
   joins `customerh_t ⋈ orders_coli_t` on `custkey` (→ `q5_jr1_t`),
-  BMJ #2 joins `q5_jr1_t ⋈ lineitem_col_t` on `(custkey, orderkey)`
-  via `q5_co_jk_t::Key` (→ `q5_jr2_t`). No `LineitemRevenueAggregator`
+  BMJ #2 joins `q5_jr1_t ⋈ lineitem_col_t` on
+  `(custkey, orderkey, linenumber)` via `q5_sort_key_t`
+  (linenumber=`WILDCARD_KEY` on the build side; → `q5_jr2_t`).
+  No `LineitemRevenueAggregator`
   pre-aggregate — Q5 needs per-lineitem `l_suppkey` for SUPPLIER probe.
   Per-emit callback invokes `q5_admit_lineitem` (shared with S3/S4).
   Test harness flipped to strict 4-way parity: SF=1 all four paths
@@ -493,15 +498,18 @@ regressions clean.
 
 Phase 1 landed: S1 BMJ chain intermediate types added to `views.hpp`
 (`q5_cust_jk_t` id=58, `q5_jr1_t` id=59, `q5_jr2_t` id=60,
-`q5_co_jk_t` id=61) with `std::hash` and `SKBuilder` specialisations.
-`q5_pipeline_view_t::Key` is the primary key of the S2 view. The
-join-API methods (`match()`, `matching_keys()`, `operator%`,
-`std::hash`, `SKBuilder`) are intentionally absent because no
-*current* consumer joins on this Key — S2 scans sequentially, and
-S1/S4 join on `q5_co_jk_t::Key`. Nothing about the type prevents
-future joining; reinstate the methods using `wildcard_match` (see
-`frontend/shared/wildcard_key.hpp`) when a consumer arrives. BMJ #2
-right side is `lineitem_col_t` (per-lineitem, not pre-aggregated —
+`q5_sort_key_t` id=61) with `std::hash` and `SKBuilder` specialisations.
+`q5_pipeline_view_t::Key` is a plain primary key with default
+`operator<=>` only — all join semantics live on `q5_sort_key_t`, the
+dedicated shared sort-key abstraction (mirrors `geo::sort_key_t`).
+Wildcard handling is uniform across all three fields of the sort key:
+`match()` uses `wildcard_match` per field, `matching_keys()` enumerates
+every prefix anchor, `operator%` / `std::hash` are wildcard-blind.
+`SKBuilder<q5_sort_key_t>::project<q5_jr1_t>` strips linenumber to
+`WILDCARD_KEY`, which is what makes BMJ's per-record-type clear in
+`join_state::join_and_clear` preserve the jr1 buffer across
+per-lineitem cartesian flushes. BMJ #2 right side is `lineitem_col_t`
+(per-lineitem, not pre-aggregated —
 needed for per-lineitem SUPPLIER probe). No payload extensions
 needed. All four tests pass; Q3 / Q3I regressions clean.
 

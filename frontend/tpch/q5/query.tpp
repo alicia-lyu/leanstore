@@ -318,9 +318,10 @@ long Q5Workload<Backend>::query_by_base(std::vector<q5_agg_row_t>& out)
    //
    // Unlike Q3, we do NOT pre-aggregate lineitems per (custkey, orderkey)
    // because each lineitem needs l_suppkey for the SUPPLIER probe.
-   // The 2-field join key q5_co_jk_t (custkey, orderkey) lets every
-   // lineitem within an order match the single jr1 entry via cartesian
-   // product — no linenumber on the build side is required.
+   // BMJ #2 keys on q5_sort_key_t (custkey, orderkey, linenumber) with
+   // the WILDCARD_KEY convention: jr1 build-side rows project
+   // linenumber=WILDCARD_KEY, so every lineitem in an order matches the
+   // single jr1 entry via the wildcard-aware match() on the sort key.
    //
    // OPERATORS.md §6.1: same predicate logic as S3 — apples-to-apples.
    out.clear();
@@ -372,10 +373,11 @@ long Q5Workload<Backend>::query_by_base(std::vector<q5_agg_row_t>& out)
       return kv;
    };
 
-   // BMJ #2: jr1 ⋈ split_lineitem on (custkey, orderkey) → q5_jr2_t.
-   // q5_co_jk_t::Key is the 2-field key; SKBuilder<q5_co_jk_t::Key>
-   // extracts (custkey, orderkey) from both q5_jr1_t and lineitem_col_t.
-   BinaryMergeJoin<q5_co_jk_t::Key, q5_jr2_t, q5_jr1_t, lineitem_col_t>
+   // BMJ #2: jr1 ⋈ split_lineitem on q5_sort_key_t → q5_jr2_t.
+   // SKBuilder projects linenumber=WILDCARD_KEY on the build side
+   // (q5_jr1_t) and forwards the real linenumber on the probe side
+   // (lineitem_col_t).
+   BinaryMergeJoin<q5_sort_key_t, q5_jr2_t, q5_jr1_t, lineitem_col_t>
        bmj2(fetch_bmj1, fetch_lin,
             [&](const q5_jr2_t::Key&, const q5_jr2_t& jr2) {
                // q5_admit_lineitem: SUPPLIER probe + cross-eq + accumulate.
@@ -504,7 +506,7 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
    //   probe  = col.split_orders() scan, filter orderdate window
    //   output = q5_jr1_t  (custkey → (customer, order))
    //
-   // Stage 2: HashJoin<q5_co_jk_t::Key, q5_jr2_t, q5_jr1_t, lineitem_col_t>
+   // Stage 2: HashJoin<q5_sort_key_t, q5_jr2_t, q5_jr1_t, lineitem_col_t>
    //   build  = stage-1 output (drained via next())
    //   probe  = col.split_lineitem() scan (no pre-filter; SUPPLIER probe is post-join)
    //   per-emit: q5_admit_lineitem(jr2.lineitem(), jr2.jr1().cust().c_nationkey, sides, agg, stats)
@@ -553,11 +555,12 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
    // ------------------------------------------------------------------
    // Stage 2: HashJoin jr1 ⋈ split_lineitem on (custkey, orderkey).
    //
-   // Using q5_co_jk_t::Key (2-field) rather than q5_pipeline_view_t::Key
-   // (3-field): the build side (jr1) has no inherent linenumber, so a
-   // 3-field key would require a linenumber=0 placeholder that matches
-   // only linenumber=0 rows — missing all real lineitems.  The 2-field
-   // key lets every lineitem in an order match the jr1 entry for that order.
+   // Keys on q5_sort_key_t with the WILDCARD_KEY convention on linenumber:
+   // SKBuilder projects linenumber=WILDCARD_KEY for jr1 build-side rows
+   // and forwards the real linenumber for lineitem probe-side rows.
+   // std::hash hashes all three fields uniformly; matching_keys() on the
+   // probe side enumerates the (custkey, orderkey, WILDCARD_KEY) anchor
+   // bucket so the probe finds the jr1 entry.
 
    auto lin_sc = col.split_lineitem().getScanner();
 
@@ -571,8 +574,8 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
       return kv;
    };
 
-   HashJoin<q5_co_jk_t::Key, q5_jr2_t, q5_jr1_t, lineitem_col_t>
-       hj2(fetch_jr1, fetch_lin, q5_co_jk_t::Key::max(),
+   HashJoin<q5_sort_key_t, q5_jr2_t, q5_jr1_t, lineitem_col_t>
+       hj2(fetch_jr1, fetch_lin, q5_sort_key_t::max(),
            [&](const q5_jr2_t::Key&, const q5_jr2_t& jr2) {
               // q5_admit_lineitem handles SUPPLIER probe, cross-eq, and accumulate.
               q5_admit_lineitem(jr2.lineitem(), jr2.jr1().cust().c_nationkey,

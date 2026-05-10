@@ -21,12 +21,14 @@
 //   BMJ #1: customerh_t ⋈ orders_coli_t  on custkey             → q5_jr1_t
 //   BMJ #2: q5_jr1_t    ⋈ lineitem_col_t on (custkey, orderkey) → q5_jr2_t
 //
-// BMJ #2 join key is q5_co_jk_t::Key (custkey, orderkey) — NOT the 3-field
-// q5_pipeline_view_t::Key.  Using the 3-field key would require the
-// build-side jr1 entry to carry a real linenumber, but jr1 represents an
-// entire (customer, order) pair; lineitems are the right (probe) side.
-// The 2-field key lets the BMJ match every lineitem within an order to the
-// single jr1 entry for that order via cartesian product.
+// BMJ #2 join key is q5_sort_key_t (custkey, orderkey, linenumber) —
+// a dedicated shared sort-key type that is its own Key (mirrors
+// geo::sort_key_t).  Wildcard semantics live in match() / matching_keys()
+// on q5_sort_key_t; SKBuilder<q5_sort_key_t>::project<q5_jr1_t> strips
+// linenumber to WILDCARD_KEY so join_state preserves the jr1 buffer
+// across per-lineitem cartesian flushes within an orderkey group.
+// The canonical analogue is ol_sort_key_t in
+// frontend/tpch/tpch_family/views_ol.hpp.
 //
 // ID allocation (verified 2026-05-08 against all existing record type IDs
 // in the tpch directory — last used was 55 in tpchi_tables.hpp):
@@ -35,7 +37,9 @@
 //   q5_cust_jk_t       : id = 58
 //   q5_jr1_t           : id = 59
 //   q5_jr2_t           : id = 60
-//   q5_co_jk_t         : id = 61  (custkey+orderkey JK for BMJ #2 / HJ stage 2)
+//   q5_sort_key_t      : id = 61  shared (custkey, orderkey, linenumber)
+//                                   sort-key abstraction; JK for BMJ #2 /
+//                                   HJ stage 2.  Replaced retired q5_co_jk_t.
 //
 // Params struct and predicate declarations live in workload.hpp.
 // SKBuilder specialisations live below.
@@ -43,11 +47,88 @@
 #include <functional>
 #include <limits>
 
+#include "../../shared/wildcard_key.hpp"
 #include "../tpch_family/views_col.hpp"
 #include "../tpch_tables.hpp"
 
 namespace tpch::q5
 {
+
+// ---------------------------------------------------------------------------
+// q5_sort_key_t — shared sort/join-key abstraction for the (custkey,
+// orderkey, linenumber) hierarchy.  Used as the JK by BMJ #2 / HJ stage 2
+// and any future operator that joins along this hierarchy.
+//
+// Design mirrors geo::sort_key_t (frontend/geo/views.hpp):
+//   - Self-referential `using Key = q5_sort_key_t` — the type IS its own
+//     key; not the primary key of any single table.
+//   - Wildcard semantics live entirely in match() and matching_keys().
+//     match() uses wildcard_match per field; matching_keys() enumerates
+//     each prefix-anchor key a probe-side row must look up.
+//   - Hash (operator% / std::hash) is wildcard-blind: it hashes all three
+//     fields uniformly.  HashJoin probe walks matching_keys() to consult
+//     each anchor bucket explicitly.
+//   - Per-table records (q5_jr1_t, lineitem_col_t, q5_pipeline_view_t)
+//     keep their own native ::Key types.  SKBuilder<q5_sort_key_t> below
+//     extracts the sort key from each, projecting trailing fields to
+//     WILDCARD_KEY where the record has no value at that level
+//     (e.g. jr1 carries no linenumber so its sort key is
+//     (custkey, orderkey, WILDCARD_KEY)).
+
+struct q5_sort_key_t {
+   static constexpr int id = 61;  // reuses retired q5_co_jk_t id slot
+
+   Integer custkey;
+   Integer orderkey;
+   Integer linenumber;
+
+   using Key = q5_sort_key_t;
+   ADD_KEY_TRAITS(&q5_sort_key_t::custkey, &q5_sort_key_t::orderkey, &q5_sort_key_t::linenumber)
+
+   auto operator<=>(const q5_sort_key_t&) const = default;
+
+   static q5_sort_key_t max()
+   {
+      return q5_sort_key_t{std::numeric_limits<Integer>::max(),
+                           std::numeric_limits<Integer>::max(),
+                           std::numeric_limits<Integer>::max()};
+   }
+
+   // Wildcard-aware match — WILDCARD_KEY in any field on either side
+   // matches any value in that field.  All wildcard semantics live here
+   // and in matching_keys(); hash is wildcard-blind.
+   int match(const q5_sort_key_t& other) const
+   {
+      if (int c = wildcard_match(custkey,    other.custkey);    c) return c;
+      if (int c = wildcard_match(orderkey,   other.orderkey);   c) return c;
+      if (int c = wildcard_match(linenumber, other.linenumber); c) return c;
+      return 0;
+   }
+
+   // Enumerate every prefix-anchor key a probe-side row must look up,
+   // walking up the (custkey, orderkey, linenumber) hierarchy.  Mirrors
+   // geo::sort_key_t::matching_keys.
+   std::vector<q5_sort_key_t> matching_keys() const
+   {
+      std::vector<q5_sort_key_t> result;
+      if (linenumber != WILDCARD_KEY) {
+         result.push_back(q5_sort_key_t{custkey, orderkey, WILDCARD_KEY});
+      }
+      if (orderkey != WILDCARD_KEY) {
+         result.push_back(q5_sort_key_t{custkey, WILDCARD_KEY, WILDCARD_KEY});
+      }
+      result.push_back(*this);
+      return result;
+   }
+
+   friend int operator%(const q5_sort_key_t& k, int n)
+   {
+      std::size_t h = std::hash<int>{}(static_cast<int>(k.custkey));
+      h ^= std::hash<int>{}(static_cast<int>(k.orderkey))   + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(static_cast<int>(k.linenumber)) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      return static_cast<int>(h % static_cast<std::size_t>(n));
+   }
+};
 
 // ---------------------------------------------------------------------------
 // Structure 2 pipeline view row: per-(custkey, orderkey, linenumber) row.
@@ -65,18 +146,12 @@ namespace tpch::q5
 // probe and cross-equality check (c_nationkey = s_nationkey) without
 // re-joining base tables.
 //
-// q5_pipeline_view_t::Key is the primary key of the S2 view.  No current
-// consumer joins on it: S2 is a sequential scan; S1 BMJ chain and S4
-// HashJoin both join on q5_co_jk_t::Key (custkey+orderkey) — see
-// 105b66a7, which minted q5_co_jk_t to side-step a confused attempt to
-// use the 3-field view key with a "linenumber=0 placeholder on the
-// build side" trick.  With wildcard_match() (frontend/shared/wildcard_key.hpp)
-// the 3-field key would in fact join correctly — the linenumber slot
-// would be WILDCARD_KEY on jr1 and a real value on lineitem rows, and
-// match()/matching_keys() would do the right thing.  Nothing about the
-// type prevents future joining on this Key; the join-API methods were
-// dropped because no current consumer needs them, not because they're
-// inappropriate.  Reinstate them via wildcard_match() if a consumer arrives.
+// q5_pipeline_view_t::Key is the primary key of the S2 view: a plain
+// (custkey, orderkey, linenumber) triple, one row per lineitem.  All
+// join semantics — wildcard match, prefix-anchor enumeration, hashing —
+// live in the dedicated q5_sort_key_t (defined below), not on this Key.
+// The view loader builds a sort key per row via SKBuilder<q5_sort_key_t>
+// when needed for joining; for storage it just folds via ADD_KEY_TRAITS.
 
 struct q5_pipeline_view_t {
    static constexpr int id = 56;
@@ -85,14 +160,9 @@ struct q5_pipeline_view_t {
       static constexpr int id = 56;
       Integer custkey;     // primary sort — groups custkey partitions
       Integer orderkey;    // secondary sort — unique within a custkey group
-      Integer linenumber;  // tertiary sort — unique within an order; WILDCARD_KEY = anchor
+      Integer linenumber;  // tertiary sort — unique within an order
       ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
 
-      // No match() / max() / matching_keys() / operator% here — no current
-      // consumer joins on this Key.  See header comment above for how to
-      // reinstate them (use wildcard_match for the linenumber field).  Until
-      // then, omitting the join-API methods avoids shipping a strict-equality
-      // stub that would silently produce wrong results if used as a join key.
       auto operator<=>(const Key&) const = default;
    };
 
@@ -151,10 +221,11 @@ struct q5_agg_row_t {
 // this type local (analogous to Q3's `q3_cust_jk_t`) so q5 does not depend
 // on q3 headers.
 //
-// `q5_co_jk_t` is a (custkey, orderkey) join-key type used by BMJ #2.
-// It avoids the linenumber=0 placeholder problem: the build side (jr1)
-// has no meaningful linenumber, so using the 3-field q5_pipeline_view_t::Key
-// would prevent any lineitem with linenumber>0 from matching.
+// BMJ #2 / HJ stage 2 reuses q5_pipeline_view_t::Key as its join key — the
+// 3-field (custkey, orderkey, linenumber) tuple, with linenumber following
+// the WILDCARD_KEY convention (build-side jr1 projects WILDCARD_KEY,
+// probe-side lineitem projects its real linenumber).  See q5_pipeline_view_t
+// header comment for the full convention.
 //
 // Key design difference from Q3: BMJ #2's right side is `lineitem_col_t`
 // (per-lineitem), NOT a pre-aggregate.  Q5 must consult `supplier_nation_map
@@ -190,48 +261,6 @@ struct q5_cust_jk_t {
    };
 };
 
-// Join-key for BMJ #2 / HJ stage 2: (custkey, orderkey).
-//
-// Using (custkey, orderkey) rather than (custkey, orderkey, linenumber)
-// allows every lineitem within a given order to match the single jr1 entry
-// for that (customer, order) pair.  If linenumber were included, the
-// build-side jr1 entry (which has no inherent linenumber) would need a
-// linenumber=0 placeholder that would never match any real lineitem.
-struct q5_co_jk_t {
-   static constexpr int id = 61;
-
-   struct Key {
-      static constexpr int id = 61;
-      Integer custkey;
-      Integer orderkey;
-      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
-
-      int match(const Key& other) const
-      {
-         if (custkey  != other.custkey)  return custkey  < other.custkey  ? -1 : 1;
-         if (orderkey != other.orderkey) return orderkey < other.orderkey ? -1 : 1;
-         return 0;
-      }
-
-      static Key max()
-      {
-         return Key{std::numeric_limits<Integer>::max(),
-                    std::numeric_limits<Integer>::max()};
-      }
-
-      std::vector<Key> matching_keys() const { return {*this}; }
-
-      auto operator<=>(const Key&) const = default;
-
-      friend int operator%(const Key& k, int n)
-      {
-         std::size_t h = std::hash<int>{}(static_cast<int>(k.custkey));
-         h ^= std::hash<int>{}(static_cast<int>(k.orderkey)) + 0x9e3779b9u + (h << 6) + (h >> 2);
-         return static_cast<int>(h % static_cast<std::size_t>(n));
-      }
-   };
-};
-
 // JR1: customerh_t ⋈ orders_coli_t on custkey.
 struct q5_jr1_t : public joined_t<59, q5_cust_jk_t::Key, false,
                                    customerh_t, orders_coli_t>
@@ -262,17 +291,16 @@ struct q5_jr1_t : public joined_t<59, q5_cust_jk_t::Key, false,
    const orders_coli_t& order() const { return std::get<1>(payloads); }
 };
 
-// JR2: q5_jr1_t ⋈ lineitem_col_t on (custkey, orderkey).
+// JR2: q5_jr1_t ⋈ lineitem_col_t on (custkey, orderkey, linenumber).
 //
-// The join key is q5_co_jk_t::Key (2-field: custkey + orderkey).
-// Using the 3-field q5_pipeline_view_t::Key would require a linenumber
-// on the build side (jr1), but jr1 represents a (customer, order) pair
-// with no per-lineitem component.  The 2-field key lets every lineitem
-// in an order match the single jr1 entry via cartesian product.
-struct q5_jr2_t : public joined_t<60, q5_co_jk_t::Key, false,
+// The join key is q5_sort_key_t — the dedicated shared sort-key
+// abstraction defined above.  linenumber follows the WILDCARD_KEY
+// convention: jr1 build-side rows project linenumber=WILDCARD_KEY,
+// lineitem probe-side rows project their real linenumber.
+struct q5_jr2_t : public joined_t<60, q5_sort_key_t, false,
                                    q5_jr1_t, lineitem_col_t>
 {
-   using Base = joined_t<60, q5_co_jk_t::Key, false,
+   using Base = joined_t<60, q5_sort_key_t, false,
                           q5_jr1_t, lineitem_col_t>;
    q5_jr2_t() = default;
    q5_jr2_t(const q5_jr1_t& jr1, const lineitem_col_t& l) : Base(jr1, l) {}
@@ -280,23 +308,21 @@ struct q5_jr2_t : public joined_t<60, q5_co_jk_t::Key, false,
    struct Key : public Base::Key {
       Key() = default;
 
-      // Constructor from constituent Keys.  Build the 2-field JK
-      // (custkey, orderkey) from the JR1 join-key (custkey) and the
-      // lineitem key (carries orderkey).  linenumber is NOT part of
-      // the join key — it is a payload attribute of the lineitem.
+      // Constructor from constituent Keys.  Carry the lineitem's real
+      // linenumber into the JK; the JK's wildcard-aware match() handles
+      // the build-side WILDCARD_KEY case symmetrically.
       Key(const q5_jr1_t::Key& jk1, const lineitem_col_t::Key& lk)
-          : Base::Key(q5_co_jk_t::Key{jk1.jk.custkey, lk.orderkey},
+          : Base::Key(q5_sort_key_t{jk1.jk.custkey, lk.orderkey, lk.linenumber},
                       jk1, lk)
       {
       }
 
-      // Reverse-construct constituent keys from JK only.  The lineitem
-      // placeholder uses linenumber=0; this path is taken by the BMJ
+      // Reverse-construct constituent keys from JK only — taken by the BMJ
       // unfold/seek logic where only the join key is available.
-      explicit Key(const q5_co_jk_t::Key& jk)
+      explicit Key(const q5_sort_key_t& jk)
           : Base::Key(jk,
                       q5_jr1_t::Key{q5_cust_jk_t::Key{jk.custkey}},
-                      lineitem_col_t::Key{jk.custkey, jk.orderkey, Integer(0)})
+                      lineitem_col_t::Key{jk.custkey, jk.orderkey, jk.linenumber})
       {
       }
    };
@@ -318,69 +344,120 @@ struct hash<tpch::q5::q5_cust_jk_t::Key> {
    }
 };
 
-// No std::hash<q5_pipeline_view_t::Key> — no current consumer hash-joins
-// on this Key.  The only HashJoin in today's Q5 plan keys on q5_co_jk_t
-// (see below).  Add a specialisation here if a future consumer arrives;
-// it should hash on (custkey, orderkey) only — see the matching note on
-// SKBuilder below for why linenumber must be excluded from the hash.
-
+// std::hash<q5_sort_key_t> — used by HashJoin in S4 stage 2 and any
+// future hashmap keyed on the sort-key abstraction.  Hashes all three
+// fields uniformly; wildcard handling lives in match() / matching_keys()
+// only.  HashJoin probe walks matching_keys() to consult each anchor
+// bucket explicitly.
 template <>
-struct hash<tpch::q5::q5_co_jk_t::Key> {
-   std::size_t operator()(const tpch::q5::q5_co_jk_t::Key& k) const
+struct hash<tpch::q5::q5_sort_key_t> {
+   std::size_t operator()(const tpch::q5::q5_sort_key_t& k) const
    {
       std::size_t h = std::hash<int>{}(static_cast<int>(k.custkey));
-      h ^= std::hash<int>{}(static_cast<int>(k.orderkey)) + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(static_cast<int>(k.orderkey))   + 0x9e3779b9u + (h << 6) + (h >> 2);
+      h ^= std::hash<int>{}(static_cast<int>(k.linenumber)) + 0x9e3779b9u + (h << 6) + (h >> 2);
       return h;
    }
 };
 
 }  // namespace std
 
-// No SKBuilder<q5_pipeline_view_t::Key> — SKBuilder is a join-time JK
-// extractor and no current consumer joins on this Key.  The view is
-// stored via fold/unfold from ADD_KEY_TRAITS, not via SKBuilder.  If a
-// consumer arrives, the build-side overload (e.g. for q5_jr1_t) must
-// project linenumber to WILDCARD_KEY so the build-side JK and the
-// probe-side lineitem JK collide into the same hash bucket — analogous
-// to how SKBuilder<ol_sort_key_t>::create projects ORDERS rows with
-// linenumber=WILDCARD_KEY in views_ol.hpp.
-
 // ---------------------------------------------------------------------------
-// SKBuilder specialisation for q5_co_jk_t::Key.
+// SKBuilder specialisation for q5_sort_key_t.
 //
-// Used by BMJ #2 (q5_jr1_t ⋈ lineitem_col_t on (custkey, orderkey)) and
-// by HJ stage 2.  The 2-field key avoids the linenumber=0 mismatch:
-//   - q5_jr1_t (build/left side): extract custkey from the embedded JK
-//     and orderkey from the embedded orders_coli_t::Key.
-//   - lineitem_col_t (probe/right side): extract custkey and orderkey
-//     directly from the lineitem key.
+// Used by BMJ #2 / HJ stage 2 (q5_jr1_t ⋈ lineitem_col_t).  Three concerns:
+//
+//   - create<R>: extract a sort key from each participating record type.
+//     q5_jr1_t (build side) projects linenumber=WILDCARD_KEY because jr1
+//     represents a (customer, order) pair with no per-lineitem component.
+//     lineitem_col_t (probe side) carries its real linenumber.
+//
+//   - project<R>: project a full sort key down to record R's natural
+//     granularity.  q5_jr1_t lives at orderkey-only granularity within a
+//     customer, so project<q5_jr1_t> strips linenumber to WILDCARD_KEY.
+//     This is what makes wildcard-keyed BMJ work: join_state's
+//     join_and_clear() compares next_jk.match(project<R>(jk_to_join)) per
+//     record-type buffer; with linenumber stripped to wildcard, the jr1
+//     buffer survives across per-lineitem cartesian flushes within the
+//     same orderkey group.  lineitem_col_t lives at full-key granularity
+//     so its project is identity.
+//
+//   - to_key<R>: convert a sort key back to record R's native primary key.
 
 template <>
-struct SKBuilder<tpch::q5::q5_co_jk_t::Key> {
-   using JK = tpch::q5::q5_co_jk_t::Key;
+struct SKBuilder<tpch::q5::q5_sort_key_t> {
+   using JK = tpch::q5::q5_sort_key_t;
 
-   // q5_jr1_t (build side of BMJ #2 / HJ stage 2): JK is (custkey, orderkey).
-   // custkey lives in the embedded q5_cust_jk_t::Key; orderkey lives in the
-   // embedded orders_coli_t::Key (second element of the keys tuple).
+   // q5_jr1_t (build side): extract custkey from the embedded q5_cust_jk_t,
+   // orderkey from the embedded orders_coli_t::Key, project linenumber to
+   // WILDCARD_KEY (jr1 has no per-lineitem component).
    static JK create(const tpch::q5::q5_jr1_t::Key& k, const tpch::q5::q5_jr1_t&)
    {
       const auto& ord_key = std::get<1>(k.keys);
-      return JK{k.jk.custkey, ord_key.orderkey};
+      return JK{k.jk.custkey, ord_key.orderkey, WILDCARD_KEY};
    }
 
-   // lineitem_col_t (probe side of BMJ #2 / HJ stage 2): custkey and orderkey
-   // are direct fields of the lineitem key.
+   // lineitem_col_t (probe side): forward custkey, orderkey, and the real
+   // linenumber from the lineitem's primary key.
    static JK create(const tpch::lineitem_col_t::Key& k, const tpch::lineitem_col_t&)
    {
-      return JK{k.custkey, k.orderkey};
+      return JK{k.custkey, k.orderkey, k.linenumber};
    }
 
-   template <typename R>
-   static JK project(const JK& k) { return k; }
+   // q5_pipeline_view_t (S2 view): primary key shape matches the sort key
+   // shape; forward all three fields with the lineitem's real linenumber.
+   static JK create(const tpch::q5::q5_pipeline_view_t::Key& k,
+                    const tpch::q5::q5_pipeline_view_t&)
+   {
+      return JK{k.custkey, k.orderkey, k.linenumber};
+   }
 
+   // project<R>: see header comment.
    template <typename R>
-   static JK to_key(const JK& k) { return k; }
+   static JK project(const JK& k);
+
+   // to_key<R>: convert a sort key to record R's native primary key.
+   template <typename R>
+   static typename R::Key to_key(const JK& k);
 };
+
+// project<R> explicit specialisations.
+template <>
+inline tpch::q5::q5_sort_key_t
+SKBuilder<tpch::q5::q5_sort_key_t>::project<tpch::q5::q5_jr1_t>(const tpch::q5::q5_sort_key_t& k)
+{
+   // jr1 lives at orderkey-only granularity within a customer.
+   return tpch::q5::q5_sort_key_t{k.custkey, k.orderkey, WILDCARD_KEY};
+}
+
+template <>
+inline tpch::q5::q5_sort_key_t
+SKBuilder<tpch::q5::q5_sort_key_t>::project<tpch::lineitem_col_t>(const tpch::q5::q5_sort_key_t& k)
+{
+   return k;
+}
+
+template <>
+inline tpch::q5::q5_sort_key_t
+SKBuilder<tpch::q5::q5_sort_key_t>::project<tpch::q5::q5_pipeline_view_t>(const tpch::q5::q5_sort_key_t& k)
+{
+   return k;
+}
+
+// to_key<R> explicit specialisations.
+template <>
+inline tpch::q5::q5_jr1_t::Key
+SKBuilder<tpch::q5::q5_sort_key_t>::to_key<tpch::q5::q5_jr1_t>(const tpch::q5::q5_sort_key_t& k)
+{
+   return tpch::q5::q5_jr1_t::Key{tpch::q5::q5_cust_jk_t::Key{k.custkey}};
+}
+
+template <>
+inline tpch::lineitem_col_t::Key
+SKBuilder<tpch::q5::q5_sort_key_t>::to_key<tpch::lineitem_col_t>(const tpch::q5::q5_sort_key_t& k)
+{
+   return tpch::lineitem_col_t::Key{k.custkey, k.orderkey, k.linenumber};
+}
 
 // SKBuilder specialisation for q5_cust_jk_t::Key — used by BMJ #1.
 //
