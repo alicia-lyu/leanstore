@@ -23,6 +23,26 @@ namespace tpch
 
 // ---------------------------------------------------------------------------
 // Sort key over orderkey: the ORDERS x LINEITEM join key.
+//
+// OLD DESIGN — slated for retirement.  Pre-dates the WILDCARD_KEY /
+// wildcard_match convention codified in `frontend/shared/wildcard_key.hpp`.
+// Two divergences from the canonical pattern (used by `q5_sort_key_t` and
+// `geo::sort_key_t`):
+//
+//   1. Hash is wildcard-AWARE (orderkey-only) — see operator% below and
+//      std::hash<ol_sort_key_t>.  The canonical pattern hashes all fields
+//      uniformly and lets `matching_keys()` enumerate the anchor buckets
+//      a probe must visit.  The orderkey-only hash works only because no
+//      consumer probes with an orderkey-only anchor today.
+//
+//   2. `matching_keys()` enumerates only the linenumber-wildcard anchor
+//      (returns 2 entries).  The canonical pattern walks every prefix
+//      anchor up the hierarchy.  Single-anchor enumeration is fine here
+//      only because no current consumer needs more.
+//
+// Kept working as-is — Q12, Q3, Q9 all depend on this.  Retire to the
+// canonical pattern the next time a consumer or behaviour forces the
+// question (e.g. a join introducing an orderkey-only anchor probe).
 
 struct ol_sort_key_t {
    Integer orderkey;
@@ -79,8 +99,10 @@ struct ol_sort_key_t {
 
 }  // namespace tpch
 
-// std::hash specialization for use in HashJoin (hashes on orderkey only so
-// that order-level and lineitem-level keys collide into the same bucket).
+// std::hash specialization for use in HashJoin.  Hashes on orderkey only
+// so order-level (linenumber=WILDCARD_KEY) and lineitem-level keys collide
+// into the same bucket — the wildcard-AWARE hash divergence flagged in the
+// OLD DESIGN note above ol_sort_key_t.
 namespace std
 {
 template <>

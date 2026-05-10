@@ -15,8 +15,12 @@
 //   Both schemas allocate IDs starting at 1, so 0 is safe as the sentinel.
 //   But that convention is invisible at call sites: a literal `0` in a Key
 //   constructor or `field == 0` in match() looks like a real value.  This
-//   has misled at least two builders in q5/views.hpp (BMJ #2 join key bug
-//   fixed in 105b66a7, then re-introduced in dead form by 2591c5d8).
+//   has misled at least two builders in q5/views.hpp: 105b66a7 worked
+//   around the confusion by minting a narrower JK type (q5_co_jk_t),
+//   2591c5d8 then re-introduced wildcard machinery in dead form on the
+//   wrong key.  With wildcard_match() in place, neither workaround was
+//   structurally necessary; q5_co_jk_t was retired in favour of a single
+//   3-field q5_sort_key_t with proper per-field wildcard semantics.
 //
 // Use WILDCARD_KEY whenever a key field is intentionally left unset to
 // signal a prefix anchor or wildcard match.  Never write a bare `0` in a

@@ -221,11 +221,13 @@ struct q5_agg_row_t {
 // this type local (analogous to Q3's `q3_cust_jk_t`) so q5 does not depend
 // on q3 headers.
 //
-// BMJ #2 / HJ stage 2 reuses q5_pipeline_view_t::Key as its join key — the
-// 3-field (custkey, orderkey, linenumber) tuple, with linenumber following
-// the WILDCARD_KEY convention (build-side jr1 projects WILDCARD_KEY,
-// probe-side lineitem projects its real linenumber).  See q5_pipeline_view_t
-// header comment for the full convention.
+// BMJ #2 / HJ stage 2 keys on `q5_sort_key_t` — a dedicated 3-field
+// (custkey, orderkey, linenumber) shared sort-key type defined above
+// (mirrors `geo::sort_key_t`).  All wildcard semantics (per-field
+// match, full prefix-anchor enumeration, wildcard-blind hash) live on
+// q5_sort_key_t; per-input projection (e.g. linenumber=WILDCARD_KEY for
+// the build side jr1) lives in `SKBuilder<q5_sort_key_t>`.  See
+// q5_sort_key_t header comment for the full convention.
 //
 // Key design difference from Q3: BMJ #2's right side is `lineitem_col_t`
 // (per-lineitem), NOT a pre-aggregate.  Q5 must consult `supplier_nation_map
@@ -279,10 +281,12 @@ struct q5_jr1_t : public joined_t<59, q5_cust_jk_t::Key, false,
       }
 
       // Constructor from JK — required by BMJ unfold path with fold_pks=false.
+      // The JK (q5_cust_jk_t) carries only custkey, so the orders placeholder's
+      // orderkey slot is filled with WILDCARD_KEY.
       explicit Key(const q5_cust_jk_t::Key& jk)
           : Base::Key(jk,
                       customerh_t::Key{jk.custkey},
-                      orders_coli_t::Key{jk.custkey, Integer(0)})
+                      orders_coli_t::Key{jk.custkey, WILDCARD_KEY})
       {
       }
    };

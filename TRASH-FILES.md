@@ -55,3 +55,4 @@ build/q3i_lsm_iso3 - moved to TRASH/ - replaced by build/q3i_lsm_iso/ unified tr
 test_data_*/ test_csv_*/ (60 dirs total, project root) - moved to TRASH/scratch-2026-05-04/ - leftover scratch from per-tag test/load runs (`_a1`/`_a2c`/`_p1b`/`_v8`/`_baseline`/`_prod`/`_s1..s4`/etc.); convention now puts scratch under build/scratch/<tag>/{data,csv} (gitignored via build*/) so it never lands in the project root again
 build/scratch/q5_parity/ - moved to TRASH/ - stale RocksDB scratch from prior parity test run; rebuilding fresh for wildcard-key cleanup verification
 build/scratch/{q5,q12}_parity/ - moved to TRASH/ - rotated scratch dirs across wildcard-key sweep verification runs
+build/scratch/q5_parity/ - moved to TRASH/ - rotated again across post-audit verification run
