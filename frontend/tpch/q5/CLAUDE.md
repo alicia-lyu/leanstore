@@ -238,11 +238,14 @@ logical plan as S3 over three separate custkey-sorted streams
 (CUSTOMER + two secondary indexes on ORDERS and LINEITEM). The
 secondary keys (`(custkey, orderkey)` for orders,
 `(custkey, orderkey, linenumber)` for lineitem) place both inputs
-in the order required by the BMJ chain. Implemented as a 3-way
-streaming merge that dispatches to the **same Visitor** as S3.
-The accumulators are reused verbatim. S1 differs from S3 only in
-I/O pattern: three trees instead of one, three scanner-advance
-calls per group instead of one.
+in the order required by the BMJ chain. Implemented as a 2-BMJ
+chain: BMJ #1 joins `customerh_t ⋈ orders_coli_t` on custkey
+(→ `q5_jr1_t`), BMJ #2 joins `q5_jr1_t ⋈ lineitem_col_t` on
+`(custkey, orderkey)` using `q5_co_jk_t::Key` (→ `q5_jr2_t`).
+Per-emit the same `q5_admit_lineitem` free helper is called as in
+S3/S4. Unlike Q3's S1, no `LineitemRevenueAggregator` pre-aggregate
+is used — Q5 needs per-lineitem `l_suppkey` for the SUPPLIER probe.
+S1 differs from S3 only in I/O pattern: three trees instead of one.
 
 **S2 (materialised pipeline view)** caches per-lineitem rows of
 the post-join (pre-aggregate) family plan as a
@@ -276,7 +279,7 @@ in physical operators and filter substrate.
 
 | Approach | Inside-pipeline physical | Aggregate | Filters resolved by |
 |----------|--------------------------|-----------|---------------------|
-| S1 (merge family) | 3-way custkey BMJ chain over secondaries; SUPPLIER + NATION + REGION as side hash builds | HashAggregate per `n_name` (Visitor `accumulator`, same code as S3) | Visitor `on_*` hooks (same code as S3) |
+| S1 (merge family) | 2-BMJ chain over custkey-sorted split indexes (`q5_jr1_t` → `q5_jr2_t`); SUPPLIER + NATION + REGION as side hash builds | `NNameRevenueAggregator` per `n_name` (same as S3/S4 via `q5_admit_lineitem`) | per-scan inline filters (nation_set gate, orderdate window); `q5_admit_lineitem` per emit |
 | S2 (merge family) | sequential per-lineitem view scan; SUPPLIER + NATION + REGION as side hash builds | HashAggregate per `n_name` above the view scan | All filters live at query time (no filter baking — view is param-reusable) |
 | S3 (merge family) | `col_group_walk` over MI[COL]; SUPPLIER + NATION + REGION as side hash builds | HashAggregate per `n_name` (Visitor `accumulator`, same code as S1) | Visitor `on_*` hooks (same code as S1) |
 | S4 (baseline) | HashJoin chain over base tables; SUPPLIER + NATION + REGION as side hash builds | HashAggregate per `n_name` above the chain | TableScan-time filters all pushed below the corresponding hash build/probe |
@@ -435,17 +438,40 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   Phase 0.5 (no changes).
 - ~~**Phase 2 / Phase 3**~~ — retired by PLAYBOOK consolidation;
   contents merged into Phase 1 (cont.) above.
-- **Phase 4 §7.1** — S3 `query_by_merged` via shared
-  `col_group_walk` with a Q5-specific Visitor (CRTP subclass of
-  the shared `q3_family::Q3FamilyVisitor` if extended for Q5;
-  otherwise a fresh `q5_family::` namespace).
-- **Phase 4 §7.2** — S1 `query_by_base` via 2-way BMJ chain over
-  COL split indexes.
-- **Phase 4 §7.3** — S2 `query_by_view` via `q5_pipeline_view_t`
-  scan.
-- **Phase 4 §7.5** — S4 `query_by_hash` via HashJoin chain.
+- **Phase 4 §7.1** (2026-05-09; **complete**) — S3 `query_by_merged`
+  via `col_group_walk` + `Q5GroupWalkVisitor` (free struct, not a
+  Q3FamilyVisitor subclass — Q5's hook semantics differ). The visitor
+  gates by `c_nationkey ∈ nation_set` at `on_customer`, orderdate
+  window at `on_order`, and delegates per-lineitem work to the shared
+  `q5_admit_lineitem` free helper. `NNameRevenueAggregator` collects
+  per-`n_name` revenue; `agg.emit()` + `std::sort` produce the
+  final ~5-row result. `test_query_q5_lsm` reports S3 rows >= 1,
+  non-zero digest; S1/S2/S4 `[SKIP]`-tolerant.
+- **Phase 4 §7.3** (2026-05-09; **complete**) — S2 `query_by_view`
+  via sequential `q5_pipeline_view_t` scan. Customer gate, orderdate
+  filter, SUPPLIER probe, and cross-equality all applied live;
+  per-`n_name` `NNameRevenueAggregator` accumulates across the scan.
+- **Phase 4 §7.5** (2026-05-09; **complete**) — S4 `query_by_hash`
+  via 2-stage HashJoin chain: stage 1 joins `customerh_t ⋈
+  orders_coli_t` on `custkey` (→ `q5_jr1_t`), stage 2 joins
+  `q5_jr1_t ⋈ lineitem_col_t` on `(custkey, orderkey)` via
+  `q5_co_jk_t::Key` (→ `q5_jr2_t`). Per-emit callback invokes
+  `q5_admit_lineitem`. `q5_pipeline_view_t::Key::matching_keys()`
+  returns `(custkey,orderkey,0)` and `(custkey,0,0)` prefix anchors
+  plus self so HashJoin probe finds jr1 anchors correctly.
+- **Phase 4 §7.2** (2026-05-09; **complete**) — S1 `query_by_base`
+  via 2-BMJ chain over custkey-sorted COL split indexes: BMJ #1
+  joins `customerh_t ⋈ orders_coli_t` on `custkey` (→ `q5_jr1_t`),
+  BMJ #2 joins `q5_jr1_t ⋈ lineitem_col_t` on `(custkey, orderkey)`
+  via `q5_co_jk_t::Key` (→ `q5_jr2_t`). No `LineitemRevenueAggregator`
+  pre-aggregate — Q5 needs per-lineitem `l_suppkey` for SUPPLIER probe.
+  Per-emit callback invokes `q5_admit_lineitem` (shared with S3/S4).
+  Test harness flipped to strict 4-way parity: SF=1 all four paths
+  `[OK]` at matching non-zero digest, rows=1. Q3 (rows=9) and Q3I
+  (rows=10, S1–S5) regressions clean.
 - **Phase 5–8** — `per_structure_workload.hpp` alias-only,
-  executables, `test_query_q5_{lsm,btree}` strict parity, CMake.
+  executables, `test_query_q5_{lsm,btree}` strict parity, CMake —
+  all landed in Phase 0.5 skeleton.
 - **Phase 9** — doc refresh + cross-link from
   `frontend/tpch/CLAUDE.md` once skeleton acquires real code.
 - **S5** — omitted by design (no parameter-independent aggregate
@@ -454,7 +480,7 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
 
 ---
 
-## Implementation Status (Phase 1 — 2026-05-09)
+## Implementation Status (Phase 4 complete — 2026-05-09)
 
 Phase 0.5 landed: all 8 per-query files exist, executable links,
 `test_query_q5_lsm` runs to exit 0 with all four paths agreeing on
@@ -462,41 +488,28 @@ empty results (digest 0x0, vacuous `[OK]` parity). Q3 / Q3I
 regressions clean.
 
 Phase 1 landed: S1 BMJ chain intermediate types added to `views.hpp`
-(`q5_cust_jk_t` id=58, `q5_jr1_t` id=59, `q5_jr2_t` id=60) with
-`std::hash<q5_cust_jk_t::Key>` specialisation and `SKBuilder`
-specialisations for `q5_cust_jk_t::Key` and extended
-`q5_pipeline_view_t::Key`. BMJ #2 right side is `lineitem_col_t`
-(per-lineitem, not pre-aggregated). No payload extensions needed.
-All four tests pass; Q3 / Q3I regressions clean.
+(`q5_cust_jk_t` id=58, `q5_jr1_t` id=59, `q5_jr2_t` id=60,
+`q5_co_jk_t` id=61) with `std::hash` and `SKBuilder` specialisations.
+`q5_pipeline_view_t::Key` gains canonical `matching_keys()` and
+wildcard `match()`. BMJ #2 right side is `lineitem_col_t`
+(per-lineitem, not pre-aggregated — needed for per-lineitem SUPPLIER
+probe). No payload extensions needed. All four tests pass; Q3 / Q3I
+regressions clean.
 
-**Real bodies**:
+Phase 1 (cont.) landed: `workload.hpp` PARAM_TABLE (REGION × DATE,
+10 entries), real `set_params_for_iter`, real `q5_predicate_orders`
+body (orderdate window), `Q5Stats` counter struct.
 
-- `Params::defaults()` — `{"ASIA", DATE_1994_01_01}`.
-- `set_params_for_iter(long)` — stubbed to `params = Params::defaults()`
-  (PLAYBOOK §3.6 wrapper-uniformity requirement; non-stub body in
-  Phase 5).
-- `populate_q5_view` — 3-way custkey-sorted manual merge; loaded
-  unfiltered, param-reusable.
-- `q5_pipeline_view_t::unfoldKey`, `q5_agg_row_t::print`.
-- All four storage-structure dispatch arms in `load.tpp`,
-  `get_size`.
-- `q5_cust_jk_t`, `q5_jr1_t`, `q5_jr2_t` — S1 BMJ chain types.
-- `SKBuilder<q5_cust_jk_t::Key>` — `create` overloads for
-  `customerh_t`, `orders_coli_t`, `q5_jr1_t`.
-- `SKBuilder<q5_pipeline_view_t::Key>` — extended with `create`
-  overloads for `q5_jr1_t` and `lineitem_col_t`.
+Phase 4 landed (all sub-phases in one session, 2026-05-09):
 
-**Stubs** (next commits, Phase 2+):
-
-- All four `query_by_*` bodies → return 0 (`out.clear(); return 0;`).
-- Predicate bodies (`q5_predicate_customer/orders/lineitem`) →
-  `return true;`.
-- `Q5Stats` counter struct — deferred to Phase 4.
+- **S3** — `Q5GroupWalkVisitor` + `col_group_walk` + `NNameRevenueAggregator`.
+- **S2** — sequential `q5_pipeline_view_t` scan, all filters live.
+- **S4** — 2-stage HashJoin chain; per-emit → `q5_admit_lineitem`.
+- **S1** — 2-BMJ chain; per-emit → `q5_admit_lineitem` (no pre-agg).
+- **Test harness** — flipped to strict 4-way parity. SF=1: all four
+  `[OK]` at matching non-zero digest. Q3/Q3I regressions clean.
 
 **Record-type ids allocated**: see `q5/views.hpp` header comment.
 Skeleton uses `customer_coli_t` / `orders_coli_t` from
-`views_col.hpp` directly (per the design-doc correction);
-`lineitem_col_t` was extended in place to carry `l_suppkey` and
-`l_returnflag` in commit `bec67300`.
-
-Next commit: Phase 2 — `workload.hpp` Params + predicate declarations.
+`views_col.hpp` directly; `lineitem_col_t` was extended in place to
+carry `l_suppkey` and `l_returnflag` in commit `bec67300`.
