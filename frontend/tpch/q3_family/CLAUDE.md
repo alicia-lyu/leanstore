@@ -115,7 +115,7 @@ hoisting prevents per-query stats drift.  Previously internal to
 
 ---
 
-### `coli_visitors.hpp` — `Q3FamilyVisitor<Derived, Params, LineitemType, AggRow, Stats>`
+### `coli_visitors.hpp` — `Q3FamilyVisitor<Derived, Params, LineitemType, AggRow, Stats, Sink>`
 
 CRTP base implementing the C×O×L core of the group-walk visitor over COL and
 COLI merged indexes:
@@ -135,13 +135,38 @@ Three CRTP customisation points (all have base no-op defaults):
 | `extra_emit_fields(row)` | fills `cust_open_due` | base (no-op) |
 | `on_record_visited_hook()` | bumps invoice-specific counters | base (no-op) |
 
-**Consumers**: Q3I's `COLIGroupWalkVisitor` (`q3i/query.tpp`) subclasses this,
-overriding all three hooks.  Q3 will use `Q3FamilyVisitor` directly with the
+**Consumers**: Q3I's `COLIGroupWalkVisitor<Sink>` (`q3i/query.tpp`)
+subclasses this, overriding all three hooks.  Q3's
+`COLGroupWalkVisitor<Sink>` (`q3/query.tpp`) subclasses with the
 base no-op overlay (no invoice arm to wire).
 
 **Rationale**: Q3 and Q3I share the identical C×O×L walk logic; the invoice-
 specific surface is isolated to three narrow hooks.  Previously the entire
 visitor lived in `q3i/query.tpp`; hoisted Phase A4.
+
+**`Sink` template parameter (added commit `458bcaf0`)**: the visitor
+takes a sink type as a template parameter rather than holding a
+`std::vector<AggRow>&` directly.  `flush_order` calls
+`sink.offer(std::move(row))`; the sink decides storage shape
+internally (a heap for `TopNSink`, a hashmap for a future
+HashAggregate sink, etc.).  In production the sink is
+`TopNSink<AggRow, Cmp>` from `frontend/tpch/operators.hpp`; any
+type exposing `void offer(AggRow&&)` works.
+
+This is the **OutClass** convention codified in
+`PLAYBOOK.md §7.6` — small-buffer sink owning the
+pipeline → result boundary, push-once-per-row, drained once at the
+end.  It replaces the older "buffer all qualifying rows in `out`,
+then `apply_topN`" pattern (PLAYBOOK anti-pattern #30) which
+defeated the merged-index streaming benefit at the post-pipeline
+sink.
+
+Q3I's derived class additionally needs
+`using Base::params; using Base::stats; using Base::sink;`
+declarations because `Base` is now dependent on the `Sink`
+template parameter — without them, two-phase name lookup would
+fail to find unqualified `params` / `stats` / `sink` references in
+the derived hooks.  See `q3i/query.tpp` for the canonical pattern.
 
 ---
 

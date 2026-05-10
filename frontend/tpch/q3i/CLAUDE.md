@@ -233,7 +233,53 @@ no-merged-index baseline that the family is compared against.
 S5 is implemented and parity-verified at SF=1 but **deferred from
 the paper sweep** across all queries — see
 [`PLAYBOOK.md §S5`](../PLAYBOOK.md). All five agree on what's outside
-the pipeline: `apply_top10` (sort by revenue DESC + truncate to 10).
+the pipeline: a single `TopNSink<q3i_agg_row_t, Cmp>(10, cmp)` that
+the pipeline pushes into via `sink.offer(...)`, drained at the end
+via `sink.drain_sorted(out)`.  See OutClass subsection below.
+
+### OutClass: shared `TopNSink<q3i_agg_row_t, Cmp>`
+
+All five `query_by_*` bodies construct one
+`TopNSink<q3i_agg_row_t, decltype(cmp)>(10, cmp)` per query and push
+qualifying rows through `sink.offer(...)`; final
+`sink.drain_sorted(out)` materialises the 10 result rows.  Same
+shape as Q3 — the only difference is the row type carries
+`cust_open_due` (`q3i_agg_row_t` derives from
+`q3_family::q3_agg_row_base_t`).  `cmp` is the inherited
+`q3_agg_row_base_t::cmp`
+(`revenue DESC, o_orderdate ASC, o_orderkey ASC`).
+
+This is Q3I's instance of the **OutClass** convention codified in
+`PLAYBOOK.md §7.6`.  Memory is `O(K) = O(10)`, not `O(orders
+passing all filters)` — important at SF=15 / SF=40 where the
+pre-`458bcaf0` `std::vector<q3i_agg_row_t> + apply_topN` shape
+buffered millions of rows just to discard 99.999% of them
+(PLAYBOOK anti-pattern #30).
+
+The visitor (`COLIGroupWalkVisitor<Sink>`) is template-on-Sink
+because `Q3FamilyVisitor` now takes the sink type as a template
+parameter.  Q3I's derived class additionally needs:
+
+```cpp
+using Base = q3_family::Q3FamilyVisitor<COLIGroupWalkVisitor<Sink>,
+                                         Params, lineitem_coli_t,
+                                         q3i_agg_row_t, Q3IStats, Sink>;
+using Base::params;
+using Base::stats;
+using Base::sink;
+```
+
+The `using Base::...` declarations bring the dependent-base members
+into scope so the override hooks (`on_invoice`,
+`per_order_admit_check`, `extra_emit_fields`, `on_group_end`) can
+reference `params` / `stats` / `sink` unqualified.  Without the
+`using`s, two-phase name lookup would fail because `Base` is
+dependent on the `Sink` template parameter.
+
+Per OPERATORS.md §7 rule 5, the same OutClass instance is shared
+across all five storage variants for comparison-integrity at the
+post-pipeline boundary.  `NNameRevenueAggregator` plays the
+analogous role for Q5 (no LIMIT; HashAggregate IS the OutClass).
 
 ---
 

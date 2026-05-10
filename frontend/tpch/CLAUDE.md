@@ -14,7 +14,12 @@ trigger described:
   contract.
 - [`PLAYBOOK.md`](PLAYBOOK.md) — read **when implementing a new TPC-H
   query end-to-end** across all four storage structures (uses Q3I as
-  the canonical reference template).
+  the canonical reference template).  Cross-cutting subsections worth
+  bookmarking even outside a full bring-up: `§4` (sort-key wildcard
+  semantics — `WILDCARD_KEY` / `wildcard_match` / `matching_keys`),
+  `§7.6` (post-pipeline OutClass — `TopNSink` for LIMIT queries,
+  `NNameRevenueAggregator` for global HashAggregates), and the
+  Anti-patterns table at the end.
 - [`INVOICE_EXTENSION_CANDIDATES.md`](INVOICE_EXTENSION_CANDIDATES.md)
   — read **before proposing a new `q{N}i/` invoice-extended query**:
   authoritative record of which TPC-H queries are natural COLI MI

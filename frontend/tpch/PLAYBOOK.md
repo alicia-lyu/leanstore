@@ -1384,31 +1384,126 @@ See Q3I `query.tpp` lines 620–740 for the full pattern.
 
 ---
 
-### §7.6 — Common Epilogue: `apply_topN`
+### §7.6 — Post-pipeline OutClass: small-buffer sink
 
-Every `query_by_*` body ends with:
+The pipeline → result boundary is owned by an **OutClass** — a
+small-buffer sink the visitor / scan loop / per-emit lambda pushes
+rows into one at a time.  The sink decides storage shape internally;
+the caller drains it once after the pipeline runs.
+
+This is the project convention codified in commit `458bcaf0`.  It
+replaces the older "push every qualifying row into
+`std::vector<AggRow>& out`, then truncate via `apply_topN`" shape,
+which buffered O(qualifying rows) in memory just to discard 99.999%
+of them at SF=15+ — see anti-pattern #30 below.
+
+#### Two canonical implementations (use these; don't reinvent)
+
+| OutClass | File | Used by | Output bound |
+|---|---|---|---|
+| `NNameRevenueAggregator` | `frontend/tpch/q5/query.tpp` | Q5 S1/S2/S3/S4 | `\|nation_set\|` ≈ 5 (intrinsic to the GROUP BY) |
+| `TopNSink<R, Cmp>` | `frontend/tpch/operators.hpp` | Q3 / Q3I S1–S4(/S5) | `K` (LIMIT — 10 for Q3 family) |
+
+Both expose the same shape:
+
+- **Push API** — one row at a time
+  (`agg.accumulate(l, n_name)` for Q5; `sink.offer(std::move(row))`
+  for Q3 family).
+- **Memory** — bounded by output cardinality, not by walk size.
+  `NNameRevenueAggregator` is a `std::unordered_map<string, Numeric>`
+  (~5 buckets); `TopNSink` is a `std::priority_queue` of size `K`.
+- **Drain API** — single materialisation pass at the end
+  (`agg.emit(out, sides)` for Q5; `sink.drain_sorted(out)` for Q3
+  family).  `out` ends up holding exactly the answer, in result order.
+
+The **same OutClass instance must be used across S1/S2/S3/S4(/S5)**
+for a given query — this is the OPERATORS.md §6.1
+comparison-integrity contract applied to the post-pipeline boundary.
+Q5's `NNameRevenueAggregator` and Q3's `TopNSink` already obey this:
+all four (or five) `query_by_*` bodies in each query construct one
+sink and push through it.
+
+#### Two flavours of OutClass
+
+- **Blocking small-buffered** (the two canonical impls above) —
+  output cardinality is bounded by the GROUP BY shape (Q5) or by an
+  explicit `LIMIT` (Q3 family).  The sink internally aggregates /
+  sorts; rows beyond the bound are evicted (TopNSink) or folded
+  into existing buckets (NNameRevenueAggregator).  Memory is
+  O(output_cardinality), not O(qualifying_rows).
+- **Streaming pass-through** — operator transforms / filters per
+  row without a blocking step (filter, project, witness).  The
+  OutClass receives each row, computes whatever it needs (parity
+  digest, correctness check, optional retain-for-debug), and either
+  forwards or discards.  Memory is O(1) per row plus whatever metric
+  state the OutClass owns.  No live consumer of this flavour exists
+  in `frontend/tpch/` today; the canonical reference for the shape
+  is `query_proc_w_merged_index/operators/witness.hpp`.
+
+#### Authoring rules
+
+- One row at a time on the push side.
+- Memory bounded by `output_cardinality` (blocking case) or by a
+  metric-only constant (streaming case).
+- Drain materialises the final answer once; **no inside-the-pipeline
+  buffering** with O(N) growth in `qualifying_rows`.
+- Same OutClass instance shared across all storage variants of the
+  query.  Asymmetric sinks across S1/S2/S3/S4 break OPERATORS.md
+  §6.1 — the answer comparison stops measuring the storage substrate
+  and starts measuring sink-shape divergence.
+
+#### Comparator-as-Cmp template parameter
+
+`TopNSink<R, Cmp>` takes the result-ordering comparator as a
+template parameter; callers pass a per-row lambda wrapping the
+shared `q3_family::q3_agg_row_base_t::cmp`:
 
 ```cpp
-apply_topN(out, {{K}}, [](const q{{N}}_agg_row_t& a, const q{{N}}_agg_row_t& b) {
-   if (a.revenue != b.revenue) return a.revenue > b.revenue;  // DESC
-   if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;  // ASC
-   return a.o_orderkey < b.o_orderkey;  // ASC — unique tiebreaker
-});
-return static_cast<long>(out.size());
+auto cmp = [](const q{{N}}_agg_row_t& a, const q{{N}}_agg_row_t& b) {
+   return q3_family::q3_agg_row_base_t::cmp(a, b);
+};
+TopNSink<q{{N}}_agg_row_t, decltype(cmp)> sink({{K}}, cmp);
 ```
 
-The comparator MUST include a unique tiebreaker field as the final key.
+The comparator MUST include a unique tiebreaker field as the final
+key — `q3_agg_row_base_t::cmp` already does this
+(`revenue DESC, o_orderdate ASC, o_orderkey ASC`).
 
 > **PITFALL — Single-key comparator in top-K** (commit `a4f5a4bc`):
-> Using only `revenue DESC` as the sort key leaves `std::partial_sort`
-> free to resolve ties by input order, which differs across paths
-> (S2 scans by `(custkey, orderkey)`, S4 iterates an `unordered_map`).
+> Using only `revenue DESC` as the sort key leaves the heap (or, in
+> the legacy `apply_topN`, `std::partial_sort`) free to resolve ties
+> by input order, which differs across paths (S2 scans by
+> `(custkey, orderkey)`, S4 iterates an `unordered_map`).
 > On data states with revenue ties at the boundary, this produces
 > different top-10 sets and thus different XOR digests.
 > **Symptom**: 3 or 4 distinct digests despite correct query logic.
 > **Fix**: always include enough tiebreaker fields to make the comparator
 > a strict weak ordering with no residual ambiguity. A unique key
 > (e.g. `o_orderkey`) as the last field guarantees this.
+
+#### When to use plain `apply_topN` instead
+
+`apply_topN(out, K, cmp)` (also in `operators.hpp`) is kept for
+callers whose result set is **intrinsically small** before any
+truncation — e.g. Q12's per-shipmode `HashAggregate` output (~7
+buckets, bounded by SHIPMODE cardinality).  In that case the buffer
+never grows past the bound, so the choice between
+`apply_topN(small_vec, K, cmp)` and `TopNSink::offer + drain` is
+purely stylistic — `apply_topN` is shorter.
+
+For any sink whose input cardinality grows with the walk (every
+`query_by_*` in Q3 / Q3I / Q10), use `TopNSink`.  Anti-pattern #30
+spells out the failure mode of getting this wrong.
+
+#### Forward-direction note
+
+The fully general operator-tree refactor
+(`Iterator<Output>::open/next/close` per
+`query_proc_w_merged_index/operators/CLAUDE.md`) is a strict
+super-set of the OutClass pattern: every OutClass becomes a leaf
+`Iterator` operator, the pipeline becomes a tree of operators
+above it.  Out of scope until a real correctness or performance
+forcing function arrives; the OutClass convention is the interim.
 
 ---
 
@@ -1801,6 +1896,7 @@ documented.
 | 27 | Reusing one cardinality framing across pure-hierarchical and sibling-aggregate queries | Q3 Phase 0 design draft (commit `dad7ccce` reverted by `d50cc33a`) | "3-way M:N with no sibling shortcut" framing imported into a query that has no sibling at all — undersells the hierarchical-prefix story and confuses reviewers | Use the typology in §3.5 §4: pure hierarchical, hierarchical + sibling sub-aggregate, OR genuine tree. Never import (2)'s "no sibling shortcut" wording into (1) or (3) |
 | 28 | Silently continuing on an illegal hook return instead of throwing | Q5/Q3 walker bring-up (2026-05-09) | Wrong-but-plausible answers: a visitor arm that returns `SkipOrder` when no order is open is a programming error, not a runtime condition; swallowing it silently produces subtly wrong aggregates that still pass non-zero parity | `throw std::logic_error` immediately — see §"Contract violations & fail-fast" below |
 | 29 | Default `matching_keys() { return {*this}; }` on a sort key with a wildcard-able trailing slot | Q5 stage-2 join bring-up (2026-05-09) | HashJoin probe hashes to a different bucket than the build-side anchor; `equal_range` returns empty; query silently emits zero rows. BMJ's analogous failure surfaces via `match()` returning a non-zero compare instead of treating the WILDCARD_KEY slot as a wildcard | All three pieces required: per-field `wildcard_match` in `match()`, full prefix-anchor enumeration in `matching_keys()`, AND `SKBuilder<JK>::project<R>` stripping absent fields to WILDCARD_KEY for BMJ's `join_state::join_and_clear`. Hash stays wildcard-blind. See §4 "Sort-key wildcard semantics" for the audit checklist; `q5_sort_key_t` and `geo::sort_key_t` are the canonical reference impls |
+| 30 | `std::vector<AggRow>& out` as the visitor's emit target paired with a trailing `apply_topN` | Q3 / Q3I pre-`458bcaf0` | Buffers every qualifying row before truncation: ~150K rows at SF=1 → ~6M (~192 MiB) at SF=40, just to discard 99.999% of them. Cache-thrashes the discard pile and defeats the merged-index streaming benefit at the post-pipeline boundary | Use a small-buffer OutClass instead — `TopNSink<R, Cmp>` for LIMIT queries, a HashAggregate-style aggregator (`NNameRevenueAggregator`) for global aggregates. See §7.6 OutClass for the contract and the two canonical impls. `apply_topN` itself is kept for intrinsically-small result sets (e.g. Q12's per-shipmode HashAggregate output) where the buffer never grows past the bound |
 
 ---
 

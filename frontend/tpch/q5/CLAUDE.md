@@ -290,6 +290,37 @@ per-`n_name` revenue map, sort by `revenue DESC`, output ~5
 rows (one per in-region nation). **No LIMIT** — the result
 cardinality is bounded by `|nation_set|` ≈ 5.
 
+### OutClass: shared `NNameRevenueAggregator`
+
+All four `query_by_*` bodies construct one
+`NNameRevenueAggregator` per query and push qualifying lineitems
+through `agg.accumulate(l, n_name)` (via the shared
+`q5_admit_lineitem` helper).  The aggregator's internal `by_name`
+map has at most ~5 entries (one per in-region nation); after the
+walk, `agg.emit(out, sides)` materialises the final ~5 rows in
+one pass.
+
+This is Q5's instance of the **OutClass** convention codified in
+`PLAYBOOK.md §7.6`: a small-buffer sink owning the
+pipeline → result boundary, push-once-per-row, drained once at the
+end.  Memory is `O(|nation_set|)`, not `O(qualifying_lineitems)`.
+Q5 has no LIMIT and therefore no `apply_topN` / `TopNSink` — the
+HashAggregate IS the OutClass.
+
+The same `NNameRevenueAggregator` instance is reused across all
+four storage variants per OPERATORS.md §7 rule 5
+(comparison-integrity at the post-pipeline boundary).
+`TopNSink<R, Cmp>` plays the analogous role for Q3 / Q3I (LIMIT 10
+queries) — see `q3/CLAUDE.md` and `q3i/CLAUDE.md`.
+
+> **Counter convention (audit B.2)**: `lineitems_scanned` is
+> bumped at four sites — S2 scan loop, S3 visitor `on_lineitem`,
+> S1 `fetch_lin`, S4 `fetch_lin` — all at "raw fetch (pre-filter)"
+> so the metric is comparable across paths.  See the inline
+> comment block above `q5_admit_lineitem` in `q5/query.tpp` for
+> the full convention; do NOT bump the counter inside the helper
+> (post-SUPPLIER-probe would double-count).
+
 ---
 
 ## Required Record Types
