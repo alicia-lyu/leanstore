@@ -36,10 +36,13 @@ Phase 0   (design doc — REQUIRED before any code)
   → Phase 0.5 (skeleton commit — REQUIRED before Phase 1)
     → Phase 1   (load path: views.hpp + workload.hpp + load.tpp;
     │            test_load_*_lsm passes at end)
-      → Phase 4 (query bodies: query.tpp)   ← the bulk of the work
-        → Phase 5 (wiring + tests + docs:
-                   per_structure_workload.hpp, executables,
-                   test harness, CMake/targets, doc refresh)
+      → Phase 4a (join-FREE query bodies: §7.1 S3 walker,
+      │           §7.3 S2 view scan, §7.4 S5 if applicable)
+        → Phase 4b (join-DRIVEN query bodies: §7.5 S4 hash,
+        │           §7.2 S1 BMJ chain)
+          → Phase 5 (wiring + tests + docs:
+                     per_structure_workload.hpp, executables,
+                     test harness, CMake/targets, doc refresh)
 ```
 
 > **Phase numbering note (2026-05-09 consolidation).** Phase numbers
@@ -50,6 +53,23 @@ Phase 0   (design doc — REQUIRED before any code)
 > 4 §7.2" (S1 merge join), etc. Renumbering would churn dozens of
 > cross-references for no architectural gain. Sub-section labels
 > "(cont.)" identify continuations of the same phase.
+
+> **Phase 4a / 4b split (2026-05-09; anti-pattern #29 driver).** Phase
+> 4 splits along the SK-validation axis. Phase 4a lands the join-free
+> paths (S3 walker, S2 view scan, S5 if applicable) — these exercise
+> record types and aggregators but never call `BinaryMergeJoin` or
+> `HashJoin`, so they don't depend on the SK's `matching_keys()` /
+> `match()` wildcard wiring being correct. Phase 4b lands the
+> join-driven paths (S4 hash, S1 BMJ) — these exercise every JK
+> consumer pair. **Phase 4b's entry criterion is an SK wildcard
+> smoke test**: for each JK consumer pair feeding a join, assert
+> `SKBuilder<SK>::create(left)` either equals
+> `SKBuilder<SK>::create(right)` for known-matching synthetic rows,
+> or that the asymmetry is covered by the SK's `matching_keys()` +
+> `match()` wildcard wiring (§4 "Sort-key wildcard semantics"). The
+> Q5 stage-2 zero-rows bug (2026-05-09) was a Phase 1 SK-design
+> error that hid until Phase 4 §7.5 — four phases of latency. The
+> 4a/4b split shortens that to one sub-phase.
 
 > **Process rule (NON-NEGOTIABLE).** No code change for the new
 > query lands before Phase 0 + Phase 0.5 are committed. Phase 0
@@ -498,6 +518,86 @@ See Q3I `views.hpp` lines 154–241 for the exact pattern.
 merge-joins on that key, plus `project<R>` and `to_key<R>`. See Q3I
 `views.hpp` lines 309–375.
 
+#### Sort-key wildcard semantics — `WILDCARD_KEY`, `matching_keys()`, `match()`
+
+The convention is codified in `frontend/shared/wildcard_key.hpp`:
+
+- `WILDCARD_KEY` is the sentinel constant (`= 0` — TPC-H and geo IDs
+  are 1-based) for a key field intentionally left unset to act as a
+  prefix anchor or wildcard match.  Never write a bare `0` in a
+  `Key{...}` constructor or in a match()/matching_keys() comparison.
+- `wildcard_match(a, b)` is a 3-way comparison helper that returns 0
+  when either side equals `WILDCARD_KEY`, otherwise the usual signed
+  ordering.  Use it inside `match()` instead of hand-rolling the
+  `if (a == 0 || b == 0) return 0;` branch.
+
+Three pieces of machinery work together for wildcard-keyed joins:
+
+1. **`match()`** chains `wildcard_match` calls per field (see
+   `q5_sort_key_t::match` in `q5/views.hpp` for the canonical 3-field
+   shape, `geo::sort_key_t::match` in `frontend/geo/views.hpp` for the
+   5-field shape).  Used by BMJ's `refresh_join_state`, by HashJoin's
+   probe-side equal-range check, and by `join_state::join_and_clear`
+   (which compares `next_jk.match(SKBuilder<JK>::project<R>(jk_to_join))`
+   to decide whether each per-record-type buffer needs flushing).
+
+2. **`matching_keys()`** enumerates the prefix-anchor keys a probe-side
+   row must look up, walking up the hierarchy (each non-WILDCARD_KEY
+   field, set to WILDCARD_KEY one level at a time, plus self).  HashJoin
+   probe walks the returned vector and consults each bucket via
+   `equal_range`, because the hashmap (`std::unordered_multimap`)
+   cannot itself ignore trailing slots.
+
+3. **`SKBuilder<JK>::project<R>(jk)`** strips a JK to record R's
+   natural granularity, filling absent fields with `WILDCARD_KEY`.
+   Pure granularity stripping — has nothing to do with wildcards in
+   isolation; the wildcard semantics come from `match()` honouring
+   the WILDCARD_KEY sentinel.  But the two mechanisms together are
+   what make wildcard-keyed BMJ work: when one input lacks a finer
+   field (e.g. `q5_jr1_t` has no linenumber), `project<q5_jr1_t>`
+   strips it to WILDCARD_KEY, and `join_and_clear`'s match-vs-projected
+   call returns 0 → the build-side buffer survives across probe-side
+   fan-out instead of being cleared per probe row.
+
+**Hash convention**: wildcard-blind by default.  `operator%` /
+`std::hash` hash all fields uniformly; the probe-side `matching_keys()`
+fan-out is what bridges build/probe bucket placement.  See
+`q5_sort_key_t` and `geo::sort_key_t` for the canonical pattern.  The
+OLD-DESIGN exception is `tpch_family/views_ol.hpp::ol_sort_key_t`,
+which uses a wildcard-AWARE hash (orderkey-only) and enumerates only
+one anchor in `matching_keys()` — kept working as-is because no
+current consumer needs the canonical pattern there, but slated for
+retirement; do not mirror it in new code.
+
+**Audit checklist for any SK with >1 field**:
+
+1. Does every consumer of this SK project every field with a concrete
+   value? If yes, `return {*this}` is sound and `match()` can stay
+   strict.
+2. If any consumer projects WILDCARD_KEY into a trailing slot, three
+   things are required (all, not any):
+   - **`match()`** chains `wildcard_match` per field.
+   - **`matching_keys()`** enumerates every prefix anchor walking up
+     the hierarchy.
+   - **`SKBuilder<JK>::project<R>`** strips fields R doesn't carry to
+     WILDCARD_KEY (granularity stripping; needed by BMJ via
+     `join_state::join_and_clear`).
+3. `operator<=>` stays strict (default).  `std::hash` / `operator%`
+   hash all fields uniformly (wildcard-blind); the probe-side
+   `matching_keys()` fan-out handles the bucket asymmetry.
+4. Don't mint a narrower SK type to "drop" wildcardable fields.
+   Trailing fields stay in the SK because the underlying secondary
+   structure relies on them for sort uniqueness; teach the existing
+   SK its wildcard wiring instead.  (Q5's `q5_co_jk_t` was a
+   workaround that got retired in favour of the proper
+   `q5_sort_key_t`.)
+
+**Canonical reference implementations**: `q5/views.hpp::q5_sort_key_t`
+(3-field, mirrors geo style) and `frontend/geo/views.hpp::sort_key_t`
+(5-field).  Both expose all three pieces (per-field `match`, full
+prefix-anchor enumeration, wildcard-blind hash) plus their
+`SKBuilder` projections.
+
 > **PITFALL — `joined_ol_t::unfoldKey`** (commit `be8b9bba`): The generic
 > `joined_t::unfoldKey(fold_pks=false)` path assumes each constituent
 > type has a `Key(JK)` constructor. If yours doesn't, you must add an
@@ -691,13 +791,17 @@ runs (e.g. `l_shipdate > DATE_1995_03_15` with the default date constant,
 `i_status = 'O'`).
 
 > **PITFALL — BinaryMergeJoin for view population** (commit `f74b67da`):
-> Do NOT use `BinaryMergeJoin` for view loading. Its hierarchical-key
-> wildcard semantics (`linenumber==0` matches any linenumber) cause the
-> join-state machine to emit ~1 row per order group instead of N rows per
-> (order, lineitem) pair. Use a manual two-pointer merge instead.
+> Do NOT use `BinaryMergeJoin` for view loading.  The hierarchical-key
+> wildcard semantics on `ol_sort_key_t` (`linenumber == WILDCARD_KEY`
+> matches any linenumber) interact with the OLD-DESIGN OL configuration
+> (orderkey-only hash, single-anchor `matching_keys()`) such that the
+> join-state machine emits ~1 row per order group instead of N rows per
+> (order, lineitem) pair.  Use a manual two-pointer merge instead.
 > **Symptom**: view has ~150K rows (one per order) instead of ~600K
 > (one per lineitem), and the parity test fails with S2 producing
-> different results from S1/S3/S4.
+> different results from S1/S3/S4.  May not reproduce once OL adopts
+> the canonical `q5_sort_key_t` / `geo::sort_key_t` pattern, but for
+> now the manual two-pointer merge is the safe choice.
 
 > **PITFALL — View missing baked-in filter** (commit `4dc93ec6`):
 > If `query_by_view` assumes a filter was baked into the view at load time
@@ -710,6 +814,37 @@ runs (e.g. `l_shipdate > DATE_1995_03_15` with the default date constant,
 ---
 
 ## §7 — Phase 4: `query.tpp` (The Core)
+
+Phase 4 is split into **4a (join-free paths)** and **4b (join-driven
+paths)** along the SK-validation axis — see §0 "Phase 4a / 4b split"
+for rationale.
+
+| Sub-phase | Sub-§ | Path | Uses join primitives? |
+|-----------|-------|------|-----------------------|
+| **4a** | §7.1 | S3 (group walk over MI) | No — visitor pattern, no JK |
+| **4a** | §7.3 | S2 (sequential view scan) | No — pure scan + filter |
+| **4a** | §7.4 | S5 (aCOLI MI, if applicable) | No — group walk variant |
+| **4b** | §7.5 | S4 (HashJoin chain) | **Yes** — `HashJoin<SK,...>` |
+| **4b** | §7.2 | S1 (BMJ chain) | **Yes** — `BinaryMergeJoin<SK,...>` |
+
+**Land Phase 4a first** — these paths work even if the SK's wildcard
+wiring is wrong, so they validate data shape, accumulators, and
+filter pushdown without dragging in JK bugs. Flip the test harness
+to strict-on-{S2, S3, S5} at the end of 4a; S1 / S4 stay
+`[SKIP]`-tolerant.
+
+**Then land Phase 4b** with this entry criterion: an SK wildcard
+smoke test — for each `(SK, left_record_type, right_record_type)`
+triple feeding a join, build matching synthetic rows from each side
+and assert
+`SKBuilder<SK>::create(left).match(SKBuilder<SK>::create(right)) == 0`,
+plus that walking
+`SKBuilder<SK>::create(probe_side).matching_keys()` and looking up
+each anchor via `equal_range` finds the build-side row.  If either
+fails, fix the SK's `matching_keys()` / `match()` /
+`SKBuilder::project<R>` wiring (§4 "Sort-key wildcard semantics")
+**before writing the join body**.  Then implement S4 and S1, and flip
+the harness to strict 4-way (or 5-way) parity.
 
 ### Preamble
 
@@ -1646,6 +1781,7 @@ documented.
 | 26 | `[SKIP X]` parity guards in the cross-structure test harness | Q3I S5 (`tests/q3i/test_query_q3i_leanstore.cpp` guard retired by `8ac423dd`) | A storage variant that diverges at non-default params is excused as "baked-in filter mismatch", masking unsoundness | A `[SKIP]` is a structural-soundness alarm. Treat it as a fix-blocker, not a documented exception. If the variant cannot match parity at all params, the variant's design is wrong — rebuild it (don't bypass the check) |
 | 27 | Reusing one cardinality framing across pure-hierarchical and sibling-aggregate queries | Q3 Phase 0 design draft (commit `dad7ccce` reverted by `d50cc33a`) | "3-way M:N with no sibling shortcut" framing imported into a query that has no sibling at all — undersells the hierarchical-prefix story and confuses reviewers | Use the typology in §3.5 §4: pure hierarchical, hierarchical + sibling sub-aggregate, OR genuine tree. Never import (2)'s "no sibling shortcut" wording into (1) or (3) |
 | 28 | Silently continuing on an illegal hook return instead of throwing | Q5/Q3 walker bring-up (2026-05-09) | Wrong-but-plausible answers: a visitor arm that returns `SkipOrder` when no order is open is a programming error, not a runtime condition; swallowing it silently produces subtly wrong aggregates that still pass non-zero parity | `throw std::logic_error` immediately — see §"Contract violations & fail-fast" below |
+| 29 | Default `matching_keys() { return {*this}; }` on a sort key with a wildcard-able trailing slot | Q5 stage-2 join bring-up (2026-05-09) | HashJoin probe hashes to a different bucket than the build-side anchor; `equal_range` returns empty; query silently emits zero rows. BMJ's analogous failure surfaces via `match()` returning a non-zero compare instead of treating the WILDCARD_KEY slot as a wildcard | All three pieces required: per-field `wildcard_match` in `match()`, full prefix-anchor enumeration in `matching_keys()`, AND `SKBuilder<JK>::project<R>` stripping absent fields to WILDCARD_KEY for BMJ's `join_state::join_and_clear`. Hash stays wildcard-blind. See §4 "Sort-key wildcard semantics" for the audit checklist; `q5_sort_key_t` and `geo::sort_key_t` are the canonical reference impls |
 
 ---
 
