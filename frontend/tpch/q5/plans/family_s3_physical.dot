@@ -37,10 +37,14 @@
 // groups for the entire walk; the walker emits no rows mid-walk and
 // drains the final map at on_walk_end.
 //
-// n_name is NOT resolved during the walk. At on_walk_end, for each
-// (n_nationkey, revenue) entry in the accumulator, one NATION
-// primary-index point lookup materialises n_name (~5 lookups total).
-// No nation_name_map; no n_name in any intermediate build.
+// n_name is resolved INSIDE the walk, downstream of the CUSTOMER ⋈ RN
+// inner-join gate at on_customer. The inner-join framing authorizes
+// carrying NATION columns into the chain; lookup timing is an
+// efficiency choice. Convention: lazy per-nationkey lookup cached in
+// the Visitor's revenue map (~5 lookups total — one per distinct
+// nationkey first encountered during the walk). No nation_name_map
+// (no duplicate of NATION's primary index); no n_name in any
+// intermediate build payload (primary-key payload convention).
 //
 // Operator-framing rules (same as baseline_s4.dot and
 // family_logical.dot):
@@ -81,9 +85,13 @@
 //                             (c_nationkey, l_suppkey);
 //                             SKIP if absent;
 //                             accumulate revenue into per-nationkey map
-//     Visitor::on_walk_end  → for each (nationkey, revenue): resolve
-//                             n_name via NATION primary-index lookup;
+//     Visitor::on_lineitem (n_name lazy fetch) → on first encounter
+//                             of a new nationkey, NATION PK lookup
+//                             → n_name; cached in the per-nationkey
+//                             bucket (~5 lookups total, inside walk)
+//     Visitor::on_walk_end  → drain per-nationkey buckets;
 //                             emit one q5_agg_row_t per entry
+//                             (n_name already resolved)
 //
 // PremergedJoin / BinaryMergeJoin are NOT instantiated here — the COL
 // merged adapter's tagged-key encoding makes the Visitor pattern strictly
@@ -118,7 +126,7 @@ digraph {
   mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLGroupWalk(Visitor)\nsubsumes the entire family logical pipeline:\n  • on_customer: HashJoin (inner) CUSTOMER ⋈ RN\n      gate, lowered to (c_nationkey ∈ nation_set);\n      preserves c_nationkey on survivors\n  • on_order:    o_orderdate window filter\n  • on_lineitem: HashSemiJoin (COL ⋉ supplier_nation_set)\n      lowered to one hashset probe with\n      (c_nationkey, l_suppkey) — fuses SUPPLIER\n      semi-join + cross-eq + suppkey equi-join\n  • chain joins: CUSTOMER ⋈ ORDERS ⋈ LINEITEM,\n      lowered to a 3-way custkey-byte-lex merge\n      inside the MI walker (no separate operator)\n  • aggregate:   per-nationkey HashAggregate\n      (small in-Visitor map keyed by n_nationkey)\n  • on_walk_end: NATION PK lookup per nationkey\n      → n_name (~5 lookups); emit q5_agg_row_t",
+  walk [label="COLGroupWalk(Visitor)\nsubsumes the entire family logical pipeline:\n  • on_customer: HashJoin (inner) CUSTOMER ⋈ RN\n      gate, lowered to (c_nationkey ∈ nation_set);\n      preserves c_nationkey on survivors\n  • on_order:    o_orderdate window filter\n  • on_lineitem: HashSemiJoin (COL ⋉ supplier_nation_set)\n      lowered to one hashset probe with\n      (c_nationkey, l_suppkey) — fuses SUPPLIER\n      semi-join + cross-eq + suppkey equi-join\n  • chain joins: CUSTOMER ⋈ ORDERS ⋈ LINEITEM,\n      lowered to a 3-way custkey-byte-lex merge\n      inside the MI walker (no separate operator)\n  • n_name fetch (inside walk): on first sighting\n      of each new nationkey, NATION PK lookup\n      caches n_name in the bucket (~5 lookups total)\n  • aggregate:   per-nationkey HashAggregate\n      (small in-Visitor map keyed by n_nationkey,\n       n_name already resolved per bucket)\n  • on_walk_end: drain buckets → emit q5_agg_row_t",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
@@ -130,8 +138,4 @@ digraph {
   mi     -> walk;
   walk   -> sort;
 
-  // ─────────── Emit-time note ───────────
-  note [label="n_name resolved at on_walk_end\nvia NATION primary-index lookup;\n~5 entries → ~5 point lookups.\nNo nation_name_map in the walker.\nNo Probe/Build operator nodes —\nthe walker IS the single physical\noperator that subsumes the chain.",
-        shape=note, style=filled, fillcolor="#F3E5F5"];
-  walk -> note [style=dashed, arrowhead=none];
 }

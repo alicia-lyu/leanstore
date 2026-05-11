@@ -30,13 +30,16 @@
 // build relation's primary key — no record content. Downstream
 // consumers fetch additional columns via the primary index at
 // consumption time. n_name is the canonical example: it is NOT in
-// any intermediate build; it is fetched at emit time via NATION's
-// primary-index lookup keyed on n_nationkey (~5 lookups per query).
+// any intermediate build payload; the inner-join framing of
+// CUSTOMER ⋈ RN authorizes fetching n_name anywhere downstream.
+// Convention: lazy NATION PK lookup inside the HashAggregate, on
+// first encounter of each new nationkey (~5 lookups per query,
+// cached in the per-nationkey bucket).
 //
 // Asymmetry between the two fan-outs from RN:
 //   CUSTOMER ⋈ RN is HashJoin (inner) — the joined record carries
-//                                       n_nationkey forward, used at
-//                                       emit time to fetch n_name.
+//                                       n_nationkey forward; n_name
+//                                       fetched lazily downstream.
 //   SUPPLIER ⋉ RN is HashSemiJoin    — no NATION column flows
 //                                       downstream from the supplier
 //                                       arm; supplier survivors carry
@@ -106,20 +109,13 @@ digraph {
   hj_lin -> sj_col_sup [label="probe (per-lineitem)"];
   sj_sup -> sj_col_sup [label="build\n(supplier_nation_set)"];
 
-  // ─────────── Aggregate + emit ───────────
-  agg [label="HashAggregate\ngroup = [n_nationkey],\nrevenue = SUM(l_extendedprice\n          * (1 - l_discount))",
+  // ─────────── Aggregate (n_name fetched lazily inside) ───────────
+  agg [label="HashAggregate\ngroup = [n_nationkey],\nrevenue = SUM(l_extendedprice\n          * (1 - l_discount))\nn_name fetched lazily on first sighting\nof each nationkey via NATION PK lookup\n(~5 lookups, cached in the bucket);\nbuckets drain to q5_agg_row_t directly",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
-  emit [label="emit(): NATION PK lookup\nper nationkey → n_name\n(~5 output rows,\n ~5 point lookups)\n→ q5_agg_row_t",
-        shape=box, style=filled, fillcolor="#FCE5CD"];
   sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
         shape=box, style=filled, fillcolor="#E6F4EA"];
 
   sj_col_sup -> agg;
-  agg        -> emit;
-  emit       -> sort;
+  agg        -> sort;
 
-  // ─────────── Footer note ───────────
-  footer [label="S4 uses base tables only; no col.split_*.\nFairness vs S3.\nEvery operator is a HashJoin or HashSemiJoin;\nno standalone Probe/Build/Sort nodes.\nLineitem hash join lowered to sorted-seek per\nbuild orderkey (build sorted; probe naturally\nsorted on l_orderkey).",
-          shape=note, style=filled, fillcolor="#F3E5F5"];
-  sort -> footer [style=dashed, arrowhead=none];
 }

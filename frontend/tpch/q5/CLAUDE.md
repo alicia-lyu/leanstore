@@ -99,9 +99,11 @@ What Q5 adds beyond Q3:
   into a per-nationkey bucket — one extra constant-time hashset
   lookup per lineitem versus Q3's pure-revenue accumulator.
 - **Emit-time `n_name` resolution.** `n_name` is not carried through
-  any intermediate build. At `on_walk_end` / result-emission time,
-  ~5 NATION primary-index point lookups materialise the final name
-  per nationkey bucket.
+  any intermediate build. Inside the walker (or downstream of the
+  CUSTOMER ⋈ RN inner join, for non-walker paths), NATION primary-
+  index lookups materialise `n_name` lazily on first sighting of
+  each new nationkey (~5 lookups, cached in the per-nationkey
+  aggregator bucket).
 
 The MI advantage thesis is the same as Q3's: `MI[COL]` co-locates
 the chain in custkey-byte-lex order so a single `PremergedJoin`
@@ -133,8 +135,9 @@ operators:
   `r_regionkey`.
 - NATION (25 rows): `HashJoin(REGION ⋈ NATION on n_regionkey =
   r_regionkey)` — yields `nation_set` (~5 `n_nationkey` entries).
-  `n_name` is NOT stored; fetched at emit time via NATION primary
-  index (~5 point lookups).
+  `n_name` is NOT stored; fetched lazily inside the chain/walker
+  via NATION primary index (~5 point lookups, on first sighting of
+  each new nationkey).
 - SUPPLIER (~10K rows at SF=1): `HashSemiJoin(SUPPLIER ⋉ RN on
   s_nationkey = n_nationkey)` with survivors projected to
   `(s_nationkey, s_suppkey)` — yields `supplier_nation_set`
@@ -160,9 +163,9 @@ locality on the COL chain — anti-pattern #27 forbids importing
 | # | Strategy | Secondary structure | Join strategy | Params baked in |
 |---|----------|--------------------|--------------|-----------------|
 | 1 | Traditional indexes + binary merge join | Custkey-sorted secondaries on ORDERS (`(custkey, orderkey)`) and LINEITEM (`(custkey, orderkey, linenumber)`) | BMJ chain: customer ⋈ orders\_sec ⋈ lineitem\_sec on the custkey-extended prefix; SUPPLIER + NATION + REGION as side hash builds | none |
-| 2 | Intermediate pipeline view | `q5_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_suppkey` + FD-attached `c_nationkey`, `o_orderdate`) | View scan + orderdate filter + composite-key `supplier_nation_set` probe live; per-nationkey `HashAggregate`; `n_name` at emit time | none |
+| 2 | Intermediate pipeline view | `q5_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_suppkey` + FD-attached `c_nationkey`, `o_orderdate`) | View scan + orderdate filter + composite-key `supplier_nation_set` probe live; per-nationkey `HashAggregate`; `n_name` fetched lazily inside the aggregator | none |
 | 3 | MI[COL] only | `MergedAdapter<customer_col_t, orders_col_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys | `col_group_walk[_fused_emit]` over the COL MI; CUSTOMER hierarchy co-located, no separate join; SUPPLIER + NATION + REGION as side hash builds | none |
-| 4 | Traditional indexes + hash join | None | `CUSTOMER ⋈ RN` → `HashSemiJoin(⋈orders)` → orderdate filter → orderkey-only lineitem seeks → composite-key `supplier_nation_set` probe → per-nationkey `HashAggregate`; `n_name` at emit time | none |
+| 4 | Traditional indexes + hash join | None | `CUSTOMER ⋈ RN` → `HashSemiJoin(⋈orders)` → orderdate filter → orderkey-only lineitem seeks → composite-key `supplier_nation_set` probe → per-nationkey `HashAggregate`; `n_name` fetched lazily inside the aggregator | none |
 
 **S5 deliberately omitted.** Q5 has **no parameter-independent
 aggregate to bake**: every per-row contribution to the answer
@@ -182,7 +185,7 @@ Three DOT files in [`plans/`](plans/) document the operator graphs:
 
 - `plans/family_logical.dot` — shared logical plan for S1, S2, S3.
   All three agree on filter placement, aggregate shape (per-nationkey
-  HashAggregate + emit-time `n_name` lookup), and the RN dimension
+  HashAggregate with lazy in-aggregator `n_name` lookup), and the RN dimension
   subtree with its two asymmetric fan-outs (CUSTOMER ⋈ RN inner;
   SUPPLIER ⋉ RN semi-join); only the
   inside-pipeline physical operator differs.
@@ -192,7 +195,7 @@ Three DOT files in [`plans/`](plans/) document the operator graphs:
   RN inner-join gate, and the 2-way join; the per-lineitem
   composite-key semi-join (`COL ⋉ supplier_nation_set`) and
   per-nationkey aggregator wrap the walker callback; `n_name`
-  resolved at `on_walk_end`.
+  resolved lazily inside the walker per nationkey.
 - `plans/baseline_s4.dot` — S4 baseline. A HashJoin chain over base
   tables only (no `col.split_*`) with `r_name` pushed below the
   REGION scan, `CUSTOMER ⋈ RN` applied before the customer
@@ -219,7 +222,7 @@ this means:
 - The `nation_set` (output of `HashJoin(REGION ⋈ NATION)`)
   gates CUSTOMER via an **inner** `HashJoin(CUSTOMER ⋈ RN on
   c_nationkey = n_nationkey)` — inner because the matched
-  `n_nationkey` flows downstream (consumed at emit time to
+  `n_nationkey` flows downstream (consumed inside the chain/walker to
   fetch `n_name` via NATION's primary index). The join lowers
   to `c_nationkey ∈ nation_set` fused with `TableScan(CUSTOMER)`
   (or with the COL walker's `on_customer` hook for S3); the
@@ -259,8 +262,10 @@ per-lineitem the walker probes `supplier_nation_set` with
 `(c_nationkey, l_suppkey)` — one hashset lookup fuses the SUPPLIER
 semi-join, the cross-equality, and the suppkey equi-join. Revenue
 accumulates into the per-nationkey bucket carried by the Visitor.
-At `on_walk_end`, `n_name` is resolved via NATION primary-index
-lookup (~5 point lookups) and the final rows are emitted. No
+Inside the walker, `n_name` is resolved lazily via NATION primary-
+index lookup on first sighting of each new nationkey (~5 point
+lookups, cached in the bucket). On_walk_end drains the buckets
+to `q5_agg_row_t`. No
 buffering of MI rows, no hashmaps over MI rows, no separate
 aggregate pass — only the two small reduce-side structures
 (`nation_set`, `supplier_nation_set`) prebuilt before the walk.
@@ -291,10 +296,10 @@ all parameterised, so predicate hoisting forbids fusing them at
 load time (PLAYBOOK soundness rule). Query time is a sequential
 view scan: the customer nation-set gate, orderdate filter, and
 composite-key `supplier_nation_set` probe all apply live; revenue
-is rolled up via a per-nationkey `HashAggregate`. At emit time,
-`n_name` is resolved per nationkey via NATION primary-index lookup
-(~5 lookups). The view is reusable across all REGION and DATE
-param sets.
+is rolled up via a per-nationkey `HashAggregate`. Inside the
+aggregator, `n_name` is resolved lazily per nationkey via NATION
+primary-index lookup (~5 lookups, cached in the bucket). The view
+is reusable across all REGION and DATE param sets.
 
 **S4 (HashJoin chain baseline)** uses base tables only (no
 `col.split_*` secondaries — fairness vs S3). Filter pushdown:
@@ -309,8 +314,9 @@ CUSTOMER → `c_nationkey`), amortised over ~4 lineitems per order.
 Per-lineitem: probe `supplier_nation_set` with
 `(cached_c_nationkey, l_suppkey)` — one hashset lookup replaces
 the old separate `supplier_nation_map` probe and cross-equality
-filter. At emit time, `n_name` is resolved per nationkey via
-NATION primary-index lookup (~5 lookups). S4 measures the
+filter. Inside the aggregator, `n_name` is resolved lazily per
+nationkey via NATION primary-index lookup (~5 lookups, cached
+in the bucket). S4 measures the
 no-merged-index baseline that the family is compared against.
 
 ### Comparison axis summary
@@ -322,13 +328,13 @@ filter substrate.
 
 | Approach | Inside-pipeline physical | Aggregate | Filters / semi-joins resolved by |
 |----------|--------------------------|-----------|----------------------------------|
-| S1 (merge family) | 2-BMJ chain over custkey-sorted split indexes (`q5_jr1_t` → `q5_jr2_t`); `nation_set` + `supplier_nation_set` prebuilt | `NNameRevenueAggregator` keyed by nationkey; `n_name` at emit time via NATION PK lookup | per-scan inline semi-join (nation_set gate, orderdate window); composite-key `supplier_nation_set` probe per lineitem |
-| S2 (merge family) | sequential per-lineitem view scan; `nation_set` + `supplier_nation_set` prebuilt | per-nationkey HashAggregate; `n_name` at emit time via NATION PK lookup | all filters live at query time (no filter baking — view is param-reusable); composite-key probe per lineitem |
-| S3 (merge family) | `col_group_walk` over MI[COL]; `nation_set` + `supplier_nation_set` prebuilt | per-nationkey HashAggregate (Visitor map); `n_name` at `on_walk_end` via NATION PK lookup | Visitor `on_*` hooks; composite-key `supplier_nation_set` probe per lineitem |
-| S4 (baseline) | HashJoin chain over base tables only (no `col.split_*`); orderkey-only lineitem seeks; `c_nationkey` cached per orderkey via PK lookups | per-nationkey HashAggregate; `n_name` at emit time via NATION PK lookup | TableScan-time semi-joins pushed below each hash build; composite-key `supplier_nation_set` probe per lineitem |
+| S1 (merge family) | 2-BMJ chain over custkey-sorted split indexes (`q5_jr1_t` → `q5_jr2_t`); `nation_set` + `supplier_nation_set` prebuilt | `NNameRevenueAggregator` keyed by nationkey; `n_name` fetched lazily inside the aggregator on first sighting of each nationkey (NATION PK lookup, ~5) | per-scan inline semi-join (nation_set gate, orderdate window); composite-key `supplier_nation_set` probe per lineitem |
+| S2 (merge family) | sequential per-lineitem view scan; `nation_set` + `supplier_nation_set` prebuilt | per-nationkey HashAggregate; `n_name` fetched lazily inside the aggregator on first sighting of each nationkey (NATION PK lookup, ~5) | all filters live at query time (no filter baking — view is param-reusable); composite-key probe per lineitem |
+| S3 (merge family) | `col_group_walk` over MI[COL]; `nation_set` + `supplier_nation_set` prebuilt | per-nationkey HashAggregate (Visitor map); `n_name` fetched lazily inside the walker on first sighting of each nationkey (NATION PK lookup, ~5) | Visitor `on_*` hooks; composite-key `supplier_nation_set` probe per lineitem |
+| S4 (baseline) | HashJoin chain over base tables only (no `col.split_*`); orderkey-only lineitem seeks; `c_nationkey` cached per orderkey via PK lookups | per-nationkey HashAggregate; `n_name` fetched lazily inside the aggregator on first sighting of each nationkey (NATION PK lookup, ~5) | TableScan-time semi-joins pushed below each hash build; composite-key `supplier_nation_set` probe per lineitem |
 
 All four agree on what's outside the pipeline: collect the
-per-nationkey revenue map, resolve `n_name` at emit time via
+per-nationkey revenue map, resolve `n_name` fetched lazily inside the aggregator via
 NATION primary-index lookup (~5 lookups), sort by `revenue DESC`,
 output ~5 rows (one per in-region nation). **No LIMIT** — the
 result cardinality is bounded by `|nation_set|` ≈ 5.
@@ -419,7 +425,8 @@ membership), only in-process hashmaps built per query invocation:
   REGION filtered by `r_name = :1` first. Build payload is
   `n_nationkey` only (primary-key payload convention — no other
   NATION columns carried). `n_name` is NOT stored here; it is
-  fetched at result-emission time via NATION's primary-index
+  fetched lazily inside the aggregator (first sighting of each
+  nationkey) via NATION's primary-index
   point lookup (~5 lookups per query).
 - `supplier_nation_set` — `std::unordered_set<std::tuple<Integer,
   Integer>>` keyed on `(s_nationkey, s_suppkey)`, restricted to

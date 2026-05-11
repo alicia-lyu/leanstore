@@ -24,11 +24,13 @@
 //
 //         Fan-out 1 — CUSTOMER ⋈ RN on c_nationkey = n_nationkey
 //             HashJoin (INNER). The joined record carries c_nationkey
-//             (= matched n_nationkey on survivors), used at emit time
-//             to fetch n_name via NATION's primary index (~5 lookups).
-//             Inner because something from the RN side flows downstream
-//             (the matched n_nationkey, even though carried as the
-//             equal c_nationkey).
+//             (= matched n_nationkey on survivors), used downstream
+//             to fetch n_name via NATION's primary index. Lookup
+//             timing is an efficiency choice — the inner-join framing
+//             authorizes it anywhere after on_customer (S3) / the
+//             customer build (S1/S2/S4). Convention: lazy lookup on
+//             first sighting of each new nationkey, cached in the
+//             per-nationkey aggregator bucket (~5 lookups per query).
 //
 //         Fan-out 2 — SUPPLIER ⋉ RN on s_nationkey = n_nationkey
 //             HashSemiJoin. No NATION column flows downstream from the
@@ -80,8 +82,10 @@
 // relation's primary key as payload — no record content. Downstream
 // consumers fetch additional columns via the primary index at
 // consumption time. n_name is the canonical example: NOT flowed
-// through any intermediate build; fetched at result-emission time
-// (~5 output rows, ~5 NATION primary-index point lookups).
+// through any intermediate build; lazy NATION PK lookup happens
+// INSIDE the chain (downstream of CUSTOMER ⋈ RN), on first sighting
+// of each distinct nationkey (~5 lookups per query, cached in the
+// per-nationkey aggregator bucket).
 //
 // C++ implementation map (q5/query.tpp + col_pipeline.tpp):
 //
@@ -112,8 +116,11 @@
 //   • HashAggregate(group=[n_nationkey],       — per-nationkey accumulator
 //       revenue = SUM(l_extendedprice           (Visitor carries a small map
 //                     * (1 - l_discount)))      keyed by n_nationkey)
-//   • n_name resolved at emit time             — ~5 NATION primary-index
-//                                                lookups keyed on n_nationkey
+//   • n_name resolved inside the chain         — lazy NATION PK lookup
+//                                                on first sighting of each
+//                                                nationkey; ~5 lookups
+//                                                per query, cached in the
+//                                                aggregator bucket
 //   • Pipeline output                          — q5_pipeline_view_t
 //                                                (S2 only) or direct
 //                                                q5_agg_row_t emission
@@ -133,7 +140,7 @@
 //        carrying l_extendedprice, l_discount, l_suppkey,
 //        c_nationkey, o_orderdate). All filters apply live on view
 //        rows; the per-nationkey HashAggregate fires above the view
-//        scan; n_name resolved at emit time.
+//        scan; n_name resolved lazily inside the aggregator.
 //   S3 → col_group_walk over the 3-table COL MergedAdapter
 //
 // Outside-pipeline operators are byte-identical across the three.
@@ -191,11 +198,8 @@ digraph {
   sj_col_sup [label="HashSemiJoin\n<col-chain> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\nsurvivors: lineitem fields +\n   c_nationkey (for aggregation key)",
               shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
-  agg [label="HashAggregate\ngroup = [n_nationkey],\nrevenue = SUM(l_extendedprice\n          * (1 - l_discount))\n[NNameRevenueAggregator\n keyed by nationkey]",
+  agg [label="HashAggregate\ngroup = [n_nationkey],\nrevenue = SUM(l_extendedprice\n          * (1 - l_discount))\n[NNameRevenueAggregator keyed by nationkey;\n n_name fetched lazily on first sighting\n of each nationkey via NATION PK lookup,\n cached in the bucket — ~5 lookups total;\n buckets drain to q5_agg_row_t directly]",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
-
-  emit [label="emit(): NATION PK lookup\nper nationkey → n_name\n(~5 output rows,\n ~5 point lookups)\n→ q5_agg_row_t",
-        shape=box, style=filled, fillcolor="#FCE5CD"];
 
   sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
         shape=box, style=filled, fillcolor="#E6F4EA"];
@@ -211,11 +215,6 @@ digraph {
   sj_sup -> sj_col_sup [label="build\n(supplier_nation_set)"];
 
   sj_col_sup -> agg;
-  agg        -> emit;
-  emit       -> sort;
+  agg        -> sort;
 
-  // ─────────── Emit-time note ───────────
-  note [label="n_name resolved at emit time\nvia NATION primary-index lookup;\n~5 output rows → ~5 point lookups.\nNo nation_name_map; no n_name in any build.\nNo Probe/Build/Sort operator nodes —\noperator class decided by downstream\nconsumption, not build-payload shape.",
-        shape=note, style=filled, fillcolor="#F3E5F5"];
-  emit -> note [style=dashed, arrowhead=none];
 }
