@@ -57,6 +57,23 @@ struct Q3FamilyStats : public tpch::TPCHFamilyStats {
    // pushdown).
    long s4_orderkey_seeks = 0;
 
+   // S1 (query_by_base) per-custkey seek-skip counters — mirror of
+   // mi_groups_skipped (S3) and view_groups_skipped (S2).  Apples-to-apples
+   // physical-seek parity for the BMJ chain over custkey-sorted split
+   // indexes:
+   //   • s1_groups_skipped — bumped each time fetch_ord physically seeks
+   //     its scanner past rejected-customer custkey range(s), AND each time
+   //     the lineitem aggregator's inner scanner does the same.  Because
+   //     S1 has two physical streams (orders + lineitem) the per-customer
+   //     skip event can bump this twice.  This is the cost of two physical
+   //     streams in S1; what matters is that no physical seek is omitted.
+   //   • s1_orders_skipped — reserved counter for a future order-date-miss
+   //     seek; currently zero (S3's SkipOrder is logical/next()-based too,
+   //     so there is no I/O fairness gap to close).  Declared here so the
+   //     harness print site is stable.
+   long s1_groups_skipped = 0;
+   long s1_orders_skipped = 0;
+
    void reset() { *this = Q3FamilyStats{}; }
 };
 

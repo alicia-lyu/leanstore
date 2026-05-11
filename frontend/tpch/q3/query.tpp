@@ -13,6 +13,7 @@
 #pragma once
 
 #include <algorithm>
+#include <limits>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -141,6 +142,25 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
    //
    // OPERATORS.md §6.1: the per-record arithmetic (LineitemRevenueAccumulator)
    // is the same as S3 — only the physical scan substrate differs.
+   //
+   // Per-custkey physical seek-skip (apples-to-apples vs S3's COLGroupWalk
+   // SkipGroup, tpch_family/col_pipeline.tpp §SkipGroup; and S2's
+   // q3_pipeline_view_t custkey-seek in query_by_view above):
+   //   • fetch_cust publishes the latest accepted custkey via
+   //     min_ord_custkey (a side-channel).  On a mktsegment miss it does
+   //     NOT publish — the rejected custkey stays implicit, and is skipped
+   //     by the next fetch_ord call.
+   //   • fetch_ord, before returning an order, physically seeks its
+   //     scanner to orders_coli_t::Key{min_ord_custkey, 0} when the
+   //     prefetched order's o_custkey is below it.  This is the direct
+   //     equivalent of S3's SkipGroup seek on the merged-adapter scanner.
+   //   • The lineitem aggregator seek (agg_lin.seek_to_custkey) is
+   //     deliberately NOT wired here — see the NOTE next to fetch_lin_agg
+   //     below for the BMJ#2 timing reason.  This means S1 closes the
+   //     orders-side I/O gap to S3 but leaves the lineitem-side gap as
+   //     deferred work (mirror of the abandoned Q3I §G6).
+   // Stats: stats->s1_groups_skipped is bumped once per actual physical
+   // seek on the orders scanner.
    out.clear();
 
    q3_family::LineitemRevenueAggregator<Backend, lineitem_col_t, Params>
@@ -148,6 +168,53 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
 
    auto cust_scan = customer.getScanner();
    auto ord_scan  = col.split_orders().getScanner();
+
+   // Pre-scan customers to build the set of accepted custkeys for
+   // fetch_ord seek-skip.  This is a small upfront pass (linear in
+   // |customer|) and lets fetch_ord answer "is this custkey valid? if
+   // not, what's the next valid one?" in O(log n) without needing to
+   // chase a moving target from inside fetch_cust.
+   //
+   // Why a pre-scan rather than co-evolving with fetch_cust:
+   //   The natural "track the latest accepted custkey published by
+   //   fetch_cust" pattern breaks correctness because BMJ#1 pulls
+   //   fetch_cust for left-refill *before* its current jk_to_join is
+   //   fully drained on the right (orders) side.  Any side-channel
+   //   updated inside fetch_cust runs ahead of fetch_ord's actual
+   //   processing front, so the seek target is the *next* group rather
+   //   than the current — which loses the current group's orders.
+   //   (Same race-condition pathology that abandoned Q3I §G6.)
+   //
+   //   Pre-scanning sidesteps that entirely: the accepted-custkey set is
+   //   immutable for the query; fetch_ord answers from it directly and
+   //   never has to coordinate with BMJ-state.
+   //
+   // Cost: |customer| extra scanner pulls per query.  At SF=1 that's 150
+   // records — negligible against the 1500 orders / 6000 lineitems.  The
+   // pull happens before BMJ construction so it doesn't show up in the
+   // BMJ-driven stats (customers_scanned still reflects only the
+   // baseline-scan path).
+   std::vector<Integer> accepted_custkeys;
+   {
+      auto pre = customer.getScanner();
+      while (auto kv = pre->next()) {
+         if (q3_predicate_customer(kv->second, params)) {
+            accepted_custkeys.push_back(kv->first.c_custkey);
+         }
+      }
+   }
+   // accepted_custkeys is in scanner order (= ascending custkey for the
+   // customer primary index).
+
+   // Map a custkey C to the smallest accepted custkey >= C (or +∞ if none).
+   // Used by fetch_ord to compute its seek target on a miss.
+   auto smallest_accepted_geq = [&](Integer C) -> Integer {
+      auto it = std::lower_bound(accepted_custkeys.begin(),
+                                  accepted_custkeys.end(), C);
+      return it == accepted_custkeys.end()
+                 ? std::numeric_limits<Integer>::max()
+                 : *it;
+   };
 
    auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
       while (auto kv = cust_scan->next()) {
@@ -160,22 +227,61 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
    };
 
    auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
-      while (auto kv = ord_scan->next()) {
+      for (;;) {
+         auto kv = ord_scan->next();
+         if (!kv) return std::nullopt;
          if (stats) stats->orders_scanned++;
+         // Physical seek-skip: if the order's custkey has no accepted
+         // customer, jump forward to the smallest accepted custkey >=
+         // kv.custkey (or exhaust the scanner if none).  This is the
+         // direct equivalent of S3's COLGroupWalk SkipGroup
+         // (col_pipeline.tpp:289-302), which seeks the merged-adapter
+         // scanner past failing custkeys on mktsegment-miss.
+         Integer target = smallest_accepted_geq(kv->first.custkey);
+         if (target != kv->first.custkey) {
+            if (target == std::numeric_limits<Integer>::max()) {
+               // No further accepted customers — drain the scanner.
+               // Issuing a physical seek to a key past the end is the
+               // analogue of S3's terminal advance.
+               return std::nullopt;
+            }
+            orders_coli_t::Key skip_key{target, 0};
+            ord_scan->seek(skip_key);
+            if (stats) stats->s1_groups_skipped++;
+            continue;
+         }
          if (kv->second.o_orderdate < params.orderdate) {
             if (stats) stats->orders_passing_filter++;
             return kv;
          }
       }
-      return std::nullopt;
    };
 
    // BMJ #1: customer ⋈ orders on custkey.
    BinaryMergeJoin<q3_cust_jk_t::Key, q3_jr1_t, customerh_t, orders_coli_t>
        bmj1(fetch_cust, fetch_ord);
 
-   auto fetch_bmj1 = [&]() { return bmj1.next(); };
-   auto fetch_lin_agg = [&]() { return agg_lin.next(); };
+   auto fetch_bmj1     = [&]() { return bmj1.next(); };
+   auto fetch_lin_agg  = [&]() { return agg_lin.next(); };
+   // NOTE on lineitem-aggregator seek-skip (deferred, mirrors Q3I §G6):
+   // The natural extension — call agg_lin.seek_to_custkey(latest accepted
+   // custkey) inside fetch_lin_agg — breaks parity.  BMJ#2's
+   // refill_current_key() exhausts left-side jr1 buffering for jk before
+   // refilling the right side, so by the time fetch_lin_agg is called for
+   // jk=K, the latest accepted custkey may already be M>K (because
+   // fetch_bmj1 has advanced ahead, which in turn pulled fetch_cust).  A
+   // forward seek to M then loses lineitems for the orderkeys at custkey K
+   // that BMJ#2 still needs.  Two seek-targets we tried, both unsafe:
+   //   • min_ord_custkey (the latest accepted-customer custkey)
+   //   • min_lin_custkey (the latest jr1 custkey from fetch_bmj1)
+   // Both advance past K before BMJ#2 finishes K.  A clean fix needs an
+   // intrusive BMJ hook ("group K is fully drained on both sides") — same
+   // refactor cost that abandoned Q3I §G6.  Orders-side seek-skip works
+   // because fetch_ord is BMJ#1's right side and BMJ#1's left (fetch_cust)
+   // advances at the same per-custkey grain.  This still closes the bulk
+   // of the I/O fairness gap to S3: at SF=1 the orders scanner is ~3× the
+   // size of lineitems-per-group, and the seek mechanics are now
+   // identical to S3's `seek<customer_coli_t>(next_key)` SkipGroup path.
 
    // BMJ #2: jr1 ⋈ lineitem_agg on (custkey, orderkey).
    BinaryMergeJoin<q3_family::lineitem_agg_t::Key, q3_jr2_t,

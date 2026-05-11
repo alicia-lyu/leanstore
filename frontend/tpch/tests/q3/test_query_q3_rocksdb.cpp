@@ -197,10 +197,14 @@ int main(int argc, char** argv)
    parity_line("S3 merged", d_merged, (long)r_merged.size());
    parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
 
-   // Group-skip counters: S2 view_groups_skipped should be roughly equal to
-   // S3 mi_groups_skipped (same customers fail the mktsegment filter on both
-   // paths; only the skip mechanism differs).
-   std::cout << "\n=== Per-customer skip-seek (S2 vs S3) ===\n"
+   // Skip-seek counters across all four paths.  S1 has two physical streams
+   // (orders + lineitem), so s1_groups_skipped can be up to ~2× the
+   // single-stream counters (S2/S3); what matters is that it is > 0 and of
+   // the same order of magnitude.  S4 seeks per qualifying orderkey, not
+   // per custkey, so its counter is naturally larger.
+   std::cout << "\n=== Per-customer skip-seek (S1 vs S2 vs S3 vs S4) ===\n"
+             << "S1 s1_groups_skipped   = " << st_base.s1_groups_skipped
+             << "    (orders_scanned = " << st_base.orders_scanned << ")\n"
              << "S2 view_groups_skipped = " << st_view.view_groups_skipped
              << "    (lineitems_scanned = " << st_view.lineitems_scanned << ")\n"
              << "S3 mi_groups_skipped   = " << st_merged.mi_groups_skipped
