@@ -171,3 +171,57 @@ G-series, §A6 memory-pressure sweep). New runs go here.
   fanout costlier). The S3-vs-S2 gap is *wider* on Q3I than Q3
   (Q3I 2.12× vs Q3 1.30× at same SF/DRAM on BTree) — the COLI MI
   amortizes invoice-side work S2 must duplicate.
+
+### 2026-05-11 13:30 CDT — q3i_lsm SF=15 DRAM=0.1 GiB — **post-Q3I-fairness-fix**
+- **Commit**: `426a79cd` (`calcite-integration`); Q3I ports of S1
+  pre-scan, S2 custkey seek-skip, S4 inverted-lineitem seek
+  (mirrors Q3 commits `bbc15e68` + `f62a0149`).
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 12–16 (DRAM=0.1,
+  scale=15, second sweep — first sweep at rows 2–6 is pre-Q3I-
+  fairness baseline).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S5, secondaries 16.2–19.97 MiB
+  per structure (LSM). Cache-resident.
+- **Headline (TX/s)**: **S2 pipeline_view 269.73** > S3 mi_coli_walk
+  187.70 > S5 acoli_aggregated 72.82 > S4 base_hash_join 56.98 ≈ S1
+  base_merge_join 56.40.
+- **Deltas vs the 12:50 pre-Q3I-fairness entry above**: S1 55→56
+  (+2% noise — Q3I S1 pre-scan + cust_open_due_map build cost
+  doesn't visibly bite at SF=15 LSM), S2 108→270 (**+150%**, custkey
+  seek-skip dominates), S3 176→188 (+7% noise), S4 69→57 (**−17%
+  regression** — Q3I S4 inverted-seek does not pay at cache-resident
+  LSM; the original orders_map.find filter was already cheap),
+  S5 63→73 (+16%, noise/variance).
+- **Counter values**: `view_groups_skipped`=86, `s1_groups_skipped`=12,
+  `s4_orderkey_seeks`=95, `s4_hashtable_bytes`=9587 (0.01 MiB).
+- **Claim check**: **The paper pitch S3 ≥ S2 breaks at cache-resident
+  LSM after fairness fix**, mirroring Q3 at the same regime. S2's
+  custkey seek-skip closes the I/O asymmetry and the wider FD-attached
+  view rows become cheap to stream — view sequential scan wins over
+  MI's per-record variant dispatch when DRAM dominates. S3 still beats
+  S1/S4/S5 by 2.5–3.3×.
+
+### 2026-05-11 13:42 CDT — q3i_btree SF=15 DRAM=0.1 GiB — **post-Q3I-fairness-fix**
+- **Commit**: `426a79cd` (`calcite-integration`).
+- **TPut.csv**: `build/q3i_btree/TPut.csv` rows 7–11 (DRAM=0.1,
+  scale=15, second sweep — first sweep at rows 2–6 is pre-Q3I-
+  fairness baseline).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S5, secondaries 49–61 MiB per
+  structure (BTree, ~3× LSM size). Cache-resident.
+- **Headline (TX/s)**: **S2 pipeline_view 450.80** > S3 mi_coli_walk
+  304.09 > S5 acoli_aggregated 103.69 > S4 base_hash_join 82.92 >
+  S1 base_merge_join 73.52.
+- **Deltas vs the 12:50 pre-Q3I-fairness entry above**: S1 97→74
+  (**−24% regression**, mirrors Q3 SF=600 BTree S1 regression —
+  pre-scan + lower_bound + cust_open_due_map build cost), S2 143→451
+  (**+215%**, custkey seek-skip enormous on BTree where view-fanout
+  cost dominates pre-fix), S3 303→304 (stable), S4 81→83 (+2%
+  noise — Q3I S4 inverted-seek wash on BTree cache-resident), S5
+  105→104 (stable).
+- **Claim check**: **Same paper-pitch crossover as LSM** —
+  S2 (451) > S3 (304) on BTree cache-resident after S2's custkey
+  seek-skip lands. S3 still beats S5/S4/S1 by 3–4×. S2 lead is even
+  wider than LSM here (451/304 = 1.48× BTree vs 270/188 = 1.43× LSM)
+  — BTree's per-page descent cost amplifies the win from skipping
+  customer groups outright. **S1 regression flagged** (consistent
+  pattern across Q3 and Q3I where pre-scan adds overhead at the
+  expense of S1's hot-path streaming cost).
