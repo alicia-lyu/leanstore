@@ -121,3 +121,53 @@ G-series, §A6 memory-pressure sweep). New runs go here.
   the same S3 ≥ S2 > S1/S4 ordering at ~17× the absolute throughput;
   confirms the ordering is structural, not an artefact of the SF=15
   working-set/DRAM ratio.
+
+### 2026-05-11 12:50 CDT — q3i_lsm SF=15 DRAM=0.1 GiB — post-BMJ-flush + merge
+- **Commit**: `3193df06` (`calcite-integration`); includes
+  `92336200` (BMJ final-group flush — fixes ~10% probabilistic
+  digest-drop on btree, fix shared with Q3/Q12) and the TopNSink
+  refactor merge `d976b047`.
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 2–6 (DRAM=0.1,
+  scale=15).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S5, secondaries 16.2–19.97 MiB
+  per structure (LSM). Cache-resident regime. Host: Linux
+  (CloudLab `node0`, fresh bring-up).
+- **Headline (TX/s)**: S3 mi_coli_walk **176.10** > S2 pipeline_view
+  107.89 > S4 base_hash_join 68.91 > S5 acoli_aggregated 62.65 >
+  S1 base_merge_join 55.06.
+- **Deltas vs 2026-05-08 baseline** (`edd34a1f`): S1 57 → 55
+  (−3%, noise), S2 95 → 108 (+14%), S3 156 → 176 (+13%), S4 80 →
+  69 (−14%), S5 84 → 63 (−25% regression — flagged; possible
+  TopNSink/Sink templating cost on the aCOLI walker, or RNG-shaped
+  qualifying row count). S2 has NOT yet received the Q3-style
+  custkey seek-skip — that's a Q3I followup. Note Q3I S2 absolute
+  TX/s (108) is less than Q3 S2 (264) at the same SF/DRAM despite
+  smaller view footprint — extra `cust_open_due` payload and the
+  threshold filter cost.
+- **Claim check**: **Supports the paper pitch — S3 ≥ S2 > S1/S4**.
+  Same shape as 2026-05-08, slightly tighter S3/S2 ratio (1.63×).
+  Q3I S5 regression worth investigating but doesn't affect the
+  paper-axis (S5 is deferred per `PLAYBOOK §S5`).
+
+### 2026-05-11 12:50 CDT — q3i_btree SF=15 DRAM=0.1 GiB — post-BMJ-flush + merge
+- **Commit**: `3193df06` (`calcite-integration`); same fixes as LSM
+  sibling.
+- **TPut.csv**: `build/q3i_btree/TPut.csv` rows 2–6 (DRAM=0.1,
+  scale=15).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S5, secondaries 49–61 MiB per
+  structure (BTree, ~3× LSM size). Cache-resident regime. Host:
+  Linux (CloudLab `node0`).
+- **Headline (TX/s)**: S3 mi_coli_walk **303.34** > S2 pipeline_view
+  143.12 > S5 acoli_aggregated 104.98 > S1 base_merge_join 96.80 >
+  S4 base_hash_join 81.27.
+- **Deltas vs 2026-05-08 baseline** (`defec568`): all within ±10%
+  noise — S1 92→97, S2 130→143, S3 302→303, S4 84→81, S5 105→105.
+  BTree path is stable across the BMJ flush + TopNSink merge —
+  contrast with the LSM S5 regression.
+- **Claim check**: **Supports the paper pitch — S3 ≥ S2 > S1/S4**.
+  S3 is 2.12× S2 on BTree (vs LSM's 1.63×) — the merged-index
+  locality advantage is wider on BTree, mirroring the Q3 cross-
+  backend story (BTree per-page descent makes per-lineitem view
+  fanout costlier). The S3-vs-S2 gap is *wider* on Q3I than Q3
+  (Q3I 2.12× vs Q3 1.30× at same SF/DRAM on BTree) — the COLI MI
+  amortizes invoice-side work S2 must duplicate.
