@@ -96,3 +96,88 @@ consolidating.
   (Q3I S3=156 vs S1=57, ratio 2.7× at the same SF/DRAM) — exactly as
   predicted: Q3 isolates the §3.1.3 hierarchical-prefix benefit
   without the §3.1.2 sibling-aggregate confound.
+
+### 2026-05-11 11:09 CDT — q3_lsm SF=15 DRAM=0.1 GiB — post-fairness-fix
+- **Commit**: `51ea87b0` (`calcite-integration`); commits since
+  2026-05-08 baseline: `bbc15e68` (S2 custkey seek-skip), `92336200`
+  (BMJ final-group flush), `f62a0149` (S1 custkey seek + S4
+  inverted-lineitem seek), `d976b047` (merge — TopNSink refactor
+  reduces post-pipeline buffer O(N)→O(K)), `51ea87b0`
+  (`s4_hashtable_bytes` counter).
+- **TPut.csv**: `build/q3_lsm/TPut.csv` rows 6–9 (DRAM=0.1, scale=15,
+  post-merge sweep).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S4, secondary 12–15 MiB /
+  structure (LSM). Cache-resident regime. Host: Linux (CloudLab
+  `node0`, fresh bring-up — see `LINUX_SETUP.md`).
+- **Headline (TX/s)**: S2 pipeline_view **264.26** > S3 mi_col_walk
+  211.46 > S4 base_hash_join 113.63 > S1 base_merge_join 80.41.
+- **Deltas vs pre-fairness-fix baseline** (`87f01426` on this branch,
+  see `q3_lsm SF=15 ... post-tput-wiring baseline` entry above):
+  S1 61.03 → 80.41 (+32%), S2 97.09 → 264.26 (2.72×), S3 199.94 →
+  211.46 (+6% noise), S4 63.16 → 113.63 (+80%). SSTRead(us)/TX:
+  S2 7.54 → 4.34, S4 11.98 → 94.56 (S4 random-seek overhead even
+  cache-resident — hash table walk still cheap).
+- **Claim check**: **Paper claim S3 ≥ S2 > S1/S4 breaks at this
+  config**. With fair access-pattern parity (S1/S2/S4 all use
+  physical seek mechanics matching S3's `WalkAction::SkipGroup`),
+  S2 (the per-lineitem view with FD-attached order columns) overtakes
+  S3 at cache-resident scale — view sequential scan with custkey-skip
+  beats MI walk when DRAM dominates and the MI's per-record dispatch
+  overhead doesn't amortize. The merged-index advantage is reserved
+  for the beyond-memory regime (see SF=300 / SF=600 / SF=1500
+  entries below).
+
+### 2026-05-11 11:09 CDT — q3_btree SF=15 DRAM=0.1 GiB — post-fairness-fix
+- **Commit**: `51ea87b0` (`calcite-integration`); same fixes as the
+  LSM sibling above.
+- **TPut.csv**: `build/q3_btree/TPut.csv` rows 6–9 (DRAM=0.1,
+  scale=15, post-merge sweep).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S4, secondary 33–44 MiB /
+  structure (BTree). Cache-resident regime. Host: Linux (CloudLab
+  `node0`).
+- **Headline (TX/s)**: S2 pipeline_view **408.55** > S3 mi_col_walk
+  314.09 > S4 base_hash_join 168.73 > S1 base_merge_join 101.30.
+- **Deltas vs pre-fairness-fix baseline** (same branch,
+  `q3_btree SF=15 ... post-tput-wiring baseline` entry above):
+  S1 95.78 → 101.30 (+6%), S2 128.50 → 408.55 (3.18×), S3 334.24 →
+  314.09 (−6% noise), S4 70.71 → 168.73 (2.39×). R MiB/TX:
+  S2 2.075e-05 → 6.526e-06 (3.18× less, mirror of S2 TPut gain).
+- **Claim check**: **Same paper-claim break as LSM** — S2 overtakes
+  S3 at cache-resident BTree once S2 has physical custkey skip. BTree
+  per-record dispatch overhead is higher than LSM (no inline bloom
+  filter shortcut, B-tree descents are O(log n) each), which widens
+  the absolute S2 lead.
+
+### 2026-05-11 11:13 CDT — q3_lsm SF=300 DRAM=0.08 GiB — post-fairness-fix
+- **Commit**: `51ea87b0` (`calcite-integration`); same fixes as
+  SF=15 above.
+- **TPut.csv**: `build/q3_lsm/TPut.csv` rows 14–17 (DRAM=0.08,
+  scale=300, post-merge sweep).
+- **Config**: SF=300, DRAM=0.08 GiB, S1–S4, secondaries 244–305 MiB
+  per structure, secondary/DRAM ≈ 3.5×, beyond-memory regime. Host:
+  Linux (CloudLab `node0`).
+- **Headline (TX/s)**: S2 pipeline_view **4.99** > S3 mi_col_walk
+  4.20 > S1 base_merge_join 2.32 >> S4 base_hash_join 0.62.
+- **Deltas vs pre-fairness-fix baseline** (`c500b747` SF=300 entry
+  above): S1 2.06 → 2.32 (+13%, custkey seek-skip), S2 4.91 →
+  4.99 (+2%, stable), S3 3.13 → 4.20 (+34%, BMJ-flush + TopNSink
+  buffer relief), **S4 1.22 → 0.62 (−49% regression!)**.
+- **S4 regression diagnosis**: SSTRead(us)/TX jumped 92,795 →
+  1,203,646 (13×). The inverted-lineitem seek pattern (`f62a0149`)
+  replaces a sequential lineitem scan with one physical `Seek` per
+  qualifying orderkey. Cache-resident this is a +80% win (fewer
+  rows processed); beyond-memory it is a catastrophe — each seek
+  triggers bloom-filter + random SST reads, losing LSM's
+  sequential-prefetch friendliness. Hash-table working-set itself
+  is small here (~2.7 MiB at SF=300, only 3.3% of the 80 MiB DRAM
+  budget per `s4_hashtable_bytes` extrapolation — `51ea87b0`); the
+  regression is access-pattern, not memory pressure.
+- **Claim check**: **Paper claim S3 ≥ S2 > S1/S4 still breaks at the
+  S3-vs-S2 boundary**: S2 leads S3 by 19% even beyond-memory at this
+  size. S3 > S1 (+81%) and S3 >> S4 (6.8×) hold strongly. The S3-vs-S2
+  gap may close at larger scales — the per-lineitem view's row-count
+  scales linearly with lineitem volume while the MI's working set
+  scales the same; the differentiator is per-record dispatch cost vs
+  scan locality, which S2 wins on at this DRAM-pressure ratio. **TODO**:
+  diagnose with deeper memory pressure (SF=1500 / DRAM=0.4 GiB) to
+  see if the crossover finally lands.
