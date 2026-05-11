@@ -514,11 +514,15 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
 - **Phase 5–8** — `per_structure_workload.hpp` alias-only,
   executables, `test_query_q5_{lsm,btree}` strict parity, CMake —
   all landed in Phase 0.5 skeleton.
-- **Phase 9** — doc refresh + cross-link from
-  `frontend/tpch/CLAUDE.md` once skeleton acquires real code.
+- **Phase 9** (2026-05-11; **complete**) — doc refresh: Q5 added to
+  `frontend/tpch/CLAUDE.md` per-query subdirectories list, Tests
+  table (`test_query_q5_{lsm,btree}` + `test_side_tables`), and
+  Per-query test commands. Top-level `CLAUDE.md` repo markdown
+  index updated for `LINUX_HISTORY.md`.
 - **S5** — omitted by design (no parameter-independent aggregate
   to bake; see §Storage Structure Options).
-- **Linux perf sweep** — pending; tracked in `LINUX_PENDING.md`.
+- **Linux perf sweep** — pending; tracked in `LINUX_PENDING.md`
+  (active worklist; rotated to `LINUX_HISTORY.md` once landed).
 
 ---
 

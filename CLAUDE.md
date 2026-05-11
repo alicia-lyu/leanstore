@@ -38,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   cost. If you skip this step, the first perf run after a merge
   will be deceptively long and the slowdown will look like a
   regression in the binary itself rather than scheduled reload.
-- When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree.
+- When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree. Resolved items are rotated out to [LINUX_HISTORY.md](LINUX_HISTORY.md) so the pending file stays a worklist, not an archive.
 - **Append a `RUNS.md` entry after every perf run.** Each query
   directory under `frontend/tpch/<q>/` and `frontend/geo/` has a
   `RUNS.md`. After a `make q*_{lsm,btree}` (or `geo_*`) sweep
@@ -129,6 +129,13 @@ which has no `CLAUDE.md`). Each entry includes when to read it.
 - [`LINUX_SETUP.md`](./LINUX_SETUP.md) — read when bringing up a fresh
   Linux node (perf_event_paranoid sysctl, NVMe partitioning + ext4
   mount, smoke-test commands). Authoritative; reproduce per-machine.
+- [`LINUX_PENDING.md`](./LINUX_PENDING.md) — active worklist of
+  macOS-developed items awaiting Linux follow-up (perf sweeps,
+  LeanStore B-tree validation). Read at the start of every Linux
+  session; append new items from macOS sessions.
+- [`LINUX_HISTORY.md`](./LINUX_HISTORY.md) — append-only archive of
+  resolved Linux/LeanStore bring-up items rotated out of
+  `LINUX_PENDING.md`. Read only when reconstructing a prior fix.
 - [`TPCH_experiments.md`](./TPCH_experiments.md) — read for the TPC-H
   experiment matrix: query status, storage-structure conventions,
   memory-pressure design, reviewer-concern mapping. Use this before

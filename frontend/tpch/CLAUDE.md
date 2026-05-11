@@ -174,6 +174,12 @@ Per-query subdirectories:
 
 - `q12/` — Shipping Modes and Order Priority (2 tables, 1 join).
 - `q3/`  — Shipping Priority (3 tables, 2 joins; adds CUSTOMER adapter).
+- `q5/`  — Local Supplier Volume (3 tables in the COL chain + 3 small
+  dimension tables — REGION, NATION, SUPPLIER — as reduce-side hash
+  builds). §3.1.3 pure-hierarchical sibling to Q3; S1–S4 implemented
+  and parity-verified at SF=1 (no S5 — see
+  `q5/CLAUDE.md §Storage Structure Options`). Production targets
+  wired; Linux perf sweep pending (`LINUX_PENDING.md`).
 - `q9/`  — Product Type Profit Measure (6 tables, 5 joins; adds NATION,
   SUPPLIER, PART, PARTSUPP adapters).
 - `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; S1–S4
@@ -378,6 +384,9 @@ point. Run from the repo root.
 | `test_query_q3i_btree` | `q3i/` | LeanStore (Linux only) | `tests/q3i/test_query_q3i_leanstore.cpp` |
 | `test_query_q3_lsm` | `q3/` | RocksDB (mac+Linux) | `tests/q3/test_query_q3_rocksdb.cpp` |
 | `test_query_q3_btree` | `q3/` | LeanStore (Linux only) | `tests/q3/test_query_q3_leanstore.cpp` |
+| `test_query_q5_lsm` | `q5/` | RocksDB (mac+Linux) | `tests/q5/test_query_q5_rocksdb.cpp` |
+| `test_query_q5_btree` | `q5/` | LeanStore (Linux only) | `tests/q5/test_query_q5_leanstore.cpp` |
+| `test_side_tables` | `q5/` | RocksDB (mac+Linux) | `tests/q5/test_side_tables.cpp` |
 | Q9 tests | `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
@@ -454,6 +463,9 @@ been moved to `TRASH/`.
 - Q12 — see [`q12/CLAUDE.md §Tests`](q12/CLAUDE.md#tests)
 - Q3 load — `test_load_col_lsm` (see commands above)
 - Q3 query — `test_query_q3_lsm` (Phase-0.5: digests all 0x0, `[OK]` parity)
+- Q5 — see [`q5/CLAUDE.md §Tests`](q5/CLAUDE.md#tests) for
+  `test_query_q5_{lsm,btree}` (strict S1–S4 XOR parity at SF=1) and
+  `test_side_tables` (REGION/NATION/SUPPLIER hashmaps).
 - Q9 — none yet (load/query bodies TODO)
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
