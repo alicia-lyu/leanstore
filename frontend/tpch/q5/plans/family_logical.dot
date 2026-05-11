@@ -10,35 +10,62 @@
 //      Per OPERATORS.md §1, the family logical plan must match the COL
 //      MI's natural sort key.
 //
-//   2. **Side dimension tables (REGION, NATION, SUPPLIER) reduce
-//      independently of the chain and gate the chain via reduce-side
-//      hash structures**:
-//         • REGION → r_name = SEGMENT → 1 r_regionkey
-//         • NATION ⋈ region → in-region nation_set (~5 entries),
-//           plus nation_name_map (n_nationkey → n_name)
-//         • SUPPLIER ⋈ nation_set → supplier_nation_map
-//           (s_suppkey → s_nationkey, restricted to in-region)
-//      All three structures are computed BEFORE the chain pipeline
+//   2. **Side dimension subtree (RN = REGION ⋈ NATION) fans out into
+//      two symmetric semi-joins, framed as standard hash operations:**
+//
+//         RN shared dimension subtree
+//         ───────────────────────────
+//         • Filter(r_name = :1) → REGION
+//         • HashJoin(REGION ⋈ NATION on n_regionkey = r_regionkey)
+//             inner join; build payload = n_nationkey only
+//             (primary-key payload convention — join key = PK of
+//             surviving NATION rows; no other columns carried).
+//             → RN result
+//
+//         Two symmetric fan-outs from RN, both framed as semi-joins:
+//
+//         Fan-out 1 — CUSTOMER ⋉ RN on c_nationkey = n_nationkey
+//             (semi-join; no NATION column flows downstream;
+//              surviving CUSTOMER rows carry only their own columns;
+//              c_nationkey is preserved so the downstream composite-
+//              key probe at lineitem time has it;
+//              n_name fetched at emit time via NATION primary-index
+//              lookup keyed on c_nationkey, ~5 lookups per query)
+//
+//         Fan-out 2 — SUPPLIER ⋉ RN on s_nationkey = n_nationkey
+//             (semi-join; no NATION column flows downstream)
+//             → Build(hashset on (s_nationkey, s_suppkey))
+//                 composite key — effective PK of the restricted-
+//                 supplier relation; no payload.
+//                 Probed per-lineitem with (c_nationkey, l_suppkey):
+//                 one lookup fuses SUPPLIER ⋉ RN with the cross-
+//                 equality c_nationkey = s_nationkey and the natural
+//                 join l_suppkey = s_suppkey.
+//
+//      All three structures (RN, CUSTOMER semi-join, SUPPLIER
+//      composite build) are computed BEFORE the chain pipeline
 //      starts. They have no chain-position; the chain consumes them
 //      via lookups, not joins-up.
 //
 // The chain itself is identical in shape to Q3's: customer × orders ×
 // lineitem in custkey-byte-lex order. Filter pushdown:
 //
-//   • c_nationkey ∈ nation_set       → fused with TableScan(CUSTOMER)
-//                                       (set membership; ~80% prune)
+//   • CUSTOMER ⋉ RN on c_nationkey = n_nationkey → fused with
+//                                       TableScan(CUSTOMER)
+//                                       (semi-join; ~80% prune)
 //   • o_orderdate ∈ window           → fused with TableScan(ORDERS)
 //   • l_extendedprice * (1-l_discount) → per-lineitem accumulator input
-//   • l_suppkey → SUPPLIER lookup    → per-lineitem; SKIP if not in
-//                                       supplier_nation_map (out-of-region)
-//   • c_nationkey == s_nationkey     → per-lineitem cross-equality;
-//                                       earliest position is right after
-//                                       the SUPPLIER lookup
+//   • (c_nationkey, l_suppkey) probe  → per-lineitem composite-key
+//                                       hashset probe; SKIP if absent
+//                                       (fuses supplier semi-join,
+//                                        cross-equality c_nationkey =
+//                                        s_nationkey, and suppkey
+//                                        equi-join in one lookup)
 //
 // Q5 has NO sibling sub-aggregate. The MI benefit is purely §3.1.3
 // hierarchical-prefix scan locality on the COL chain. (The side tables
-// are dimension lookups, not chain participants; the cross-equality
-// gate is a per-lineitem post-lookup filter, not a fourth join level.)
+// are dimension lookups, not chain participants; the composite-key probe
+// is a per-lineitem constant-time hashset lookup, not a fourth join level.)
 //
 // FILTER PUSHDOWN: every parameterised filter is pushed as far down as
 // possible, stopping ONLY at secondary structures. The COL MI, COL
@@ -46,44 +73,51 @@
 // `r_name`, the resolved nation_set, or the orderdate window may be
 // baked into any secondary (predicate hoisting; PLAYBOOK §3.5 step 7).
 //
+// PRIMARY-KEY PAYLOAD CONVENTION: every hash build carries the build
+// relation's primary key as payload — no record content. Downstream
+// consumers fetch additional columns via the primary index at
+// consumption time. n_name is the one example: n_name is NOT flowed
+// through any intermediate build; it is fetched at result-emission
+// time (~5 output rows, ~5 NATION primary-index point lookups).
+//
 // C++ implementation map (q5/query.tpp + col_pipeline.tpp,
 // to be created in Phase 0.5):
 //
 //   Side reductions (built before pipeline)
 //   ───────────────────────────────────────
-//   • Scan(REGION) + Filter(r_name == :1)        — 5 rows → 1 regionkey
-//   • Scan(NATION) + Filter(n_regionkey == reg)  — 25 rows → ~5 entries
-//                                                  → nation_set,
-//                                                    nation_name_map
-//   • Scan(SUPPLIER) + Filter(s_nationkey ∈ ns)  — ~10K rows → ~2K entries
-//                                                  → supplier_nation_map
+//   • Scan(REGION) + Filter(r_name == :1)     — 5 rows → 1 regionkey
+//   • HashJoin(REGION ⋈ NATION on n_regionkey)— 25 rows → ~5 entries
+//                                               → nation_set
+//                                                 (unordered_set<n_nationkey>)
+//   • SUPPLIER ⋉ nation_set on s_nationkey    — ~10K rows → ~2K entries
+//                                               → supplier_nation_set
+//                                                 (unordered_set<tuple<
+//                                                  n_nationkey, s_suppkey>>)
 //
 //   Pipeline (custkey-sorted)
 //   ─────────────────────────
-//   • Scan + per-table Filter (fused)             — q5_predicate_customer
-//                                                   (c_nationkey ∈ nation_set)
-//                                                   in on_customer; returns
-//                                                   false to suppress group;
-//                                                   q5_predicate_orders
-//                                                   (orderdate window) in
-//                                                   on_order
-//   • Per-LINEITEM SUPPLIER lookup + cross-eq     — per-lineitem in
-//                                                   on_lineitem; SKIP if
-//                                                   absent or
-//                                                   c_nationkey != s_nationkey
-//   • HashAggregate(group=[n_name],               — per-`n_name`
-//       revenue = SUM(l_extendedprice              accumulator (Visitor
-//                     * (1 - l_discount)))         carries a small map
-//                                                   keyed by n_name)
-//   • Pipeline output                             — q5_pipeline_view_t
-//                                                   (S2 only) or direct
-//                                                   q5_agg_row_t emission
-//                                                   (S1/S3)
+//   • CUSTOMER ⋉ nation_set on c_nationkey   — semi-join at on_customer;
+//                                               returns false to suppress
+//                                               group; c_nationkey carried
+//                                               on survivors
+//   • o_orderdate ∈ window                   — q5_predicate_orders;
+//                                               applied at on_order
+//   • (c_nationkey, l_suppkey) ∈             — per-lineitem; SKIP if absent
+//       supplier_nation_set                    (fuses cross-eq + suppkey join)
+//   • HashAggregate(group=[nationkey],        — per-nationkey accumulator
+//       revenue = SUM(l_extendedprice          (Visitor carries a small map
+//                     * (1 - l_discount)))      keyed by n_nationkey)
+//   • n_name resolved at emit time            — ~5 NATION primary-index
+//                                               lookups keyed on n_nationkey
+//   • Pipeline output                         — q5_pipeline_view_t
+//                                               (S2 only) or direct
+//                                               q5_agg_row_t emission
+//                                               (S1/S3)
 //
 //   Outside-pipeline (constant across S1/S2/S3 per OPERATORS.md §6.4)
 //   ────────────────────────────────────────────────────────────────
-//   • Sort (revenue DESC)                         — std::sort over ~5 rows
-//   • No LIMIT                                    — TPC-H Q5 has no LIMIT
+//   • Sort (revenue DESC)                     — std::sort over ~5 rows
+//   • No LIMIT                                — TPC-H Q5 has no LIMIT
 //
 // Inside-pipeline physical execution (the S1/S2/S3 comparison axis):
 //   S1 → col_secondary_group_walk over CUSTOMER + 2 COL secondaries
@@ -93,8 +127,8 @@
 //        per-lineitem (one row per (custkey, orderkey, linenumber)
 //        carrying l_extendedprice, l_discount, l_suppkey,
 //        c_nationkey, o_orderdate). All filters apply live on view
-//        rows; the per-`n_name` HashAggregate fires above the view
-//        scan.
+//        rows; the per-nationkey HashAggregate fires above the view
+//        scan; n_name resolved at emit time.
 //   S3 → col_group_walk over the 3-table COL MergedAdapter
 //
 // Outside-pipeline operators are byte-identical across the three.
@@ -102,40 +136,56 @@
 digraph {
   rankdir=BT;
 
-  // ─────────── Side reductions (computed before pipeline) ───────────
+  // ─────────── Shared dimension subtree: RN = REGION ⋈ NATION ───────────
   s_reg [label="TableScan(REGION)\n+ Filter(r_name == :1)\n→ 1 regionkey",
          shape=box, style=filled, fillcolor="#E0F2F1"];
-  s_nat [label="TableScan(NATION)\n+ Filter(n_regionkey == reg)\n→ nation_set, nation_name_map",
+  s_nat [label="TableScan(NATION)",
          shape=box, style=filled, fillcolor="#E0F2F1"];
-  s_sup [label="TableScan(SUPPLIER)\n+ Filter(s_nationkey ∈ nation_set)\n→ supplier_nation_map",
-         shape=box, style=filled, fillcolor="#E0F2F1"];
+  rn    [label="HashJoin(REGION ⋈ NATION\n  on n_regionkey = r_regionkey)\ninner join\nbuild payload = n_nationkey only\n(primary-key payload convention;\nno other NATION columns carried)",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
 
-  s_reg -> s_nat [style=dashed, label="region\nresolved"];
-  s_nat -> s_sup [style=dashed, label="nation_set"];
+  s_reg -> rn [label="build\n(filtered)"];
+  s_nat -> rn [label="probe"];
 
-  // ─────────── Sources with filters fused ───────────
-  s_cust [label="TableScan(CUSTOMER)\n+ Filter(c_nationkey ∈ nation_set)",
+  // ─────────── Fan-out 1: CUSTOMER ⋉ RN ───────────
+  sj_cust [label="HashSemiJoin\n(CUSTOMER ⋉ RN\n  on c_nationkey = n_nationkey)\nno NATION column flows downstream;\nc_nationkey preserved on survivors",
+           shape=box, style="filled,rounded", fillcolor="#E8F0FE"];
+
+  rn -> sj_cust [style=dashed, label="nation_set\n(build)"];
+
+  // ─────────── Fan-out 2: SUPPLIER ⋉ RN → composite-key build ───────────
+  sj_sup [label="HashSemiJoin\n(SUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey)\nno NATION column flows downstream",
+          shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+  bld_sup [label="Build(hashset on (s_nationkey, s_suppkey))\ncomposite key = effective PK of\nrestricted-supplier relation;\nno payload\n[supplier_nation_set]",
+           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+
+  rn     -> sj_sup  [style=dashed, label="nation_set\n(build)"];
+  sj_sup -> bld_sup;
+
+  // ─────────── Sources (chain) ───────────
+  s_cust [label="TableScan(CUSTOMER)",
           shape=box, style=filled, fillcolor="#E8F0FE"];
   s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ window)",
           shape=box, style=filled, fillcolor="#E8F0FE"];
   s_lin  [label="TableScan(LINEITEM)",
           shape=box, style=filled, fillcolor="#E8F0FE"];
 
+  s_cust -> sj_cust [label="probe"];
+
   // ─────────── Inside pipeline (custkey-sorted) ───────────
-  joinB [label="Join(ORDERS ⋈ LINEITEM, o_orderkey = l_orderkey)\nstill custkey-sorted (FD via parent)",
+  joinB [label="MergeJoin(ORDERS ⋈ LINEITEM\n  on (custkey, orderkey))\nstill custkey-sorted (FD via parent)\norders_sec: (custkey, orderkey)\nlineitem_sec: (custkey, orderkey, linenumber)",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  joinA [label="Join(CUSTOMER ⋈ <ord-line>, c_custkey = o_custkey)\nsorted on custkey",
+  joinA [label="MergeJoin(CUSTOMER ⋈ <ord-line>\n  on custkey)\nsorted on custkey;\nc_nationkey preserved on survivors",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  probe_sup [label="Probe(supplier_nation_map[l_suppkey])\nSKIP if absent",
+  probe_sup [label="Probe supplier_nation_set\n  with (c_nationkey, l_suppkey)\nSKIP if absent\n(fuses: SUPPLIER semi-join,\n c_nationkey = s_nationkey,\n l_suppkey = s_suppkey)",
              shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
-  cross_eq  [label="Filter(c_nationkey == s_nationkey)",
-             shape=box, style=filled, fillcolor="#FFEBEE"];
 
-  agg [label="HashAggregate(group=[n_name],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[Q5RevenueByNationAccumulator]",
+  agg [label="HashAggregate(group=[n_nationkey],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[NNameRevenueAggregator keyed by nationkey]",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
-  proj [label="Project(n_name, revenue)\n→ q5_agg_row_t"];
+  emit [label="emit(): resolve n_name per nationkey\nvia NATION primary-index lookup\n(~5 output rows, ~5 point lookups)\n→ q5_agg_row_t",
+        shape=box, style=filled, fillcolor="#FCE5CD"];
 
   // ─────────── Outside pipeline ───────────
   sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
@@ -145,15 +195,18 @@ digraph {
   s_ord -> joinB [label="0"];
   s_lin -> joinB [label="1"];
 
-  s_cust -> joinA [label="0"];
-  joinB -> joinA  [label="1"];
+  sj_cust -> joinA [label="0"];
+  joinB   -> joinA [label="1"];
 
-  joinA   -> probe_sup;
-  s_sup   -> probe_sup [style=dashed, label="lookup"];
-  probe_sup -> cross_eq;
-  cross_eq -> agg;
-  s_nat   -> agg [style=dashed, label="n_name"];
+  joinA     -> probe_sup;
+  bld_sup   -> probe_sup [style=dashed, label="supplier_nation_set\n(lookup)"];
+  probe_sup -> agg;
 
-  agg  -> proj;
-  proj -> sort;
+  agg  -> emit;
+  emit -> sort;
+
+  // ─────────── Emit-time note ───────────
+  note [label="n_name resolved at result-emission time\nvia NATION primary-index lookup;\n~5 output rows → ~5 point lookups.\nNo nation_name_map; no n_name in any build.",
+        shape=note, style=filled, fillcolor="#F3E5F5"];
+  emit -> note [style=dashed, arrowhead=none];
 }

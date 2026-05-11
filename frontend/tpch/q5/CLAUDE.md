@@ -89,14 +89,19 @@ What Q5 adds beyond Q3:
   fused at `on_customer` (a 5-element set membership test) and
   prunes ~80% of customers — quantitatively similar reduction,
   qualitatively the same MI advantage.
-- **Cross-record predicate** `c_nationkey = s_nationkey`. This is
-  the only Q5 filter that cannot be pushed below the SUPPLIER
-  hashmap lookup; it fires per qualifying lineitem. None of the
-  other ~5 predicates are cross-record.
-- **Wider per-lineitem callback.** Each surviving lineitem must
-  consult the SUPPLIER hashmap and resolve a nationkey for the
-  GROUP BY. This is one extra constant-time lookup per lineitem
-  versus Q3's pure-revenue accumulator.
+- **Composite-key SUPPLIER semi-join.** The cross-equality
+  `c_nationkey = s_nationkey` and the natural join `l_suppkey =
+  s_suppkey` are fused into a single composite-key hashset probe
+  `(c_nationkey, l_suppkey) ∈ supplier_nation_set`. One lookup per
+  qualifying lineitem; no standalone cross-record predicate node.
+- **Wider per-lineitem callback.** Each surviving lineitem probes
+  `supplier_nation_set` with a composite key and accumulates revenue
+  into a per-nationkey bucket — one extra constant-time hashset
+  lookup per lineitem versus Q3's pure-revenue accumulator.
+- **Emit-time `n_name` resolution.** `n_name` is not carried through
+  any intermediate build. At `on_walk_end` / result-emission time,
+  ~5 NATION primary-index point lookups materialise the final name
+  per nationkey bucket.
 
 The MI advantage thesis is the same as Q3's: `MI[COL]` co-locates
 the chain in custkey-byte-lex order so a single `PremergedJoin`
@@ -126,16 +131,20 @@ operators:
 
 - REGION (5 rows): point lookup on `r_name = :1`, returns one
   `r_regionkey`.
-- NATION (25 rows): hash build on `n_regionkey`, restricted to the
-  chosen region — yields ~5 `(n_nationkey → n_name)` entries.
-- SUPPLIER (~10K rows at SF=1): hash build on `s_suppkey`,
-  restricted to suppliers whose `s_nationkey` is in the in-region
-  NATION map — yields ~2K `(s_suppkey → s_nationkey)` entries.
+- NATION (25 rows): `HashJoin(REGION ⋈ NATION on n_regionkey =
+  r_regionkey)` — yields `nation_set` (~5 `n_nationkey` entries).
+  `n_name` is NOT stored; fetched at emit time via NATION primary
+  index (~5 point lookups).
+- SUPPLIER (~10K rows at SF=1): `SUPPLIER ⋉ nation_set` semi-join
+  followed by `Build(hashset on (s_nationkey, s_suppkey))` —
+  yields `supplier_nation_set` (~2K composite-key entries).
+  The cross-equality `c_nationkey = s_nationkey` and the natural
+  join `l_suppkey = s_suppkey` are fused into this composite key.
 
 These are dimension lookups, not chain participants. They do **not**
-contribute M:N rows to the join output. The `c_nationkey =
-s_nationkey` cross-equality is a per-lineitem post-lookup filter,
-not a fourth join level. **This is not a §3.1.2 sibling pattern**
+contribute M:N rows to the join output. The per-lineitem probe of
+`supplier_nation_set` with `(c_nationkey, l_suppkey)` is a single
+constant-time hashset lookup, not a fourth join level. **This is not a §3.1.2 sibling pattern**
 (no per-customer scalar reduction of an out-of-chain table) and
 **not a §3.1.3 genuine-tree pattern** (no co-located sub-hierarchy
 inside the MI). The MI benefit is purely hierarchical-prefix scan
@@ -147,11 +156,11 @@ locality on the COL chain — anti-pattern #27 forbids importing
 ## Storage Structure Options
 
 | # | Strategy | Secondary structure | Join strategy | Params baked in |
-|---|----------|--------------------|---|---|
+|---|----------|--------------------|--------------|-----------------|
 | 1 | Traditional indexes + binary merge join | Custkey-sorted secondaries on ORDERS (`(custkey, orderkey)`) and LINEITEM (`(custkey, orderkey, linenumber)`) | BMJ chain: customer ⋈ orders\_sec ⋈ lineitem\_sec on the custkey-extended prefix; SUPPLIER + NATION + REGION as side hash builds | none |
-| 2 | Intermediate pipeline view | `q5_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_suppkey` + FD-attached `c_nationkey`, `o_orderdate`) | View scan + orderdate filter live; SUPPLIER hashmap lookup per lineitem; per-`n_name` `HashAggregate` | none |
+| 2 | Intermediate pipeline view | `q5_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_suppkey` + FD-attached `c_nationkey`, `o_orderdate`) | View scan + orderdate filter + composite-key `supplier_nation_set` probe live; per-nationkey `HashAggregate`; `n_name` at emit time | none |
 | 3 | MI[COL] only | `MergedAdapter<customer_col_t, orders_col_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys | `col_group_walk[_fused_emit]` over the COL MI; CUSTOMER hierarchy co-located, no separate join; SUPPLIER + NATION + REGION as side hash builds | none |
-| 4 | Traditional indexes + hash join | None | `Scan(customer)` + nation-set gate → `HashJoin(⋈orders)` → orderdate filter → `HashJoin(⋈lineitem)` → SUPPLIER probe + cross-equality → per-`n_name` `HashAggregate` | none |
+| 4 | Traditional indexes + hash join | None | `CUSTOMER ⋉ nation_set` → `HashSemiJoin(⋈orders)` → orderdate filter → orderkey-only lineitem seeks → composite-key `supplier_nation_set` probe → per-nationkey `HashAggregate`; `n_name` at emit time | none |
 
 **S5 deliberately omitted.** Q5 has **no parameter-independent
 aggregate to bake**: every per-row contribution to the answer
@@ -170,18 +179,22 @@ covers this case.**
 Three DOT files in [`plans/`](plans/) document the operator graphs:
 
 - `plans/family_logical.dot` — shared logical plan for S1, S2, S3.
-  All three agree on filter placement, aggregate shape (per-`n_name`
-  HashAggregate above the chain), and the side-table attachments;
-  only the inside-pipeline physical operator differs.
+  All three agree on filter placement, aggregate shape (per-nationkey
+  HashAggregate + emit-time `n_name` lookup), and the RN dimension
+  subtree with its two symmetric semi-join fan-outs; only the
+  inside-pipeline physical operator differs.
 - `plans/family_s3_physical.dot` — S3 physical specialisation. A
   single `col_group_walk[_fused_emit]` over the 3-table COL
-  MergedAdapter subsumes the per-table filters, the customer
-  nation-set gate, and the 2-way join; the per-lineitem SUPPLIER
-  probe and per-`n_name` aggregator wrap the walker callback.
+  MergedAdapter subsumes the per-table filters, the CUSTOMER
+  semi-join gate, and the 2-way join; the per-lineitem
+  `supplier_nation_set` composite-key probe and per-nationkey
+  aggregator wrap the walker callback; `n_name` resolved at
+  `on_walk_end`.
 - `plans/baseline_s4.dot` — S4 baseline. A HashJoin chain over base
-  tables with `r_name` pushed down at the REGION scan, the
-  in-region nation-set computed before the customer scan, and
-  `c_nationkey ∈ nation_set` fused with the customer scan.
+  tables only (no `col.split_*`) with `r_name` pushed below the
+  REGION scan, `CUSTOMER ⋉ nation_set` applied before the customer
+  hash build, orderkey-only lineitem seeks, and composite-key
+  `supplier_nation_set` probe per lineitem.
 
 ### Filter pushdown principle (applied across all four plans)
 
@@ -200,24 +213,26 @@ this means:
   filter may be baked into any secondary** (PLAYBOOK §3.5 step 7).
 - `r_name = :1` fuses with the REGION scan; the resolved
   `r_regionkey` then drives the NATION hash build's filter.
-- The in-region `nation_set` (computed pre-pipeline from REGION ⋈
-  NATION) gates the CUSTOMER scan: `c_nationkey ∈ nation_set`
-  fuses with `TableScan(CUSTOMER)` (or with the COL walker's
-  `on_customer` hook for S3).
+- The `nation_set` (output of `HashJoin(REGION ⋈ NATION)`)
+  gates CUSTOMER via a semi-join: `CUSTOMER ⋉ RN on c_nationkey
+  = n_nationkey` fuses with `TableScan(CUSTOMER)` (or with the
+  COL walker's `on_customer` hook for S3). Surviving CUSTOMER rows
+  carry `c_nationkey` downstream for the composite-key probe.
 - `o_orderdate >= :d AND o_orderdate < :d+1y` fuses with
   `TableScan(ORDERS)` (or with the walker's `on_order` hook).
-- The cross-record predicate `c_nationkey = s_nationkey` fires
-  per qualifying lineitem, immediately after the SUPPLIER
-  hashmap probe — earliest possible position. This filter is
-  **not** in the secondary (it depends on per-row CUSTOMER and
-  SUPPLIER state simultaneously).
+- The SUPPLIER-side semi-join build is keyed by
+  `(s_nationkey, s_suppkey)` and consumes the cross-equality
+  `c_nationkey = s_nationkey` implicitly: the per-lineitem probe
+  is a single `supplier_nation_set` hashset lookup with
+  `(c_nationkey, l_suppkey)`. There is no standalone cross-record
+  predicate node — the cross-equality is fused inside the
+  composite key.
 - For S4 specifically, `r_name` is pushed below the REGION scan,
-  and `c_nationkey ∈ nation_set` is fused with the CUSTOMER
-  scan **before the hash build**, so the customer hash table only
-  contains qualifying customers.
-- For S3, every filter except the cross-equality applies **during**
-  the group walk, at the Visitor's `on_*` hook for that record
-  type. There is no post-walk Filter node.
+  and `CUSTOMER ⋉ nation_set` is applied **before the hash build**,
+  so the customer set only contains qualifying customers.
+- For S3, every filter applies **during** the group walk, at the
+  Visitor's `on_*` hook for that record type. There is no post-walk
+  Filter node.
 
 ### How the four approaches differ
 
@@ -225,15 +240,18 @@ this means:
 plan. The COL tagged-key encoding co-locates customer, orders, and
 lineitem records by `custkey` in byte-lex order
 (`customer → (orders → lineitem*)+`), and the walker streams
-through them in a single forward pass. The customer nation-set
-gate at `on_customer` skips the entire group; the orderdate
-filter is an inline `if` check at `on_order`; per-lineitem the
-walker probes SUPPLIER, applies the cross-equality, resolves
-`s_nationkey → n_name` via the NATION map, and accumulates
-revenue into the per-`n_name` bucket. No buffering of MI rows,
-no hashmaps over MI rows, no separate aggregate pass — only the
-two small reduce-side hashmaps (NATION, SUPPLIER) prebuilt before
-the walk.
+through them in a single forward pass. The CUSTOMER semi-join gate
+at `on_customer` (`c_nationkey ∈ nation_set`) skips the entire
+group; the orderdate filter is an inline `if` check at `on_order`;
+per-lineitem the walker probes `supplier_nation_set` with
+`(c_nationkey, l_suppkey)` — one hashset lookup fuses the SUPPLIER
+semi-join, the cross-equality, and the suppkey equi-join. Revenue
+accumulates into the per-nationkey bucket carried by the Visitor.
+At `on_walk_end`, `n_name` is resolved via NATION primary-index
+lookup (~5 point lookups) and the final rows are emitted. No
+buffering of MI rows, no hashmaps over MI rows, no separate
+aggregate pass — only the two small reduce-side structures
+(`nation_set`, `supplier_nation_set`) prebuilt before the walk.
 
 **S1 (custkey-sorted secondaries + BMJ chain)** runs the same
 logical plan as S3 over three separate custkey-sorted streams
@@ -259,48 +277,60 @@ the post-join (pre-aggregate) family plan as a
 view** — `r_name`, the in-region nation set, and orderdate are
 all parameterised, so predicate hoisting forbids fusing them at
 load time (PLAYBOOK soundness rule). Query time is a sequential
-view scan: the customer nation-set gate, orderdate filter,
-SUPPLIER probe, and cross-equality all apply live; per-`n_name`
-revenue is rolled up via a `HashAggregate` keyed on `n_name`.
-The view is reusable across all REGION and DATE param sets.
+view scan: the customer nation-set gate, orderdate filter, and
+composite-key `supplier_nation_set` probe all apply live; revenue
+is rolled up via a per-nationkey `HashAggregate`. At emit time,
+`n_name` is resolved per nationkey via NATION primary-index lookup
+(~5 lookups). The view is reusable across all REGION and DATE
+param sets.
 
-**S4 (HashJoin chain baseline)** uses base tables only (nothing
-is custkey-sorted). Filter pushdown: `r_name` fuses with the
-REGION scan; the resolved `nation_set` gates the CUSTOMER scan
-before the hash build; orderdate fuses with ORDERS pre-build.
-The chain is `Scan(CUSTOMER) → Filter(c_nationkey ∈ nation_set)
-→ HashBuild → HashProbe(ORDERS pre-filtered) → HashProbe(LINEITEM)
-→ Probe(SUPPLIER) → Filter(c_nationkey = s_nationkey) →
-HashAggregate(n_name)`. S4 measures the no-merged-index baseline
-that the family is compared against.
+**S4 (HashJoin chain baseline)** uses base tables only (no
+`col.split_*` secondaries — fairness vs S3). Filter pushdown:
+`r_name` fuses with the REGION scan; `CUSTOMER ⋉ nation_set`
+gates the customer scan before the hash build; orderdate fuses
+with ORDERS pre-build. Orders survivors feed an
+`unordered_set<o_orderkey>` (Q3-isomorphic). Lineitem is driven
+by a sorted list of qualifying orderkeys with orderkey-only seeks
+into the base `lineitem` table; per orderkey, `c_nationkey` is
+cached once via two primary-index lookups (ORDERS → `o_custkey`;
+CUSTOMER → `c_nationkey`), amortised over ~4 lineitems per order.
+Per-lineitem: probe `supplier_nation_set` with
+`(cached_c_nationkey, l_suppkey)` — one hashset lookup replaces
+the old separate `supplier_nation_map` probe and cross-equality
+filter. At emit time, `n_name` is resolved per nationkey via
+NATION primary-index lookup (~5 lookups). S4 measures the
+no-merged-index baseline that the family is compared against.
 
 ### Comparison axis summary
 
 All four plans share the same logical shape (chain join + side-
-table reductions + per-`n_name` HashAggregate); they differ only
-in physical operators and filter substrate.
+table reductions + per-nationkey HashAggregate + emit-time
+`n_name` lookup); they differ only in physical operators and
+filter substrate.
 
-| Approach | Inside-pipeline physical | Aggregate | Filters resolved by |
-|----------|--------------------------|-----------|---------------------|
-| S1 (merge family) | 2-BMJ chain over custkey-sorted split indexes (`q5_jr1_t` → `q5_jr2_t`); SUPPLIER + NATION + REGION as side hash builds | `NNameRevenueAggregator` per `n_name` (same as S3/S4 via `q5_admit_lineitem`) | per-scan inline filters (nation_set gate, orderdate window); `q5_admit_lineitem` per emit |
-| S2 (merge family) | sequential per-lineitem view scan; SUPPLIER + NATION + REGION as side hash builds | HashAggregate per `n_name` above the view scan | All filters live at query time (no filter baking — view is param-reusable) |
-| S3 (merge family) | `col_group_walk` over MI[COL]; SUPPLIER + NATION + REGION as side hash builds | HashAggregate per `n_name` (Visitor `accumulator`, same code as S1) | Visitor `on_*` hooks (same code as S1) |
-| S4 (baseline) | HashJoin chain over base tables; SUPPLIER + NATION + REGION as side hash builds | HashAggregate per `n_name` above the chain | TableScan-time filters all pushed below the corresponding hash build/probe |
+| Approach | Inside-pipeline physical | Aggregate | Filters / semi-joins resolved by |
+|----------|--------------------------|-----------|----------------------------------|
+| S1 (merge family) | 2-BMJ chain over custkey-sorted split indexes (`q5_jr1_t` → `q5_jr2_t`); `nation_set` + `supplier_nation_set` prebuilt | `NNameRevenueAggregator` keyed by nationkey; `n_name` at emit time via NATION PK lookup | per-scan inline semi-join (nation_set gate, orderdate window); composite-key `supplier_nation_set` probe per lineitem |
+| S2 (merge family) | sequential per-lineitem view scan; `nation_set` + `supplier_nation_set` prebuilt | per-nationkey HashAggregate; `n_name` at emit time via NATION PK lookup | all filters live at query time (no filter baking — view is param-reusable); composite-key probe per lineitem |
+| S3 (merge family) | `col_group_walk` over MI[COL]; `nation_set` + `supplier_nation_set` prebuilt | per-nationkey HashAggregate (Visitor map); `n_name` at `on_walk_end` via NATION PK lookup | Visitor `on_*` hooks; composite-key `supplier_nation_set` probe per lineitem |
+| S4 (baseline) | HashJoin chain over base tables only (no `col.split_*`); orderkey-only lineitem seeks; `c_nationkey` cached per orderkey via PK lookups | per-nationkey HashAggregate; `n_name` at emit time via NATION PK lookup | TableScan-time semi-joins pushed below each hash build; composite-key `supplier_nation_set` probe per lineitem |
 
 All four agree on what's outside the pipeline: collect the
-per-`n_name` revenue map, sort by `revenue DESC`, output ~5
-rows (one per in-region nation). **No LIMIT** — the result
-cardinality is bounded by `|nation_set|` ≈ 5.
+per-nationkey revenue map, resolve `n_name` at emit time via
+NATION primary-index lookup (~5 lookups), sort by `revenue DESC`,
+output ~5 rows (one per in-region nation). **No LIMIT** — the
+result cardinality is bounded by `|nation_set|` ≈ 5.
 
 ### OutClass: shared `NNameRevenueAggregator`
 
 All four `query_by_*` bodies construct one
 `NNameRevenueAggregator` per query and push qualifying lineitems
-through `agg.accumulate(l, n_name)` (via the shared
-`q5_admit_lineitem` helper).  The aggregator's internal `by_name`
-map has at most ~5 entries (one per in-region nation); after the
-walk, `agg.emit(out, sides)` materialises the final ~5 rows in
-one pass.
+through `agg.accumulate(l, nationkey)` (via the shared
+`q5_admit_lineitem` helper). The aggregator's internal map has at
+most ~5 entries keyed by `n_nationkey` (one per in-region nation);
+after the walk, `agg.emit(out, sides)` resolves `n_name` per
+nationkey via NATION's primary-index point lookup (~5 lookups) and
+materialises the final ~5 rows in one pass.
 
 This is Q5's instance of the **OutClass** convention codified in
 `CONVENTIONS.md §Post-pipeline OutClass`: a small-buffer sink owning the
@@ -372,16 +402,27 @@ These are not stored secondaries (no MergedAdapter / B-tree
 membership), only in-process hashmaps built per query invocation:
 
 - `nation_set` — `std::unordered_set<Integer>` of in-region
-  `n_nationkey` values (~5 entries). Built from the NATION
-  base-table scan filtered by `n_regionkey == :region_key`.
-- `nation_name_map` — `std::unordered_map<Integer, std::string>`
-  from `n_nationkey` to `n_name` (same ~5 entries).
-- `supplier_nation_map` — `std::unordered_map<Integer, Integer>`
-  from `s_suppkey` to `s_nationkey`, restricted to
-  `s_nationkey ∈ nation_set` (~2K entries at SF=1).
+  `n_nationkey` values (~5 entries). Built as the output of
+  `HashJoin(REGION ⋈ NATION on n_regionkey = r_regionkey)`,
+  REGION filtered by `r_name = :1` first. Build payload is
+  `n_nationkey` only (primary-key payload convention — no other
+  NATION columns carried). `n_name` is NOT stored here; it is
+  fetched at result-emission time via NATION's primary-index
+  point lookup (~5 lookups per query).
+- `supplier_nation_set` — `std::unordered_set<std::tuple<Integer,
+  Integer>>` keyed on `(s_nationkey, s_suppkey)`, restricted to
+  suppliers whose `s_nationkey ∈ nation_set` (~2K entries at SF=1).
+  Encodes `SUPPLIER ⋉ nation_set` fused with the downstream
+  cross-equality `c_nationkey = s_nationkey` and the natural join
+  `l_suppkey = s_suppkey`: the per-lineitem probe sends
+  `(c_nationkey, l_suppkey)` — one hashset lookup decides "supplier
+  survived its semi-join AND its nation matches the customer's
+  nation AND its suppkey equals the lineitem's suppkey". The
+  cross-equality and suppkey equi-join collapse to a single
+  composite-key probe; they do not exist as separate operators.
 
-All three are built before the COL walk / chain join begins;
-their build cost is sub-millisecond and is included in the per-TX
+Both are built before the COL walk / chain join begins; their
+build cost is sub-millisecond and is included in the per-TX
 budget (not amortised across queries).
 
 ---
@@ -519,6 +560,23 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   table (`test_query_q5_{lsm,btree}` + `test_side_tables`), and
   Per-query test commands. Top-level `CLAUDE.md` repo markdown
   index updated for `LINUX_HISTORY.md`.
+- **Phase 10A** (2026-05-11; **complete**) — semi-join refactor,
+  docs + DOT plans only. Replace `nation_name_map` with emit-time
+  NATION primary-index lookup; replace `supplier_nation_map` with
+  composite-key `supplier_nation_set<(nationkey, suppkey)>`;
+  reframe both fan-outs from RN as symmetric semi-joins; rewrite S4
+  to use base tables with orderkey-keyed orders set and orderkey-only
+  lineitem seeks (Q3-isomorphic). Updates: `q5/CLAUDE.md`,
+  `plans/family_logical.dot`, `plans/baseline_s4.dot`,
+  `plans/family_s3_physical.dot`. Code unchanged — see Phase 10B.
+- **Phase 10B** (pending) — code rewrite to match Phase 10A design:
+  `build_q5_side_tables` (returns `nation_set` + `supplier_nation_set`;
+  no name map), `q5_admit_lineitem` (takes `c_nationkey`, probes
+  composite key, defers `n_name` to emit time), all four
+  `query_by_*` bodies (S4 additionally switches to base tables with
+  orderkey-only seeks), `NNameRevenueAggregator` keyed by nationkey,
+  `Q5Stats` counter semantics, `test_query_q5_lsm` strict 4-way XOR
+  parity at SF=1.
 - **S5** — omitted by design (no parameter-independent aggregate
   to bake; see §Storage Structure Options).
 - **Linux perf sweep** — pending; tracked in `LINUX_PENDING.md`
@@ -526,7 +584,7 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
 
 ---
 
-## Implementation Status (Phase 4 complete — 2026-05-09)
+## Implementation Status (Phase 9 complete — 2026-05-11; Phase 10A docs landed)
 
 Phase 0.5 landed: all 8 per-query files exist, executable links,
 `test_query_q5_lsm` runs to exit 0 with all four paths agreeing on
@@ -567,3 +625,12 @@ Phase 4 landed (all sub-phases in one session, 2026-05-09):
 Skeleton uses `customer_coli_t` / `orders_coli_t` from
 `views_col.hpp` directly; `lineitem_col_t` was extended in place to
 carry `l_suppkey` and `l_returnflag` in commit `bec67300`.
+
+Phase 10A landed (2026-05-11): semi-join design locked in docs and
+DOT plans. `nation_name_map` removed; `supplier_nation_map` replaced
+by `supplier_nation_set<(nationkey, suppkey)>`; both RN fan-outs
+framed as symmetric semi-joins; S4 plan switched to base tables with
+orderkey-only lineitem seeks. **Code not yet changed** — the C++
+bodies (`build_q5_side_tables`, `q5_admit_lineitem`, all four
+`query_by_*`) still use the old side-table shapes. Phase 10B
+(code rewrite) is the next commit.

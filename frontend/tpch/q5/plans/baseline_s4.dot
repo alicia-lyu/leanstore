@@ -2,91 +2,132 @@
 // index. The "no co-location" reference point against which S1/S2/S3
 // are compared.
 //
+// S4 uses base tables only; no col.split_* secondaries. Fairness vs S3.
+//
 // Filter pushdown follows the same principles as the family logical
-// plan, with three fusions specific to S4:
+// plan, with fusions specific to S4:
 //
-//   • r_name = :1                → fused with TableScan(REGION) before
-//                                   the NATION join's hash build.
-//   • c_nationkey ∈ nation_set    → fused with TableScan(CUSTOMER)
-//                                   before the customer hash build, so
-//                                   the build side is ~5× smaller.
-//   • o_orderdate ∈ window        → fused with TableScan(ORDERS) before
-//                                   the orders hash build.
+//   • r_name = :1               → fused with TableScan(REGION) before
+//                                  the NATION join's hash build.
+//   • o_orderdate ∈ window       → fused with TableScan(ORDERS) before
+//                                  the orders hash build.
 //
-// The chain pre-builds three side maps (nation_set, nation_name_map,
-// supplier_nation_map) before the customer scan. Then:
+// PRIMARY-KEY PAYLOAD CONVENTION: every hash build carries only the
+// build relation's primary key — no record content. Downstream
+// consumers fetch additional columns via the primary index at
+// consumption time.
 //
-//   Scan(CUSTOMER) + nation gate
-//     → HashBuild(c_custkey)
-//       ⋈ HashProbe(filtered orders) on o_custkey = c_custkey
-//         → HashBuild(o_orderkey, o_custkey, c_nationkey)
-//           ⋈ HashProbe(LINEITEM) on l_orderkey = o_orderkey
-//             → Probe(supplier_nation_map[l_suppkey])
-//               → Filter(c_nationkey == s_nationkey)
-//                 → HashAggregate(group=[n_name],
-//                       revenue = SUM(l_extendedprice * (1-l_discount)))
-//                   → Sort(revenue DESC)
+// Shared RN = REGION ⋈ NATION dimension subtree fans out identically
+// to the family logical plan — two symmetric semi-joins:
 //
-// S4 differs from S1/S3 only in physical operators (HashAggregate +
-// HashJoin chain instead of SortedAggregate + walker / BMJ); the
-// logical shape is identical, preserving OPERATORS.md §6.1
-// comparison-integrity. S4 measures the no-merged-index baseline that
-// the family is compared against.
+//   Fan-out 1: CUSTOMER ⋉ RN on c_nationkey = n_nationkey
+//       build side: unordered_set<c_custkey>   (PK of CUSTOMER)
+//       no c_nationkey payload; fetched per surviving custkey via
+//       CUSTOMER primary-index lookup when needed downstream.
+//
+//   Fan-out 2: SUPPLIER ⋉ RN on s_nationkey = n_nationkey
+//       → Build(hashset on (s_nationkey, s_suppkey))
+//           composite key = effective PK of restricted-supplier
+//           relation; no payload.
+//
+// Customer side: HashSemiJoin(CUSTOMER ⋉ nation_set on c_nationkey).
+//   Survivors feed HashBuild(c_custkey) — orders_set probe side.
+//
+// Orders scan: orderdate window pushed below; then
+//   HashSemiJoin(orders ⋉ cust_set on o_custkey = c_custkey).
+//   Build side is unordered_set<o_orderkey> (primary key, no payload).
+//   Q3-isomorphic in shape.
+//
+// Lineitem driver: Sort(qualifying orderkeys) → seek into base
+//   lineitem.getScanner() per orderkey (orderkey-only seek; no custkey
+//   component in the scan key). Per orderkey, c_nationkey is cached
+//   once via two primary-index lookups:
+//     ORDERS primary-index lookup by orderkey → o_custkey;
+//     CUSTOMER primary-index lookup by custkey → c_nationkey.
+//   Cache lives across that orderkey's lineitem batch (~4 lineitems),
+//   amortising the two point-lookups over the batch.
+//
+// Per-lineitem: probe supplier_nation_set with (cached_c_nationkey,
+//   l_suppkey). One hashset lookup replaces the old supplier_nation_map
+//   probe + separate cross-equality filter.
+//
+// Aggregate by nationkey, then resolve n_name at emit time via NATION
+// primary-index lookup (~5 output rows, ~5 lookups).
 
 digraph {
   rankdir=BT;
 
-  // ─────────── Side reductions ───────────
+  // ─────────── Shared dimension subtree: RN = REGION ⋈ NATION ───────────
   s_reg [label="TableScan(REGION) + Filter(r_name == :1)\n→ 1 regionkey",
          shape=box, style=filled, fillcolor="#E0F2F1"];
-  s_nat [label="TableScan(NATION) + Filter(n_regionkey == reg)\n→ nation_set, nation_name_map",
+  s_nat [label="TableScan(NATION)",
          shape=box, style=filled, fillcolor="#E0F2F1"];
-  s_sup [label="TableScan(SUPPLIER) + Filter(s_nationkey ∈ nation_set)\n→ supplier_nation_map",
-         shape=box, style=filled, fillcolor="#E0F2F1"];
-  s_reg -> s_nat [style=dashed, label="region"];
-  s_nat -> s_sup [style=dashed, label="nation_set"];
+  rn    [label="HashJoin(REGION ⋈ NATION\n  on n_regionkey = r_regionkey)\ninner join; build payload = n_nationkey only\n(primary-key payload convention)",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
 
-  // ─────────── Sources ───────────
-  s_cust [label="TableScan(CUSTOMER)\n+ Filter(c_nationkey ∈ nation_set)",
-          shape=box, style=filled, fillcolor="#E8F0FE"];
-  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ window)",
-          shape=box, style=filled, fillcolor="#E8F0FE"];
-  s_lin  [label="TableScan(LINEITEM)",
-          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_reg -> rn [label="build\n(filtered)"];
+  s_nat -> rn [label="probe"];
 
-  // ─────────── Hash join chain ───────────
-  bld_cust [label="HashBuild(c_custkey → c_nationkey)",
-            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  prb_co   [label="HashProbe(o_custkey = c_custkey)",
-            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  bld_co   [label="HashBuild(o_orderkey →\n  c_nationkey)",
-            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  prb_col  [label="HashProbe(l_orderkey = o_orderkey)",
+  // ─────────── Fan-out 1: CUSTOMER ⋉ RN ───────────
+  sj_cust [label="HashSemiJoin\n(CUSTOMER ⋉ RN\n  on c_nationkey = n_nationkey)\nbuild: unordered_set<c_custkey> (PK only)",
+           shape=box, style="filled,rounded", fillcolor="#E8F0FE"];
+  s_cust  [label="TableScan(CUSTOMER)",
+           shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  rn     -> sj_cust [style=dashed, label="nation_set\n(build)"];
+  s_cust -> sj_cust [label="probe"];
+
+  // ─────────── Fan-out 2: SUPPLIER ⋉ RN → composite-key build ───────────
+  sj_sup  [label="HashSemiJoin\n(SUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey)",
+           shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+  bld_sup [label="Build(hashset on (s_nationkey, s_suppkey))\ncomposite key; no payload\n[supplier_nation_set]",
+           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+  s_sup   [label="TableScan(SUPPLIER)",
+           shape=box, style=filled, fillcolor="#E0F2F1"];
+
+  rn     -> sj_sup  [style=dashed, label="nation_set\n(build)"];
+  s_sup  -> sj_sup  [label="probe"];
+  sj_sup -> bld_sup;
+
+  // ─────────── Orders: semi-join with cust_set ───────────
+  s_ord    [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ window)",
+            shape=box, style=filled, fillcolor="#E8F0FE"];
+  sj_ord   [label="HashSemiJoin\n(orders ⋉ cust_set\n  on o_custkey = c_custkey)\nbuild: unordered_set<o_orderkey> (PK only)\nQ3-isomorphic",
             shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  prb_sup  [label="Probe(supplier_nation_map[l_suppkey])\nSKIP if absent",
+  sj_cust -> sj_ord [style=dashed, label="cust_set\n(build)"];
+  s_ord   -> sj_ord [label="probe"];
+
+  // ─────────── Lineitem: orderkey-only seek ───────────
+  s_lin    [label="Sort(qualifying orderkeys)\n→ seek base lineitem.getScanner()\nper orderkey (orderkey-only seek;\nno custkey component)",
+            shape=box, style=filled, fillcolor="#E8F0FE"];
+  cache_nat [label="Per-orderkey: cache c_nationkey once\nvia ORDERS PK lookup → o_custkey;\nthen CUSTOMER PK lookup → c_nationkey.\nAmortised over ~4 lineitems per order.",
+             shape=box, style=filled, fillcolor="#FFF4E5"];
+
+  sj_ord -> s_lin;
+  s_lin  -> cache_nat;
+
+  // ─────────── Per-lineitem composite-key probe ───────────
+  prb_sup  [label="Probe supplier_nation_set\n  with (cached_c_nationkey, l_suppkey)\nSKIP if absent\n(fuses: SUPPLIER semi-join,\n c_nationkey = s_nationkey,\n l_suppkey = s_suppkey)",
             shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
-  cross_eq [label="Filter(c_nationkey == s_nationkey)",
-            shape=box, style=filled, fillcolor="#FFEBEE"];
 
-  agg [label="HashAggregate(group=[n_name],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))",
+  cache_nat -> prb_sup;
+  bld_sup   -> prb_sup [style=dashed, label="supplier_nation_set\n(lookup)"];
+
+  // ─────────── Aggregate + emit ───────────
+  agg [label="HashAggregate(group=[n_nationkey],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
-
+  emit [label="emit(): resolve n_name per nationkey\nvia NATION primary-index lookup\n(~5 output rows, ~5 point lookups)\n→ q5_agg_row_t",
+        shape=box, style=filled, fillcolor="#FCE5CD"];
   sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
         shape=box, style=filled, fillcolor="#E6F4EA"];
 
-  // ─────────── Edges ───────────
-  s_cust -> bld_cust;
-  bld_cust -> prb_co [label="build"];
-  s_ord    -> prb_co [label="probe"];
-  prb_co   -> bld_co;
-  bld_co   -> prb_col [label="build"];
-  s_lin    -> prb_col [label="probe"];
+  prb_sup -> agg;
+  agg     -> emit;
+  emit    -> sort;
 
-  prb_col  -> prb_sup;
-  s_sup    -> prb_sup [style=dashed, label="lookup"];
-  prb_sup  -> cross_eq;
-  cross_eq -> agg;
-  s_nat    -> agg [style=dashed, label="n_name"];
-  agg      -> sort;
+  // ─────────── Footer note ───────────
+  footer [label="S4 uses base tables only; no col.split_*.\nFairness vs S3.",
+          shape=note, style=filled, fillcolor="#F3E5F5"];
+  sort -> footer [style=dashed, arrowhead=none];
 }
