@@ -337,6 +337,122 @@ root-cause when a stale-cache bug misreported one CF's size.
 
 ---
 
+## §Operator framing rules
+
+*Surfaced during Q5 Phase 10A semi-join refactor (commits `1263e7e2`,
+`a076d31f`, `614240dd`, `347c3c44`, `6b69b3fd`, `6ab7ad15`). Apply
+before writing any join body in any new query.*
+
+**Rule 1 — Operator class is decided by downstream consumption, not
+by build shape.** Use `HashJoin` (inner) when right-side columns flow
+past the operator. Use `HashSemiJoin` only when the right side is a
+pure existence test with no columns consumed downstream. Build
+payload shape (empty / PK-only / wide) is independent — a build
+that happens to carry no payload does NOT make the operator a
+semi-join. Q5: CUSTOMER ⋈ NATION is inner (`n_name` flows
+downstream); SUPPLIER ⋉ nation_set is semi (no NATION column past
+the supplier arm).
+
+**Rule 2 — "Probe" and "Build" are edge labels on a HashJoin node,
+never standalone operator nodes.** Draw one HashJoin box; annotate
+its two input edges as "build" and "probe". Never write a separate
+"Build" or "Probe" step as if it were its own operator class.
+
+**Rule 3 — Probe-side seek-on-miss is a HashJoin lowering, not a
+Sort operator.** Hash builds are inherently unordered (sets /
+hashmaps), so neither the build itself nor a sorted vector view of
+its keys is required for the lowering. When the **probe side is
+naturally ordered on the join key** (e.g., LINEITEM is sorted on
+`l_orderkey`), the lowering is: stream the probe; probe the
+hashset on each row; on a miss at probe-side key `K`, seek the
+probe scanner to `K + 1` and continue. The natural sort guarantees
+every probe row in the miss group is skipped without per-row hash
+lookups. Draw it as `HashJoin`; the seek-on-miss strategy belongs
+in a code comment, not as a separate `Sort` operator.
+
+**Rule 4 — Build payload = primary key only.** Standard hash builds
+carry only the build relation's PK; downstream consumers fetch
+additional columns via the primary index at consumption time. Q5:
+`nation_set = unordered_set<n_nationkey>` (dimension semi-join);
+`orders_set = unordered_set<o_orderkey>` (fact-side build). No
+forwarded payload columns.
+
+**Rule 5 — Join outputs are first-class relations; multi-column
+equi-joins are NOT cross-equality filters.** Once two tables join,
+the output is a relation with its own combined schema. Predicates
+that relate columns from already-joined inputs ARE join conditions
+on that combined relation — pack them into the composite key of
+the next build, probe with the corresponding columns from the
+joined-side row. Q5: SUPPLIER ⋉ nation_set produces a relation
+keyed by `(s_nationkey, s_suppkey)`; the lineitem-side probe sends
+`(c_nationkey, l_suppkey)` from the JOINED-COL row (c_nationkey is
+a column on that row, not "a column from a different table"). One
+hashset probe is the lowering of this multi-column equi-join — no
+separate "cross-equality filter" downstream.
+`supplier_nation_set: unordered_set<tuple<n_nationkey, s_suppkey>>`
+is the composite-key PK of the restricted-supplier relation.
+
+**Rule 6 — Aggregator keys on the output column (GROUP BY column),
+not on intermediate IDs.** Resolve dimension IDs to output columns
+at the join point that introduces them; carry the resolved value
+downstream. The aggregator stays decoupled from dimension adapters.
+Q5: `NNameRevenueAggregator` keys on `n_name` string; resolution
+happens at the CUSTOMER ⋈ NATION survival point in every query
+body.
+
+**Rule 7 — Lookup columns ride on join-output records (mental
+model); the C++ type is only minted when an operator template
+demands it.** Think of every join as producing a relation whose
+schema is the union of fields surviving from each side — that's
+the mental model. In code, that "join-output record" is usually
+*not* a defined struct; it's the payload of whatever container
+the next operator consumes (a hashmap value, a view-row payload,
+a BMJ intermediate). Widen the existing carrier to add the
+looked-up field. Q5: `n_name` widens into `q5_jr1_t`,
+`q5_jr2_t`, and `q5_pipeline_view_t`; S4's hand-rolled
+`cust_map` payload is a local anonymous struct carrying
+`{c_nationkey, n_name}`. Do NOT mint a new top-level
+`customer_rn_t` (or similar "named output of CUSTOMER ⋈ NATION")
+type — the mental model doesn't require one. The only forcing
+function for a real type is an operator template that needs it
+as a parameter (e.g., `HashJoin<JK, JR, R1, R2>` — see Rule 9).
+Hand-rolled chains express the joined record inline. A per-query
+`nationkey_to_name` cache is implementation glue to avoid
+duplicate PK lookups; it is NOT the canonical column carrier
+either.
+
+**Rule 8 — S4 baselines use base tables only — no `col.split_*`.**
+A hash-join baseline that consumes a custkey-sorted split secondary
+borrows the merged-index family's locality and produces an unfair
+comparison against S3. Use the `customer` / `orders` / `lineitem`
+adapter members directly. See Q5 Phase 10B for the explicit fix.
+
+**Rule 9 — Hand-roll vs reuse `HashJoin<…>` is a boilerplate trade-
+off, not a star-schema / reduce-side rule.** The shared
+`HashJoin<JK, JR, R1, R2>` in
+`frontend/shared/merge-join/hash_join.hpp` requires (a) a `JK` type
+satisfying `match()` / `matching_keys()` / `std::hash` / `operator%`
+(the wildcard-key contract from §Sort-key wildcard semantics), and
+(b) a `JR` join-result type. If you'd have to mint these wrappers
+specifically for this join — that is, no existing SK/JR pair fits
+— hand-writing the hashmap + probe loop costs the same or less
+than the wrapper. Decide on syntax cost only:
+
+- **Reuse `HashJoin<…>`** when an existing SK type already
+  carries the join key (e.g., Q12's `ol_sort_key_t`; geo's
+  hierarchical `sort_key_t`).
+- **Hand-roll** when the join key would force a bespoke
+  composite (tuple, multi-column custom struct) AND no other
+  caller needs that key shape (e.g., Q3 / Q3I / Q5 dimension
+  filters, S4 build chains keyed by PK).
+
+The decision has nothing to do with whether the schema is "star"
+or "snowflake" or how many dimension tables exist. It's purely:
+will defining the wrapper types cost more boilerplate than the
+inline hashmap probe?
+
+---
+
 ## §Anti-Pattern Reference
 
 | # | Anti-pattern | Source commit | Symptom | Fix |

@@ -11,9 +11,15 @@ actionable.
 
 - **Q5 first Linux perf sweep**: collect SF=15 (and optionally SF=40
   disk-bound) `TPut.csv` for `q5_lsm` and `q5_btree`. Q5 S1–S4 strict
-  XOR parity verified at SF=1 on macOS (2026-05-09); production
-  targets wired via `generate_targets.py`. No S5 variant (deliberate —
-  see `frontend/tpch/q5/CLAUDE.md §Storage Structure Options`).
+  XOR parity verified at SF=1 on macOS after Phase 10B (2026-05-11,
+  digest=0x2df0d67874759c18); production targets wired via
+  `generate_targets.py`. No S5 variant (deliberate — see
+  `frontend/tpch/q5/CLAUDE.md §Storage Structure Options`).
+
+  **Phase 10B note**: `frontend/tpch/q5/load.tpp` was modified (NATION
+  scan added to the S2 view loader). Any Linux node that has a
+  previously-loaded DB image will need a reload pass before the perf
+  sweep — the view payload schema changed (added `n_name` field).
 
   Pre-sweep checklist (per `CLAUDE.md` Workflow Rules):
 

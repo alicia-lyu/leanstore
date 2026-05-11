@@ -49,7 +49,11 @@ static uint64_t row_digest(const tpch::q5::q5_agg_row_t& r)
 {
    auto rotl64 = [](uint64_t v, int s) { return (v << s) | (v >> (64 - s)); };
    uint64_t d = 0;
-   d = rotl64(d, 13) ^ static_cast<uint64_t>(static_cast<int>(r.n_nationkey));
+   // Hash n_name (the GROUP BY key) instead of n_nationkey: after Phase 10B
+   // the aggregator keys by n_name and sets n_nationkey=0, so parity must be
+   // established on the actual output key.
+   std::string_view sv(r.n_name.data, r.n_name.length);
+   d = rotl64(d, 13) ^ std::hash<std::string_view>{}(sv);
    d = rotl64(d, 13) ^ static_cast<uint64_t>(static_cast<double>(r.revenue) * 1e6);
    return d;
 }
@@ -124,7 +128,7 @@ int main(int argc, char** argv)
    std::cout << "=== Populating secondaries ===\n";
    q5.col_pipeline().populate_split();   // S1: custkey-sorted split indexes
    tpch::q5::populate_q5_view<B>(        // S2: per-lineitem pipeline view
-       customer, orders, lineitem, pipeline_view);
+       customer, nation, orders, lineitem, pipeline_view);
    q5.col_pipeline().populate_merged();  // S3: COL merged index
    // S4: base tables only — nothing to populate.
 

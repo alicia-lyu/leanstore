@@ -3,19 +3,26 @@
 // Q5-specific record types for the COL pipeline (CUSTOMER × ORDERS × LINEITEM).
 //
 // Types defined here:
+//   - q5_customer_rn_t    : Join-output of CUSTOMER ⋈ RN (inner join on
+//                           c_nationkey = n_nationkey).  Transient in-memory
+//                           type; no tagged_path / SKBuilder / sentinel id.
+//                           Carries c_custkey, c_nationkey, n_name downstream.
 //   - q5_pipeline_view_t  : Structure 2 intermediate view — one row per
 //                           (custkey, orderkey, linenumber), unaggregated
-//                           lineitem fields + FD-attached order/customer cols.
+//                           lineitem fields + FD-attached order/customer cols
+//                           including n_name (FD-attached at load time).
 //   - q5_agg_row_t        : final aggregate output row, one per in-region
 //                           nation (~5 rows).
 //   - q5_cust_jk_t        : custkey-only join-key type used by S1 BMJ #1.
 //   - q5_jr1_t            : result of BMJ #1: customerh_t ⋈ orders_coli_t
-//                           on custkey.
+//                           on custkey; carries n_name resolved at customer-
+//                           survival point.
 //   - q5_jr2_t            : result of BMJ #2: q5_jr1_t ⋈ lineitem_col_t
 //                           on (custkey, orderkey, linenumber).  Right side is
 //                           per-lineitem (NOT pre-aggregated) because each
 //                           lineitem needs l_suppkey for the SUPPLIER probe and
-//                           c_nationkey = s_nationkey cross-equality.
+//                           c_nationkey = s_nationkey cross-equality.  Carries
+//                           n_name propagated from jr1.
 //
 // S1 BMJ chain shape:
 //   BMJ #1: customerh_t ⋈ orders_coli_t  on custkey             → q5_jr1_t
@@ -46,6 +53,7 @@
 
 #include <functional>
 #include <limits>
+#include <string>
 
 #include "../../shared/wildcard_key.hpp"
 #include "../tpch_family/views_col.hpp"
@@ -53,6 +61,26 @@
 
 namespace tpch::q5
 {
+
+// ---------------------------------------------------------------------------
+// q5_customer_rn_t — join-output of CUSTOMER ⋈ RN (inner join on
+// c_nationkey = n_nationkey).
+//
+// Carries the customer's own join-relevant fields plus the matched NATION
+// column n_name.  Acts as the customer-input wrapper for every downstream
+// join in Q5:
+//   - S1 BMJ #1 customer-input wrapper (n_name propagated into q5_jr1_t)
+//   - S2 view loader (n_name FD-attached per customer row at load time)
+//   - S3 walker per-group state (cached in Q5GroupWalkVisitor)
+//   - S4 cust_map payload (keyed by c_custkey, value = q5_customer_rn_t)
+//
+// Transient in-memory type only — no tagged_path, no SKBuilder, no sentinel
+// id.  Not stored in any B-tree or RocksDB column family.
+struct q5_customer_rn_t {
+   Integer     c_custkey;
+   Integer     c_nationkey;  // == matched n_nationkey on survivors
+   std::string n_name;
+};
 
 // ---------------------------------------------------------------------------
 // q5_sort_key_t — shared sort/join-key abstraction for the (custkey,
@@ -167,13 +195,14 @@ struct q5_pipeline_view_t {
    };
 
    // Unaggregated lineitem fields — revenue computed at query time.
-   Numeric   l_extendedprice;
-   Numeric   l_discount;
-   Integer   l_suppkey;      // supplier join key for SUPPLIER probe
+   Numeric     l_extendedprice;
+   Numeric     l_discount;
+   Integer     l_suppkey;      // supplier join key for SUPPLIER probe
 
    // FD-attached customer / order columns (parameter-independent at load time).
-   Integer   c_nationkey;    // customer's nation (filter + GROUP BY driver)
-   Timestamp o_orderdate;    // order date (filter at query time)
+   Integer     c_nationkey;    // customer's nation (filter + GROUP BY driver)
+   std::string n_name;         // FD-attached at load time (1:1 with c_nationkey)
+   Timestamp   o_orderdate;    // order date (filter at query time)
 
    ADD_RECORD_TRAITS(q5_pipeline_view_t)
 
@@ -264,12 +293,24 @@ struct q5_cust_jk_t {
 };
 
 // JR1: customerh_t ⋈ orders_coli_t on custkey.
+//
+// Carries n_name resolved at the customer-survival point (Phase 10B
+// widening): the CUSTOMER ⋈ RN inner join resolves n_name lazily via
+// NATION PK lookup (~5 total) and the string is forwarded into q5_jr1_t
+// so q5_jr2_t and the per-emit callback can pass it to q5_admit_lineitem
+// without any further lookup.
 struct q5_jr1_t : public joined_t<59, q5_cust_jk_t::Key, false,
                                    customerh_t, orders_coli_t>
 {
    using Base = joined_t<59, q5_cust_jk_t::Key, false, customerh_t, orders_coli_t>;
+
+   // n_name resolved at the customer-survival point of BMJ #1.
+   // Not part of the key; carried as a plain member alongside the joined_t payload.
+   std::string n_name;
+
    q5_jr1_t() = default;
-   q5_jr1_t(const customerh_t& c, const orders_coli_t& o) : Base(c, o) {}
+   q5_jr1_t(const customerh_t& c, const orders_coli_t& o, std::string name = {})
+       : Base(c, o), n_name(std::move(name)) {}
 
    struct Key : public Base::Key {
       Key() = default;
@@ -301,13 +342,22 @@ struct q5_jr1_t : public joined_t<59, q5_cust_jk_t::Key, false,
 // abstraction defined above.  linenumber follows the WILDCARD_KEY
 // convention: jr1 build-side rows project linenumber=WILDCARD_KEY,
 // lineitem probe-side rows project their real linenumber.
+//
+// n_name is propagated from jr1 (Phase 10B widening) so the per-emit
+// callback can pass it directly to q5_admit_lineitem without any
+// additional lookup.
 struct q5_jr2_t : public joined_t<60, q5_sort_key_t, false,
                                    q5_jr1_t, lineitem_col_t>
 {
    using Base = joined_t<60, q5_sort_key_t, false,
                           q5_jr1_t, lineitem_col_t>;
+
+   // n_name propagated from jr1 at join-emit time.
+   std::string n_name;
+
    q5_jr2_t() = default;
-   q5_jr2_t(const q5_jr1_t& jr1, const lineitem_col_t& l) : Base(jr1, l) {}
+   q5_jr2_t(const q5_jr1_t& jr1, const lineitem_col_t& l)
+       : Base(jr1, l), n_name(jr1.n_name) {}
 
    struct Key : public Base::Key {
       Key() = default;
