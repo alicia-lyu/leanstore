@@ -1557,6 +1557,75 @@ documented.
 
 ---
 
+## §12.5 — Operator Framing Rules
+
+*Surfaced during Q5 Phase 10A semi-join refactor; commits 1263e7e2,
+a076d31f, 614240dd. Apply to every new query before writing any join body.*
+
+**Rule 1 — Operator class is decided by downstream consumption, not build
+shape.** Use `HashJoin` (inner) when right-side columns flow past the
+operator. Use `HashSemiJoin` only when the right side is a pure existence
+test with no columns consumed downstream. Q5: CUSTOMER ⋈ NATION is inner
+(`n_name` flows downstream); SUPPLIER ⋉ nation_set is semi (no NATION
+column past the supplier arm).
+
+**Rule 2 — Probe and Build are edge labels on a HashJoin node, never
+standalone operator nodes.** Draw one HashJoin box; annotate its two
+input edges as "build" and "probe". Never write a separate "Build" or
+"Probe" step as if it were its own operator class.
+
+**Rule 3 — Sorted-then-seek is a HashJoin lowering, not a Sort operator.**
+When the build side is sorted and the probe side is naturally ordered on
+the join key, a per-build-row seek into the probe scanner is a valid
+physical implementation of inner HashJoin. Draw it as `HashJoin`; record
+the seek strategy in a code comment.
+
+**Rule 4 — Build payload = primary key only.** Standard hash builds carry
+only the build relation's PK; downstream consumers fetch additional
+columns via the primary index at consumption time. Q5: `nation_set =
+unordered_set<n_nationkey>` (dimension semi-join); `orders_set =
+unordered_set<o_orderkey>` (fact-side build). No forwarded payload columns.
+
+**Rule 5 — Composite-key sets fuse semi-join + cross-equality + natural
+join.** When a downstream multi-column equality wants the same filtered
+relation, one `unordered_set<tuple<...>>` handles it all. Q5:
+`supplier_nation_set: unordered_set<tuple<n_nationkey, s_suppkey>>` fuses
+SUPPLIER ⋉ nation_set, `c_nationkey = s_nationkey`, and `l_suppkey =
+s_suppkey` into a single per-lineitem probe. The composite key is the PK
+of the restricted-supplier relation.
+
+**Rule 6 — Aggregator keys on the output column (GROUP BY column), not on
+intermediate IDs.** Resolve dimension IDs to output columns at the join
+point that introduces them; carry the resolved value downstream. The
+aggregator stays decoupled from dimension adapters. Q5:
+`NNameRevenueAggregator` keys on `n_name` string; resolution happens at
+the CUSTOMER ⋈ NATION survival point in every query body.
+
+**Rule 7 — Lookup columns ride on a new join-output record type, not on a
+side hashmap.** The join produces a record that carries the matched
+dimension column. Q5: `q5_customer_rn_t {c_custkey, c_nationkey, n_name}`
+is the codification of CUSTOMER ⋈ NATION output. Downstream join
+intermediates widen to carry `n_name`. A per-query `nationkey_to_name`
+cache is implementation glue to avoid duplicate PK lookups; it is NOT the
+canonical column carrier.
+
+**Rule 8 — S4 baselines use base tables only — no `col.split_*`.** A
+hash-join baseline that consumes a custkey-sorted split secondary borrows
+the merged-index family's locality and produces an unfair comparison
+against S3. Use the `customer` / `orders` / `lineitem` adapter members
+directly. See Q5 Phase 10B for the explicit fix.
+
+**Rule 9 — Reduce-side dimension hash builds are hand-rolled, not
+`HashJoin<…>`.** The shared `HashJoin<JK,JR,R1,R2>` in
+`frontend/shared/merge-join/hash_join.hpp` is a 2-table scalar-key
+inner-join operator (used by Q12 S4 and geo). Queries with multiple small
+dimension filters (Q3, Q3I, Q5) hand-roll independent hash maps/sets in a
+pipeline — that is the established family pattern. Adapting `HashJoin` for
+composite keys requires a wrapper type with `matching_keys()`/`match()`,
+equivalent effort to hand-rolling with no reuse benefit.
+
+---
+
 ## §13 — Anti-Pattern Reference
 
 → see `CONVENTIONS.md §Anti-Pattern Reference`
