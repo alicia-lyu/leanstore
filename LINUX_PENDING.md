@@ -49,6 +49,16 @@ traceability since they used to live above this header.
   SF=1 cleanly — the BTreeLL adapter fix in 708daa84 had been
   papering over the dispatch bug for the long-running TX loop;
   this fix closes the underlying defect.
+  **Follow-up 2026-05-11**: the "5/5 consecutive runs" above was a
+  lucky sample, not a true close. A fresh CloudLab bring-up
+  reproduced an S1-only digest mismatch (rows=10 across paths but
+  S1 `aggregator_rows_out`=12 vs S3/S4=13) at ~10% repro rate. Root
+  cause was a *separate* defect in `BinaryMergeJoin` (see the
+  2026-05-11 entry below), not a regression of the variant-dispatch
+  fix. The `HasKeyAcceptsKey` + `scheduleJobSync` fixes above were
+  real prerequisites — without them the test asserts or SEGVs
+  before it can run — and the BMJ-flush bug was probabilistic-silent
+  on top of those. Both fixes are needed; neither is wasted.
 
 - **`_btree` smoke-test SEGV** (was: SIGSEGV right after
   `Loaded 1500 orders records.` and during q3i custkey-map build).
@@ -100,3 +110,51 @@ traceability since they used to live above this header.
   ctor, leftover from the vanilla/invoice-extended workload split
   (commit 238e6829). Fix: dropped the adapter and the trailing
   ctor argument from both files.
+
+
+## Closed by 2026-05-11
+
+- **BMJ final-group flush — silently-dropped last-group join**
+  (was: `test_query_q3i_btree` at SF=1 `--wal=true` produced
+  rows=10 across all paths but S1's digest diverged from
+  S2/S3/S4/S5, with `aggregator_rows_out` S1=12 vs S3/S4=13.
+  `[FAIL] cross-structure aggregator_rows_out` plus `[FAIL] S1
+  base topK row 2/3 differs`; ~10% repro rate driven by
+  `std::random_device`-seeded TPC-H data). Root cause:
+  `BinaryMergeJoin::refresh_join_state()` in
+  `frontend/shared/merge-join/binary_merge_join.hpp` early-returned
+  when both fetch sides exhausted in the same `next_jk()` pass
+  after their pre-exhaust JKs were equal, skipping the final
+  `join_state.refresh(...)` that drains the last group's matched
+  records. Records emplaced for the final shared key sat in
+  `records_to_join` without producing their cartesian product —
+  silent drop of last-group join output. Fires only when the
+  rightmost JK is simultaneously the last surviving group on both
+  BMJ sides. Fix: flush the final group from `next()` in
+  `frontend/shared/merge-join/binary_merge_join.hpp` (commit
+  `92336200`). Verification: 50/50 consecutive `test_query_q3i_btree`
+  SF=1 runs pass `[OK]` parity across S1–S5; `test_query_q3_btree`
+  and `test_query_q12_btree` (other BMJ consumers) still pass — no
+  regression.
+
+- **Q3 S1/S2/S4 vs S3 access-pattern fairness** (was: only S3 had
+  physical custkey seek-skip via `WalkAction::SkipGroup`; S1/S2
+  streamed every row and S4 used a logical hash filter, so the
+  perf sweep wasn't apples-to-apples on physical-seek mechanics).
+  Three sibling commits today close the asymmetry:
+  - `bbc15e68`: S2 view physical seek-skip on custkey-miss,
+    mirroring S3's `WalkAction::SkipGroup` at
+    `tpch_family/col_pipeline.tpp:294-296`. New counter
+    `view_groups_skipped`.
+  - `f62a0149`: S1 BMJ-chain pre-scans the 150-customer table;
+    `fetch_ord` physical-seeks `ord_scan` past gaps between
+    accepted custkeys (orders-side closed; lineitem-aggregator-side
+    deferred — BMJ refill race blocker documented inline). New
+    counters `s1_groups_skipped`, `s1_orders_skipped` (reserved).
+  - `f62a0149` (S4 portion of same commit): inverts the lineitem
+    pass to physical-seek per qualifying
+    orderkey instead of streaming all lineitems and filtering by
+    `orders_map.find()`. New counter `s4_orderkey_seeks`.
+  Result: S1/S2/S3/S4 now apples-to-apples on physical-seek
+  mechanics. SF=1 parity preserved on both backends. Linux
+  prerequisite for the upcoming Q3 perf sweep.
