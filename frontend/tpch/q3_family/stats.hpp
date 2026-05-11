@@ -40,6 +40,23 @@ struct Q3FamilyStats : public tpch::TPCHFamilyStats {
    // Per-stage wall-clock for the TopN sort step (microseconds).
    long stage_us_topN = 0;
 
+   // -----------------------------------------------------------------------
+   // S2 (query_by_view) per-customer seek-skip counter — mirror of
+   // mi_groups_skipped (S3).  Bumped when the view scanner seeks past an
+   // entire custkey range after a c_mktsegment mismatch on the first row
+   // of that custkey group.  Makes the S2-vs-S3 comparison apples-to-apples
+   // wrt per-customer skip locality.
+   long view_groups_skipped = 0;
+
+   // S4 (query_by_hash) per-qualifying-orderkey seek counter.  Bumped once
+   // per physical seek into the lineitem scanner during the index-NL probe
+   // pass (post-orders-map-build).  Should equal the size of the qualifying
+   // orders map.  Mirror of mi_groups_skipped (S3) / view_groups_skipped
+   // (S2) — makes the S1/S2/S3/S4 access-pattern comparison apples-to-apples
+   // (every path now exercises physical seek mechanics, not just filter
+   // pushdown).
+   long s4_orderkey_seeks = 0;
+
    void reset() { *this = Q3FamilyStats{}; }
 };
 

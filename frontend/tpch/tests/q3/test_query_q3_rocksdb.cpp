@@ -197,6 +197,17 @@ int main(int argc, char** argv)
    parity_line("S3 merged", d_merged, (long)r_merged.size());
    parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
 
+   // Group-skip counters: S2 view_groups_skipped should be roughly equal to
+   // S3 mi_groups_skipped (same customers fail the mktsegment filter on both
+   // paths; only the skip mechanism differs).
+   std::cout << "\n=== Per-customer skip-seek (S2 vs S3) ===\n"
+             << "S2 view_groups_skipped = " << st_view.view_groups_skipped
+             << "    (lineitems_scanned = " << st_view.lineitems_scanned << ")\n"
+             << "S3 mi_groups_skipped   = " << st_merged.mi_groups_skipped
+             << "    (mi_records_visited = " << st_merged.mi_records_visited << ")\n"
+             << "S4 s4_orderkey_seeks   = " << st_hash.s4_orderkey_seeks
+             << "    (lineitems_scanned = " << st_hash.lineitems_scanned << ")\n";
+
    if (r_merged.empty()) {
       std::cout << "\n[FAIL] S3 returned 0 rows — query_by_merged body broken.\n";
       return 1;

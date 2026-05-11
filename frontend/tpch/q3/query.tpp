@@ -12,9 +12,11 @@
 
 #pragma once
 
+#include <algorithm>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "../tpch_family/col_pipeline.hpp"
 #include "../operators.hpp"
@@ -203,15 +205,19 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
 {
    // S2: sequential scan over q3_pipeline_view_t (per-lineitem rows).
    //
-   // Scan order is (custkey, orderkey, linenumber).  Mktsegment + orderdate
-   // filters are evaluated once per orderkey transition (constant within an
-   // order); l_shipdate is applied per-lineitem inside the accumulator.
-   // At each orderkey boundary we emit the agg row if revenue > 0.
+   // Scan order is (custkey, orderkey, linenumber).  Mktsegment is evaluated
+   // once per custkey transition (FD-attached, constant within a custkey
+   // group); on a miss we seek past the entire custkey range — mirror of
+   // S3's COLGroupWalk SkipGroup behaviour at on_customer.  Orderdate is
+   // evaluated once per orderkey transition (constant within an order);
+   // l_shipdate is applied per-lineitem inside the accumulator.  At each
+   // orderkey boundary we emit the agg row if revenue > 0.
    //
    // OPERATORS.md §4 / §6: all parameterised filters applied live at query
    // time; none baked into the view at load time.
    out.clear();
 
+   Integer   cur_custkey      = -1;
    Integer   cur_orderkey     = -1;
    Timestamp cur_orderdate    = 0;
    Integer   cur_shippriority = 0;
@@ -232,18 +238,35 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
       const q3_pipeline_view_t&      row = kv->second;
       if (stats) stats->lineitems_scanned++;
 
+      if (k.custkey != cur_custkey) {
+         // Custkey transition — flush prior order, re-evaluate mktsegment.
+         flush_order();
+         cur_custkey      = k.custkey;
+         cur_orderkey     = -1;       // force orderdate re-check below
+         cur_order_ok     = false;
+
+         // Mktsegment filter — FD-attached, identical for every row sharing
+         // this custkey, so checking the first row is sufficient.  On a miss
+         // we seek past the entire custkey range to mirror S3's SkipGroup.
+         auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
+         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+         if (sm != psm) {
+            if (stats) stats->view_groups_skipped++;
+            // Seek to (cur_custkey + 1, 0, 0) — start of next custkey group.
+            q3_pipeline_view_t::Key next_key{cur_custkey + 1, 0, 0};
+            vs->seek(next_key);
+            cur_custkey = -1;  // re-arm on next row
+            continue;
+         }
+         if (stats) stats->customers_passing_filter++;
+      }
+
       if (k.orderkey != cur_orderkey) {
          flush_order();
          cur_orderkey     = k.orderkey;
          cur_orderdate    = row.o_orderdate;
          cur_shippriority = row.o_shippriority;
          cur_order_ok     = false;
-
-         // Mktsegment filter.
-         auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
-         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-         if (sm != psm) continue;
-         if (stats) stats->customers_passing_filter++;
 
          // Orderdate filter.
          if (row.o_orderdate >= params.orderdate) continue;
@@ -353,19 +376,34 @@ long Q3Workload<Backend>::query_by_hash(std::vector<q3_agg_row_t>& out)
    }
 
    {
+      // Index-NL seek pattern (mirror of S2 view custkey-seek and S3 COL
+      // walker custkey-miss seek): extract qualifying orderkeys from the
+      // orders_map, sort them, and physical-seek the lineitem scanner to
+      // each (orderkey, 0).  Avoids streaming the full lineitem table and
+      // filtering by hashmap probe.  Makes S1/S2/S3/S4 apples-to-apples on
+      // access pattern, not just on filter pushdown.
+      std::vector<Integer> qualifying_orderkeys;
+      qualifying_orderkeys.reserve(orders_map.size());
+      for (const auto& [ok, _slot] : orders_map) qualifying_orderkeys.push_back(ok);
+      std::sort(qualifying_orderkeys.begin(), qualifying_orderkeys.end());
+
       auto sc = lineitem.getScanner();
-      while (auto kv = sc->next()) {
-         if (stats) stats->lineitems_scanned++;
-         if (!q3_predicate_lineitem(kv->second, params)) continue;
-         auto it = orders_map.find(kv->first.l_orderkey);
-         if (it == orders_map.end()) continue;
-         if (stats) stats->lineitems_passing_filter++;
-         // Reuse LineitemRevenueAccumulator for the per-record arithmetic
-         // (OPERATORS.md §6.1 comparison-integrity).  Reset so each
-         // accumulate() folds exactly one row's revenue into the slot.
-         q3_family::LineitemRevenueAccumulator<Params> acc;
-         acc.consume(kv->second, params);
-         it->second.revenue += acc.revenue;
+      for (Integer ok : qualifying_orderkeys) {
+         sc->seek(typename lineitem_t::Key{ok, 0});
+         if (stats) stats->s4_orderkey_seeks++;
+         auto it = orders_map.find(ok);  // guaranteed present
+         while (auto kv = sc->next()) {
+            if (kv->first.l_orderkey != ok) break;  // exited the orderkey group
+            if (stats) stats->lineitems_scanned++;
+            if (!q3_predicate_lineitem(kv->second, params)) continue;
+            if (stats) stats->lineitems_passing_filter++;
+            // Reuse LineitemRevenueAccumulator for the per-record arithmetic
+            // (OPERATORS.md §6.1 comparison-integrity).  Fresh accumulator
+            // so each consume() folds exactly one row's revenue into the slot.
+            q3_family::LineitemRevenueAccumulator<Params> acc;
+            acc.consume(kv->second, params);
+            it->second.revenue += acc.revenue;
+         }
       }
    }
 
