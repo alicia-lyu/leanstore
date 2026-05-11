@@ -118,6 +118,23 @@ populated and meaningful for Q3 S3.
 | 3 | MI[COL] only | `MergedAdapter<customer_col_t, orders_col_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys | `col_group_walk[_fused_emit]` over the COL MI; CUSTOMER hierarchy co-located, no separate join |
 | 4 | Traditional indexes + hash join | None | `Scan(customer)` → `Filter(mktsegment)` → `HashJoin(⋈orders)` → `Filter(orderdate)` → `HashJoin(⋈lineitem)` → `Filter(shipdate)` → SortedAggregate → TopN |
 
+**S4 transient hash-table working set (DRAM-budget caveat).** S4 builds
+three transient containers per `query_by_hash` invocation that S1/S2/S3
+do not: `cust_set` (qualifying customers post-mktsegment),
+`orders_map<orderkey, OrderSlot>` (qualifying orders post-orderdate ∧
+custkey-membership), and `qualifying_orderkeys` (sorted driver for the
+inverted-lineitem seek pass). Measured at SF=1 (BUILDING / 1995-03-15):
+**9092 bytes ≈ 0.0087 MiB** (LSM backend; BTree 7900 B). Implication:
+in fair-comparison perf sweeps, S4's `--dram_gib` budget should be
+reduced by this amount to keep total-memory parity with S1/S2/S3
+(which build no transient containers). Working-set scales ~linearly
+with qualifying-customer count, so at SF=N the budget reduction grows
+~N× — e.g. extrapolating from SF=1 (≈30 of 150 BUILDING customers
+qualifying): SF=300 ≈ 2.7 MiB, SF=600 ≈ 5.4 MiB, SF=1500 ≈ 13.5 MiB.
+The `s4_hashtable_bytes` counter in `Q3FamilyStats` (set by
+`query_by_hash` in `q3/query.tpp`) surfaces this empirically per query
+and is printed by the `test_query_q3_{lsm,btree}` harnesses.
+
 **S5 deliberately omitted.** Q3 has no parameter-independent
 aggregate to bake — Q3I's S5 keeps `pre_open_due` (invoice
 `status='O'` is hardcoded by spec, so the aggregate is genuinely

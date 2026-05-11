@@ -57,6 +57,16 @@ struct Q3FamilyStats : public tpch::TPCHFamilyStats {
    // pushdown).
    long s4_orderkey_seeks = 0;
 
+   // S4 (query_by_hash) transient hash-table working-set byte estimate.
+   // Computed once per query_by_hash invocation after qualifying_orderkeys
+   // is built but before the inverted-lineitem seek pass.  Approximation:
+   //   cust_set.size() * (sizeof(Integer) + 16)            // ~16B/node (next-ptr + cached hash) for stdlib unordered_set<int>
+   // + orders_map.size() * (sizeof(Integer) + sizeof(OrderSlot) + 24) // ~24B/node for stdlib unordered_map
+   // + qualifying_orderkeys.size() * sizeof(Integer)
+   // Surfaces the working-set cost that S1/S2/S3 do not incur and that the
+   // --dram_gib budget does not currently account for.
+   long s4_hashtable_bytes = 0;
+
    // S1 (query_by_base) per-custkey seek-skip counters — mirror of
    // mi_groups_skipped (S3) and view_groups_skipped (S2).  Apples-to-apples
    // physical-seek parity for the BMJ chain over custkey-sorted split

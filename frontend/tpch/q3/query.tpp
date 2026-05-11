@@ -512,6 +512,19 @@ long Q3Workload<Backend>::query_by_hash(std::vector<q3_agg_row_t>& out)
       for (const auto& [ok, _slot] : orders_map) qualifying_orderkeys.push_back(ok);
       std::sort(qualifying_orderkeys.begin(), qualifying_orderkeys.end());
 
+      // Transient hash-table working-set instrumentation (see stats.hpp
+      // for the per-element overhead rationale — stdlib unordered nodes
+      // store a next-pointer + cached hash, ~16B/node for set<int>,
+      // ~24B/node for map).  These three containers are CPU-cache and
+      // DRAM-budget consumers that S1/S2/S3 do not have.
+      if (stats) {
+         size_t bytes =
+             cust_set.size() * (sizeof(Integer) + 16)
+           + orders_map.size() * (sizeof(Integer) + sizeof(OrderSlot) + 24)
+           + qualifying_orderkeys.size() * sizeof(Integer);
+         stats->s4_hashtable_bytes = static_cast<long>(bytes);
+      }
+
       auto sc = lineitem.getScanner();
       for (Integer ok : qualifying_orderkeys) {
          sc->seek(typename lineitem_t::Key{ok, 0});

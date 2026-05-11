@@ -163,7 +163,10 @@ int main(int argc, char** argv)
              << "S3 mi_groups_skipped   = " << st_merged.mi_groups_skipped
              << "    (mi_records_visited = " << st_merged.mi_records_visited << ")\n"
              << "S4 s4_orderkey_seeks   = " << st_hash.s4_orderkey_seeks
-             << "    (lineitems_scanned = " << st_hash.lineitems_scanned << ")\n";
+             << "    (lineitems_scanned = " << st_hash.lineitems_scanned << ")\n"
+             << "  S4 s4_hashtable_bytes=" << st_hash.s4_hashtable_bytes
+             << " (" << std::fixed << std::setprecision(2)
+             << (double(st_hash.s4_hashtable_bytes) / 1048576.0) << " MiB)\n";
 
    if (r_merged.empty()) {
       std::cout << "\n[FAIL] S3 returned 0 rows — query_by_merged body broken.\n";
