@@ -93,8 +93,27 @@ struct BinaryMergeJoin {
       while (!join_state.has_next() && (next_left || next_right)) {
          next_jk();
       }
+      // Final-group flush: when both sides exhaust in the same next_jk()
+      // pass (next_left and next_right both become nullopt while their
+      // pre-exhaust JKs were equal), refresh_join_state() early-returns on
+      // `left_jk == JK::max()` and never calls join_state.refresh(), so
+      // the records emplaced for that last shared key sit in
+      // records_to_join un-joined. Force one final flush so the last
+      // group's cartesian product is produced before we declare the
+      // BMJ exhausted. Idempotent on subsequent calls (records_to_join
+      // already empty → join_current() returns 0).
+      if (!join_state.has_next() && !next_left && !next_right
+          && !final_flushed) {
+         join_state.refresh(JK::max());
+         final_flushed = true;
+      }
       return join_state.next();
    }
+
+  private:
+   bool final_flushed = false;
+
+  public:
 
    JK jk_to_join() const { return join_state.jk_to_join; }
    long produced() const { return join_state.get_produced(); }
