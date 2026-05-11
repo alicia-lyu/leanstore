@@ -358,14 +358,15 @@ never standalone operator nodes.** Draw one HashJoin box; annotate
 its two input edges as "build" and "probe". Never write a separate
 "Build" or "Probe" step as if it were its own operator class.
 
-**Rule 3 — Probe-side seek-on-miss is a HashJoin lowering, not a
-Sort operator.** Hash builds are inherently unordered (sets /
-hashmaps), so neither the build itself nor a sorted vector view of
-its keys is required for the lowering. When the **probe side is
-naturally ordered on the join key** (e.g., LINEITEM is sorted on
-`l_orderkey`), the lowering is: stream the probe; probe the
-hashset on each row; on a miss at probe-side key `K`, seek the
-probe scanner to `K + 1` and continue. The natural sort guarantees
+**Rule 3 — Probe-side seek-on-miss is a HashJoin physical
+implementation choice, not a Sort operator.** Hash builds are
+inherently unordered (sets / hashmaps), so neither the build
+itself nor a sorted vector view of its keys is needed. When the
+**probe side is naturally ordered on the join key** (e.g.,
+LINEITEM is sorted on `l_orderkey`), one valid physical
+implementation is: stream the probe; probe the hashset on each
+row; on a miss at probe-side key `K`, seek the probe scanner to
+`K + 1` and continue. The natural sort guarantees
 every probe row in the miss group is skipped without per-row hash
 lookups. Draw it as `HashJoin`; the seek-on-miss strategy belongs
 in a code comment, not as a separate `Sort` operator.
@@ -387,8 +388,9 @@ joined-side row. Q5: SUPPLIER ⋉ nation_set produces a relation
 keyed by `(s_nationkey, s_suppkey)`; the lineitem-side probe sends
 `(c_nationkey, l_suppkey)` from the JOINED-COL row (c_nationkey is
 a column on that row, not "a column from a different table"). One
-hashset probe is the lowering of this multi-column equi-join — no
-separate "cross-equality filter" downstream.
+hashset probe is the physical implementation of this multi-
+column equi-join — no separate "cross-equality filter"
+downstream.
 `supplier_nation_set: unordered_set<tuple<n_nationkey, s_suppkey>>`
 is the composite-key PK of the restricted-supplier relation.
 
