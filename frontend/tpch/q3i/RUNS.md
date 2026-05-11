@@ -5,6 +5,11 @@ file. Pre-existing run-grade numbers from before this file's creation are
 captured in [`PERFORMANCE.md`](./PERFORMANCE.md) (§A1 anomaly, §3 worklist
 G-series, §A6 memory-pressure sweep). New runs go here.
 
+For cross-config analysis (storage structure comparison, memory regime,
+LSM vs BTree, S5 deep-disk-bound surprise, cross-query Q3↔Q3I diffs, open
+questions) see [`RUNS_ANALYSIS.md`](RUNS_ANALYSIS.md) — synthesis lives
+there, raw entries live here.
+
 ## Entry format
 
 ```
@@ -225,3 +230,79 @@ G-series, §A6 memory-pressure sweep). New runs go here.
   customer groups outright. **S1 regression flagged** (consistent
   pattern across Q3 and Q3I where pre-scan adds overhead at the
   expense of S1's hot-path streaming cost).
+
+### 2026-05-11 13:50 CDT — q3i_lsm SF=300 DRAM=0.08 GiB — **post-Q3I-fairness-fix (altered paths only)**
+- **Commit**: `c482945d` (`calcite-integration`).
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 7–9 (altered paths
+  S1, S2, S4 only; S3 row 4 and S5 row 6 are unchanged pre-fix
+  numbers since their code paths weren't modified).
+- **Config**: SF=300, DRAM=0.08 GiB, S1–S5, secondaries 324–399 MiB
+  per structure (LSM), secondary/DRAM ≈ 4×, beyond-memory.
+- **Headline (TX/s)**: **S2 pipeline_view 4.60** > S3 mi_coli_walk
+  3.52 > S5 acoli_aggregated 2.01 > S1 base_merge_join 1.57 >>
+  S4 base_hash_join 0.455.
+- **Deltas (altered paths only) vs pre-Q3I-fairness baseline above**:
+  S1 1.71 → 1.57 (−8%, mild regression from pre-scan overhead at
+  beyond-memory), S2 2.88 → 4.60 (**+60%**, custkey seek-skip),
+  S4 0.4529 → 0.4546 (essentially unchanged, +0.4% noise — Q3I S4
+  hashmap+invoice-map work dominates the lineitem-pass cost so
+  inverted seek is wash).
+- **Claim check**: **S2 overtakes S3 even at 4× beyond-memory LSM**
+  after Q3I S2 custkey seek-skip — mirrors Q3 LSM SF=300/SF=1500
+  finding that LSM keeps S2 ahead across all regimes. S3 still
+  beats S5/S1/S4 by 1.75–7.7×. **Q3I-specific finding**: S4 does
+  NOT improve from the inverted-seek fix at beyond-memory LSM either
+  (cache-resident regressed; beyond-memory wash) — the Q3I S4 hash
+  build cost (3 maps: cust_set, open_due, orders) was already the
+  bottleneck, not the lineitem stream. Different from Q3 where S4
+  showed dramatic deltas in both directions.
+
+### 2026-05-11 14:15 CDT — q3i_btree SF=600 DRAM=0.4 GiB — **post-Q3I-fairness-fix**
+- **Commit**: `c482945d` (`calcite-integration`); fresh load (data
+  not previously on /mnt/ssd).
+- **TPut.csv**: `build/q3i_btree/TPut.csv` rows 12–16 (DRAM=0.4,
+  scale=600, post-merge sweep).
+- **Config**: SF=600, DRAM=0.4 GiB, S1–S5, secondaries 1.95–2.44 GiB
+  per structure (BTree, ~5× LSM size), secondary/DRAM ≈ 6×, deeply
+  beyond-memory.
+- **Headline (TX/s)**: **S5 acoli_aggregated 1.46** > S3 mi_coli_walk
+  0.570 > S2 pipeline_view 0.487 > S1 base_merge_join 0.174 >>
+  S4 base_hash_join 0.043.
+- **Surprise**: **S5 (the paper-deferred aCOLI MI) wins this config
+  by 2.6× over S3.** S5 eliminates invoice rows at scan time
+  (`pre_open_due` baked into `customer_acoli_t` payload at load
+  time) AND uses the same `WalkAction::SkipGroup` physical-seek
+  walker as S3. Net effect: fewer bytes scanned per qualifying
+  customer (no invoice rows) + same locality. At BTree deep-disk-
+  bound, fewer-bytes-scanned dominates per-record-dispatch
+  overhead, and S5's aCOLI walker overhead amortizes against the
+  6× DRAM pressure. **This contradicts the project-wide §S5
+  deferral framing** that "S3 > S5" — S5 is competitive here.
+- **Claim check on paper pitch S3 ≥ S2 > S1/S4**: **holds —
+  S3 (0.57) > S2 (0.49) > S1 (0.17) >> S4 (0.043)** on the S1–S4
+  axis. Same backend-structural pattern as Q3 SF=600 BTree (BTree
+  per-page descent makes S3 reassert beyond-memory). But S5
+  outperforming S3 is the headline finding here — worth following
+  up in [`PERFORMANCE.md`](PERFORMANCE.md) §S5-deferral context.
+
+### 2026-05-11 14:40 CDT — q3i_lsm SF=1500 DRAM=0.4 GiB — **post-Q3I-fairness-fix**
+- **Commit**: `c482945d` (`calcite-integration`); fresh load.
+- **TPut.csv**: `build/q3i_lsm/TPut.csv` rows 18–22 (DRAM=0.4,
+  scale=1500, post-merge sweep).
+- **Config**: SF=1500, DRAM=0.4 GiB, S1–S5, secondaries 1.62–2.00 GiB
+  per structure (LSM), secondary/DRAM ≈ 4.5×, large beyond-memory.
+- **Headline (TX/s)**: **S2 pipeline_view 0.859** > S3 mi_coli_walk
+  0.650 > S5 acoli_aggregated 0.477 > S1 base_merge_join 0.292 >>
+  S4 base_hash_join 0.079.
+- **Q3I LSM never inverts to S3 > S2**: S2 leads S3 across every
+  LSM regime measured for Q3I (SF=15 cache-resident, SF=300 4×
+  beyond-mem, SF=1500 4.5× beyond-mem). Same backend-structural
+  finding as Q3.
+- **S5 ordering shift**: On LSM SF=1500 S5 (0.48) sits below S3
+  (0.65), unlike BTree SF=600 where S5 led. LSM keeps S3's
+  variant-dispatched walker competitive because sequential SST
+  prefetch handles the extra invoice-row scans cheaply.
+- **Claim check**: **Supports the paper pitch S3 ≥ S2 > S1/S4** on
+  the S1–S4 axis at the same envelope as SF=300 LSM. Cross-backend
+  conclusion confirmed: **prefer S2 on LSM, S3 (or S5!) on BTree,
+  when DRAM is tight; cache-resident is S2 on both.**
