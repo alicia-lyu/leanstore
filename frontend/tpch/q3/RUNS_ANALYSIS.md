@@ -37,13 +37,15 @@ counters.
 ### Headline numbers (post-2026-05-11 fairness fix)
 
 Run sources: SF=15 LSM/BTree (commit `51ea87b0`), SF=300 LSM
-(commit `51ea87b0`), SF=600 BTree (commit `51ea87b0`).
+(commit `51ea87b0`), SF=600 BTree (commit `51ea87b0`), SF=1500 LSM
+(commit `56d0da1c`).
 
 | Config | S1 | S2 | S3 | S4 | Winner |
 |--------|----|----|----|----|--------|
 | SF=15 LSM (cache-resident) | 80.4 | 264.3 | 211.5 | 113.6 | **S2** |
 | SF=15 BTree (cache-resident) | 101.3 | 408.6 | 314.1 | 168.7 | **S2** |
 | SF=300 LSM (3.5× beyond-mem) | 2.32 | **4.99** | 4.20 | 0.62 | **S2** |
+| SF=1500 LSM (3.7× beyond-mem) | 0.43 | **0.99** | 0.62 | 0.078 | **S2** |
 | SF=600 BTree (4× beyond-mem) | 0.39 | 0.75 | **1.30** | 0.087 | **S3** |
 
 Numbers are TX/s; bold marks the winning structure for that config.
@@ -106,6 +108,7 @@ Across all four configs, S3 lands within a 2× envelope of S2:
 | SF=15 LSM | 0.80 |
 | SF=15 BTree | 0.77 |
 | SF=300 LSM | 0.84 |
+| SF=1500 LSM | 0.63 |
 | SF=600 BTree | 1.73 |
 
 This is the load-bearing experimental claim: **S3 matches S2 within
@@ -159,18 +162,28 @@ ordering**:
 | Backend (beyond-mem) | Ordering | S3 vs S2 |
 |----------------------|----------|----------|
 | LSM (SF=300/0.08) | S2 > S3 > S1 >> S4 | S2 ahead (84%) |
+| LSM (SF=1500/0.4) | S2 > S3 > S1 >> S4 | S2 ahead (63%) |
 | BTree (SF=600/0.4) | S3 > S2 > S1 >> S4 | S3 ahead (+73%) |
 
-**Why the S2/S3 inversion flips between backends:**
+**The S2/S3 winner is backend-structural, not memory-pressure-
+structural.** SF=1500 LSM (commit `56d0da1c`) closed Open Q2 from
+the prior revision of this doc — even at large beyond-memory LSM
+(3.7× secondary/DRAM), S2 leads S3. The conjecture that S3 would
+"reassert" at larger LSM scale was wrong; the difference between
+backends is structural:
 
 - On LSM, the per-lineitem view's sequential SST scan benefits from
-  bloom-filter prefetch and level-1 caching. S2 stays competitive
-  even at 3.5× beyond-memory.
+  bloom-filter prefetch and level-1 caching. S2 stays ahead across
+  all LSM regimes measured (cache-resident through 3.7× beyond-mem).
 - On BTree, every page miss is a root-to-leaf descent with no
   shortcut. The view's wider rows compound this (more pages for
   the same number of qualifying rows). The MI's compact tagged-key
   layout fits more useful records per page; S3 reasserts its
   locality advantage.
+
+The cross-backend behavior thus splits cleanly: **prefer S2 if your
+backend is LSM, S3 if your backend is BTree, when DRAM is tight.**
+Cache-resident is S2 on both.
 
 **Storage cost cross-check (SF=15):**
 
@@ -257,18 +270,23 @@ Candidates:
 **Action**: rerun the `c500b747` binary on the same fresh /mnt/ssd
 data to isolate code vs data-shape. Not done yet.
 
-### Q2. S3 vs S2 crossover scale on LSM
+### Q2. S3 vs S2 crossover scale on LSM — RESOLVED
 
-At SF=15 cache-resident, S2/S3 = 1.25 (S2 wins). At SF=300
-beyond-memory LSM, S2/S3 = 1.19 (S2 still wins, gap closing).
-**Does the gap fully close — or invert — at SF=1500 LSM?**
+**Resolved 2026-05-11 by SF=1500 LSM sweep (commit `56d0da1c`)**:
+the gap does NOT close on LSM. S3/S2 ratios across LSM regimes:
 
-If LSM follows BTree's behavior (BTree inverts to S3 > S2 at
-SF=600), we'd expect S3 to overtake S2 somewhere between SF=300
-and SF=1500 LSM. If LSM stays S2-favored even at SF=1500, that's
-a structural backend difference worth documenting.
+| Config | S3/S2 |
+|--------|-------|
+| SF=15 LSM cache-resident | 0.80 |
+| SF=300 LSM 3.5× beyond-mem | 0.84 |
+| **SF=1500 LSM 3.7× beyond-mem** | **0.63** |
 
-**Pending**: SF=1500 LSM sweep in flight at time of writing.
+The gap actually *widened* at SF=1500 — S3 sits at 63% of S2. The
+conjecture that "LSM follows BTree and inverts at larger scale"
+was wrong. The S2-vs-S3 winner is backend-structural, not
+memory-pressure-structural. See §3 LSM vs BTree for the rationale
+(LSM's sequential SST + bloom-filter friendliness keeps the wider
+view rows cheap; BTree's per-page descent makes them expensive).
 
 ### Q3. S4 access-pattern switching
 

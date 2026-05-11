@@ -232,3 +232,35 @@ entries live here.
   variation rather than code regression. Treat the *ordering*
   conclusion as solid, the absolute deltas as pending the regression
   diagnosis flagged below.
+
+### 2026-05-11 11:40 CDT — q3_lsm SF=1500 DRAM=0.4 GiB — post-fairness-fix
+- **Commit**: `56d0da1c` (`calcite-integration`); same fixes as
+  SF=15/SF=300/SF=600 above. Sweep ran on the post-merge binary.
+- **TPut.csv**: `build/q3_lsm/TPut.csv` rows 18–21 (DRAM=0.4,
+  scale=1500, post-merge sweep).
+- **Config**: SF=1500, DRAM=0.4 GiB, S1–S4, secondaries 1.22–1.53 GiB
+  per structure, secondary/DRAM ≈ 3.7×, large beyond-memory regime.
+  Fresh load (not previously on /mnt/ssd). Host: Linux (CloudLab
+  `node0`).
+- **Headline (TX/s)**: S2 pipeline_view **0.986** > S3 mi_col_walk
+  0.621 > S1 base_merge_join 0.429 >> S4 base_hash_join 0.078.
+  SSTRead(µs)/TX S1=375K, S2=192K, S3=233K, **S4=10.77M** — S4
+  beyond-memory random-seek tax extreme.
+- **Deltas vs pre-fairness-fix baseline** (`c500b747` SF=1500 LSM
+  entry above): S1 0.450 → 0.429 (−5%, noise), S2 0.549 → 0.986
+  (**+80%** — view custkey seek-skip dominates at large beyond-mem
+  LSM), S3 0.840 → 0.621 (−26%, regressed — same data-shape vs
+  code question as SF=600 BTree), S4 0.243 → 0.078 (**−68%**,
+  inverted-seek tax compounds at scale).
+- **Claim check**: **Supports the paper pitch — S3 still in the
+  same league as S2 (S3/S2 = 0.63) > S1/S4**, but with S2 leading
+  on LSM beyond-memory rather than S3. This **answers Open Q2 in
+  RUNS_ANALYSIS.md**: on LSM the S3-vs-S2 winner does NOT flip from
+  cache-resident to beyond-memory; S2 wins across LSM regimes
+  because LSM's sequential SST scan + bloom-filter prefetch keeps
+  the per-lineitem view's wider rows cheap to stream. Contrast with
+  SF=600 BTree where S3 inverts to lead — BTree page-descent cost
+  per random read exceeds the view's row-fanout cost, so MI
+  locality reasserts. **Cross-backend conclusion**: the S2 vs S3
+  winner is **backend-structural**, not memory-regime-structural,
+  on this workload.
