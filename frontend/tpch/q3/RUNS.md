@@ -181,3 +181,40 @@ consolidating.
   scan locality, which S2 wins on at this DRAM-pressure ratio. **TODO**:
   diagnose with deeper memory pressure (SF=1500 / DRAM=0.4 GiB) to
   see if the crossover finally lands.
+
+### 2026-05-11 12:11 CDT — q3_btree SF=600 DRAM=0.4 GiB — post-fairness-fix
+- **Commit**: `51ea87b0` (`calcite-integration`); same fixes as
+  SF=15/SF=300 above.
+- **TPut.csv**: `build/q3_btree/TPut.csv` rows 10–13 (DRAM=0.4,
+  scale=600, post-merge sweep).
+- **Config**: SF=600, DRAM=0.4 GiB, S1–S4, secondaries 1.32–1.75 GiB
+  per structure, secondary/DRAM ≈ 4×, deeply beyond-memory regime.
+  Fresh load (data not previously on /mnt/ssd). Host: Linux (CloudLab
+  `node0`).
+- **Headline (TX/s)**: S3 mi_col_walk **1.30** > S2 pipeline_view 0.75
+  > S1 base_merge_join 0.39 >> S4 base_hash_join 0.087.
+- **Deltas vs pre-fairness-fix baseline** (`c500b747` SF=600 entry
+  above): S1 1.27 → 0.39 (**−69% regression**), S2 0.21 → 0.75
+  (**3.6× win** — S2 finally breathes once the per-customer skip-seek
+  cuts the read-fanout footprint), S3 3.71 → 1.30 (**−65% regression**),
+  S4 0.04 → 0.087 (+118%). Both S1 and S3 regressed — large enough
+  to suggest a real cause, not noise, but **fresh load means RNG-seeded
+  TPC-H data differs from the `c500b747` snapshot**, so part of the
+  delta may be data-shape variation. **Investigation needed** —
+  candidates: (a) BMJ final-group flush adds ε work to S1 hot path
+  even when not firing (drainers now check `final_flushed`); (b) the
+  S1 custkey pre-scan + std::lower_bound per fetched order = ~1.5M
+  orders × O(log 30K) ≈ 22M comparisons at this SF, potentially
+  cache-thrashing; (c) S3 regression has no obvious cause from this
+  branch — the col_group_walk path didn't change, TopNSink emit is
+  a heap-of-10 push, neither should cost 65%. **Action**: A/B the
+  S1 pre-scan path vs a streaming variant; rerun the `c500b747`
+  binary on the same fresh data to isolate data-shape vs code regression.
+- **Claim check**: **At this beyond-memory scale the paper claim
+  S3 ≥ S2 > S1/S4 partially holds** — S3 still leads S2 (1.30 vs
+  0.75, +73%), S2 > S1 (now! previously inverted), S4 catastrophic.
+  The cache-resident inversion (S2 > S3) does not extend to
+  deep-disk-bound on BTree; sequential MI walk reasserts its
+  locality advantage at the right DRAM-pressure ratio. But the
+  absolute numbers are suspicious given the regressions — treat
+  this as a data point pending the S1/S3 regression diagnosis.
