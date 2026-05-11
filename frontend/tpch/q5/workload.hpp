@@ -115,6 +115,24 @@ struct Q5Stats : public ::tpch::TPCHFamilyStats {
    long lineitems_admitted = 0;  // passed SUPPLIER probe + cross-equality
    long agg_buckets        = 0;  // distinct n_name buckets (≤ |nation_set|)
 
+   // Fairness counters — mirror Q3FamilyStats (q3_family/stats.hpp).
+   // Make S1/S2/S3/S4 apples-to-apples on physical-seek access pattern, not
+   // just on filter pushdown.  Q5 uses nation_set membership where Q3 uses
+   // c_mktsegment; the seek-skip mechanic is identical.
+   //   • s1_groups_skipped   — bumped each time S1's fetch_ord physically
+   //                            seeks past rejected-customer custkey range(s).
+   //   • view_groups_skipped — bumped each time S2's view scanner seeks past
+   //                            an entire custkey range on nation_set miss.
+   //   • s4_orderkey_seeks   — bumped once per physical seek into the
+   //                            lineitem scanner during the index-NL probe
+   //                            pass (post-orders-map-build).
+   //   • s4_hashtable_bytes  — transient hash-table working-set byte estimate
+   //                            (cust_nation_map + orders_map + sorted vec).
+   long s1_groups_skipped  = 0;
+   long view_groups_skipped = 0;
+   long s4_orderkey_seeks  = 0;
+   long s4_hashtable_bytes = 0;
+
    void reset() { *this = Q5Stats{}; }
 };
 

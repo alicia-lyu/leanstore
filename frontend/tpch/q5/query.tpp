@@ -21,12 +21,12 @@
 #pragma once
 
 #include <algorithm>
+#include <limits>
 #include <ostream>
 #include <unordered_map>
 #include <vector>
 
 #include "../../shared/merge-join/binary_merge_join.hpp"
-#include "../../shared/merge-join/hash_join.hpp"
 #include "../tpch_family/col_pipeline.hpp"
 #include "../tpch_family/revenue.hpp"
 #include "../tpch_family/walk_action.hpp"
@@ -364,6 +364,33 @@ long Q5Workload<Backend>::query_by_base(std::vector<q5_agg_row_t>& out)
    auto cust_sc = customer.getScanner();
    auto ord_sc  = col.split_orders().getScanner();
 
+   // Pre-scan customers to build the set of accepted custkeys for fetch_ord
+   // seek-skip.  Mirrors Q3 S1 fairness fix (q3/query.tpp:169–241): a small
+   // upfront linear pass over CUSTOMER produces an ascending vector of
+   // custkeys whose c_nationkey ∈ nation_set; fetch_ord answers "is this
+   // custkey valid? if not, what's the next valid one?" in O(log n) via
+   // std::lower_bound.  Avoids the BMJ refill-race that abandoned Q3I §G6
+   // and Q3's lineitem-side seek (see NOTE next to fetch_lin below).
+   //
+   // Customer-side cost: |customer| extra scanner pulls per query (~150 at
+   // SF=1) — negligible against the orders/lineitem volume.
+   std::vector<Integer> accepted_custkeys;
+   {
+      auto pre = customer.getScanner();
+      while (auto kv = pre->next()) {
+         if (sides.nation_set.count(kv->second.c_nationkey) != 0) {
+            accepted_custkeys.push_back(kv->first.c_custkey);
+         }
+      }
+   }
+   auto smallest_accepted_geq = [&](Integer C) -> Integer {
+      auto it = std::lower_bound(accepted_custkeys.begin(),
+                                  accepted_custkeys.end(), C);
+      return it == accepted_custkeys.end()
+                 ? std::numeric_limits<Integer>::max()
+                 : *it;
+   };
+
    // fetch_cust: scan customers, gate by c_nationkey ∈ nation_set.
    auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
       while (auto kv = cust_sc->next()) {
@@ -375,16 +402,32 @@ long Q5Workload<Backend>::query_by_base(std::vector<q5_agg_row_t>& out)
       return std::nullopt;
    };
 
-   // fetch_ord: scan custkey-sorted orders split index, gate by orderdate window.
+   // fetch_ord: scan custkey-sorted orders split index, gate by orderdate
+   // window.  Physical seek-skip: if the order's custkey has no accepted
+   // customer (nation_set miss), jump forward to the smallest accepted
+   // custkey >= kv.custkey.  Direct equivalent of S3's COLGroupWalk
+   // SkipGroup (col_pipeline.tpp) and of S2's view seek on nation miss.
    auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
-      while (auto kv = ord_sc->next()) {
+      for (;;) {
+         auto kv = ord_sc->next();
+         if (!kv) return std::nullopt;
          if (stats) stats->orders_scanned++;
+         Integer target = smallest_accepted_geq(kv->first.custkey);
+         if (target != kv->first.custkey) {
+            if (target == std::numeric_limits<Integer>::max()) {
+               // No further accepted customers — drain the scanner.
+               return std::nullopt;
+            }
+            orders_coli_t::Key skip_key{target, 0};
+            ord_sc->seek(skip_key);
+            if (stats) stats->s1_groups_skipped++;
+            continue;
+         }
          const Timestamp od = kv->second.o_orderdate;
          if (od < params.orderdate_lo || od >= params.orderdate_lo + 365) continue;
          if (stats) stats->orders_passing_filter++;
          return kv;
       }
-      return std::nullopt;
    };
 
    // BMJ #1: customer ⋈ split_orders on custkey → q5_jr1_t.
@@ -448,13 +491,39 @@ long Q5Workload<Backend>::query_by_view(std::vector<q5_agg_row_t>& out)
 
    NNameRevenueAggregator agg;
 
+   // Per-custkey seek-skip mirrors Q3 S2 (q3/query.tpp:365–386) and S3's
+   // COLGroupWalk SkipGroup.  Within a custkey group, c_nationkey is
+   // FD-attached and identical for every row; we evaluate the nation_set
+   // gate once at the custkey transition and seek past the entire custkey
+   // range on a miss instead of streaming every row through a per-row
+   // hashmap probe.  This closes the access-pattern gap to S3 (apples-to-
+   // apples physical-seek parity, not just filter pushdown).
+   Integer cur_custkey       = -1;
+   bool    cur_custkey_ok    = false;
+
    auto sc = pipeline_view.getScanner();
    while (auto kv = sc->next()) {
+      const auto& k = kv->first;
       const auto& v = kv->second;
       if (stats) stats->lineitems_scanned++;
 
-      // Customer gate.
-      if (sides.nation_set.count(v.c_nationkey) == 0) continue;
+      if (k.custkey != cur_custkey) {
+         // Custkey transition — re-evaluate nation_set membership.  On a
+         // miss, physical-seek past the entire custkey range to mirror
+         // S3's SkipGroup.
+         cur_custkey = k.custkey;
+         if (sides.nation_set.count(v.c_nationkey) == 0) {
+            if (stats) stats->view_groups_skipped++;
+            q5_pipeline_view_t::Key next_key{cur_custkey + 1, 0, 0};
+            sc->seek(next_key);
+            cur_custkey    = -1;  // re-arm on next row
+            cur_custkey_ok = false;
+            continue;
+         }
+         cur_custkey_ok = true;
+         if (stats) stats->customers_passing_filter++;
+      }
+      if (!cur_custkey_ok) continue;
 
       // Orderdate window.  Inlined here (not delegated to q5_predicate_orders)
       // because that predicate takes orders_t and the view row is
@@ -529,20 +598,25 @@ long Q5Workload<Backend>::query_by_merged(std::vector<q5_agg_row_t>& out)
 template <typename Backend>
 long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
 {
-   // S4: 2-stage HashJoin chain over base tables (S4 baseline).
+   // S4: HashJoin chain baseline rewritten for access-pattern fairness vs
+   // S3 (mirrors the Q3 S4 fairness fix in q3/query.tpp:451–561).
    //
-   // Stage 1: HashJoin<q5_cust_jk_t::Key, q5_jr1_t, customerh_t, orders_coli_t>
-   //   build  = customer scan, filter c_nationkey ∈ nation_set
-   //   probe  = col.split_orders() scan, filter orderdate window
-   //   output = q5_jr1_t  (custkey → (customer, order))
+   //   1. Build qualifying-customer map (cust_nation_map: custkey → c_nationkey)
+   //      with nation_set pushed down at the CUSTOMER scan.
+   //   2. Build orders_map keyed by (custkey, orderkey) carrying c_nationkey,
+   //      with orderdate filter + custkey-membership pushed down at the
+   //      ORDERS scan.
+   //   3. Extract qualifying (custkey, orderkey) pairs, sort lex, and
+   //      physical-seek the lineitem scanner per pair (index-NL pattern,
+   //      mirror of S2 view custkey-seek and S3 COL walker SkipGroup).
+   //      Avoids streaming the full lineitem table — makes S1/S2/S3/S4
+   //      apples-to-apples on access pattern, not just filter pushdown.
+   //   4. Per-lineitem: invoke q5_admit_lineitem (SUPPLIER probe + cross-eq +
+   //      n_name accumulate), with cached c_nationkey from orders_map.
    //
-   // Stage 2: HashJoin<q5_sort_key_t, q5_jr2_t, q5_jr1_t, lineitem_col_t>
-   //   build  = stage-1 output (drained via next())
-   //   probe  = col.split_lineitem() scan (no pre-filter; SUPPLIER probe is post-join)
-   //   per-emit: q5_admit_lineitem(jr2.lineitem(), jr2.jr1().cust().c_nationkey, sides, agg, stats)
-   //
-   // seek_jk = JK::max() for both stages (unbounded full scan).
-   // OPERATORS.md §6.1: same predicate logic as S1/S3 — apples-to-apples comparison.
+   // S4 is the *only* path allowed hash-aggregates inside the pipeline
+   // (CONVENTIONS.md pitfall — the hashmap tax S4 pays for not having a
+   // merged index).  s4_hashtable_bytes surfaces that empirically.
    out.clear();
 
    Q5SideTables sides;
@@ -550,68 +624,85 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
 
    NNameRevenueAggregator agg;
 
-   // ------------------------------------------------------------------
-   // Stage 1: HashJoin customer ⋈ split_orders on custkey.
-
-   auto cust_sc  = customer.getScanner();
-   auto ord_sc   = col.split_orders().getScanner();
-
-   auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
-      while (auto kv = cust_sc->next()) {
+   // (1) Qualifying customers: custkey → c_nationkey.
+   std::unordered_map<Integer, Integer> cust_nation_map;
+   {
+      auto sc = customer.getScanner();
+      while (auto kv = sc->next()) {
          if (stats) stats->customers_scanned++;
          if (sides.nation_set.count(kv->second.c_nationkey) == 0) continue;
          if (stats) stats->customers_passing_filter++;
-         return kv;
+         cust_nation_map.emplace(kv->first.c_custkey, kv->second.c_nationkey);
       }
-      return std::nullopt;
-   };
+   }
 
-   auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
-      while (auto kv = ord_sc->next()) {
+   // (2) Qualifying orders: (custkey, orderkey) → c_nationkey.
+   //     Uses col.split_orders() scanner (carries custkey-extended key);
+   //     filters by orderdate window AND custkey ∈ cust_nation_map.
+   struct OrderSlot {
+      Integer c_nationkey;
+   };
+   // Key by (custkey, orderkey) since S4 needs the custkey to drive the
+   // custkey-prefixed lineitem seek in step 3.  Using a flat
+   // unordered_map<pair, …> is cheaper than nested maps.
+   std::unordered_map<long, OrderSlot> orders_map;
+   auto pack_co = [](Integer custkey, Integer orderkey) -> long {
+      return (static_cast<long>(custkey) << 32) | static_cast<unsigned long>(orderkey);
+   };
+   {
+      auto sc = col.split_orders().getScanner();
+      while (auto kv = sc->next()) {
          if (stats) stats->orders_scanned++;
-         // q5_predicate_orders reads only o_orderdate; apply the same check inline
-         // using orders_coli_t's o_orderdate field (no full orders_t needed).
          const Timestamp od = kv->second.o_orderdate;
          if (od < params.orderdate_lo || od >= params.orderdate_lo + 365) continue;
+         auto cit = cust_nation_map.find(kv->first.custkey);
+         if (cit == cust_nation_map.end()) continue;
          if (stats) stats->orders_passing_filter++;
-         return kv;
+         orders_map.emplace(pack_co(kv->first.custkey, kv->first.orderkey),
+                            OrderSlot{cit->second});
       }
-      return std::nullopt;
-   };
+   }
 
-   HashJoin<q5_cust_jk_t::Key, q5_jr1_t, customerh_t, orders_coli_t>
-       hj1(fetch_cust, fetch_ord, q5_cust_jk_t::Key::max());
+   // (3) Sorted (custkey, orderkey) pairs drive the index-NL seek into
+   //     col.split_lineitem().  Same Q3 fairness pattern; the only Q5
+   //     specific bit is the 2-component lex sort (since split_lineitem's
+   //     primary key is (custkey, orderkey, linenumber)).
+   std::vector<std::pair<Integer, Integer>> qualifying_co;
+   qualifying_co.reserve(orders_map.size());
+   for (const auto& [packed, _slot] : orders_map) {
+      Integer ck = static_cast<Integer>(packed >> 32);
+      Integer ok = static_cast<Integer>(packed & 0xFFFFFFFFL);
+      qualifying_co.emplace_back(ck, ok);
+   }
+   std::sort(qualifying_co.begin(), qualifying_co.end());
 
-   // ------------------------------------------------------------------
-   // Stage 2: HashJoin jr1 ⋈ split_lineitem on (custkey, orderkey).
-   //
-   // Keys on q5_sort_key_t with the WILDCARD_KEY convention on linenumber:
-   // SKBuilder projects linenumber=WILDCARD_KEY for jr1 build-side rows
-   // and forwards the real linenumber for lineitem probe-side rows.
-   // std::hash hashes all three fields uniformly; matching_keys() on the
-   // probe side enumerates the (custkey, orderkey, WILDCARD_KEY) anchor
-   // bucket so the probe finds the jr1 entry.
+   // Transient hash-table working-set instrumentation (mirror of Q3's
+   // s4_hashtable_bytes — see q3_family/stats.hpp).
+   if (stats) {
+      size_t bytes =
+          cust_nation_map.size() * (sizeof(Integer) * 2 + 24)
+        + orders_map.size() * (sizeof(long) + sizeof(OrderSlot) + 24)
+        + qualifying_co.size() * sizeof(std::pair<Integer, Integer>);
+      stats->s4_hashtable_bytes = static_cast<long>(bytes);
+   }
 
-   auto lin_sc = col.split_lineitem().getScanner();
-
-   auto fetch_jr1 = [&]() -> std::optional<std::pair<q5_jr1_t::Key, q5_jr1_t>> {
-      return hj1.next();
-   };
-
-   auto fetch_lin = [&]() -> std::optional<std::pair<lineitem_col_t::Key, lineitem_col_t>> {
-      auto kv = lin_sc->next();
-      if (kv && stats) stats->lineitems_scanned++;
-      return kv;
-   };
-
-   HashJoin<q5_sort_key_t, q5_jr2_t, q5_jr1_t, lineitem_col_t>
-       hj2(fetch_jr1, fetch_lin, q5_sort_key_t::max(),
-           [&](const q5_jr2_t::Key&, const q5_jr2_t& jr2) {
-              // q5_admit_lineitem handles SUPPLIER probe, cross-eq, and accumulate.
-              q5_admit_lineitem(jr2.lineitem(), jr2.jr1().cust().c_nationkey,
-                                sides, agg, stats);
-           });
-   hj2.run();
+   {
+      auto sc = col.split_lineitem().getScanner();
+      for (const auto& [ck, ok] : qualifying_co) {
+         sc->seek(typename lineitem_col_t::Key{ck, ok, 0});
+         if (stats) stats->s4_orderkey_seeks++;
+         auto oit = orders_map.find(pack_co(ck, ok));  // guaranteed present
+         const Integer c_nk = oit->second.c_nationkey;
+         while (auto kv = sc->next()) {
+            // Exited the (custkey, orderkey) group?  split_lineitem is sorted
+            // (custkey, orderkey, linenumber), so the boundary is when either
+            // custkey or orderkey changes.
+            if (kv->first.custkey != ck || kv->first.orderkey != ok) break;
+            if (stats) stats->lineitems_scanned++;
+            q5_admit_lineitem(kv->second, c_nk, sides, agg, stats);
+         }
+      }
+   }
 
    agg.emit(out, sides);
    if (stats) {
