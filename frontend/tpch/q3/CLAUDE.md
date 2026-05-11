@@ -1,5 +1,7 @@
 # Q3: Shipping Priority
 
+**Reading guide**: For SQL and plan descriptions, read §TPC-H Definition and §Plan Descriptions. For implementation status and open questions, read §Implementation Phases and §Open Questions. For OutClass / wildcard / anti-pattern details, see `../CONVENTIONS.md`. Skip the rest unless reconstructing a historical decision.
+
 ## Sibling Docs
 
 Every non-`CLAUDE.md` Markdown in `q3/` and `q3/plans/` (the latter

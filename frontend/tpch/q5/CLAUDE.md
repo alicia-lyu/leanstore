@@ -1,5 +1,7 @@
 # Q5: Local Supplier Volume
 
+**Reading guide**: For SQL and plan descriptions, read §TPC-H Definition and §Plan Descriptions. For implementation status, read §Implementation Status. For OutClass / wildcard / latent-assumption details, see `../CONVENTIONS.md`. Skip the rest unless reconstructing a design decision or adding a new storage structure.
+
 ## Sibling Docs
 
 Every non-`CLAUDE.md` Markdown in `q5/` and `q5/plans/` (the latter

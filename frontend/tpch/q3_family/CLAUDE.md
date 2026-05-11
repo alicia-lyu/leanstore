@@ -1,5 +1,7 @@
 # q3_family/ — Shared Building Blocks for Q3 and Q3I
 
+**Reading guide**: For the symbol inventory and what each header provides, read §Shared Symbols. For wildcard / OutClass / anti-pattern conventions that govern these symbols, see `../CONVENTIONS.md`. Skip the rest unless adding a new shared accumulator or hoisting a family utility.
+
 This directory contains headers that are shared between Q3 and Q3I (and any
 future Q3-flavoured query). Every symbol here must be usable by both queries
 without modification; query-specific logic stays in `q3/` or `q3i/`.

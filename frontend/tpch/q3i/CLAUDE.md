@@ -1,5 +1,7 @@
 # Q3I: Shipping Priority × Customer Outstanding Balance (Invoice-Extended Q3)
 
+**Reading guide**: For SQL and plan descriptions, read §TPC-H Definition and §Plan Descriptions. For implementation status and phase history, read §Implementation Phases. For perf investigation context, read `PERFORMANCE.md`. For OutClass / wildcard / anti-pattern details, see `../CONVENTIONS.md`. Skip the rest unless reconstructing a historical decision.
+
 ## Sibling Docs
 
 Every non-`CLAUDE.md` Markdown in `q3i/` and `q3i/plans/` (the latter

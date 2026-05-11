@@ -1,5 +1,7 @@
 # Q12: Shipping Modes and Order Priority Query
 
+**Reading guide**: For SQL and Calcite plan architecture, read §TPC-H Definition and §Calcite Plan Architecture. For storage structure options and operator translation, read §Storage Structure Options and §Operator Translation. For OutClass / anti-pattern details, see `../CONVENTIONS.md`. Skip the rest unless wiring a new executable or adding CMake targets.
+
 ## TPC-H Definition (Section 2.4.12)
 
 ```sql
