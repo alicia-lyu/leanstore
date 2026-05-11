@@ -533,6 +533,17 @@ int main(int argc, char** argv)
              << " mi_groups_skipped=" << st_merged.mi_groups_skipped
              << " agg_rows="          << st_merged.aggregator_rows_out << "\n";
    check_joins("S4 hash  ", st_hash.join_callbacks);
+
+   // Fairness-fix counters (Q3 ports bbc15e68 + f62a0149 + 51ea87b0).
+   std::cout << "[--]   S1 s1_groups_skipped  = " << st_base.s1_groups_skipped
+             << "    (orders_scanned = " << st_base.orders_scanned << ")\n"
+             << "[--]   S2 view_groups_skipped = " << st_view.view_groups_skipped << "\n"
+             << "[--]   S4 s4_orderkey_seeks   = " << st_hash.s4_orderkey_seeks
+             << "    (lineitems_scanned = " << st_hash.lineitems_scanned << ")\n"
+             << "[--]   S4 s4_hashtable_bytes  = " << st_hash.s4_hashtable_bytes
+             << " (" << std::fixed << std::setprecision(2)
+             << (double(st_hash.s4_hashtable_bytes) / 1048576.0) << " MiB)\n";
+
    {
       bool ok = st_merged.mi_groups_skipped > 0;
       card_ok &= ok;

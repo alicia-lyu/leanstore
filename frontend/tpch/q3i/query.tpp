@@ -9,10 +9,14 @@
 
 #pragma once
 
+#include <algorithm>
 #include <chrono>
+#include <limits>
 #include <ostream>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "../operators.hpp"
 #include "../q3_family/accumulators.hpp"
@@ -500,6 +504,75 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
    auto cust_scan_ptr = customer.getScanner();
    auto ord_scan_ptr  = coli.split_orders().getScanner();
 
+   // -----------------------------------------------------------------
+   // Pre-scan: build a sorted vector of accepted custkeys for orders-side
+   // physical seek-skip.  Ported from Q3 commit f62a0149 (S1 portion).
+   //
+   // A custkey is accepted iff it passes BOTH per-customer gates:
+   //   (a) c_mktsegment == params.mktsegment       (customer table)
+   //   (b) cust_open_due > params.threshold        (invoice aggregate)
+   //
+   // Both are FD-attached and constant within a custkey group, so both
+   // gates are evaluated once per custkey upfront.  fetch_ord then
+   // lower_bounds the next accepted custkey and physically seeks
+   // ord_scan past gaps — mirror of S3's COLIGroupWalk SkipGroup seek
+   // on the merged-adapter scanner.
+   //
+   // Why pre-scan rather than a side-channel from fetch_cust: BMJ#1
+   // pulls fetch_cust ahead of its current jk's drain on the right
+   // (orders) side, so any side-channel updated inside fetch_cust runs
+   // ahead of fetch_ord's processing front (the §G6 refill race).
+   // Pre-scanning sidesteps that — accepted_custkeys is immutable for
+   // the query.
+   //
+   // Cost: |customer| + |invoice| extra scanner pulls (linear in both).
+   // At SF=1 that's 150 + ~600 records — negligible vs the BMJ chain's
+   // 1500 orders / 6000 lineitems.  The pre-built invoice open_due map
+   // is reused as the threshold gate, not the BMJ right side (the
+   // existing CustomerOpenDueAggregator still drives BMJ#1).
+   std::unordered_map<Integer, Numeric> cust_open_due_map;
+   {
+      CustomerOpenDueAccumulator acc;
+      auto inv_scan = coli.split_invoice().getScanner();
+      Integer cur_ck = -1;
+      auto flush = [&]() {
+         if (cur_ck >= 0 && acc.value > Numeric(0)) {
+            cust_open_due_map[cur_ck] = acc.value;
+         }
+         acc.reset();
+      };
+      while (auto kv = inv_scan->next()) {
+         if (kv->first.custkey != cur_ck) {
+            flush();
+            cur_ck = kv->first.custkey;
+         }
+         acc.consume_invoice(kv->second);
+      }
+      flush();
+   }
+   std::vector<Integer> accepted_custkeys;
+   {
+      auto pre = customer.getScanner();
+      while (auto kv = pre->next()) {
+         auto sm  = std::string_view(kv->second.c_mktsegment.data,
+                                     kv->second.c_mktsegment.length);
+         auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+         if (sm != psm) continue;
+         auto it = cust_open_due_map.find(kv->first.c_custkey);
+         if (it == cust_open_due_map.end()) continue;
+         if (it->second <= params.threshold) continue;
+         accepted_custkeys.push_back(kv->first.c_custkey);
+      }
+   }
+   std::sort(accepted_custkeys.begin(), accepted_custkeys.end());
+   auto smallest_accepted_geq = [&](Integer C) -> Integer {
+      auto it = std::lower_bound(accepted_custkeys.begin(),
+                                  accepted_custkeys.end(), C);
+      return it == accepted_custkeys.end()
+                 ? std::numeric_limits<Integer>::max()
+                 : *it;
+   };
+
    // G1 customer-level Seek-skip on the invoice aggregator only.
    //
    // Trait-gated by Backend::USE_PHYSICAL_SEEK_SKIP, runtime-overridden by
@@ -569,15 +642,38 @@ long Q3IWorkload<Backend>::query_by_base(std::vector<q3i_agg_row_t>& out)
 
    // BMJ #2: q3i_jr1_t ⋈ orders_coli_t on custkey.
    // fetch_ord skips orders with o_orderdate >= params.orderdate.
+   //
+   // Physical seek-skip ported from Q3 commit f62a0149 (S1 portion):
+   // if the order's custkey has no accepted customer (mktseg-pass AND
+   // threshold-pass), jump forward to the smallest accepted custkey
+   // >= kv.custkey via lower_bound + ord_scan->seek.  Mirror of S3's
+   // COLIGroupWalk SkipGroup on the merged-adapter scanner.  Bumps
+   // s1_groups_skipped per actual physical seek.
+   //
+   // Lineitem-aggregator-side seek (agg_lin.seek_to_custkey from
+   // fetch_lin_agg) is deferred — same §G6 BMJ refill race documented
+   // in the G1/G6 block above.  s1_orders_skipped stays reserved at 0
+   // (S3's SkipOrder is logical/next-based, no I/O fairness gap).
    auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
-      while (auto kv = ord_scan_ptr->next()) {
+      for (;;) {
+         auto kv = ord_scan_ptr->next();
+         if (!kv) return std::nullopt;
          if (stats) stats->orders_scanned++;
+         Integer target = smallest_accepted_geq(kv->first.custkey);
+         if (target != kv->first.custkey) {
+            if (target == std::numeric_limits<Integer>::max()) {
+               return std::nullopt;
+            }
+            orders_coli_t::Key skip_key{target, Integer(0)};
+            ord_scan_ptr->seek(skip_key);
+            if (stats) stats->s1_groups_skipped++;
+            continue;
+         }
          if (kv->second.o_orderdate < params.orderdate) {
             if (stats) stats->orders_passing_filter++;
             return kv;
          }
       }
-      return std::nullopt;
    };
 
    auto fetch_bmj1 = [&]() {
@@ -659,6 +755,12 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
    };
    TopNSink<q3i_agg_row_t, decltype(cmp)> sink(10, cmp);
 
+   // Per-custkey skip-seek state.  Mirror of Q3 S2 (commit bbc15e68) and
+   // S3's WalkAction::SkipGroup: c_mktsegment and cust_open_due are
+   // FD-attached, constant within a custkey group.  On a miss we seek past
+   // the entire custkey range to mirror S3's COLIGroupWalk SkipGroup.
+   Integer   cur_custkey     = -1;
+
    // Per-orderkey accumulator state — tracks the currently-open order group.
    Integer   cur_orderkey    = -1;
    Timestamp cur_orderdate   = 0;
@@ -689,8 +791,34 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
          const q3i_pipeline_view_t::Key& k   = kv->first;
          const q3i_pipeline_view_t&      row = kv->second;
 
+         // Custkey transition: c_mktsegment and cust_open_due are FD-attached
+         // (constant within a custkey group).  Check both once per custkey;
+         // on a miss seek past the entire custkey range — mirror of S3's
+         // SkipGroup behaviour.  Ported from Q3 commit bbc15e68 with the
+         // additional cust_open_due > threshold check (Q3I-specific
+         // per-customer gate).
+         if (k.custkey != cur_custkey) {
+            flush_order();
+            cur_custkey  = k.custkey;
+            cur_orderkey = -1;  // force orderdate re-check on next orderkey
+            cur_order_ok = false;
+
+            auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
+            auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
+            const bool seg_miss = (sm != psm);
+            const bool thr_miss = (row.cust_open_due <= params.threshold);
+            if (seg_miss || thr_miss) {
+               if (stats) stats->view_groups_skipped++;
+               // Seek past this custkey: (cur_custkey + 1, 0, 0).
+               q3i_pipeline_view_t::Key next_key{cur_custkey + 1, 0, 0};
+               vs->seek(next_key);
+               cur_custkey = -1;  // re-arm on next row
+               continue;
+            }
+         }
+
          // Orderkey transition: flush the previous group and re-evaluate
-         // per-order gates for the new (custkey, orderkey).
+         // the per-order orderdate gate for the new orderkey.
          if (k.orderkey != cur_orderkey) {
             flush_order();
             cur_orderkey     = k.orderkey;
@@ -698,14 +826,6 @@ long Q3IWorkload<Backend>::query_by_view(std::vector<q3i_agg_row_t>& out)
             cur_shippriority = row.o_shippriority;
             cur_open_due     = row.cust_open_due;
             cur_order_ok     = false;
-
-            // Mktsegment filter.
-            auto sm  = std::string_view(row.c_mktsegment.data, row.c_mktsegment.length);
-            auto psm = std::string_view(params.mktsegment.data, params.mktsegment.length);
-            if (sm != psm) continue;
-
-            // Threshold filter.
-            if (row.cust_open_due <= params.threshold) continue;
 
             // Orderdate filter.
             if (row.o_orderdate >= params.orderdate) {
@@ -858,75 +978,68 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          if (stats) stats->join2_output_rows++;  // each surviving (custkey,orderkey)
       }
 
-      // G2: build a sorted vector of surviving orderkeys for orderkey-
-      // level Seek-skip on the lineitem probe. The orders-build phase
-      // populates ord_map keyed by surviving orderkeys; HashJoin's
-      // probe-miss path otherwise iterates one lineitem at a time
-      // through every orderkey. Trait-gated via use_seek_skip; counter
-      // increments per skip event. See q3i/PERFORMANCE.md §3 A/B-1.
-      const bool seek_skip =
-          FLAGS_use_seek_skip < 0 ? Backend::USE_PHYSICAL_SEEK_SKIP
-                                  : (FLAGS_use_seek_skip != 0);
-      std::vector<Integer> surviving_orderkeys;
-      if (seek_skip) {
-         surviving_orderkeys.reserve(ord_map.size());
-         for (const auto& [ok, _] : ord_map) surviving_orderkeys.push_back(ok);
-         std::sort(surviving_orderkeys.begin(), surviving_orderkeys.end());
+      // Inverted-lineitem physical seek pass.  Ported from Q3 commit
+      // f62a0149 (S4 portion).  After ord_map is built, extract its
+      // surviving orderkeys into a sorted vector, then for each
+      // qualifying orderkey physical-seek the lineitem scanner to
+      // lineitem_i_t::Key{ok, 0} and scan next() until l_orderkey != ok.
+      // This makes S4's lineitem access pattern apples-to-apples with
+      // S3's group-skip mechanic.  Bumps s4_orderkey_seeks per seek
+      // (== |qualifying orderkeys|).
+      std::vector<Integer> qualifying_orderkeys;
+      qualifying_orderkeys.reserve(ord_map.size());
+      for (const auto& [ok, _] : ord_map) qualifying_orderkeys.push_back(ok);
+      std::sort(qualifying_orderkeys.begin(), qualifying_orderkeys.end());
+
+      // Transient hash-table working-set instrumentation.  S4 builds
+      // four transient containers (open_due_map, cust_ok, ord_map,
+      // qualifying_orderkeys) — Q3I's working set is larger than Q3's
+      // because it also includes the invoice aggregator map.  Mirror of
+      // Q3 commit 51ea87b0 with an extra term for open_due_map.
+      if (stats) {
+         size_t bytes =
+             open_due_map.size() * (sizeof(Integer) + sizeof(Numeric) + 24)
+           + cust_ok.size()      * (sizeof(Integer) + sizeof(bool) + 24)
+           + ord_map.size()      * (sizeof(Integer) + sizeof(OrderSlot) + 24)
+           + qualifying_orderkeys.size() * sizeof(Integer);
+         stats->s4_hashtable_bytes = static_cast<long>(bytes);
       }
 
-      // Probe lineitem against orders map; accumulate revenue per orderkey.
       {
          LineitemRevenueAccumulator acc;
-         while (auto kv = lin_scan->next()) {
-            if (stats) stats->lineitems_scanned++;
-            const lineitem_t& l = kv->second;
-            auto it = ord_map.find(kv->first.l_orderkey);
-            if (it == ord_map.end()) {
-               if (seek_skip) {
-                  // Lineitem's orderkey missed ord_map. Find the next
-                  // surviving orderkey > current and seek the lineitem
-                  // scanner there. Orderkeys-sorted-vector binary search.
-                  auto sit = std::upper_bound(
-                      surviving_orderkeys.begin(),
-                      surviving_orderkeys.end(),
-                      kv->first.l_orderkey);
-                  if (sit == surviving_orderkeys.end()) break;  // no more
-                  if (stats) stats->hj_groups_skipped++;
-                  lin_scan->seek(lineitem_i_t::Key{*sit, Integer(0)});
+         for (Integer ok : qualifying_orderkeys) {
+            lin_scan->seek(typename lineitem_i_t::Key{ok, Integer(0)});
+            if (stats) stats->s4_orderkey_seeks++;
+            auto it = ord_map.find(ok);  // guaranteed present
+            while (auto kv = lin_scan->next()) {
+               if (kv->first.l_orderkey != ok) break;  // exited orderkey group
+               if (stats) stats->lineitems_scanned++;
+               const lineitem_t& l = kv->second;
+               if (!acc.consume(l, params)) continue;  // shipdate filter
+               if (stats) {
+                  stats->lineitems_passing_filter++;
+                  stats->join_callbacks++;
+                  stats->join3_output_rows++;
                }
-               continue;
-            }
-            if (!acc.consume(l, params)) continue;  // shipdate filter fused in consume
-            if (stats) {
-               stats->lineitems_passing_filter++;
-               stats->join_callbacks++;
-               stats->join3_output_rows++;
-            }
-            const OrderSlot& slot = it->second;
-            Integer orderkey = kv->first.l_orderkey;
-            auto& row = per_order[orderkey];
-            if (row.o_orderkey == Integer(0)) {
-               // First lineitem for this order: populate order fields.
-               // Defensive lookup: by construction (line 851's gate), every
-               // slot.custkey was in open_due_map when ord_map was populated.
-               // If we ever miss here, log and skip — this is the symptom of
-               // the SF=15 dram=0.1 q3i_btree S4 crash before the local-copy
-               // fix above. Once that fix holds, this branch should never fire.
-               auto due_it = open_due_map.find(slot.custkey);
-               if (due_it == open_due_map.end()) {
-                  std::cerr << "[q3i S4 invariant violation] slot.custkey="
-                            << slot.custkey << " orderkey=" << orderkey
-                            << " open_due_map.size=" << open_due_map.size()
-                            << " ord_map.size=" << ord_map.size() << "\n";
-                  continue;
+               const OrderSlot& slot = it->second;
+               auto& row = per_order[ok];
+               if (row.o_orderkey == Integer(0)) {
+                  auto due_it = open_due_map.find(slot.custkey);
+                  if (due_it == open_due_map.end()) {
+                     std::cerr << "[q3i S4 invariant violation] slot.custkey="
+                               << slot.custkey << " orderkey=" << ok
+                               << " open_due_map.size=" << open_due_map.size()
+                               << " ord_map.size=" << ord_map.size() << "\n";
+                     continue;
+                  }
+                  row.o_orderkey     = ok;
+                  row.o_orderdate    = slot.orderdate;
+                  row.o_shippriority = slot.shippriority;
+                  row.cust_open_due  = due_it->second;
                }
-               row.o_orderkey     = orderkey;
-               row.o_orderdate    = slot.orderdate;
-               row.o_shippriority = slot.shippriority;
-               row.cust_open_due  = due_it->second;
+               row.revenue += acc.revenue;
+               acc.reset();
             }
-            row.revenue += acc.revenue;
-            acc.reset();
          }
       }
    }  // end StageTimer: entire HJ chain attributed to stage_us_join
