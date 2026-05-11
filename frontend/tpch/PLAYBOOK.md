@@ -1575,10 +1575,14 @@ input edges as "build" and "probe". Never write a separate "Build" or
 "Probe" step as if it were its own operator class.
 
 **Rule 3 — Sorted-then-seek is a HashJoin lowering, not a Sort operator.**
-When the build side is sorted and the probe side is naturally ordered on
-the join key, a per-build-row seek into the probe scanner is a valid
-physical implementation of inner HashJoin. Draw it as `HashJoin`; record
-the seek strategy in a code comment.
+Hash builds are inherently unordered (they're sets / hashmaps), so the
+build itself has no sort order. When the **probe side is naturally
+ordered on the join key**, take a sorted *vector view* of the build's
+keys and iterate it as a cursor — per build-key seek into the probe
+scanner, stream the matching slice, advance. This is a valid physical
+implementation of inner HashJoin. Draw it as `HashJoin`; the sorted
+vector-view + seek strategy belongs in a code comment, not as a
+separate `Sort` operator.
 
 **Rule 4 — Build payload = primary key only.** Standard hash builds carry
 only the build relation's PK; downstream consumers fetch additional
