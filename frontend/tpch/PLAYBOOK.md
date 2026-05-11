@@ -518,91 +518,7 @@ See Q3I `views.hpp` lines 154–241 for the exact pattern.
 merge-joins on that key, plus `project<R>` and `to_key<R>`. See Q3I
 `views.hpp` lines 309–375.
 
-#### Sort-key wildcard semantics — `WILDCARD_KEY`, `matching_keys()`, `match()`
-
-The convention is codified in `frontend/shared/wildcard_key.hpp`:
-
-- `WILDCARD_KEY` is the sentinel constant (`= 0` — TPC-H and geo IDs
-  are 1-based) for a key field intentionally left unset to act as a
-  prefix anchor or wildcard match.  Never write a bare `0` in a
-  `Key{...}` constructor or in a match()/matching_keys() comparison.
-- `wildcard_match(a, b)` is a 3-way comparison helper that returns 0
-  when either side equals `WILDCARD_KEY`, otherwise the usual signed
-  ordering.  Use it inside `match()` instead of hand-rolling the
-  `if (a == 0 || b == 0) return 0;` branch.
-
-Three pieces of machinery work together for wildcard-keyed joins:
-
-1. **`match()`** chains `wildcard_match` calls per field (see
-   `q5_sort_key_t::match` in `q5/views.hpp` for the canonical 3-field
-   shape, `geo::sort_key_t::match` in `frontend/geo/views.hpp` for the
-   5-field shape).  Used by BMJ's `refresh_join_state`, by HashJoin's
-   probe-side equal-range check, and by `join_state::join_and_clear`
-   (which compares `next_jk.match(SKBuilder<JK>::project<R>(jk_to_join))`
-   to decide whether each per-record-type buffer needs flushing).
-
-2. **`matching_keys()`** enumerates the prefix-anchor keys a probe-side
-   row must look up, walking up the hierarchy (each non-WILDCARD_KEY
-   field, set to WILDCARD_KEY one level at a time, plus self).  HashJoin
-   probe walks the returned vector and consults each bucket via
-   `equal_range`, because the hashmap (`std::unordered_multimap`)
-   cannot itself ignore trailing slots.
-
-3. **`SKBuilder<JK>::project<R>(jk)`** strips a JK to record R's
-   natural granularity, filling absent fields with `WILDCARD_KEY`.
-   Pure granularity stripping — has nothing to do with wildcards in
-   isolation; the wildcard semantics come from `match()` honouring
-   the WILDCARD_KEY sentinel.  But the two mechanisms together are
-   what make wildcard-keyed BMJ work: when one input lacks a finer
-   field (e.g. `q5_jr1_t` has no linenumber), `project<q5_jr1_t>`
-   strips it to WILDCARD_KEY, and `join_and_clear`'s match-vs-projected
-   call returns 0 → the build-side buffer survives across probe-side
-   fan-out instead of being cleared per probe row.
-
-**Hash convention**: wildcard-blind by default.  `operator%` /
-`std::hash` hash all fields uniformly; the probe-side `matching_keys()`
-fan-out is what bridges build/probe bucket placement.  See
-`q5_sort_key_t` and `geo::sort_key_t` for the canonical pattern.  The
-OLD-DESIGN exception is `tpch_family/views_ol.hpp::ol_sort_key_t`,
-which uses a wildcard-AWARE hash (orderkey-only) and enumerates only
-one anchor in `matching_keys()` — kept working as-is because no
-current consumer needs the canonical pattern there, but slated for
-retirement; do not mirror it in new code.
-
-**Audit checklist for any SK with >1 field**:
-
-1. Does every consumer of this SK project every field with a concrete
-   value? If yes, `return {*this}` is sound and `match()` can stay
-   strict.
-2. If any consumer projects WILDCARD_KEY into a trailing slot, three
-   things are required (all, not any):
-   - **`match()`** chains `wildcard_match` per field.
-   - **`matching_keys()`** enumerates every prefix anchor walking up
-     the hierarchy.
-   - **`SKBuilder<JK>::project<R>`** strips fields R doesn't carry to
-     WILDCARD_KEY (granularity stripping; needed by BMJ via
-     `join_state::join_and_clear`).
-3. `operator<=>` stays strict (default).  `std::hash` / `operator%`
-   hash all fields uniformly (wildcard-blind); the probe-side
-   `matching_keys()` fan-out handles the bucket asymmetry.
-4. Don't mint a narrower SK type to "drop" wildcardable fields.
-   Trailing fields stay in the SK because the underlying secondary
-   structure relies on them for sort uniqueness; teach the existing
-   SK its wildcard wiring instead.  (Q5's `q5_co_jk_t` was a
-   workaround that got retired in favour of the proper
-   `q5_sort_key_t`.)
-
-**Canonical reference implementations**: `q5/views.hpp::q5_sort_key_t`
-(3-field, mirrors geo style) and `frontend/geo/views.hpp::sort_key_t`
-(5-field).  Both expose all three pieces (per-field `match`, full
-prefix-anchor enumeration, wildcard-blind hash) plus their
-`SKBuilder` projections.
-
-> **PITFALL — `joined_ol_t::unfoldKey`** (commit `be8b9bba`): The generic
-> `joined_t::unfoldKey(fold_pks=false)` path assumes each constituent
-> type has a `Key(JK)` constructor. If yours doesn't, you must add an
-> explicit `unfoldKey` override on your join result type. The symptom is
-> a compile error in `RocksDBAdapter<your_view_t>` instantiation.
+→ see `CONVENTIONS.md §Sort-key wildcard semantics`
 
 ---
 
@@ -1365,31 +1281,9 @@ See Q3I `query.tpp` lines 620–740 for the full pattern.
 
 ---
 
-### §7.6 — Common Epilogue: `apply_topN`
+### §7.6 — Post-pipeline OutClass: small-buffer sink
 
-Every `query_by_*` body ends with:
-
-```cpp
-apply_topN(out, {{K}}, [](const q{{N}}_agg_row_t& a, const q{{N}}_agg_row_t& b) {
-   if (a.revenue != b.revenue) return a.revenue > b.revenue;  // DESC
-   if (a.o_orderdate != b.o_orderdate) return a.o_orderdate < b.o_orderdate;  // ASC
-   return a.o_orderkey < b.o_orderkey;  // ASC — unique tiebreaker
-});
-return static_cast<long>(out.size());
-```
-
-The comparator MUST include a unique tiebreaker field as the final key.
-
-> **PITFALL — Single-key comparator in top-K** (commit `a4f5a4bc`):
-> Using only `revenue DESC` as the sort key leaves `std::partial_sort`
-> free to resolve ties by input order, which differs across paths
-> (S2 scans by `(custkey, orderkey)`, S4 iterates an `unordered_map`).
-> On data states with revenue ties at the boundary, this produces
-> different top-10 sets and thus different XOR digests.
-> **Symptom**: 3 or 4 distinct digests despite correct query logic.
-> **Fix**: always include enough tiebreaker fields to make the comparator
-> a strict weak ordering with no residual ambiguity. A unique key
-> (e.g. `o_orderkey`) as the last field guarantees this.
+→ see `CONVENTIONS.md §Post-pipeline OutClass`
 
 ---
 
@@ -1594,99 +1488,13 @@ anti-pattern #25 / #26 in §13.)
 
 ## §10.5 — Performance instrumentation (standard machinery)
 
-Four flags + two header-level utilities are inherited for free if the
-new query's executable is wired the same way as Q3I's. Each was
-introduced during a Q3I performance investigation; new queries should
-plumb them all from day one rather than back-fill when a perf surprise
-surfaces (and it will — H1, H4, H8 all surfaced this way; see
-Anti-Pattern #23).
-
-### `--micro_perf=true`
-
-Per-query scanner-internal timing.
-
-- **RocksDB**: `frontend/tpch/q3i/perf_context_capture.hpp` snapshots
-  `rocksdb::PerfContext` (e.g. `user_key_comparison_count`,
-  `iter_next_cpu_nanos`) and `IOStatsContext` (`bytes_read`) before
-  and after each query; emits per-TX averages.
-- **LeanStore**: B-tree has no PerfContext analog. The chrono hook in
-  `frontend/shared/adapter-scanner/scanner_perf_hook.hpp`
-  (`tpch::scanner_perf::iter_next_ns_acc`) accumulates wall-clock
-  per `MergedScanner::next()` call. The hook costs ~50 ns/call;
-  read absolute numbers as upper bounds, ratios as robust.
-
-### `--cfstats=true` (RocksDB only)
-
-Pre/post `helper.run()` per-CF stats diff via the shared
-`RocksDBLogger`. Useful for block-cache hit rate, SST read/write
-attribution.
-
-> **`SST_WRITE_MICROS` baseline-subtract**: the histogram
-> accumulates over DB lifetime including post-load compaction. For
-> read-only query experiments this inflates the reported
-> SSTWrite(µs)/TX. Call `RocksDBLogger::capture_baseline()` once
-> before `helper.run()`; each snapshot then reports
-> `(current – baseline)`.
-
-### `--load_only_structure=N`
-
-Populate only the secondary needed for `--storage_structure=N` at
-load time. Used by isolated-DB experiments (Q3I A5) to remove
-cross-structure cache pollution. Default `-1` = load all.
-
-`generate_targets.py::run_isolated_experiment` emits per-structure
-make targets `q{N}_lsm_iso_M` and `q{N}_btree_iso_M` (`M` = storage
-structure 1–5), plus an aggregate `q{N}_lsm_iso` / `q{N}_btree_iso`
-target (commit `9da4f295` consolidated the on-disk layout):
-
-- Image dirs:  `$(data_disk)/{exec}_iso/iso_{N}/{scale}` (one per
-  storage structure).
-- Runtime dir: `build/{exec}_iso/{scale}-in-{dram}/` — **shared
-  across all five iso structures**, so `build/{exec}_iso/TPut.csv`
-  carries one row per `N`, parallel to the non-iso
-  `build/{exec}/TPut.csv`. Don't override `csv_path` per-structure.
-
-Register your query the same way and the iso targets appear
-automatically.
-
-### `--coli_walker_variant={baseline,fused_emit}`
-
-Walker dispatch choice — see §7.1 above. **Default**: `fused_emit`
-(post-A2c, set in Makefile `coli_walker_variant ?= fused_emit`).
-Use `coli_walker_variant=baseline` to reproduce the regression A/B.
-
-### `--use_seek_skip={-1,0,1}`
-
-Walker Seek-skip override (commit `9da4f295`). `-1` (default) defers
-to `Backend::USE_PHYSICAL_SEEK_SKIP`; `0`/`1` force forward-iter /
-Seek-skip respectively. Both production binaries and the Makefile
-expose this for regression A/Bs (`use_seek_skip ?= -1`).
+→ see `CONVENTIONS.md §Performance instrumentation`
 
 ---
 
 ## §10.6 — Size diagnostics: content-walk pattern
 
-`50fd2052` (RocksDB per-CF size cache fix) and `83870b48` (LeanStore
-`content_bytes_walk`) together establish the
-`[content/row]` + `[overhead]` + `[fill]` reporting convention. New
-queries adding a custom secondary should follow it — the alternative
-(reasoning from `get_size()` MiB alone) cost the entire H1 cycle to
-root-cause when a stale-cache bug misreported one CF's size.
-
-- **RocksDB**: typed scan summing `key_bytes + value_bytes` per row;
-  divide by `get_size()` to get content-vs-overhead split. Healthy
-  tagged-record overhead ~5–25% (per-CF SST metadata + bloom filter
-  + index blocks); shrinks at higher SF.
-- **LeanStore**: call
-  `LeanStoreMergedAdapter::content_bytes_walk()` (drives
-  `next_raw()`, no variant construction) or
-  `LeanStoreAdapter::content_bytes_walk()` (typed scan summing
-  `maxFoldLength + sizeof(Record)`). Compare to
-  `estimatePages × page_size` for fill ratio. Healthy ratio
-  ~0.5–0.7; far below 0.5 implies a measurement bug or extreme
-  fragmentation. See `frontend/shared/adapter-scanner/
-  LeanStoreMergedAdapter.hpp` and `LeanStoreAdapter.hpp` for the
-  exact signatures.
+→ see `CONVENTIONS.md §Size diagnostics`
 
 ---
 
@@ -1751,67 +1559,13 @@ documented.
 
 ## §13 — Anti-Pattern Reference
 
-| # | Anti-pattern | Source commit | Symptom | Fix |
-|---|-------------|--------------|---------|-----|
-| 1 | `BinaryMergeJoin` for view population | `f74b67da` | ~1 row per order group instead of N; view cardinality wrong | Manual two-pointer merge |
-| 2 | Post-join Filter nodes | design rule | Filters not pushed down; perf loss and semantic divergence | Fuse into fetch lambdas (S1/S4) or Visitor hooks (S3) |
-| 3 | Single-key comparator in `apply_topN` | `a4f5a4bc` | 3–4 distinct digests despite correct logic; ties resolved by input order | Multi-key comparator ending in a unique field |
-| 4 | Reusing `--ssd_path` without wipe | `835b4f0a` | Lineitem count grows across re-runs; 4 distinct digests | `remove_all(ssd_path)` before `rocks_db.open()` |
-| 5 | Per-structure loading in test | `721771bc` | RNG data drift; different lineitem counts per structure | Load once, populate all secondaries up front |
-| 6 | Hash-aggregate inside MI family pipeline | OPERATORS.md §7 | Violates comparison-integrity; S1/S3 results are not comparable | Use SortedAggregate / inline accumulator; hash-aggregate only in S4 |
-| 7 | Missing `accepts_key` for tagged types | `3ce2bf38` | `toType()` falls back to fold-length heuristic, misclassifying records | Explicit `static bool accepts_key(...)` on all `_coli_t` / `_col_t` types |
-| 8 | Duplicate record type `id` | — | Silent data corruption: one type's records overwrite another's | `grep 'static constexpr int id'` before allocating |
-| 9 | Zero-revenue orders in `flush_order` | `4dc93ec6` | S3 emits orders without matching lineitems; row count too high | Guard `revenue <= 0` at top of `flush_order` |
-| 10 | ~~View missing baked-in filter~~ (RETIRED — see #24) | `4dc93ec6` reversed by `db60d49b` (Q3I) | Originally diagnosed as "S2 includes unfiltered rows; digest diverges". The actual root cause was that the view was the wrong shape (per-orderkey + pre-aggregated revenue); making the view per-lineitem + unaggregated dissolves the symptom. | Per-lineitem view, no filter baking; see #24 |
-| 11 | S2 missing zero-revenue guard | `8fdcdda1` | S2 emits zero-revenue view rows other paths suppress | Add `revenue <= 0` check in `query_by_view` |
-| 12 | `reinterpret_cast` on RocksDB values | `d8980426` | Alignment UB on platforms with unaligned value buffers | Use `memcpy` into a stack local instead |
-| 13 | Load order: lineitems before orders | `6edcf2ca` | `order_dates` map empty during lineitem generation; dates default to 0 | Load order: customer → orders → lineitem |
-| 14 | Raw indices as orderkeys | `f74b67da` | ~75% of lineitems are orphans with no matching order | Use `orderkey_from_index()` for sparse key generation |
-| 15 | `load()` populating only one secondary | `47405bec` | 3 of 4 structures read empty adapters; fantasy throughput | Populate ALL secondaries unconditionally in `load()` |
-| 16 | Hardcoded row-count assertion | `c077236f` | False test failures when data yields fewer than LIMIT rows | Assert cross-structure agreement + range `(0, K]` instead |
-| 17 | No secondary cardinality check in test | `739ebf63` | Empty secondaries produce 0-row "fast" queries silently | Verify each secondary has nonzero rows after `populate_*` |
-| 18 | ~~Physical Seek in skip path on RocksDB~~ (RETIRED — macOS-only artefact) | `8d10782b` reversed by `9da4f295` | Original macOS A/B saw SSTRead/TX rise 5× and was attributed to SST prefetch invalidation; Linux re-A/B refuted this — was a macOS page-cache artefact. RocksDB Seek-skip lifts SF=15 +700% / SF=40 +64% on Linux | Default both backends to `USE_PHYSICAL_SEEK_SKIP = true`; if a macOS regression resurfaces, override via `--use_seek_skip=0` rather than flipping the trait |
-| 19 | `wants_skip_group()` alongside `bool on_order` | (post-`128f6d44`) | Dead code — `on_order → false` already clears `customer_active`; `wants_skip_group()` guard can never fire after that | Use `on_order → false` directly; remove `wants_skip_group()` when cleaning up |
-| 20 | File-local `USE_PHYSICAL_SEEK_SKIP` constexpr instead of Backend trait | `83870b48` | Hard-coded constexpr makes per-backend tuning impossible and makes regression A/Bs (`--use_seek_skip=0`) require a recompile | Read `Backend::USE_PHYSICAL_SEEK_SKIP` from `frontend/tpch/backend.hpp` and let `--use_seek_skip` override it at runtime |
-| 21 | Custom walker calling `MergedScanner::next()` for performance-critical paths | A2c (`6402ba97`) | Per-record `std::variant` construction (memcpy of widest-payload + dispatch tag setup) — 18–50% TX/s tax at SF=15 cache-resident on LeanStore; +28% on RocksDB | Use `scanner->next_raw()` returning `(tag_byte, key_slice, value_slice)`; dispatch via tag-byte switch + `memcpy` into the typed buffer the visitor needs |
-| 22 | Reusing shared DB image for cross-structure perf comparison | A5 (`200ee0ae`) | Differential cache pollution at cache-resident SFs: structures with the largest secondary footprints are evicted disproportionately. Q3I SF=15 LeanStore: shared S3-vs-S1 gap = 36.6% but isolated gap = 13.7% — most of the gap was a benchmarking artefact | Use `--load_only_structure=N` + per-structure iso make targets (`q{N}_lsm_iso_M`); compare iso numbers, not shared |
-| 23 | Skipping `--micro_perf` / `--cfstats` plumbing during bring-up | `b7ebebc8` | When perf surprises surface (and they will — H1, H4, H8 all did), no instrumentation means a round-trip to add it before any test can be run | Wire both flags into the executable scaffold; ~30 lines using `perf_context_capture.hpp` (RocksDB) + `scanner_perf_hook.hpp` (LeanStore) |
-| 24 | Baking a parameterised filter into a secondary | Q3I S2/S5 audit (2026-05-03; commits `db60d49b`, `8ac423dd`) | Wrong answers for any param other than the validation value; surfaced (or hidden) by `[SKIP]` parity guards rather than fixed | Store unaggregated source rows in the secondary; apply parameterised filters live in `query_by_*`. Aggregates may bake **only** spec-hardcoded constants |
-| 25 | Pinning `Params::defaults()` across the entire `helper.run()` loop | (post-2026-05-03 fix in commits `f3573b0f`, `dbcce8d8`, `b9ef4947`) | Bugs that depend on a particular param value (e.g. shipdate-baked aggregate) survive long benchmark runs without ever firing | `wrapper.set_params_for_iter(count)` before each `wrapper.query(out)`; per-query rotation through a deterministic param table covering all SUBSTITUTION-PARAMETER domain values |
-| 26 | `[SKIP X]` parity guards in the cross-structure test harness | Q3I S5 (`tests/q3i/test_query_q3i_leanstore.cpp` guard retired by `8ac423dd`) | A storage variant that diverges at non-default params is excused as "baked-in filter mismatch", masking unsoundness | A `[SKIP]` is a structural-soundness alarm. Treat it as a fix-blocker, not a documented exception. If the variant cannot match parity at all params, the variant's design is wrong — rebuild it (don't bypass the check) |
-| 27 | Reusing one cardinality framing across pure-hierarchical and sibling-aggregate queries | Q3 Phase 0 design draft (commit `dad7ccce` reverted by `d50cc33a`) | "3-way M:N with no sibling shortcut" framing imported into a query that has no sibling at all — undersells the hierarchical-prefix story and confuses reviewers | Use the typology in §3.5 §4: pure hierarchical, hierarchical + sibling sub-aggregate, OR genuine tree. Never import (2)'s "no sibling shortcut" wording into (1) or (3) |
-| 28 | Silently continuing on an illegal hook return instead of throwing | Q5/Q3 walker bring-up (2026-05-09) | Wrong-but-plausible answers: a visitor arm that returns `SkipOrder` when no order is open is a programming error, not a runtime condition; swallowing it silently produces subtly wrong aggregates that still pass non-zero parity | `throw std::logic_error` immediately — see §"Contract violations & fail-fast" below |
-| 29 | Default `matching_keys() { return {*this}; }` on a sort key with a wildcard-able trailing slot | Q5 stage-2 join bring-up (2026-05-09) | HashJoin probe hashes to a different bucket than the build-side anchor; `equal_range` returns empty; query silently emits zero rows. BMJ's analogous failure surfaces via `match()` returning a non-zero compare instead of treating the WILDCARD_KEY slot as a wildcard | All three pieces required: per-field `wildcard_match` in `match()`, full prefix-anchor enumeration in `matching_keys()`, AND `SKBuilder<JK>::project<R>` stripping absent fields to WILDCARD_KEY for BMJ's `join_state::join_and_clear`. Hash stays wildcard-blind. See §4 "Sort-key wildcard semantics" for the audit checklist; `q5_sort_key_t` and `geo::sort_key_t` are the canonical reference impls |
+→ see `CONVENTIONS.md §Anti-Pattern Reference`
 
 ---
 
 ## §"Contract violations & fail-fast"
 
-**Rule**: any operator that detects a contract violation in its inputs —
-an illegal hook return, a malformed record, a broken structural invariant
-— **must throw** rather than silently continuing.  Silent fallback masks
-bugs and produces wrong-but-plausible answers that may pass non-zero
-parity checks.
-
-The canonical example is the col/coli group-walk walkers
-(`col_pipeline.tpp`, `coli_pipeline.tpp`): when an `on_customer` or
-`on_invoice` arm returns `WalkAction::SkipOrder`, no order is open at
-that point in the byte-lex scan, so `SkipOrder` is semantically
-meaningless.  The walkers throw immediately:
-
-```cpp
-// col_pipeline.tpp — on_customer arm
-if (action == tpch::WalkAction::SkipOrder)
-    throw std::logic_error(
-        "col_group_walk: on_customer returned SkipOrder — "
-        "no order is open; use SkipGroup instead");
-```
-
-The full per-hook contract is documented in
-[`tpch_family/walk_action.hpp`](tpch_family/walk_action.hpp).
-The same principle applies everywhere: a helper that detects a missing
-REGION row, an out-of-range enum, or an impossible join state must throw,
-not return a sentinel or silently skip.
+→ see `CONVENTIONS.md §Contract violations & fail-fast`
 
 ---
 

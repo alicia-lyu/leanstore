@@ -1,5 +1,7 @@
 # q3_family/ — Shared Building Blocks for Q3 and Q3I
 
+**Reading guide**: For the symbol inventory and what each header provides, read §Shared Symbols. For wildcard / OutClass / anti-pattern conventions that govern these symbols, see `../CONVENTIONS.md`. Skip the rest unless adding a new shared accumulator or hoisting a family utility.
+
 This directory contains headers that are shared between Q3 and Q3I (and any
 future Q3-flavoured query). Every symbol here must be usable by both queries
 without modification; query-specific logic stays in `q3/` or `q3i/`.
@@ -115,7 +117,7 @@ hoisting prevents per-query stats drift.  Previously internal to
 
 ---
 
-### `coli_visitors.hpp` — `Q3FamilyVisitor<Derived, Params, LineitemType, AggRow, Stats>`
+### `coli_visitors.hpp` — `Q3FamilyVisitor<Derived, Params, LineitemType, AggRow, Stats, Sink>`
 
 CRTP base implementing the C×O×L core of the group-walk visitor over COL and
 COLI merged indexes:
@@ -135,13 +137,38 @@ Three CRTP customisation points (all have base no-op defaults):
 | `extra_emit_fields(row)` | fills `cust_open_due` | base (no-op) |
 | `on_record_visited_hook()` | bumps invoice-specific counters | base (no-op) |
 
-**Consumers**: Q3I's `COLIGroupWalkVisitor` (`q3i/query.tpp`) subclasses this,
-overriding all three hooks.  Q3 will use `Q3FamilyVisitor` directly with the
+**Consumers**: Q3I's `COLIGroupWalkVisitor<Sink>` (`q3i/query.tpp`)
+subclasses this, overriding all three hooks.  Q3's
+`COLGroupWalkVisitor<Sink>` (`q3/query.tpp`) subclasses with the
 base no-op overlay (no invoice arm to wire).
 
 **Rationale**: Q3 and Q3I share the identical C×O×L walk logic; the invoice-
 specific surface is isolated to three narrow hooks.  Previously the entire
 visitor lived in `q3i/query.tpp`; hoisted Phase A4.
+
+**`Sink` template parameter (added commit `458bcaf0`)**: the visitor
+takes a sink type as a template parameter rather than holding a
+`std::vector<AggRow>&` directly.  `flush_order` calls
+`sink.offer(std::move(row))`; the sink decides storage shape
+internally (a heap for `TopNSink`, a hashmap for a future
+HashAggregate sink, etc.).  In production the sink is
+`TopNSink<AggRow, Cmp>` from `frontend/tpch/operators.hpp`; any
+type exposing `void offer(AggRow&&)` works.
+
+This is the **OutClass** convention codified in
+`CONVENTIONS.md §Post-pipeline OutClass` — small-buffer sink owning the
+pipeline → result boundary, push-once-per-row, drained once at the
+end.  It replaces the older "buffer all qualifying rows in `out`,
+then `apply_topN`" pattern (`CONVENTIONS.md §Anti-Pattern Reference` #30) which
+defeated the merged-index streaming benefit at the post-pipeline
+sink.
+
+Q3I's derived class additionally needs
+`using Base::params; using Base::stats; using Base::sink;`
+declarations because `Base` is now dependent on the `Sink`
+template parameter — without them, two-phase name lookup would
+fail to find unqualified `params` / `stats` / `sink` references in
+the derived hooks.  See `q3i/query.tpp` for the canonical pattern.
 
 ---
 
@@ -157,6 +184,15 @@ Includes `std::hash` specialisation for HashJoin.
 **Rationale**: both queries' S1 chain feeds the same scanner-wrapper output
 shape into the final BMJ — hoisted Phase 4 §7.2.  Previously inline in
 `q3i/views.hpp` (where `tpch::q3i::lineitem_agg_t` is now an alias).
+
+**Latent join-semantics assumption**: `Key::match` and
+`matching_keys() = {*this}` are correctness-sufficient today only because
+every current BMJ consumer projects both sides to the full
+`(custkey, orderkey)` JK via per-side `SKBuilder::create` overloads — no
+slot is ever left as `WILDCARD_KEY` at probe time.  See the inline comment
+above the `Key` struct in `lineitem_agg.hpp` and the layering principle in
+`CONVENTIONS.md §Sort-key wildcard semantics` (and `frontend/shared/wildcard_key.hpp`) before adding a
+consumer that probes with a coarser anchor.
 
 ---
 

@@ -1,5 +1,7 @@
 # Q3: Shipping Priority
 
+**Reading guide**: For SQL and plan descriptions, read §TPC-H Definition and §Plan Descriptions. For implementation status and open questions, read §Implementation Phases and §Open Questions. For OutClass / wildcard / anti-pattern details, see `../CONVENTIONS.md`. Skip the rest unless reconstructing a historical decision.
+
 ## Sibling Docs
 
 Every non-`CLAUDE.md` Markdown in `q3/` and `q3/plans/` (the latter
@@ -240,8 +242,39 @@ substrate.
 | S3 (merge family) | `col_group_walk` over MI[COL] | SortedAggregate per orderkey (Visitor `flush_order`, same code as S1) | Visitor `on_*` hooks (same code as S1) |
 | S4 (baseline) | HashJoin chain over base tables | HashAggregate per orderkey, **above the LINEITEM scan, below both joins** | TableScan-time filters (mktsegment, orderdate, shipdate) all pushed below the corresponding hash build/probe |
 
-All four agree on what's outside the pipeline: `apply_top10` (sort
-by `(revenue DESC, orderdate ASC)` + truncate to 10).
+All four agree on what's outside the pipeline: a single
+`TopNSink<q3_agg_row_t, Cmp>(10, cmp)` that the pipeline pushes
+into via `sink.offer(...)`, drained at the end via
+`sink.drain_sorted(out)`.  See OutClass subsection below.
+
+### OutClass: shared `TopNSink<q3_agg_row_t, Cmp>`
+
+All four `query_by_*` bodies construct one
+`TopNSink<q3_agg_row_t, decltype(cmp)>(10, cmp)` per query (where
+`cmp` wraps `q3_family::q3_agg_row_base_t::cmp` —
+`revenue DESC, o_orderdate ASC, o_orderkey ASC`).  The sink's
+internal heap holds at most 10 entries; `sink.offer(row)` is
+O(log 10) and evicts losers.  After the pipeline runs,
+`sink.drain_sorted(out)` materialises the 10 result rows.
+
+This is Q3's instance of the **OutClass** convention codified in
+`CONVENTIONS.md §Post-pipeline OutClass`: a small-buffer sink owning the
+pipeline → result boundary, push-once-per-row, drained once.
+Memory is `O(K) = O(10)`, not `O(orders passing all filters)`.
+Pre-`458bcaf0` Q3 buffered every qualifying order in a
+`std::vector<q3_agg_row_t>& out` (~150K rows at SF=1, ~6M at
+SF=40) before calling `apply_topN` — see `CONVENTIONS.md §Anti-Pattern Reference` #30.
+
+The visitor (`COLGroupWalkVisitor<Sink>`) is template-on-Sink
+because `Q3FamilyVisitor` now takes the sink type as a template
+parameter rather than holding a `std::vector<AggRow>&` — the
+visitor doesn't know or care about heap mechanics, just calls
+`sink.offer(std::move(row))` from `flush_order`.  Q3I uses the
+same shape with `q3i_agg_row_t`; `NNameRevenueAggregator` plays
+the analogous role for Q5 (no LIMIT; HashAggregate IS the
+OutClass).  Per OPERATORS.md §7 rule 5, the same OutClass
+instance is shared across all four storage variants for
+comparison-integrity at the post-pipeline boundary.
 
 ---
 

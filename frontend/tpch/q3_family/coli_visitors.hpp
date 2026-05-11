@@ -41,13 +41,23 @@
 //   AggRow       — output row type; must be default-constructible and carry
 //                  the four base fields from q3_agg_row_base_t
 //   Stats        — stats struct type; may be nullptr at runtime
+//   Sink         — post-pipeline aggregator the visitor pushes rows into via
+//                  `sink.offer(AggRow&&)`.  In production this is a
+//                  `TopNSink<AggRow, Cmp>` (`frontend/tpch/operators.hpp`),
+//                  bounding per-query memory to O(K) instead of O(|orders
+//                  passing filters|).  Mirrors the Q5 pattern where every
+//                  storage path pushes into a shared aggregator
+//                  (`NNameRevenueAggregator`) rather than a vector that
+//                  grows linearly with the walk.  Any type exposing a
+//                  `void offer(AggRow&&)` method works.
 //
 // Usage:
 //   struct MyVisitor : Q3FamilyVisitor<MyVisitor, Params, lineitem_col_t,
-//                                      q3_agg_row_t, MyStats> { ... };
+//                                      q3_agg_row_t, MyStats, MySink>
+//       { ... };
 
 #include <string_view>
-#include <vector>
+#include <utility>
 
 #include "../tpch_family/views_coli.hpp"
 #include "../tpch_family/walk_action.hpp"
@@ -57,11 +67,11 @@ namespace tpch::q3_family
 {
 
 template <typename Derived, typename Params, typename LineitemType,
-          typename AggRow, typename Stats>
+          typename AggRow, typename Stats, typename Sink>
 struct Q3FamilyVisitor {
-   const Params&         params;
-   std::vector<AggRow>&  out;
-   Stats*                stats = nullptr;  // optional — bumped by walker hooks
+   const Params&  params;
+   Sink&          sink;     // streaming top-K (or other small-buffer) aggregator
+   Stats*         stats = nullptr;  // optional — bumped by walker hooks
 
    // -------------------------------------------------------------------------
    // Per-group accumulators (factored — S1 reuses these via scanner-wrappers).
@@ -101,7 +111,11 @@ struct Q3FamilyVisitor {
          row.o_shippriority = cur_shippriority;
          // CRTP hook: derived fills in query-specific extra columns.
          static_cast<Derived*>(this)->extra_emit_fields(row);
-         out.push_back(row);
+         if (stats) {
+            stats->aggregator_rows_out++;
+            stats->topN_candidates++;
+         }
+         sink.offer(std::move(row));
       }
       rev.reset();
    }

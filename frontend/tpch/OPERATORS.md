@@ -163,14 +163,33 @@ re-sorted to match a downstream merge join. Per query:
   once and probed inside the post-join callback. Multiple per-row
   probes chain naturally.
 
-**8. Sort (final ORDER BY).** `std::sort(out.begin(), out.end(), cmp)`
-on the bounded post-aggregate vector. Sizes: Q12 ≤7 rows (5 shipmode
-combinations); Q3 ≤order-count pre-limit; Q9 ≤~175 (25 nations × 7
-years).
+**8. Sort (final ORDER BY).** Implemented as the drain step of the
+**OutClass** sink — see `frontend/tpch/CONVENTIONS.md §Post-pipeline OutClass` for the full
+contract.  Two reference implementations:
 
-**9. Limit (Q3 only).** `out.resize(std::min(out.size(), 10))` after
-sort. A top-K heap is not worth the complexity given the small group
-count.
+- `TopNSink<R, Cmp>` (`frontend/tpch/operators.hpp`): bounded heap of
+  size `K` for queries with a `LIMIT` (Q3 / Q3I; future Q10).  The
+  visitor / per-emit lambda calls `sink.offer(row)` per qualifying
+  row; the heap evicts losers as it fills.  Memory bound is `O(K)`,
+  not `O(qualifying_rows)` — see anti-pattern #30 in `CONVENTIONS.md §Anti-Pattern Reference`.
+- `NNameRevenueAggregator` (`frontend/tpch/q5/query.tpp`): per-`n_name`
+  HashAggregate.  Output cardinality is bounded by the GROUP BY shape
+  (`|nation_set|` ≈ 5).  Q5 has no LIMIT; the HashAggregate IS the
+  OutClass, drained once via `agg.emit(out, sides)` then sorted by
+  `std::sort` over the small vector.
+
+For queries whose post-aggregate result is intrinsically small —
+Q12's per-shipmode HashAggregate (~7 rows), Q9's per-(nation, year)
+table (~175 rows) — `apply_topN(out, K, cmp)` (also in
+`operators.hpp`) is the small-result-set helper: a `std::partial_sort`
+over the already-bounded vector.  Choice between `apply_topN(small_vec,
+K, cmp)` and a `TopNSink::offer` + `drain_sorted` is purely stylistic
+when input cardinality is bounded.
+
+**9. Limit (Q3, Q3I).** Implemented as the `K` parameter to
+`TopNSink<R, Cmp>(K, cmp)`; truncation happens incrementally on each
+`offer`, and `drain_sorted(out)` materialises exactly `K` rows in
+result order.  No separate post-sort `resize` step.
 
 ## 4. Why Pipeline Views Differ Per Query
 
@@ -371,6 +390,18 @@ reference; not reported in paper figures.
    onto S4 would require either an inside-pipeline hash-aggregate
    (rule 1 violation by analogy) or a forced re-sort (rule 2
    violation).
+5. **The same OutClass instance is shared across all storage
+   variants.** The post-pipeline sink (`TopNSink` for LIMIT queries,
+   `NNameRevenueAggregator` for global HashAggregates — see
+   `CONVENTIONS.md §Post-pipeline OutClass` for the contract) is constructed once per
+   `query_by_*` body and used identically by S1/S2/S3/S4 (and S5
+   where applicable).  Asymmetric sinks across structures break the
+   comparison: the answer-comparison knob stops measuring the storage
+   substrate and starts measuring sink-shape divergence.  Anti-pattern
+   #30 (vector-of-AggRow + `apply_topN`) was the pre-`458bcaf0` shape
+   that violated this implicitly — every path "agreed" because they
+   all paid the same buffering tax, but the merged-index streaming
+   benefit was lost at the post-pipeline boundary.
 
 ## 8. Why HashJoin Outside the Pipeline
 

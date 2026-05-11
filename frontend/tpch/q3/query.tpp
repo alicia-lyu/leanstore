@@ -106,13 +106,13 @@ inline void q3_pipeline_view_t::print(std::ostream& os) const
 // q3_pipeline_view_t lineitem variant for COL is `lineitem_col_t`
 // (no invoicekey segment, mirrors lineitem_coli_t with that field dropped).
 
+template <typename Sink>
 struct COLGroupWalkVisitor
-    : q3_family::Q3FamilyVisitor<COLGroupWalkVisitor, Params,
-                                  lineitem_col_t, q3_agg_row_t, Stats> {
-   COLGroupWalkVisitor(const Params& p, std::vector<q3_agg_row_t>& o,
-                       Stats* s = nullptr)
-       : q3_family::Q3FamilyVisitor<COLGroupWalkVisitor, Params,
-                                     lineitem_col_t, q3_agg_row_t, Stats>{p, o, s}
+    : q3_family::Q3FamilyVisitor<COLGroupWalkVisitor<Sink>, Params,
+                                  lineitem_col_t, q3_agg_row_t, Stats, Sink> {
+   COLGroupWalkVisitor(const Params& p, Sink& s, Stats* st = nullptr)
+       : q3_family::Q3FamilyVisitor<COLGroupWalkVisitor<Sink>, Params,
+                                     lineitem_col_t, q3_agg_row_t, Stats, Sink>{p, s, st}
    {}
    // No overrides — Q3 uses all base defaults:
    //   • per_order_admit_check  → always admit (no threshold)
@@ -162,6 +162,15 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
    // Stats: stats->s1_groups_skipped is bumped once per actual physical
    // seek on the orders scanner.
    out.clear();
+
+   // Streaming top-K sink (bounded memory: K = 10 entries) — same role as
+   // Q5's NNameRevenueAggregator: post-pipeline aggregator the per-emit
+   // path pushes into, replacing the previous "buffer everything in a
+   // vector then partial_sort" pattern.
+   auto cmp = [](const q3_agg_row_t& a, const q3_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3_agg_row_t, decltype(cmp)> sink(10, cmp);
 
    q3_family::LineitemRevenueAggregator<Backend, lineitem_col_t, Params>
        agg_lin(col.split_lineitem(), params);
@@ -289,20 +298,20 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
        bmj2(fetch_bmj1, fetch_lin_agg);
 
    while (auto kv = bmj2.next()) {
-      if (stats) stats->join_callbacks++;
+      if (stats) {
+         stats->join_callbacks++;
+         stats->aggregator_rows_out++;
+         stats->topN_candidates++;
+      }
       const q3_jr2_t& jr2 = kv->second;
       const q3_jr1_t& jr1 = jr2.jr1();
       const orders_coli_t& o = jr1.order();
       const q3_family::lineitem_agg_t& lagg = jr2.linagg();
       Integer orderkey = kv->first.jk.orderkey;
-      out.push_back({orderkey, lagg.revenue, o.o_orderdate, o.o_shippriority});
+      sink.offer({orderkey, lagg.revenue, o.o_orderdate, o.o_shippriority});
    }
 
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
-   apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+   sink.drain_sorted(out);
    return static_cast<long>(out.size());
 }
 
@@ -323,6 +332,11 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
    // time; none baked into the view at load time.
    out.clear();
 
+   auto cmp = [](const q3_agg_row_t& a, const q3_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3_agg_row_t, decltype(cmp)> sink(10, cmp);
+
    Integer   cur_custkey      = -1;
    Integer   cur_orderkey     = -1;
    Timestamp cur_orderdate    = 0;
@@ -333,8 +347,12 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
    auto flush_order = [&]() {
       if (!cur_order_ok || cur_orderkey < 0) return;
       if (rev.revenue <= Numeric(0)) { rev.reset(); return; }
-      if (stats) stats->join_callbacks++;
-      out.push_back({cur_orderkey, rev.revenue, cur_orderdate, cur_shippriority});
+      if (stats) {
+         stats->join_callbacks++;
+         stats->aggregator_rows_out++;
+         stats->topN_candidates++;
+      }
+      sink.offer({cur_orderkey, rev.revenue, cur_orderdate, cur_shippriority});
       rev.reset();
    };
 
@@ -395,11 +413,7 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
    }
    flush_order();
 
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
-   apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+   sink.drain_sorted(out);
    return static_cast<long>(out.size());
 }
 
@@ -419,17 +433,17 @@ long Q3Workload<Backend>::query_by_merged(std::vector<q3_agg_row_t>& out)
    //                    via LineitemRevenueAccumulator, gated by l_shipdate.
    //   • on_group_end — flushes the last open order.
    //
-   // After the walk, apply_topN enforces ORDER BY revenue DESC LIMIT 10
+   // After the walk, the sink drains a sorted top-K into `out`
    // (OPERATORS.md §3 op 8–9), with o_orderdate ASC, o_orderkey ASC as
-   // deterministic tiebreakers.
+   // deterministic tiebreakers (per q3_agg_row_base_t::cmp).
    out.clear();
-   COLGroupWalkVisitor v(params, out, stats);
+   auto cmp = [](const q3_agg_row_t& a, const q3_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3_agg_row_t, decltype(cmp)> sink(10, cmp);
+   COLGroupWalkVisitor<decltype(sink)> v(params, sink, stats);
    col_group_walk<Backend>(col.merged_adapter(), v);
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
-   apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+   sink.drain_sorted(out);
    return static_cast<long>(out.size());
 }
 
@@ -449,6 +463,11 @@ long Q3Workload<Backend>::query_by_hash(std::vector<q3_agg_row_t>& out)
    // (PLAYBOOK §7.5 pitfall — the hashmap tax S4 pays for not having a
    // merged index).
    out.clear();
+
+   auto cmp = [](const q3_agg_row_t& a, const q3_agg_row_t& b) {
+      return q3_family::q3_agg_row_base_t::cmp(a, b);
+   };
+   TopNSink<q3_agg_row_t, decltype(cmp)> sink(10, cmp);
 
    std::unordered_set<Integer> cust_set;
    {
@@ -515,16 +534,16 @@ long Q3Workload<Backend>::query_by_hash(std::vector<q3_agg_row_t>& out)
 
    for (auto& [ok, slot] : orders_map) {
       if (slot.revenue > Numeric(0)) {
-         if (stats) stats->join_callbacks++;
-         out.push_back({ok, slot.revenue, slot.orderdate, slot.shippriority});
+         if (stats) {
+            stats->join_callbacks++;
+            stats->aggregator_rows_out++;
+            stats->topN_candidates++;
+         }
+         sink.offer({ok, slot.revenue, slot.orderdate, slot.shippriority});
       }
    }
 
-   if (stats) {
-      stats->aggregator_rows_out = static_cast<long>(out.size());
-      stats->topN_candidates     = static_cast<long>(out.size());
-   }
-   apply_topN(out, 10, q3_family::q3_agg_row_base_t::cmp);
+   sink.drain_sorted(out);
    return static_cast<long>(out.size());
 }
 

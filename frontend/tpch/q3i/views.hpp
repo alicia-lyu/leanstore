@@ -97,6 +97,13 @@ struct cust_open_due_t {
       }
 
       // For HashJoin: a custkey-level key matches only itself (no hierarchy).
+      // Latent assumption: this is correct only as long as no consumer
+      // extends the hierarchy (e.g. an aggregate-of-aggregates pipeline
+      // that probes with `(custkey, invoicekey)`).  When that arrives,
+      // widen the Key with proper wildcard wiring (see canonical example
+      // in `frontend/tpch/q5/views.hpp::q5_sort_key_t` and the principle
+      // in `frontend/shared/wildcard_key.hpp`) instead of papering over
+      // it at the call site.
       std::vector<Key> matching_keys() const { return {*this}; }
 
       auto operator<=>(const Key&) const = default;

@@ -1,5 +1,7 @@
 # Q12: Shipping Modes and Order Priority Query
 
+**Reading guide**: For SQL and Calcite plan architecture, read §TPC-H Definition and §Calcite Plan Architecture. For storage structure options and operator translation, read §Storage Structure Options and §Operator Translation. For OutClass / anti-pattern details, see `../CONVENTIONS.md`. Skip the rest unless wiring a new executable or adding CMake targets.
+
 ## TPC-H Definition (Section 2.4.12)
 
 ```sql
@@ -233,6 +235,15 @@ auto q12_projection = [](const joined_ol_t& j) -> q12_result_t {
 ### `q12_accumulator`
 
 Inlined in callback. Groups by shipmode, sums `high_line_count` and `low_line_count`:
+
+> **OutClass note**: Q12's per-shipmode HashAggregate is
+> intrinsically small (~7 buckets, bounded by SHIPMODE
+> cardinality), so it stays as a per-row inline accumulator
+> drained into a small `std::vector<q12_agg_row_t>` and sorted via
+> `apply_topN` (or `std::sort`).  It does NOT need a `TopNSink`
+> because the buffer never grows past the bound — see
+> `CONVENTIONS.md §Post-pipeline OutClass` for the OutClass contract and the rule of
+> thumb on when to use which.  Q12 has no LIMIT.
 
 ```cpp
 // q12_agg_row_t: { Varchar<10> l_shipmode, Integer high_line_count, Integer low_line_count }
