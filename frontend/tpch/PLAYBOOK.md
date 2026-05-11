@@ -1574,15 +1574,20 @@ standalone operator nodes.** Draw one HashJoin box; annotate its two
 input edges as "build" and "probe". Never write a separate "Build" or
 "Probe" step as if it were its own operator class.
 
-**Rule 3 — Sorted-then-seek is a HashJoin lowering, not a Sort operator.**
-Hash builds are inherently unordered (they're sets / hashmaps), so the
-build itself has no sort order. When the **probe side is naturally
-ordered on the join key**, take a sorted *vector view* of the build's
-keys and iterate it as a cursor — per build-key seek into the probe
-scanner, stream the matching slice, advance. This is a valid physical
-implementation of inner HashJoin. Draw it as `HashJoin`; the sorted
-vector-view + seek strategy belongs in a code comment, not as a
-separate `Sort` operator.
+**Rule 3 — Probe-side seek-skip is a HashJoin lowering, not a Sort
+operator.** Hash builds are inherently unordered (sets / hashmaps),
+so neither the build itself nor a "sorted vector view" of it is
+required for the lowering. When the **probe side is naturally
+ordered on the join key** (e.g., LINEITEM is sorted on
+`l_orderkey`), the lowering is: stream the probe; on each row,
+probe the hashset. On a miss at probe-side key `K`, seek the
+probe scanner to `K + 1` (or use `lower_bound`-style API) and
+continue — the natural sort guarantees every probe row in the
+miss group is skipped without per-row hash lookups. No sorted
+build view is needed because the probe-side order plus the
+hashset answers everything. Draw it as `HashJoin`; the seek-on-
+miss strategy belongs in a code comment, not as a separate
+`Sort` operator.
 
 **Rule 4 — Build payload = primary key only.** Standard hash builds carry
 only the build relation's PK; downstream consumers fetch additional
@@ -1590,13 +1595,20 @@ columns via the primary index at consumption time. Q5: `nation_set =
 unordered_set<n_nationkey>` (dimension semi-join); `orders_set =
 unordered_set<o_orderkey>` (fact-side build). No forwarded payload columns.
 
-**Rule 5 — Composite-key sets fuse semi-join + cross-equality + natural
-join.** When a downstream multi-column equality wants the same filtered
-relation, one `unordered_set<tuple<...>>` handles it all. Q5:
-`supplier_nation_set: unordered_set<tuple<n_nationkey, s_suppkey>>` fuses
-SUPPLIER ⋉ nation_set, `c_nationkey = s_nationkey`, and `l_suppkey =
-s_suppkey` into a single per-lineitem probe. The composite key is the PK
-of the restricted-supplier relation.
+**Rule 5 — Join outputs are first-class relations; multi-column
+equi-joins are NOT cross-equality filters.** Once two tables join,
+the output is a relation with its own combined schema. Predicates
+that relate columns from already-joined inputs ARE join conditions
+on that combined relation — pack them into the composite key of
+the next build, probe with the corresponding columns from the
+joined-side row. Q5: SUPPLIER ⋉ nation_set produces a relation
+keyed by `(s_nationkey, s_suppkey)`; the lineitem-side probe sends
+`(c_nationkey, l_suppkey)` from the JOINED-COL row (c_nationkey is
+a column on that row, not "a column from a different table"). One
+hashset probe is the lowering of this multi-column equi-join — no
+separate "cross-equality filter" downstream. `supplier_nation_set:
+unordered_set<tuple<n_nationkey, s_suppkey>>` is the composite-key
+PK of the restricted-supplier relation.
 
 **Rule 6 — Aggregator keys on the output column (GROUP BY column), not on
 intermediate IDs.** Resolve dimension IDs to output columns at the join
@@ -1605,13 +1617,21 @@ aggregator stays decoupled from dimension adapters. Q5:
 `NNameRevenueAggregator` keys on `n_name` string; resolution happens at
 the CUSTOMER ⋈ NATION survival point in every query body.
 
-**Rule 7 — Lookup columns ride on a new join-output record type, not on a
-side hashmap.** The join produces a record that carries the matched
-dimension column. Q5: `q5_customer_rn_t {c_custkey, c_nationkey, n_name}`
-is the codification of CUSTOMER ⋈ NATION output. Downstream join
-intermediates widen to carry `n_name`. A per-query `nationkey_to_name`
-cache is implementation glue to avoid duplicate PK lookups; it is NOT the
-canonical column carrier.
+**Rule 7 — Lookup columns ride on join-output records, not on side
+hashmaps. Only mint a NEW named record type when an operator
+template demands one.** The join produces a record that carries the
+matched dimension column; widen existing join intermediates
+(`q*_jr*_t`, `q*_pipeline_view_t`, hand-rolled cust_map payloads)
+to add the field. Q5: `n_name` widens into `q5_jr1_t`, `q5_jr2_t`,
+and `q5_pipeline_view_t`; S4's hand-rolled `cust_map` payload is a
+local anonymous struct carrying `{c_nationkey, n_name}`. Do NOT
+mint a new top-level `customer_rn_t` type just to "name the
+CUSTOMER ⋈ NATION output" — only do so if a shared operator
+template (e.g., `HashJoin<JK, JR, R1, R2>`) requires the JR type
+parameter. Hand-rolled chains express the joined record as the
+payload type of the build hashmap. A per-query `nationkey_to_name`
+cache is implementation glue to avoid duplicate PK lookups; it is
+NOT the canonical column carrier.
 
 **Rule 8 — S4 baselines use base tables only — no `col.split_*`.** A
 hash-join baseline that consumes a custkey-sorted split secondary borrows
