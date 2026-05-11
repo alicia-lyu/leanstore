@@ -256,12 +256,12 @@ O(log 10) and evicts losers.  After the pipeline runs,
 `sink.drain_sorted(out)` materialises the 10 result rows.
 
 This is Q3's instance of the **OutClass** convention codified in
-`PLAYBOOK.md §7.6`: a small-buffer sink owning the
+`CONVENTIONS.md §Post-pipeline OutClass`: a small-buffer sink owning the
 pipeline → result boundary, push-once-per-row, drained once.
 Memory is `O(K) = O(10)`, not `O(orders passing all filters)`.
 Pre-`458bcaf0` Q3 buffered every qualifying order in a
 `std::vector<q3_agg_row_t>& out` (~150K rows at SF=1, ~6M at
-SF=40) before calling `apply_topN` — see PLAYBOOK anti-pattern #30.
+SF=40) before calling `apply_topN` — see `CONVENTIONS.md §Anti-Pattern Reference` #30.
 
 The visitor (`COLGroupWalkVisitor<Sink>`) is template-on-Sink
 because `Q3FamilyVisitor` now takes the sink type as a template

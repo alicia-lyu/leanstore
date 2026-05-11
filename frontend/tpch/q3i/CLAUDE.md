@@ -250,11 +250,11 @@ shape as Q3 — the only difference is the row type carries
 (`revenue DESC, o_orderdate ASC, o_orderkey ASC`).
 
 This is Q3I's instance of the **OutClass** convention codified in
-`PLAYBOOK.md §7.6`.  Memory is `O(K) = O(10)`, not `O(orders
+`CONVENTIONS.md §Post-pipeline OutClass`.  Memory is `O(K) = O(10)`, not `O(orders
 passing all filters)` — important at SF=15 / SF=40 where the
 pre-`458bcaf0` `std::vector<q3i_agg_row_t> + apply_topN` shape
 buffered millions of rows just to discard 99.999% of them
-(PLAYBOOK anti-pattern #30).
+(see `CONVENTIONS.md §Anti-Pattern Reference` #30).
 
 The visitor (`COLIGroupWalkVisitor<Sink>`) is template-on-Sink
 because `Q3FamilyVisitor` now takes the sink type as a template

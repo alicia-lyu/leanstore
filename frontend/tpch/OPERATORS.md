@@ -164,14 +164,14 @@ re-sorted to match a downstream merge join. Per query:
   probes chain naturally.
 
 **8. Sort (final ORDER BY).** Implemented as the drain step of the
-**OutClass** sink — see `frontend/tpch/PLAYBOOK.md §7.6` for the full
+**OutClass** sink — see `frontend/tpch/CONVENTIONS.md §Post-pipeline OutClass` for the full
 contract.  Two reference implementations:
 
 - `TopNSink<R, Cmp>` (`frontend/tpch/operators.hpp`): bounded heap of
   size `K` for queries with a `LIMIT` (Q3 / Q3I; future Q10).  The
   visitor / per-emit lambda calls `sink.offer(row)` per qualifying
   row; the heap evicts losers as it fills.  Memory bound is `O(K)`,
-  not `O(qualifying_rows)` — see anti-pattern #30 in PLAYBOOK.
+  not `O(qualifying_rows)` — see anti-pattern #30 in `CONVENTIONS.md §Anti-Pattern Reference`.
 - `NNameRevenueAggregator` (`frontend/tpch/q5/query.tpp`): per-`n_name`
   HashAggregate.  Output cardinality is bounded by the GROUP BY shape
   (`|nation_set|` ≈ 5).  Q5 has no LIMIT; the HashAggregate IS the
@@ -393,7 +393,7 @@ reference; not reported in paper figures.
 5. **The same OutClass instance is shared across all storage
    variants.** The post-pipeline sink (`TopNSink` for LIMIT queries,
    `NNameRevenueAggregator` for global HashAggregates — see
-   `PLAYBOOK.md §7.6` for the contract) is constructed once per
+   `CONVENTIONS.md §Post-pipeline OutClass` for the contract) is constructed once per
    `query_by_*` body and used identically by S1/S2/S3/S4 (and S5
    where applicable).  Asymmetric sinks across structures break the
    comparison: the answer-comparison knob stops measuring the storage

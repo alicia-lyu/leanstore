@@ -301,7 +301,7 @@ walk, `agg.emit(out, sides)` materialises the final ~5 rows in
 one pass.
 
 This is Q5's instance of the **OutClass** convention codified in
-`PLAYBOOK.md §7.6`: a small-buffer sink owning the
+`CONVENTIONS.md §Post-pipeline OutClass`: a small-buffer sink owning the
 pipeline → result boundary, push-once-per-row, drained once at the
 end.  Memory is `O(|nation_set|)`, not `O(qualifying_lineitems)`.
 Q5 has no LIMIT and therefore no `apply_topN` / `TopNSink` — the

@@ -240,7 +240,7 @@ Inlined in callback. Groups by shipmode, sums `high_line_count` and `low_line_co
 > drained into a small `std::vector<q12_agg_row_t>` and sorted via
 > `apply_topN` (or `std::sort`).  It does NOT need a `TopNSink`
 > because the buffer never grows past the bound — see
-> `PLAYBOOK.md §7.6` for the OutClass contract and the rule of
+> `CONVENTIONS.md §Post-pipeline OutClass` for the OutClass contract and the rule of
 > thumb on when to use which.  Q12 has no LIMIT.
 
 ```cpp

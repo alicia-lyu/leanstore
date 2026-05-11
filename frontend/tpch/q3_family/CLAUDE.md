@@ -154,10 +154,10 @@ HashAggregate sink, etc.).  In production the sink is
 type exposing `void offer(AggRow&&)` works.
 
 This is the **OutClass** convention codified in
-`PLAYBOOK.md §7.6` — small-buffer sink owning the
+`CONVENTIONS.md §Post-pipeline OutClass` — small-buffer sink owning the
 pipeline → result boundary, push-once-per-row, drained once at the
 end.  It replaces the older "buffer all qualifying rows in `out`,
-then `apply_topN`" pattern (PLAYBOOK anti-pattern #30) which
+then `apply_topN`" pattern (`CONVENTIONS.md §Anti-Pattern Reference` #30) which
 defeated the merged-index streaming benefit at the post-pipeline
 sink.
 
@@ -189,7 +189,7 @@ every current BMJ consumer projects both sides to the full
 `(custkey, orderkey)` JK via per-side `SKBuilder::create` overloads — no
 slot is ever left as `WILDCARD_KEY` at probe time.  See the inline comment
 above the `Key` struct in `lineitem_agg.hpp` and the layering principle in
-`PLAYBOOK.md §4` (and `frontend/shared/wildcard_key.hpp`) before adding a
+`CONVENTIONS.md §Sort-key wildcard semantics` (and `frontend/shared/wildcard_key.hpp`) before adding a
 consumer that probes with a coarser anchor.
 
 ---
