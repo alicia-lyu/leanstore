@@ -4,6 +4,11 @@ Append one entry per perf run. **Don't backfill** runs that pre-date this
 file unless their numbers are scattered across other docs and need
 consolidating.
 
+For cross-config analysis (storage structure comparison, memory-resident
+vs beyond-memory, LSM vs BTree, open questions) see
+[`RUNS_ANALYSIS.md`](RUNS_ANALYSIS.md) — synthesis lives there, raw
+entries live here.
+
 ## Entry format
 
 ```
