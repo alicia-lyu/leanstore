@@ -13,18 +13,24 @@
 // means a single forward streaming pass — no buffering, no chain
 // hashmaps — can:
 //
-//   1. Apply the CUSTOMER ⋉ RN semi-join gate at the customer record
-//      (c_nationkey ∈ nation_set; suppresses the rest of the group
-//      when the gate fails — same mechanism as Q3's mktsegment gate).
-//      c_nationkey is preserved on survivors for use at lineitem time.
+//   1. Apply the CUSTOMER ⋈ RN inner-join gate at the customer
+//      record (c_nationkey ∈ nation_set; suppresses the rest of the
+//      group when the gate fails — same mechanism as Q3's mktsegment
+//      gate). c_nationkey is preserved on survivors for use at
+//      lineitem time. The hash-join inner is lowered to a set-
+//      membership test inside the walker; the "inner" framing is
+//      what justifies fetching n_name at emit time via NATION's
+//      primary-index lookup.
 //   2. Apply o_orderdate ∈ window at on_order; if the order fails,
 //      no lineitems for that orderkey are admitted.
 //   3. Per qualifying lineitem: probe supplier_nation_set with
 //      (c_nationkey, l_suppkey); SKIP if absent. This single lookup
-//      fuses the SUPPLIER semi-join, the cross-equality
-//      c_nationkey = s_nationkey, and the suppkey equi-join.
-//      Accumulate l_extendedprice * (1 - l_discount) into the per-
-//      nationkey revenue map carried by the Visitor.
+//      is the per-lineitem lowering of HashSemiJoin(COL ⋉
+//      supplier_nation_set), which fuses the SUPPLIER ⋉ RN semi-
+//      join, the cross-equality c_nationkey = s_nationkey, and the
+//      suppkey equi-join. Accumulate l_extendedprice * (1 -
+//      l_discount) into the per-nationkey revenue map carried by
+//      the Visitor.
 //
 // Q5 has NO sibling sub-aggregate. The Visitor's per-nationkey
 // HashAggregate is a small (~5-bucket) map kept across all custkey
@@ -36,11 +42,25 @@
 // primary-index point lookup materialises n_name (~5 lookups total).
 // No nation_name_map; no n_name in any intermediate build.
 //
+// Operator-framing rules (same as baseline_s4.dot and
+// family_logical.dot):
+//
+//   • "Probe X" and "Build X" are NEVER operator nodes. The walker
+//     IS a single physical operator that internally lowers several
+//     logical joins (HashJoin/HashSemiJoin) into set-membership and
+//     hashset probes — but each such lowering is part of the walker,
+//     not a separate operator.
+//   • Asymmetric framing across the two fan-outs from RN:
+//        CUSTOMER ⋈ RN  is HashJoin (inner) — n_nationkey flows
+//                       downstream (consumed at emit time).
+//        SUPPLIER ⋉ RN  is HashSemiJoin   — no NATION column
+//                       flows past the supplier arm.
+//
 // FILTER PUSHDOWN STATUS: every filter from family_logical.dot is
-// fused into the walker. The composite-key probe (supplier_nation_set)
-// fires per-lineitem after the per-nationkey accumulation gate, which
-// is the earliest physically possible position. No filter applies
-// post-walk.
+// fused into the walker. The composite-key semi-join (against
+// supplier_nation_set) fires per-lineitem after the per-nationkey
+// accumulation gate, which is the earliest physically possible
+// position. No filter applies post-walk.
 //
 // C++ implementation map (q5/query.tpp::query_by_merged):
 //
@@ -49,14 +69,15 @@
 //       supplier_nation_set,   // unordered_set<tuple<n_nationkey, s_suppkey>>
 //       params})
 //
-//     Visitor::on_customer  → CUSTOMER ⋉ nation_set gate
+//     Visitor::on_customer  → CUSTOMER ⋈ RN inner-join gate
 //                             (c_nationkey ∈ nation_set);
 //                             returns false to suppress the group;
 //                             caches c_nationkey for on_lineitem use
 //     Visitor::on_order     → q5_predicate_orders (orderdate window);
 //                             no per-orderkey state to flush (per-
 //                             order revenue is not the aggregate key)
-//     Visitor::on_lineitem  → probe supplier_nation_set with
+//     Visitor::on_lineitem  → composite-key semi-join: probe
+//                             supplier_nation_set with
 //                             (c_nationkey, l_suppkey);
 //                             SKIP if absent;
 //                             accumulate revenue into per-nationkey map
@@ -78,48 +99,39 @@ digraph {
          shape=box, style=filled, fillcolor="#E0F2F1"];
   s_nat [label="TableScan(NATION)",
          shape=box, style=filled, fillcolor="#E0F2F1"];
-  rn    [label="HashJoin(REGION ⋈ NATION\n  on n_regionkey = r_regionkey)\ninner join; build payload = n_nationkey only\n(primary-key payload convention)",
+  rn    [label="HashJoin (inner)\nREGION ⋈ NATION\n  on n_regionkey = r_regionkey\nbuild payload = n_nationkey only\n(PK payload convention)\n→ nation_set",
          shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
 
-  s_reg -> rn [label="build\n(filtered)"];
+  s_reg -> rn [label="build (filtered)"];
   s_nat -> rn [label="probe"];
 
-  // ─────────── Fan-out 1: nation_set for CUSTOMER semi-join ───────────
-  nation_set [label="nation_set\n(unordered_set<n_nationkey>)\nused at on_customer:\nCUSTOMER ⋉ RN semi-join gate",
-              shape=box, style="filled,rounded", fillcolor="#E8F0FE"];
+  // ─────────── Pre-walk: SUPPLIER ⋉ RN (semi-join) ───────────
+  s_sup  [label="TableScan(SUPPLIER)",
+          shape=box, style=filled, fillcolor="#E0F2F1"];
+  sj_sup [label="HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n→ supplier_nation_set",
+          shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
-  rn -> nation_set [style=dashed, label="fan-out 1"];
-
-  // ─────────── Fan-out 2: SUPPLIER ⋉ RN → composite-key build ───────────
-  sj_sup  [label="HashSemiJoin\n(SUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey)",
-           shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
-  bld_sup [label="Build(hashset on (s_nationkey, s_suppkey))\ncomposite key; no payload\n[supplier_nation_set]\nProbed at on_lineitem with\n(c_nationkey, l_suppkey)",
-           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
-  s_sup   [label="TableScan(SUPPLIER)",
-           shape=box, style=filled, fillcolor="#E0F2F1"];
-
-  rn     -> sj_sup  [style=dashed, label="fan-out 2\n(nation_set build)"];
-  s_sup  -> sj_sup  [label="probe"];
-  sj_sup -> bld_sup;
+  rn    -> sj_sup [label="build (nation_set,\nPK-only)"];
+  s_sup -> sj_sup [label="probe"];
 
   // ─────────── COL MI pipeline ───────────
   mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLGroupWalk(Visitor)\nsubsumes:\n  • on_customer: CUSTOMER ⋉ nation_set gate\n    (c_nationkey ∈ nation_set; preserves c_nationkey)\n  • on_order: o_orderdate window filter\n  • on_lineitem: probe supplier_nation_set with\n    (c_nationkey, l_suppkey) — fuses SUPPLIER\n    semi-join + cross-eq + suppkey equi-join\n  • CUSTOMER ⋈ ORDERS ⋈ LINEITEM (merge, in-MI)\n  • per-nationkey HashAggregate (small in-Visitor map)\n  • on_walk_end: resolve n_name per nationkey\n    via NATION primary-index lookup (~5 lookups)\n    → emit q5_agg_row_t",
+  walk [label="COLGroupWalk(Visitor)\nsubsumes the entire family logical pipeline:\n  • on_customer: HashJoin (inner) CUSTOMER ⋈ RN\n      gate, lowered to (c_nationkey ∈ nation_set);\n      preserves c_nationkey on survivors\n  • on_order:    o_orderdate window filter\n  • on_lineitem: HashSemiJoin (COL ⋉ supplier_nation_set)\n      lowered to one hashset probe with\n      (c_nationkey, l_suppkey) — fuses SUPPLIER\n      semi-join + cross-eq + suppkey equi-join\n  • chain joins: CUSTOMER ⋈ ORDERS ⋈ LINEITEM,\n      lowered to a 3-way custkey-byte-lex merge\n      inside the MI walker (no separate operator)\n  • aggregate:   per-nationkey HashAggregate\n      (small in-Visitor map keyed by n_nationkey)\n  • on_walk_end: NATION PK lookup per nationkey\n      → n_name (~5 lookups); emit q5_agg_row_t",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
         shape=box, style=filled, fillcolor="#E6F4EA"];
 
   // ─────────── Edges ───────────
-  nation_set -> walk [style=dashed, label="nation_set"];
-  bld_sup    -> walk [style=dashed, label="supplier_nation_set"];
-  mi         -> walk;
-  walk       -> sort;
+  rn     -> walk [style=dashed, label="nation_set\n(build)"];
+  sj_sup -> walk [style=dashed, label="supplier_nation_set\n(build)"];
+  mi     -> walk;
+  walk   -> sort;
 
   // ─────────── Emit-time note ───────────
-  note [label="n_name resolved at on_walk_end\nvia NATION primary-index lookup;\n~5 entries → ~5 point lookups.\nNo nation_name_map in the walker.",
+  note [label="n_name resolved at on_walk_end\nvia NATION primary-index lookup;\n~5 entries → ~5 point lookups.\nNo nation_name_map in the walker.\nNo Probe/Build operator nodes —\nthe walker IS the single physical\noperator that subsumes the chain.",
         shape=note, style=filled, fillcolor="#F3E5F5"];
   walk -> note [style=dashed, arrowhead=none];
 }

@@ -135,11 +135,13 @@ operators:
   r_regionkey)` — yields `nation_set` (~5 `n_nationkey` entries).
   `n_name` is NOT stored; fetched at emit time via NATION primary
   index (~5 point lookups).
-- SUPPLIER (~10K rows at SF=1): `SUPPLIER ⋉ nation_set` semi-join
-  followed by `Build(hashset on (s_nationkey, s_suppkey))` —
-  yields `supplier_nation_set` (~2K composite-key entries).
-  The cross-equality `c_nationkey = s_nationkey` and the natural
-  join `l_suppkey = s_suppkey` are fused into this composite key.
+- SUPPLIER (~10K rows at SF=1): `HashSemiJoin(SUPPLIER ⋉ RN on
+  s_nationkey = n_nationkey)` with survivors projected to
+  `(s_nationkey, s_suppkey)` — yields `supplier_nation_set`
+  (~2K composite-key entries; the projection IS the build, no
+  separate `Build` operator). The cross-equality `c_nationkey =
+  s_nationkey` and the natural join `l_suppkey = s_suppkey` are
+  consumed implicitly by the downstream composite-key probe.
 
 These are dimension lookups, not chain participants. They do **not**
 contribute M:N rows to the join output. The per-lineitem probe of
@@ -160,7 +162,7 @@ locality on the COL chain — anti-pattern #27 forbids importing
 | 1 | Traditional indexes + binary merge join | Custkey-sorted secondaries on ORDERS (`(custkey, orderkey)`) and LINEITEM (`(custkey, orderkey, linenumber)`) | BMJ chain: customer ⋈ orders\_sec ⋈ lineitem\_sec on the custkey-extended prefix; SUPPLIER + NATION + REGION as side hash builds | none |
 | 2 | Intermediate pipeline view | `q5_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_suppkey` + FD-attached `c_nationkey`, `o_orderdate`) | View scan + orderdate filter + composite-key `supplier_nation_set` probe live; per-nationkey `HashAggregate`; `n_name` at emit time | none |
 | 3 | MI[COL] only | `MergedAdapter<customer_col_t, orders_col_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys | `col_group_walk[_fused_emit]` over the COL MI; CUSTOMER hierarchy co-located, no separate join; SUPPLIER + NATION + REGION as side hash builds | none |
-| 4 | Traditional indexes + hash join | None | `CUSTOMER ⋉ nation_set` → `HashSemiJoin(⋈orders)` → orderdate filter → orderkey-only lineitem seeks → composite-key `supplier_nation_set` probe → per-nationkey `HashAggregate`; `n_name` at emit time | none |
+| 4 | Traditional indexes + hash join | None | `CUSTOMER ⋈ RN` → `HashSemiJoin(⋈orders)` → orderdate filter → orderkey-only lineitem seeks → composite-key `supplier_nation_set` probe → per-nationkey `HashAggregate`; `n_name` at emit time | none |
 
 **S5 deliberately omitted.** Q5 has **no parameter-independent
 aggregate to bake**: every per-row contribution to the answer
@@ -181,18 +183,19 @@ Three DOT files in [`plans/`](plans/) document the operator graphs:
 - `plans/family_logical.dot` — shared logical plan for S1, S2, S3.
   All three agree on filter placement, aggregate shape (per-nationkey
   HashAggregate + emit-time `n_name` lookup), and the RN dimension
-  subtree with its two symmetric semi-join fan-outs; only the
+  subtree with its two asymmetric fan-outs (CUSTOMER ⋈ RN inner;
+  SUPPLIER ⋉ RN semi-join); only the
   inside-pipeline physical operator differs.
 - `plans/family_s3_physical.dot` — S3 physical specialisation. A
   single `col_group_walk[_fused_emit]` over the 3-table COL
-  MergedAdapter subsumes the per-table filters, the CUSTOMER
-  semi-join gate, and the 2-way join; the per-lineitem
-  `supplier_nation_set` composite-key probe and per-nationkey
-  aggregator wrap the walker callback; `n_name` resolved at
-  `on_walk_end`.
+  MergedAdapter subsumes the per-table filters, the CUSTOMER ⋈
+  RN inner-join gate, and the 2-way join; the per-lineitem
+  composite-key semi-join (`COL ⋉ supplier_nation_set`) and
+  per-nationkey aggregator wrap the walker callback; `n_name`
+  resolved at `on_walk_end`.
 - `plans/baseline_s4.dot` — S4 baseline. A HashJoin chain over base
   tables only (no `col.split_*`) with `r_name` pushed below the
-  REGION scan, `CUSTOMER ⋉ nation_set` applied before the customer
+  REGION scan, `CUSTOMER ⋈ RN` applied before the customer
   hash build, orderkey-only lineitem seeks, and composite-key
   `supplier_nation_set` probe per lineitem.
 
@@ -214,21 +217,30 @@ this means:
 - `r_name = :1` fuses with the REGION scan; the resolved
   `r_regionkey` then drives the NATION hash build's filter.
 - The `nation_set` (output of `HashJoin(REGION ⋈ NATION)`)
-  gates CUSTOMER via a semi-join: `CUSTOMER ⋉ RN on c_nationkey
-  = n_nationkey` fuses with `TableScan(CUSTOMER)` (or with the
-  COL walker's `on_customer` hook for S3). Surviving CUSTOMER rows
-  carry `c_nationkey` downstream for the composite-key probe.
+  gates CUSTOMER via an **inner** `HashJoin(CUSTOMER ⋈ RN on
+  c_nationkey = n_nationkey)` — inner because the matched
+  `n_nationkey` flows downstream (consumed at emit time to
+  fetch `n_name` via NATION's primary index). The join lowers
+  to `c_nationkey ∈ nation_set` fused with `TableScan(CUSTOMER)`
+  (or with the COL walker's `on_customer` hook for S3); the
+  set-membership lowering is what the build-payload convention
+  (`unordered_set<n_nationkey>`) makes possible. Surviving
+  CUSTOMER rows carry `c_nationkey` downstream for the
+  composite-key semi-join below.
 - `o_orderdate >= :d AND o_orderdate < :d+1y` fuses with
   `TableScan(ORDERS)` (or with the walker's `on_order` hook).
-- The SUPPLIER-side semi-join build is keyed by
-  `(s_nationkey, s_suppkey)` and consumes the cross-equality
-  `c_nationkey = s_nationkey` implicitly: the per-lineitem probe
-  is a single `supplier_nation_set` hashset lookup with
-  `(c_nationkey, l_suppkey)`. There is no standalone cross-record
-  predicate node — the cross-equality is fused inside the
+- The SUPPLIER-side semi-join (`HashSemiJoin(SUPPLIER ⋉ RN on
+  s_nationkey = n_nationkey)`) projects survivors to
+  `(s_nationkey, s_suppkey)`. The downstream per-lineitem
+  composite-key probe (`HashSemiJoin(COL ⋉ supplier_nation_set
+  on (c_nationkey, l_suppkey) = (s_nationkey, s_suppkey))`) is
+  a single hashset lookup that fuses the SUPPLIER semi-join,
+  the cross-equality `c_nationkey = s_nationkey`, and the
+  suppkey equi-join. There is no standalone cross-record
+  predicate node — the cross-equality lives inside the
   composite key.
 - For S4 specifically, `r_name` is pushed below the REGION scan,
-  and `CUSTOMER ⋉ nation_set` is applied **before the hash build**,
+  and `CUSTOMER ⋈ RN` is applied **before the hash build**,
   so the customer set only contains qualifying customers.
 - For S3, every filter applies **during** the group walk, at the
   Visitor's `on_*` hook for that record type. There is no post-walk
@@ -240,7 +252,7 @@ this means:
 plan. The COL tagged-key encoding co-locates customer, orders, and
 lineitem records by `custkey` in byte-lex order
 (`customer → (orders → lineitem*)+`), and the walker streams
-through them in a single forward pass. The CUSTOMER semi-join gate
+through them in a single forward pass. The CUSTOMER ⋈ RN inner-join gate
 at `on_customer` (`c_nationkey ∈ nation_set`) skips the entire
 group; the orderdate filter is an inline `if` check at `on_order`;
 per-lineitem the walker probes `supplier_nation_set` with
@@ -286,7 +298,7 @@ param sets.
 
 **S4 (HashJoin chain baseline)** uses base tables only (no
 `col.split_*` secondaries — fairness vs S3). Filter pushdown:
-`r_name` fuses with the REGION scan; `CUSTOMER ⋉ nation_set`
+`r_name` fuses with the REGION scan; `CUSTOMER ⋈ RN`
 gates the customer scan before the hash build; orderdate fuses
 with ORDERS pre-build. Orders survivors feed an
 `unordered_set<o_orderkey>` (Q3-isomorphic). Lineitem is driven
@@ -564,7 +576,8 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   docs + DOT plans only. Replace `nation_name_map` with emit-time
   NATION primary-index lookup; replace `supplier_nation_map` with
   composite-key `supplier_nation_set<(nationkey, suppkey)>`;
-  reframe both fan-outs from RN as symmetric semi-joins; rewrite S4
+  reframe the two RN fan-outs asymmetrically (CUSTOMER ⋈ RN inner;
+  SUPPLIER ⋉ RN semi); rewrite S4
   to use base tables with orderkey-keyed orders set and orderkey-only
   lineitem seeks (Q3-isomorphic). Updates: `q5/CLAUDE.md`,
   `plans/family_logical.dot`, `plans/baseline_s4.dot`,
@@ -629,7 +642,8 @@ carry `l_suppkey` and `l_returnflag` in commit `bec67300`.
 Phase 10A landed (2026-05-11): semi-join design locked in docs and
 DOT plans. `nation_name_map` removed; `supplier_nation_map` replaced
 by `supplier_nation_set<(nationkey, suppkey)>`; both RN fan-outs
-framed as symmetric semi-joins; S4 plan switched to base tables with
+framed asymmetrically (CUSTOMER ⋈ RN inner; SUPPLIER ⋉ RN semi);
+S4 plan switched to base tables with
 orderkey-only lineitem seeks. **Code not yet changed** — the C++
 bodies (`build_q5_side_tables`, `q5_admit_lineitem`, all four
 `query_by_*`) still use the old side-table shapes. Phase 10B
