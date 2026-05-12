@@ -124,4 +124,40 @@ struct RocksDBMergedScanner {
       assert(false); // should never be called
       return 0;
    }
+
+   // ---------------------------------------------------------------------------
+   // next_raw() — A2c fused_emit scanner path.
+   //
+   // Advances the iterator and returns (idx_tag, key_slice, value_slice) without
+   // constructing the std::variant payload.  The idx_tag is the trailing byte of
+   // the COLI tagged key (coli_idx_id encoding — see views_coli.hpp).
+   //
+   // Callers must not outlive the iterator position — slices point into RocksDB's
+   // internal buffers and are invalidated by the next iterator operation.
+   //
+   // Only meaningful for COLI tagged keys; generic merged scanners whose records
+   // don't carry a trailing idx_id byte should use next() instead.
+   std::optional<std::tuple<u8, rocksdb::Slice, rocksdb::Slice>> next_raw()
+   {
+      if (after_seek) {
+         after_seek = false;
+      } else {
+         if (!it->Valid()) {
+            return std::nullopt;
+         }
+         it->Next();
+         produced++;
+      }
+      if (!it->Valid()) {
+         return std::nullopt;
+      }
+      rocksdb::Slice k = it->key();
+      rocksdb::Slice v = it->value();
+      // The trailing byte of the COLI tagged key encodes the record type
+      // (coli_idx_id).  key_len is always >= 1 for any valid COLI record.
+      u8 tag = (k.size() > 0)
+             ? static_cast<u8>(k.data()[k.size() - 1])
+             : u8{0};
+      return std::make_tuple(tag, k, v);
+   }
 };

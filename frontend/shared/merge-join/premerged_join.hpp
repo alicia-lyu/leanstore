@@ -6,6 +6,7 @@
 #include <mutex>
 #include <variant>
 #include "join_state.hpp"
+#include "../view_templates.hpp"
 
 DECLARE_int32(tentative_skip_bytes);
 
@@ -72,20 +73,49 @@ struct PremergedJoin {
    using K = std::variant<typename Rs::Key...>;
    using V = std::variant<Rs...>;
 
+   // Optional admission filter: called on every variant record produced by
+   // scan_next before it is emplaced into JoinState. Returning false drops
+   // the record (it never enters records_to_join, never participates in the
+   // cartesian product, never triggers consume_joined). Default admits all.
+   //
+   // This is the structural equivalent of pushing a per-side filter into the
+   // fetch lambda of BinaryMergeJoin / HashJoin (S1 / S4 in the Q12 family).
+   // Without it, S3 pays full join-assembly cost for records that S1/S4
+   // discard before the join — which violates comparison-integrity with the
+   // baselines (see OPERATORS.md §6.1).
+   //
+   // Correctness note: dropping a record on one side leaves the other side's
+   // cached records to clear harmlessly on the next refresh() (zero-cardinality
+   // cartesian product is an early-out in JoinState::join_current).
+   std::function<bool(const K&, const V&)> admit =
+       [](const K&, const V&) { return true; };
+
    PremergedJoin(
        MergedScannerType& merged_scanner,
-       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {})
-       : merged_scanner(merged_scanner), join_state("PremergedJoin", consume_joined)
+       std::function<void(const typename JR::Key&, const JR&)> consume_joined = [](const typename JR::Key&, const JR&) {},
+       std::function<bool(const K&, const V&)> admit_filter = [](const K&, const V&) { return true; })
+       : merged_scanner(merged_scanner),
+         join_state("PremergedJoin", consume_joined),
+         admit(std::move(admit_filter))
    {
    }
 
    template <template <typename> class AdapterType>
    PremergedJoin(MergedScannerType& merged_scanner, AdapterType<JR>& joinedAdapter)
-       : merged_scanner(merged_scanner), join_state("PremergedJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
+       : merged_scanner(merged_scanner),
+         join_state("PremergedJoin", [&](const auto& k, const auto& v) { joinedAdapter.insert(k, v); })
    {
    }
 
-   ~PremergedJoin() { PremergedJoinLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced()); }
+   ~PremergedJoin()
+   {
+      // Drain any joined records still queued (e.g. produced by the final
+      // refresh() but not yet popped by run()/next()). Without this, the
+      // queue may legitimately hold records when the outer loop exits on
+      // scanner exhaustion, and get_produced() below would warn.
+      join_state.drain();
+      PremergedJoinLogger::log(stats, join_state.get_remaining_records_to_join(), join_state.get_produced());
+   }
 
    void replace_sk(const JK& new_sk) { seek_jk = new_sk; }
 
@@ -103,20 +133,29 @@ struct PremergedJoin {
 
    std::optional<std::tuple<K, V, JK>> scan_next(bool to_emplace = true)
    {
-      std::optional<std::pair<K, V>> kv = merged_scanner.next();
-      if (!kv) {
-         return std::nullopt;
+      // Loop so admit-rejected records don't return std::nullopt prematurely.
+      while (true) {
+         std::optional<std::pair<K, V>> kv = merged_scanner.next();
+         if (!kv) {
+            return std::nullopt;
+         }
+         auto& k = kv->first;
+         auto& v = kv->second;
+         JK jk;
+         jk = jk_from_variants<JK>(k, v);
+         if (seek_jk != JK::max() && jk.match(seek_jk) != 0) {
+            return std::nullopt;  // past the seek_jk
+         }
+         // Admission filter: drop record entirely if rejected. The caller's
+         // jk advancement still works because the next admitted record will
+         // carry an equal-or-greater jk (scan order matches JK order).
+         if (!admit(k, v)) {
+            continue;
+         }
+         if (to_emplace)
+            emplace(k, v, jk);
+         return std::make_tuple(k, v, jk);
       }
-      auto& k = kv->first;
-      auto& v = kv->second;
-      JK jk;
-      std::visit([&](auto& actual_key) -> void { jk = actual_key.get_jk(); }, k);
-      if (seek_jk != JK::max() && jk.match(seek_jk) != 0) {
-         return std::nullopt;  // past the seek_jk
-      }
-      if (to_emplace)
-         emplace(k, v, jk);
-      return std::make_tuple(k, v, jk);
    }
 
    std::tuple<int, int, int> distance(const JK& to_jk)
@@ -128,7 +167,7 @@ struct PremergedJoin {
    template <typename R>
    bool seek_next(const JK& to_jk)
    {
-      typename R::Key k{to_jk};
+      auto k = SKBuilder<JK>::template to_key<R>(to_jk);
       merged_scanner.template seek<R>(k);
       stats.seek_cnt++;
       auto t = scan_next();
@@ -190,7 +229,7 @@ struct PremergedJoin {
       if (info_exhausted) {  // no more seeks needed
          return true;
       }
-      JK to_jk_r = SKBuilder<JK>::template get<R>(full_jk);
+      JK to_jk_r = SKBuilder<JK>::template project<R>(full_jk);
       info_exhausted =
           info_exhausted || to_jk_r == full_jk;  // seek_jk has more info only when there is additional non-zero fields, i.e., seek_jk > jk_r
       // if info_exhausted, stop getting the next R
@@ -219,7 +258,7 @@ struct PremergedJoin {
          int bytes_advanced = 0;
          if (last_kv_in_page.has_value()) {
             auto [last_k, last_v] = last_kv_in_page.value();
-            JK last_jk = SKBuilder<JK>::create(last_k, last_v);
+            JK last_jk = jk_from_variants<JK>(last_k, last_v);
             int cmp = last_jk.match(to_jk_r);
             if (cmp < 0) {  // last key is before the seek_jk, required jk not in this page
                bytes_advanced = merged_scanner.go_to_last_in_page();
@@ -273,6 +312,11 @@ struct PremergedJoin {
             break;
          }
       }
+      // Flush the last group: when scan_next() returns nullopt, next()
+      // exits without joining the final batch in records_to_join. Force
+      // one more join_and_clear so the last orderkey group is emitted.
+      join_state.refresh(JK::max());
+      join_state.drain();
    }
 
    JK jk_to_join() const { return join_state.jk_to_join; }

@@ -83,6 +83,15 @@ struct RocksDBMergedAdapter {
    u64 estimatePages() { UNREACHABLE(); }
    u64 estimateLeafs() { UNREACHABLE(); }
 
+   // Returns whole-CF live data size from `cf_meta.levels[].files[].size`.
+   // Includes every byte in the dedicated CF: content + per-CF SST
+   // metadata (footer, bloom filters, index blocks, properties). At small
+   // scale factors the metadata fraction is significant — a MergedAdapter
+   // CF can read 2–3x larger per row than a same-content split adapter
+   // whose `size()` measures only a key-prefix range in the shared default
+   // CF (see RocksDBAdapter::size() above).
+   // Reporting-only; not invoked during query execution, so the
+   // cross-adapter asymmetry does not affect the perf comparison.
    double size() { return map.get_size(cf_handle, name); }
 
    template <typename JK, typename JR>

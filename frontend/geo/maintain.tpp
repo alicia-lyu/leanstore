@@ -70,9 +70,9 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::se
       }
       auto [k, v] = *kv;
       sort_key_t sk = SKBuilder<sort_key_t>::create(k, v);
-      if (sk.citykey == 0) {
-         continue;  // skip nation, states, county records
-      } else if (sk.custkey != 0) {
+      if (sk.citykey == WILDCARD_KEY) {
+         continue;  // skip nation, states, county records (no city level set)
+      } else if (sk.custkey != WILDCARD_KEY) {
          // do search to avoid scanning many customers in one city
          scanner->seekJK(sort_key_t{sk.nationkey, sk.statekey, sk.countykey, sk.citykey, std::numeric_limits<Integer>::max()});
          continue;

@@ -1,0 +1,81 @@
+// Q3 S3 physical plan — substitutes the family logical plan with a
+// single COLGroupWalk over the 3-table COL MergedAdapter.
+//
+// Why one operator replaces seven: the COL MI co-locates CUSTOMER,
+// ORDERS, and LINEITEM by custkey using Calcite-style tagged keys.
+// Within a custkey group, byte-lex order is:
+//
+//     customer → (orders → lineitem*)+
+//
+// (sentinel ordering customer=1 < invoice=2 (reserved/unused) <
+// orders=3 < lineitem=4 — COL reuses COLI tag values verbatim per
+// q3/CLAUDE.md §Required Record Types; the invoice slot is empty in
+// COL so the effective order collapses to customer→orders→lineitem).
+// This means
+// a single forward streaming pass — no buffering, no hashmaps — can:
+//
+//   1. Apply the c_mktsegment gate at the customer record (suppresses
+//      the rest of the group when the gate fails)
+//   2. Apply o_orderdate < DATE at on_order; if the order fails, no
+//      lineitems for that orderkey are admitted
+//   3. Apply l_shipdate > DATE at on_lineitem; failing lineitems are
+//      simply not added to the per-orderkey revenue accumulator
+//   4. **Per-orderkey SortedAggregate fires directly above the lineitem
+//      stream** — flush_order at each orderkey transition (and at
+//      on_group_end) emits exactly one revenue tuple per surviving
+//      orderkey BEFORE any logical "join up" with the order/customer
+//      records. Mirrors the family logical plan's push-down: aggregate
+//      first, attach order/customer columns afterwards.
+//
+// Q3 has NO sibling sub-aggregate — invoice/threshold machinery from
+// Q3I is absent. This is the pure §3.1.3 hierarchical-prefix showcase.
+//
+// FILTER PUSHDOWN STATUS: every filter from family_logical.dot is fused
+// into the walker. None applies post-join. The walker emits already
+// mktsegment-passed q3_agg_row_t rows; outside the walker we only
+// sort and truncate.
+//
+// C++ implementation map (q3/query.tpp::query_by_merged):
+//
+//   col_group_walk<Backend>(merged_col, Visitor{...})
+//
+//     Visitor::on_customer  → c_mktsegment gate (returns false to
+//                             suppress on_order / on_lineitem); this
+//                             realises the FILTER on CUSTOMER.
+//     Visitor::on_order     → flush_order(); start new orderkey register
+//                             only if q3_predicate_orders passes
+//                             (o_orderdate < DATE)
+//     Visitor::on_lineitem  → q3_predicate_lineitem (l_shipdate > DATE)
+//                             + LineitemRevenueAccumulator::consume
+//     Visitor::on_group_end → final flush_order(); reset accumulators
+//
+//     flush_order()         → emits q3_agg_row_t (orderkey, revenue,
+//                             orderdate, shippriority) unconditionally
+//                             once the order survives o_orderdate. No
+//                             threshold gate (Q3 has no sibling
+//                             aggregate).
+//
+// PremergedJoin / BinaryMergeJoin are NOT instantiated here — the COL
+// merged adapter's tagged-key encoding makes the Visitor pattern strictly
+// more expressive (3-way custkey grouping with 1 sub-aggregate + 3
+// fused filters). This is the operator-level expression of the §3.1.3
+// hierarchical pattern, isolated from the §3.1.2 sibling overlay.
+
+digraph {
+  rankdir=BT;
+
+  mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
+      shape=box3d, style=filled, fillcolor="#E8F0FE"];
+
+  walk [label="COLGroupWalk(Visitor)\nsubsumes:\n  • all 3 per-table filters (fused at on_*)\n  • per-ORDERKEY SortedAggregate (lineitem)\n      ↳ pushed below the join — fires above\n        the lineitem stream, before order/cust\n        columns are attached\n  • CUSTOMER ⋈ ORDERS ⋈ <agg-lineitem>\n  • Project → q3_agg_row_t",
+         shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  sort  [label="Sort(revenue DESC, orderdate ASC)\n[apply_top10 partial_sort]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+  limit [label="Limit 10\n[apply_top10 resize]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  mi    -> walk;
+  walk  -> sort;
+  sort  -> limit;
+}

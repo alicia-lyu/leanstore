@@ -1,0 +1,16 @@
+digraph {
+  rankdir=BT;
+  n0 [label="EnumerableSortedAggregate(group=[{0}], HIGH_LINE_COUNT=[SUM($1)], LOW_LINE_COUNT=[SUM($2)])"];
+  n1 [label="EnumerableSort(sort0=[$0], dir0=[ASC])"];
+  n2 [label="EnumerableProject(L_SHIPMODE=[$23], $f1=[CASE(OR(=(CAST($5):VARCHAR, '1-URGENT'), =(CAST($5):VARCHAR, '2-HIGH')), 1, 0)], $f2=[CASE(AND(<>(CAST($5):VARCHAR, '1-URGENT'), <>(CAST($5):VARCHAR, '2-HIGH')), 1, 0)], $f3=[$19], $f4=[$20], $f5=[$21])"];
+  n3 [label="EnumerableFilter(condition=[AND(OR(=(CAST($23):VARCHAR, 'MAIL'), =(CAST($23):VARCHAR, 'SHIP')), <($19, $20), <($20, $21), >=(CAST($21):DATE, 1994-01-01), <(CAST($21):DATE, +(1994-01-01, 12:INTERVAL YEAR)))])"];
+  n4 [label="EnumerableHashJoin(condition=[=($0, $9)], joinType=[inner])"];
+  n5 [label="EnumerableTableScan(table=[[TPCH, ORDERS]])"];
+  n6 [label="EnumerableTableScan(table=[[TPCH, LINEITEM]])"];
+  n5 -> n4 [label="0"];
+  n6 -> n4 [label="1"];
+  n4 -> n3 [label="0"];
+  n3 -> n2 [label="0"];
+  n2 -> n1 [label="0"];
+  n1 -> n0 [label="0"];
+}

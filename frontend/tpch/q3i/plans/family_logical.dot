@@ -1,0 +1,149 @@
+// Q3I family logical plan — shared by S1, S2, S3.
+//
+// Departs from Calcite's vanilla-Q3 plan in two ways:
+//
+//   1. Pipeline sort key is CUSTKEY, not ORDERKEY. The invoice
+//      sub-aggregate (`cust_open_due = SUM(i_totaldue WHERE status='O')`)
+//      is only stream-computable when invoice rows are co-grouped with
+//      their customer. Per OPERATORS.md §1, the family logical plan must
+//      match the COLI MI's natural sort key — and the COLI MI is
+//      custkey-sorted.
+//
+//   2. Two SortedAggregates inside the pipeline (vs. one in Q3):
+//        • per-CUSTKEY SortedAggregate on INVOICE → cust_open_due
+//        • per-ORDERKEY SortedAggregate on LINEITEM → revenue
+//      Both are realised in C++ as namespace-scope accumulator structs
+//      (CustomerOpenDueAccumulator, LineitemRevenueAccumulator) consumed
+//      by a single Visitor via coli_group_walk / coli_secondary_group_walk
+//      (see family_s3_physical.dot for the S3 specialisation).
+//
+// FILTER PUSHDOWN: every parameterised filter is pushed as far down the
+// graph as possible, stopping ONLY at secondary structures (so the COLI
+// MI and the COLI secondaries / pipeline view stay reusable across
+// param sets — predicate hoisting, mirroring Q12 §4). Specifically:
+//
+//   • c_mktsegment = SEGMENT          → fused with TableScan(CUSTOMER)
+//   • i_status = 'O'                  → fused with TableScan(INVOICE)
+//   • o_orderdate < DATE              → fused with TableScan(ORDERS)
+//   • l_shipdate > DATE               → fused with TableScan(LINEITEM)
+//   • cust_open_due > THRESHOLD       → fused with SortedAggregate(invoice),
+//                                       i.e. evaluated as soon as the
+//                                       per-customer sum is available;
+//                                       NOT a downstream Filter node
+//
+// No filter applies post-join. The only outside-pipeline operators are
+// Sort(revenue DESC) and Limit 10.
+//
+// C++ implementation map (q3i/query.tpp + coli_pipeline.tpp):
+//
+//   Pipeline (custkey-sorted)
+//   ─────────────────────────
+//   • Scan + per-table Filter (fused)        — q3i_predicate_invoice,
+//                                               q3i_predicate_orders,
+//                                               q3i_predicate_lineitem
+//                                               called inline at the
+//                                               Visitor's on_* hook;
+//                                               c_mktsegment gate in
+//                                               on_customer (returns
+//                                               false to suppress the
+//                                               whole group)
+//   • Per-CUSTKEY SortedAggregate (invoice)  — Visitor::on_invoice
+//                                               + CustomerOpenDueAccumulator
+//   • Threshold filter (fused with aggregate)— Visitor::flush_order
+//                                               only emits when
+//                                               cust_open_due > threshold;
+//                                               groups failing the
+//                                               threshold are dropped
+//                                               WITHOUT entering the
+//                                               OL join below
+//   • CUSTOMER ⋈ ORDERS ⋈ LINEITEM           — Visitor sequencing:
+//                                               on_customer gates the
+//                                               group; on_order /
+//                                               on_lineitem accumulate
+//                                               per orderkey under the
+//                                               gate; threshold gate
+//                                               above also short-
+//                                               circuits this layer
+//   • Per-ORDERKEY SortedAggregate (lineitem)— Visitor::flush_order +
+//                                               LineitemRevenueAccumulator,
+//                                               reset on each new orderkey
+//   • Pipeline output                         — q3i_pipeline_view_t
+//                                               (one row per (custkey,
+//                                                orderkey) carrying revenue
+//                                                + cust_open_due + FD-attached
+//                                                customer/order columns)
+//
+//   Outside-pipeline (constant across S1/S2/S3 per OPERATORS.md §6.4)
+//   ───────────────────────────────────────────────────────────────────
+//   • Sort (revenue DESC)                     — apply_top10 helper using
+//                                               std::partial_sort
+//   • Limit 10                                — apply_top10 truncate
+//
+// Inside-pipeline physical execution (the S1/S2/S3 comparison axis):
+//   S1 → coli_secondary_group_walk over CUSTOMER + 3 COLI secondaries
+//   S2 → scan q3i_pipeline_view_t (loaded via the same Visitor at load time;
+//        see populate_q3i_view notes — load applies pushed-down per-table
+//        filters but NOT mktsegment/threshold so the view is reusable)
+//   S3 → coli_group_walk over the 4-table COLI MergedAdapter
+//
+// Outside-pipeline operators are byte-identical across the three.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Sources with filters fused ───────────
+  // Each TableScan-Filter pair is logically one node; drawn as two for
+  // clarity. The filter NEVER applies to secondary-structure loading
+  // (the COLI MI, COLI secondaries, and pipeline view all carry
+  // unfiltered base records).
+  s_inv  [label="TableScan(INVOICE)\n+ Filter(i_status='O')",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_cust [label="TableScan(CUSTOMER)\n+ Filter(c_mktsegment=SEGMENT)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate < DATE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_shipdate > DATE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  // ─────────── Inside pipeline (custkey-sorted) ───────────
+  agg_inv [label="SortedAggregate(group=[i_custkey],\n  cust_open_due = SUM(i_totaldue))\n+ Filter(cust_open_due > THRESHOLD)\n[CustomerOpenDueAccumulator + flush gate]",
+           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  // The 3-way custkey-sorted join. In S3 this collapses into a single
+  // walker over the merged adapter; in S1 it is a 4-way merge over
+  // separate secondary scanners.
+  joinA [label="Join(CUSTOMER ⋈ ORDERS, c_custkey = o_custkey)\nsorted on custkey",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  joinB [label="Join(⋈ LINEITEM, o_orderkey = l_orderkey)\nstill custkey-sorted (FD via parent)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  joinC [label="Join(⋈ {custkey, cust_open_due}, custkey)\nattach per-customer aggregate;\ngroup is dropped if cust_open_due\nfailed the threshold above",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  agg_ord [label="SortedAggregate(group=[o_orderkey,\n  o_orderdate, o_shippriority,\n  custkey, cust_open_due],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[LineitemRevenueAccumulator]",
+           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  proj    [label="Project(custkey, orderkey, revenue,\n  cust_open_due,\n  o_orderdate, o_shippriority)\n→ q3i_pipeline_view_t / q3i_agg_row_t"];
+
+  // ─────────── Outside pipeline ───────────
+  sort     [label="Sort(revenue DESC)\n[apply_top10 partial_sort]",
+            shape=box, style=filled, fillcolor="#E6F4EA"];
+  limit    [label="Limit 10\n[apply_top10 resize]",
+            shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  s_inv  -> agg_inv;
+
+  s_cust -> joinA  [label="0"];
+  s_ord  -> joinA  [label="1"];
+
+  joinA  -> joinB  [label="0"];
+  s_lin  -> joinB  [label="1"];
+
+  joinB  -> joinC  [label="0"];
+  agg_inv -> joinC [label="1"];
+
+  joinC -> agg_ord;
+  agg_ord -> proj;
+  proj  -> sort;
+  sort  -> limit;
+}

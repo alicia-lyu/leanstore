@@ -10,6 +10,8 @@
 #include <rocksdb/table.h>
 #include <rocksdb/wide_columns.h>
 
+#include <unordered_map>
+
 // -------------------------------------------------------------------------------------
 #include "./Types.hpp"
 #include "Units.hpp"
@@ -25,6 +27,7 @@
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <thread>
 
 template <typename T>
 inline rocksdb::Slice RSlice(T* ptr, u64 len)
@@ -164,7 +167,13 @@ struct RocksDB {
       delete txn;
       txn = nullptr;
    }
-   double default_cf_size = 0.0;
+   // Per-CF size cache. Previously a single `default_cf_size` field cached the
+   // first caller's result and returned it for ALL subsequent get_size(cf,...)
+   // calls — silently making every MergedAdapter (e.g. COLI + aCOLI) report
+   // the same size. PERFORMANCE.md Phase 6 traced the cross-backend aCOLI
+   // size anomaly to this bug. Keyed by the CF handle pointer; mapped value
+   // is the size in MiB so the same cache-skip semantics still hold.
+   std::unordered_map<ColumnFamilyHandle*, double> cf_size_cache;
    double get_size(ColumnFamilyHandle* cf_handle, const std::string& name = "default");
 
    template <typename Record>
@@ -179,10 +188,16 @@ struct RocksDB {
       double default_full_size = get_size(cf_handles[0]);
       u64 size = 0;
       rocksdb::Range range(min_slice, max_slice);
-      tx_db->GetApproximateSizes(cf_handles[0], &range, 1, &size);
+      rocksdb::SizeApproximationOptions opts;
+      opts.include_memtables = true;
+      opts.include_files = true;
+      opts.files_size_error_margin = 0.1;
+      tx_db->GetApproximateSizes(opts, cf_handles[0], &range, 1, &size);
       double size_in_mib = static_cast<double>(size) / (1024 * 1024);
-      std::cout << "RocksDB: Approximate size for Record id " << Record::id << " is " << size_in_mib
-                << " MiB (default full size: " << default_full_size << " MiB)" << std::endl;
+      // Per-record-id approximate sizes were noisy (printed once during the
+      // compaction-stats dump and again inside the per-structure get_size()
+      // summary). Suppressed to keep experiment logs scannable.
+      (void)default_full_size;
       return size_in_mib;
    };
 

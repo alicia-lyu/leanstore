@@ -5,8 +5,13 @@
 #include <gflags/gflags.h>
 #include "Units.hpp"
 #include "leanstore/Config.hpp"
+#ifdef ROCKSDB_ONLY
+#include "../profiling_stubs/CPUTable.hpp"
+#include "../profiling_stubs/ConfigsTable.hpp"
+#else
 #include "leanstore/profiling/tables/CPUTable.hpp"
 #include "leanstore/profiling/tables/ConfigsTable.hpp"
+#endif
 #include "tabulate/table.hpp"
 
 DECLARE_int32(bgw_pct);
@@ -165,6 +170,12 @@ class Logger
    void log_sizes(std::map<std::string, double> sizes);
 
    virtual void prepare() = 0;
+
+   // Snap a baseline so that background I/O accumulated before the query
+   // measurement loop (e.g. post-load compactions) is excluded from per-TX
+   // figures. Default is a no-op; storage backends that track write stats
+   // override this.
+   virtual void capture_baseline() {}
 
    void log_loading() { log(0, "load", "", 0); }
 

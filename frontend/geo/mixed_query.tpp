@@ -118,7 +118,7 @@ struct MergedScannerCounter {
       std::visit(overloaded{[&](const nation2_t::Key& nk) { output_k = K{nk}; }, [&](const states_t::Key& sk) { output_k = K{sk}; },
                             [&](const county_t::Key& ck) { output_k = K{ck}; }, [&](const city_t::Key& cik) { output_k = K{cik}; },
                             [&](const customer2_t::Key&) {
-                               assert(last_sk == sort_key_t::max() || SKBuilder<sort_key_t>::get<customer_count_t>(curr_sk) == last_sk);
+                               assert(last_sk == sort_key_t::max() || SKBuilder<sort_key_t>::project<customer_count_t>(curr_sk) == last_sk);
                             }},
                  k);
       std::optional<V> output_v = std::nullopt;
@@ -136,7 +136,7 @@ struct MergedScannerCounter {
                             }},
                  v);
       if (!output_k.has_value()) {
-         return next(SKBuilder<sort_key_t>::get<customer_count_t>(curr_sk), customer_count);
+         return next(SKBuilder<sort_key_t>::project<customer_count_t>(curr_sk), customer_count);
       }
       produced++;
       if (customer_count > 0) {

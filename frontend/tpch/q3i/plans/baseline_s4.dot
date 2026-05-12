@@ -1,0 +1,134 @@
+// Q3I S4 baseline plan — no merged index; default Calcite-style plan
+// extended with the invoice sub-aggregate.
+//
+// Diverges from the family logical plan because no input is custkey-
+// sorted: ORDERS / LINEITEM are orderkey-sorted, INVOICE is invoicekey-
+// sorted. Instead of a streaming custkey walk, S4 uses two pre-built
+// hashmaps and a HashJoin chain. Per OPERATORS.md §6.4, S4 is allowed
+// its own logical plan.
+//
+// FILTER PUSHDOWN: same principle as the family — push every filter as
+// far down as possible, stopping at secondary structures. S4 has no
+// secondary structures (just base tables), so every filter pushes
+// directly to its source TableScan or to the moment the value first
+// becomes computable. None applies post-join.
+//
+//   • i_status = 'O'              → fused with TableScan(INVOICE) before
+//                                    aggregation enters the hashmap
+//   • cust_open_due > THRESHOLD   → fused at the moment the per-customer
+//                                    aggregate is finalised; only
+//                                    surviving custkeys land in the
+//                                    open_due hashmap, so probe-time
+//                                    lookup doubles as the threshold
+//                                    filter at zero extra cost
+//   • c_mktsegment = SEGMENT      → fused with TableScan(CUSTOMER); only
+//                                    surviving custkeys land in the
+//                                    cust_seg hashmap, same trick
+//   • o_orderdate < DATE          → fused with TableScan(ORDERS) BEFORE
+//                                    HashJoin, shrinking the build/probe
+//                                    side
+//   • l_shipdate > DATE           → fused with TableScan(LINEITEM)
+//                                    similarly, BEFORE HashJoin
+//
+// C++ implementation map (q3i/query.tpp::query_by_hash):
+//
+//   Pre-build (off the comparison axis):
+//   ─────────────────────────────────────
+//     1. open_due: unordered_map<custkey, Numeric>
+//        ─ scan base INVOICE filtered by i_status='O';
+//          CustomerOpenDueAccumulator across each custkey transition;
+//          ONLY entries with cust_open_due > THRESHOLD are inserted.
+//          A missing key in the map = a custkey that did not pass the
+//          threshold = group is dropped at probe time without an
+//          explicit Filter node.
+//     2. cust_seg: unordered_map<custkey, /*marker*/>
+//        ─ scan base CUSTOMER filtered by c_mktsegment = SEGMENT;
+//          insert custkey only. A missing key in the map = a customer
+//          outside the segment = dropped at probe time.
+//
+//   Query-time HashJoin chain (over already-filtered base scanners):
+//   ────────────────────────────────────────────────────────────────
+//     HashJoin<JK=Integer, JR=joined_ol_t, R1=orders_t, R2=lineitem_t>
+//       (orders.getScanner_filtered(o_orderdate < DATE),
+//        lineitem.getScanner_filtered(l_shipdate > DATE))
+//
+//     hj.run([&](const joined_ol_t& jr) {
+//        // mktsegment + threshold lookups; both filters are realised
+//        // as "is the key present in the pre-built hashmap?"
+//        if (cust_seg.find(o.o_custkey) == cust_seg.end()) return;
+//        auto due = open_due.find(o.o_custkey);
+//        if (due == open_due.end()) return;
+//        // No post-join Filter node — the only thing left is the
+//        // per-orderkey accumulator (HashJoin output is unsorted, so
+//        // we must hash on orderkey here; this is the hashmap tax S4
+//        // pays for not having merge ordering, NOT a filter).
+//        auto& slot = per_order[o.o_orderkey];
+//        slot.cust_open_due = due->second;
+//        slot.o_orderdate    = o.o_orderdate;
+//        slot.o_shippriority = o.o_shippriority;
+//        LineitemRevenueAccumulator::consume_into(slot.revenue, l, params);
+//     });
+//
+// The post-join unordered_map<orderkey, q3i_agg_row_t> is acceptable
+// in S4 because §6.1's "no hash-aggregate inside the merged-index
+// family pipeline" rule applies to S1/S2/S3 only. S4 already pays the
+// hashmap tax for its custkey lookups, so a third hashmap on orderkey
+// is in keeping with the "no merge ordering" baseline.
+//
+// Reuse from the family code: CustomerOpenDueAccumulator and
+// LineitemRevenueAccumulator (the latter via a static helper that
+// takes an external Numeric&). Same per-record arithmetic across all
+// four structures — OPERATORS.md §6.1 comparison-integrity preserved
+// even through the divergent operator graph.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Sources with filters fused ───────────
+  s_inv  [label="TableScan(INVOICE)\n+ Filter(i_status='O')",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_cust [label="TableScan(CUSTOMER)\n+ Filter(c_mktsegment=SEGMENT)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate < DATE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_shipdate > DATE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  // ─────────── Pre-build hashmaps ───────────
+  prebuild_due  [label="Aggregate(group=[i_custkey],\n  cust_open_due = SUM(i_totaldue))\n+ Filter(cust_open_due > THRESHOLD)\n→ unordered_map<custkey, Numeric>\n[CustomerOpenDueAccumulator + flush gate]",
+                 shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+  prebuild_cust [label="Project(custkey)\n→ unordered_set<custkey>\n[mktsegment filter already fused\n at TableScan]",
+                 shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── HashJoin OL ───────────
+  hj_ol [label="HashJoin(o_orderkey = l_orderkey)\n[shared HashJoin primitive]\n→ joined_ol_t\nINPUT IS ALREADY FILTERED on\no_orderdate / l_shipdate",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  // ─────────── Probe-time hashmap lookups (no separate Filter node) ───────────
+  probe [label="Probe-time lookups in HashJoin callback:\n  cust_seg.contains(o.o_custkey)?\n  open_due.find(o.o_custkey)?\n[lookups, NOT filters — the maps\n already encode the predicates]"];
+
+  // ─────────── Post-join aggregate (orderkey) ───────────
+  post_agg [label="Aggregate(group=[o_orderkey],\n  revenue += l_extendedprice * (1 - l_discount))\n→ unordered_map<orderkey, q3i_agg_row_t>\n[LineitemRevenueAccumulator inner expr;\n NOT a filter — hashmap tax for\n unsorted HashJoin output]",
+            shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── Outside-pipeline tail (constant) ───────────
+  sort  [label="Sort(revenue DESC)\n[apply_top10 partial_sort]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+  limit [label="Limit 10\n[apply_top10 resize]",
+         shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  s_inv  -> prebuild_due;
+  s_cust -> prebuild_cust;
+
+  s_ord  -> hj_ol [label="0"];
+  s_lin  -> hj_ol [label="1"];
+
+  hj_ol -> probe;
+  prebuild_due  -> probe [style=dashed, label="lookup"];
+  prebuild_cust -> probe [style=dashed, label="lookup"];
+
+  probe -> post_agg;
+  post_agg -> sort;
+  sort -> limit;
+}

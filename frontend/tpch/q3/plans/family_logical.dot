@@ -1,0 +1,155 @@
+// Q3 family logical plan — shared by S1, S2, S3.
+//
+// Departs from Calcite's vanilla-Q3 plan in two key ways:
+//
+//   1. Pipeline sort key is CUSTKEY, not ORDERKEY. ORDERS and LINEITEM
+//      secondaries are extended with the custkey FD (orders key
+//      `(custkey, orderkey)`, lineitem key `(custkey, orderkey,
+//      linenumber)`) so the COL MI's natural sort key is custkey.
+//      Per OPERATORS.md §1, the family logical plan must match the COL
+//      MI's natural sort key.
+//
+//   2. **Aggregation is pushed BELOW the join chain — directly above
+//      LINEITEM**. We group lineitems by `l_orderkey` and pre-aggregate
+//      revenue = SUM(l_extendedprice * (1 - l_discount)) before joining
+//      with orders. The downstream `joinB` (⋈ ORDERS) attaches
+//      `o_orderdate` / `o_shippriority` per orderkey; `joinA` (⋈
+//      CUSTOMER) then applies the mktsegment gate. Because the
+//      lineitem stream arrives custkey-sorted via the FD-extended
+//      secondary key (`l_orderkey` is the second component, so within
+//      a custkey block the lineitems naturally cluster by orderkey),
+//      this is a SortedAggregate, not a HashAggregate.
+//
+//      Pushing aggregation below the join shrinks the join input from
+//      ~4 lineitems/order to 1 partial-revenue tuple/order, removing
+//      ~4× of the join's per-row work. The sibling-free hierarchical
+//      shape makes this safe: nothing past the lineitem level depends
+//      on individual lineitem fields (only `revenue`).
+//
+// FILTER PUSHDOWN: every parameterised filter is pushed as far down the
+// graph as possible, stopping ONLY at secondary structures (so the COL
+// MI and the COL secondaries / pipeline view stay reusable across
+// param sets — predicate hoisting, mirroring Q12 §4 / Q3I §3.1.2).
+// Specifically:
+//
+//   • c_mktsegment = SEGMENT          → fused with TableScan(CUSTOMER)
+//   • o_orderdate < DATE              → fused with TableScan(ORDERS)
+//   • l_shipdate > DATE               → fused with TableScan(LINEITEM)
+//
+// No filter applies post-join. The only outside-pipeline operators are
+// Sort(revenue DESC, orderdate ASC) and Limit 10.
+//
+// C++ implementation map (q3/query.tpp + col_pipeline.tpp,
+// to be created in Phase 0.5):
+//
+//   Pipeline (custkey-sorted)
+//   ─────────────────────────
+//   • Scan + per-table Filter (fused)        — q3_predicate_orders,
+//                                               q3_predicate_lineitem
+//                                               called inline at the
+//                                               Visitor's on_* hook;
+//                                               c_mktsegment gate in
+//                                               on_customer (returns
+//                                               false to suppress the
+//                                               whole group)
+//   • Per-ORDERKEY SortedAggregate (lineitem) — Visitor::flush_order +
+//                                               LineitemRevenueAccumulator,
+//                                               reset on each new orderkey
+//                                               (FIRST aggregation, before
+//                                                any join up the tree)
+//   • ORDERS ⋈ <agg-lineitem>                 — attach o_orderdate,
+//                                               o_shippriority by orderkey
+//   • CUSTOMER ⋈ <ordered-agg>                — gate by mktsegment via
+//                                               on_customer suppress
+//   • Pipeline output                         — q3_pipeline_view_t
+//                                               (one row per (custkey,
+//                                                orderkey) carrying revenue
+//                                                + FD-attached
+//                                                customer/order columns)
+//
+//   Outside-pipeline (constant across S1/S2/S3 per OPERATORS.md §6.4)
+//   ───────────────────────────────────────────────────────────────────
+//   • Sort (revenue DESC, orderdate ASC)      — apply_top10 helper using
+//                                               std::partial_sort
+//   • Limit 10                                — apply_top10 truncate
+//
+// Inside-pipeline physical execution (the S1/S2/S3 comparison axis):
+//   S1 → col_secondary_group_walk over CUSTOMER + 2 COL secondaries
+//        (orders_sec keyed by (custkey, orderkey); lineitem_sec keyed
+//        by (custkey, orderkey, linenumber))
+//   S2 → scan q3_pipeline_view_t. The view is loaded UNFILTERED and
+//        per-lineitem (one row per (custkey, orderkey, linenumber)
+//        carrying l_extendedprice, l_discount, l_shipdate plus
+//        FD-attached customer/order columns) — predicate hoisting
+//        forbids baking ANY parameterised filter (mktsegment,
+//        orderdate, shipdate) at load time, so the view is reusable
+//        across all SEGMENT and DATE param sets (resolved
+//        2026-05-03; same audit as Q3I S2). Query-time replays the
+//        family logical plan with the view scan substituting for
+//        the entire CUSTOMER/ORDERS/LINEITEM input subtree (both
+//        joinA and joinB collapse into the view, since each row
+//        already carries c_mktsegment, o_orderdate, o_shippriority
+//        alongside l_extendedprice, l_discount, l_shipdate via the
+//        custkey/orderkey FD chain). All 3 filters apply live on
+//        view rows; the per-orderkey SortedAggregate fires above
+//        the view scan (view rows are already (custkey, orderkey,
+//        linenumber)-sorted, so within a custkey block they
+//        cluster by orderkey).
+//   S3 → col_group_walk over the 3-table COL MergedAdapter
+//
+// Outside-pipeline operators are byte-identical across the three.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Sources with filters fused ───────────
+  // Each TableScan-Filter pair is logically one node; drawn as two for
+  // clarity. The filter NEVER applies to secondary-structure loading
+  // (the COL MI, COL secondaries, and pipeline view all carry
+  // unfiltered base records).
+  s_cust [label="TableScan(CUSTOMER)\n+ Filter(c_mktsegment=SEGMENT)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate < DATE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_shipdate > DATE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  // ─────────── Inside pipeline (custkey-sorted) ───────────
+  // Aggregation FIRST, directly above LINEITEM — pushed below both
+  // joins. Group by l_orderkey, sum revenue per orderkey. Custkey-
+  // sorted FD-extended secondary key gives us sorted lineitem groups
+  // for free (lineitems within a custkey block cluster by orderkey).
+  agg_ord [label="SortedAggregate(group=[l_orderkey],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[LineitemRevenueAccumulator]\n— pushed down: directly above LINEITEM",
+           shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // The 3-way custkey-sorted join, now joining the aggregated lineitem
+  // stream up the hierarchy. In S3 this collapses into a single walker
+  // over the merged adapter; in S1 it is a 3-way merge over separate
+  // secondary scanners.
+  joinB [label="Join(ORDERS ⋈ <agg-lineitem>, o_orderkey = l_orderkey)\nattaches o_orderdate, o_shippriority\nstill custkey-sorted (FD via parent)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  joinA [label="Join(CUSTOMER ⋈ <ordered-agg>, c_custkey = o_custkey)\nsorted on custkey",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  proj    [label="Project(orderkey, revenue,\n  o_orderdate, o_shippriority)\n→ q3_pipeline_view_t / q3_agg_row_t"];
+
+  // ─────────── Outside pipeline ───────────
+  sort     [label="Sort(revenue DESC, orderdate ASC)\n[apply_top10 partial_sort]",
+            shape=box, style=filled, fillcolor="#E6F4EA"];
+  limit    [label="Limit 10\n[apply_top10 resize]",
+            shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  // Aggregate first (directly above lineitem), then join up.
+  s_lin  -> agg_ord;
+
+  s_ord  -> joinB  [label="0"];
+  agg_ord -> joinB [label="1"];
+
+  s_cust -> joinA  [label="0"];
+  joinB  -> joinA  [label="1"];
+
+  joinA -> proj;
+  proj  -> sort;
+  sort  -> limit;
+}

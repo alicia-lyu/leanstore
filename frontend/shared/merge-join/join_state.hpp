@@ -31,10 +31,9 @@ class JoinState
 
    ~JoinState()
    {
-      if (
-          // jk_to_join % 1000 == 1 || // sampling
-          joined > 10000)
-         std::cout << "~JoinState: joined " << (double)joined / 1000 << "k records. Ended at JK " << jk_to_join << std::endl;
+      // Per-destructor join cardinality logging suppressed — at higher SF
+      // a single 15-second experiment can fire this hundreds of times,
+      // burying everything else. Re-enable per-debug-session by hand.
    }
 
    bool went_past(const JK& ballpark_jk) const
@@ -65,6 +64,16 @@ class JoinState
    }
 
    bool has_next() const { return !joined_records.empty(); }
+
+   // Pop and consume any joined records that were produced by refresh() but
+   // not yet drained by next(). Safe to call from destructors: ensures the
+   // consumer callback fires for every joined record exactly once even if the
+   // outer loop returned early. After drain() the queue is empty, so the
+   // get_produced() warning will not fire.
+   void drain()
+   {
+      while (has_next()) next();
+   }
 
    template <typename Record, size_t I>
    void emplace(const typename Record::Key& key, const Record& rec)
@@ -168,7 +177,7 @@ class JoinState
           auto& vec = std::get<Is>(records_to_join);
           using VecElem = typename std::remove_reference_t<decltype(vec)>::value_type;
           using RecordType = std::tuple_element_t<1, VecElem>;
-          if (next_jk.match(SKBuilder<JK>::template get<RecordType>(jk_to_join)) != 0) {
+          if (next_jk.match(SKBuilder<JK>::template project<RecordType>(jk_to_join)) != 0) {
              joined_cnt += join_current();
              vec.clear();
           }

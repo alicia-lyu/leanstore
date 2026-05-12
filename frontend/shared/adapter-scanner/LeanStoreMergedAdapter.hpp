@@ -1,5 +1,6 @@
 #pragma once
 // #include <stdexcept>
+#include <cstring>
 #include <variant>
 #include "Exceptions.hpp"
 #include "LeanStoreMergedScanner.hpp"
@@ -23,18 +24,17 @@ struct LeanStoreMergedAdapter {
 
    LeanStoreMergedAdapter(LeanStore& db, string name) : name(name), produced(0)
    {
-      if (FLAGS_vi) {
-         if (FLAGS_recover) {
-            btree = &db.retrieveBTreeVI(name);
-         } else {
-            btree = &db.registerBTreeVI(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
-         }
+      // Always BTreeLL — see the matching comment in LeanStoreAdapter::ctor.
+      // The FLAGS_vi=true branch used to call registerBTreeVI, but the rest
+      // of this class (line ~40 below, getScanner, etc.) already assumes
+      // BTreeLL via dynamic_cast<BTreeLL*>; the mismatch returned null and
+      // either nulled out btree_generic or SEGV'd in the merged scanner.
+      // The TPC-H workloads run with --isolation_level=ser so SI is not
+      // required.
+      if (FLAGS_recover) {
+         btree = &db.retrieveBTreeLL(name);
       } else {
-         if (FLAGS_recover) {
-            btree = &db.retrieveBTreeLL(name);
-         } else {
-            btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
-         }
+         btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
       }
       btree_generic = static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree));
    }
@@ -112,10 +112,12 @@ struct LeanStoreMergedAdapter {
       std::variant<Records...> result_rec;
 
       (([&]() {
-          if (!matched && k.size() == Records::maxFoldLength() && v.size() == sizeof(Records)) {
+          if (!matched && record_matches<Records>(k.data(), k.size(), v.size())) {
              typename Records::Key key;
              Records::unfoldKey(k.data(), key);
-             const Records& rec = *reinterpret_cast<const Records*>(v.data());
+             // Alignment not guaranteed; use memcpy to avoid UB on structs with doubles.
+             Records rec;
+             std::memcpy(&rec, v.data(), sizeof(Records));
              matched = true;
              result_key = key;
              result_rec = rec;
@@ -216,23 +218,39 @@ struct LeanStoreMergedAdapter {
    }
    u64 estimateLeafs() { return btree->estimateLeafs(); }
 
+   // Content-walk: iterate every record, summing key+value bytes.
+   // Mirrors the RocksDB raw_bytes_in_cf pattern in
+   // tests/q3i/test_query_q3i_rocksdb.cpp. Use to compare reported (page-
+   // estimate) size against actual encoded payload — leaf-fill ratio.
+   //
+   // Implementation: drive the scanner via next_raw() to bypass variant
+   // construction; we only need byte counts. Returns (content_bytes,
+   // record_count). Caller is responsible for being inside an OLAP TX.
+   std::pair<long, long> content_bytes_walk()
+   {
+      // Pick any record type as the JK/JR anchor; we don't unfold values.
+      using FirstR = std::tuple_element_t<0, std::tuple<Records...>>;
+      auto scanner = this->template getScanner<typename FirstR::Key, FirstR>();
+      long rows = 0, bytes = 0;
+      while (auto raw = scanner->next_raw()) {
+         auto [tag, k_slice, v_slice] = *raw;
+         (void)tag;
+         rows  += 1;
+         bytes += static_cast<long>(k_slice.size() + v_slice.size());
+      }
+      return {bytes, rows};
+   }
+
    template <typename JK, typename JR>
    std::unique_ptr<LeanStoreMergedScanner<JK, JR, Records...>> getScanner() {
-      if (FLAGS_vi) {
-         return std::make_unique<LeanStoreMergedScanner<JK, JR, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
-      } else {
-         return std::make_unique<LeanStoreMergedScanner<JK, JR, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
-      }
+      // Always BTreeLL — matches the ctor's BTreeLL-only registration.
+      return std::make_unique<LeanStoreMergedScanner<JK, JR, Records...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
    }
 
    template <typename JK, typename JR, typename... RsSubset>
    std::unique_ptr<LeanStoreMergedScanner<JK, JR, RsSubset...>> getSelectiveScanner()
    {
-      if (FLAGS_vi) {
-         return std::make_unique<LeanStoreMergedScanner<JK, JR, RsSubset...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
-      } else {
-         return std::make_unique<LeanStoreMergedScanner<JK, JR, RsSubset...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
-      }
+      return std::make_unique<LeanStoreMergedScanner<JK, JR, RsSubset...>>(*static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
    }
 
 };

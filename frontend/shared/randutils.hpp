@@ -42,8 +42,12 @@ inline Varchar<16> randomnstring(Integer minLenStr, Integer maxLenStr)
 
 inline Numeric randomNumeric(Numeric min, Numeric max)
 {
-   double range = (max - min);
-   double div = RAND_MAX / range;
-   return min + (leanstore::utils::RandomGenerator::getRandU64() / div);
+   // getRandU64() returns a value in [0, 2^64). Map to [0,1) by dividing by
+   // 2^64, then scale to [min, max). The previous implementation divided by
+   // RAND_MAX (2^31-1) which produced values orders of magnitude outside the
+   // requested range when getRandU64 sat in its upper bits.
+   constexpr double inv_u64 = 1.0 / 18446744073709551616.0;  // 2^64
+   double r01 = static_cast<double>(leanstore::utils::RandomGenerator::getRandU64()) * inv_u64;
+   return min + r01 * (max - min);
 }
 }  // namespace randutils

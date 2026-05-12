@@ -25,4 +25,15 @@ paper*
 stderr.txt
 *.mk
 perf*
+!**/PERFORMANCE.md
+!**/perf_context_capture.hpp
 leanstore.json
+.claude
+/TRASH
+*.pdf
+/test_data*
+/test_csv*
+test*.json
+/test*data
+/test*csv
+*.bak

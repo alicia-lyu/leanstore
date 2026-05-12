@@ -8,6 +8,7 @@ ExternalProject_Add(
         GIT_TAG 718d827cf05c2e9bba17e926cac2d7ab2356621c
         TIMEOUT 10
         BUILD_COMMAND ""
+        INSTALL_COMMAND ""
         UPDATE_COMMAND "" # to prevent rebuilding everytime
         CMAKE_ARGS
         -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/vendor/tabulate
