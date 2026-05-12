@@ -3,10 +3,6 @@
 // Q5-specific record types for the COL pipeline (CUSTOMER × ORDERS × LINEITEM).
 //
 // Types defined here:
-//   - q5_customer_rn_t    : Join-output of CUSTOMER ⋈ RN (inner join on
-//                           c_nationkey = n_nationkey).  Transient in-memory
-//                           type; no tagged_path / SKBuilder / sentinel id.
-//                           Carries c_custkey, c_nationkey, n_name downstream.
 //   - q5_pipeline_view_t  : Structure 2 intermediate view — one row per
 //                           (custkey, orderkey, linenumber), unaggregated
 //                           lineitem fields + FD-attached order/customer cols
@@ -61,26 +57,6 @@
 
 namespace tpch::q5
 {
-
-// ---------------------------------------------------------------------------
-// q5_customer_rn_t — join-output of CUSTOMER ⋈ RN (inner join on
-// c_nationkey = n_nationkey).
-//
-// Carries the customer's own join-relevant fields plus the matched NATION
-// column n_name.  Acts as the customer-input wrapper for every downstream
-// join in Q5:
-//   - S1 BMJ #1 customer-input wrapper (n_name propagated into q5_jr1_t)
-//   - S2 view loader (n_name FD-attached per customer row at load time)
-//   - S3 walker per-group state (cached in Q5GroupWalkVisitor)
-//   - S4 cust_map payload (keyed by c_custkey, value = q5_customer_rn_t)
-//
-// Transient in-memory type only — no tagged_path, no SKBuilder, no sentinel
-// id.  Not stored in any B-tree or RocksDB column family.
-struct q5_customer_rn_t {
-   Integer     c_custkey;
-   Integer     c_nationkey;  // == matched n_nationkey on survivors
-   std::string n_name;
-};
 
 // ---------------------------------------------------------------------------
 // q5_sort_key_t — shared sort/join-key abstraction for the (custkey,

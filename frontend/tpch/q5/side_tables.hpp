@@ -53,7 +53,8 @@ struct TupleIntIntHash {
 // Changes from the pre-Phase-10B shape:
 //   - n_name_map removed: n_name is fetched lazily via NATION primary-index
 //     lookup at the customer-survival point in each query_by_* body and
-//     carried downstream in q5_customer_rn_t / widened join intermediates.
+//     carried downstream via widened join intermediates (q5_jr1_t /
+//     q5_jr2_t / q5_pipeline_view_t) or a local CustHit struct in S4.
 //   - supplier_nation (map<suppkey, nationkey>) replaced by
 //     supplier_nation_set (unordered_set<tuple<nationkey, suppkey>>):
 //     fuses the SUPPLIER semi-join, the cross-equality c_nationkey=s_nationkey,
