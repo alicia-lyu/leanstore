@@ -235,10 +235,11 @@ struct q5_agg_row_t {
 // q5_sort_key_t header comment for the full convention.
 //
 // Key design difference from Q3: BMJ #2's right side is `lineitem_col_t`
-// (per-lineitem), NOT a pre-aggregate.  Q5 must consult `supplier_nation_map
-// [l_suppkey]` per lineitem and apply the cross-equality
-// `c_nationkey = s_nationkey`; collapsing per-order lineitems into one
-// revenue scalar before that probe would discard l_suppkey.
+// (per-lineitem), NOT a pre-aggregate.  Q5 must probe `supplier_nation_set`
+// with the composite key `(c_nationkey, l_suppkey)` per lineitem (fuses
+// SUPPLIER semi-join + cross-equality + suppkey equi-join); collapsing
+// per-order lineitems into one revenue scalar before that probe would
+// discard l_suppkey.
 
 // Wrapper carrying only a Key (custkey).  Mirrors q3_cust_jk_t shape.
 struct q5_cust_jk_t {
