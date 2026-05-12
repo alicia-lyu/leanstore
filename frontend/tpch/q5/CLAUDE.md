@@ -590,21 +590,25 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
   `plans/family_logical.dot`, `plans/baseline_s4.dot`,
   `plans/family_s3_physical.dot`. Code unchanged — see Phase 10B.
 - **Phase 10B** (2026-05-11; **complete**) — code rewrite to match
-  Phase 10A design. `q5_customer_rn_t` new record type (join-output of
-  CUSTOMER ⋈ RN, carries c_nationkey + n_name). `supplier_nation_set`
-  replaces `supplier_nation_map`: composite hashset keyed on
-  (s_nationkey, s_suppkey); one per-lineitem probe fuses SUPPLIER
-  semi-join + cross-equality + suppkey equi-join. `nation_name_map`
-  removed; aggregator keys by n_name (resolved upstream); `emit(out)`
-  needs no `sides` arg. `q5_admit_lineitem` templated on lineitem type;
-  takes `cached_n_name`. `q5_resolve_n_name` lazy cache helper (NATION
-  PK lookup, ~5 per query). S2 view loader FD-attaches `n_name` per
+  Phase 10A design. No new top-level record type: CUSTOMER ⋈ RN
+  join-output is expressed as cached fields on `Q5GroupWalkVisitor`
+  (S3), widened `n_name` fields on `q5_jr1_t` / `q5_jr2_t` (S1), the
+  existing `q5_pipeline_view_t.n_name` (S2), and a local `CustHit`
+  anonymous struct in S4's hashmap. `supplier_nation_set` replaces
+  `supplier_nation_map`: composite hashset keyed on (s_nationkey,
+  s_suppkey); one per-lineitem probe fuses SUPPLIER semi-join +
+  cross-equality + suppkey equi-join. `nation_name_map` removed;
+  aggregator keys by n_name (resolved upstream); `emit(out)` needs no
+  `sides` arg. `q5_admit_lineitem` templated on lineitem type; takes
+  `cached_n_name`. `q5_resolve_n_name` lazy cache helper (NATION PK
+  lookup, ~5 per query). S2 view loader FD-attaches `n_name` per
   customer row at load time. S4 rewritten on BASE adapters
   (`orders`, `lineitem`, not `col.split_*`); `orders_set` is PK-only;
-  lineitem probe is sequential with seek-on-miss skip cursor; ORDERS PK
-  lookup per orderkey transition resolves the joined customer record.
+  lineitem probe is sequential scan with probe-side seek-on-miss to
+  `{K+1, 0}` (no sorted_orderkeys vector, no build-side cursor); ORDERS
+  PK lookup per orderkey transition resolves the joined customer record.
   `test_query_q5_lsm` strict 4-way XOR parity at SF=1:
-  digest=0x2df0d67874759c18. Q3/Q3I regressions clean.
+  digest=0xb75da0b90416a49f. Q3/Q3I regressions clean.
 - **S5** — omitted by design (no parameter-independent aggregate
   to bake; see §Storage Structure Options).
 - **Linux perf sweep** — pending; tracked in `LINUX_PENDING.md`
@@ -657,8 +661,10 @@ carry `l_suppkey` and `l_returnflag` in commit `bec67300`.
 Phase 10A landed (2026-05-11): semi-join design locked in docs and
 DOT plans. Phase 10B landed (2026-05-11): C++ rewrite complete.
 `nation_name_map` removed; `supplier_nation_map` replaced by
-`supplier_nation_set<(nationkey, suppkey)>`; `q5_customer_rn_t` new
-record type carries c_nationkey + n_name downstream. S4 rewritten on
-base adapters (not `col.split_*`). All four `query_by_*` bodies use
-one composite-key probe per lineitem. Strict 4-way XOR parity at SF=1:
-digest=0x2df0d67874759c18. Linux perf sweep pending (`LINUX_PENDING.md`).
+`supplier_nation_set<(nationkey, suppkey)>`; no new top-level type
+(`q5_customer_rn_t` NOT created — CUSTOMER ⋈ RN join-output expressed
+inline in each path). S4 rewritten on base adapters (not `col.split_*`);
+lineitem probe is sequential scan with seek-on-miss to `{K+1, 0}` (no
+sorted_orderkeys vector). All four `query_by_*` bodies use one
+composite-key probe per lineitem. Strict 4-way XOR parity at SF=1:
+digest=0xb75da0b90416a49f. Linux perf sweep pending (`LINUX_PENDING.md`).
