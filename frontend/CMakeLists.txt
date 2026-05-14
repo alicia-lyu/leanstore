@@ -312,6 +312,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- q5i_lsm executable (RocksDB) ---
+    add_executable(q5i_lsm tpch/q5i/executable_rocksdb.cpp)
+    target_compile_definitions(q5i_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(q5i_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(q5i_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
     # --- test_query_q3_lsm: Q3 all-four query_by_* cross-structure parity test (RocksDB) ---
     add_executable(test_query_q3_lsm tpch/tests/q3/test_query_q3_rocksdb.cpp)
     target_compile_definitions(test_query_q3_lsm PRIVATE ROCKSDB_ONLY)
@@ -467,6 +482,12 @@ else()
 
     add_executable(q3i_lsm tpch/q3i/executable_rocksdb.cpp)
     target_link_libraries(q3i_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(q5i_btree tpch/q5i/executable_leanstore.cpp)
+    target_link_libraries(q5i_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(q5i_lsm tpch/q5i/executable_rocksdb.cpp)
+    target_link_libraries(q5i_lsm PUBLIC RocksDBLogger Threads::Threads)
 
     add_executable(test_query_q3_lsm tpch/tests/q3/test_query_q3_rocksdb.cpp)
     target_link_libraries(test_query_q3_lsm PUBLIC RocksDBLogger Threads::Threads)
