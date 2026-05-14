@@ -1,0 +1,130 @@
+// Q5I family logical plan — shared by S1, S2, S3.
+//
+// Q5I extends Q5 with a single new join (l_invoicekey = i_invoicekey) and
+// four revenue accumulators split by i_status {P, O, L, nominal=all}.
+// The pipeline chain changes from COL (C→O→L) to COLI (C→I→L), with
+// ORDERS demoted to a semi-join filter (date window only, no output columns).
+//
+// Hierarchy C→I→L (CONVENTIONS.md Rule 10, "hierarchical with semi-join filter"):
+//
+//   • CUSTOMER ⋈ RN (inner) — c_nationkey ∈ nation_set gate; ~80% prune.
+//     c_nationkey carried downstream for the post-pipeline supplier probe
+//     and nation equi-join.
+//   • INVOICE ⋈ CUSTOMER on invoicekey — equi-join (Rule 10 Pattern B):
+//     invoice records buffered per custkey group; i_status extracted at
+//     lineitem assembly time.
+//   • ORDERS ⋉ LINEITEM on orderkey — semi-join (Rule 10): orders
+//     contribute only the date filter; no orders columns flow downstream.
+//   • LINEITEM joins with INVOICE buffer on l_invoicekey → i_status.
+//
+// Assembled pipeline record per lineitem:
+//   {c_nationkey, l_suppkey, l_extendedprice, l_discount, i_status}
+//
+// Post-pipeline operator chain (Rule 11 — outside pipeline, shared S1–S4):
+//   1. ⋉ supplier_nation_set[(c_nationkey, l_suppkey)]
+//      [primary admission; subsumes nation_set check for supplier arm]
+//   2. HashAggregate by c_nationkey:
+//        nominal   += revenue             (every qualifying lineitem)
+//        realised  += revenue if P
+//        open      += revenue if O
+//        late      += revenue if L
+//      [≤5 nationkeys per region; trivially small aggregate]
+//   3. n_name = nation.lookup(c_nationkey)  [PK lookup, ≤5 per query]
+//   4. Sort by nominal_revenue DESC         [std::sort, ~5 rows]
+//
+// FILTER PUSHDOWN: the COLI MI, COLI split indexes, and pipeline view are
+// all loaded UNFILTERED. r_name, the resolved nation_set, and the orderdate
+// window may NOT be baked into any secondary (predicate hoisting; PLAYBOOK
+// §3.5 step 7).
+//
+// PRIMARY-KEY PAYLOAD CONVENTION (Rules 4, 10): every hash build carries
+// PK only. n_name NOT in any intermediate build; resolved in post-pipeline
+// step 3 via nation PK lookup after aggregation on c_nationkey.
+// invoice buffer holds full invoice_coli_t records (Rule 10 Pattern B);
+// i_status extracted at lineitem assembly time.
+//
+// Shared dimension subtree (RN = REGION ⋈ NATION) and SUPPLIER semi-join
+// are identical to Q5's family plan.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Shared dimension subtree: RN = REGION ⋈ NATION ───────────
+  s_reg [label="TableScan(REGION)\n+ Filter(r_name == :1)\n→ 1 regionkey",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_nat [label="TableScan(NATION)",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  rn    [label="HashJoin (inner)\nREGION ⋈ NATION\n  on n_regionkey = r_regionkey\nbuild payload = n_nationkey only\n(PK payload convention)\n→ nation_set",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  s_reg -> rn [label="build (filtered)"];
+  s_nat -> rn [label="probe"];
+
+  // ─────────── Fan-out 1: CUSTOMER ⋈ RN (inner) ───────────
+  s_cust  [label="TableScan(CUSTOMER)",
+           shape=box, style=filled, fillcolor="#E8F0FE"];
+  hj_cust [label="HashJoin (inner)\nCUSTOMER ⋈ RN\n  on c_nationkey = n_nationkey\nsurvivors carry c_custkey,\n  c_nationkey (= matched n_nationkey)",
+           shape=box, style="filled,rounded", fillcolor="#E8F0FE"];
+
+  rn     -> hj_cust [label="build (nation_set,\nPK-only)"];
+  s_cust -> hj_cust [label="probe"];
+
+  // ─────────── Fan-out 2: SUPPLIER ⋉ RN (semi-join) ───────────
+  s_sup  [label="TableScan(SUPPLIER)",
+          shape=box, style=filled, fillcolor="#E0F2F1"];
+  sj_sup [label="HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n[supplier_nation_set]",
+          shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+
+  rn    -> sj_sup [label="build (nation_set,\nPK-only)"];
+  s_sup -> sj_sup [label="probe"];
+
+  // ─────────── Inside pipeline: COLI chain (custkey-sorted) ───────────
+
+  // INVOICE equi-join: buffers full records per custkey group (Rule 10 Pattern B).
+  // Key order: invoice records precede orders/lineitems in custkey group
+  // (invoice tag=2 < orders=3 < lineitem=4), so buffer is complete at lineitem time.
+  s_inv  [label="TableScan(INVOICE)\n[custkey-sorted secondary]",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  buf_inv [label="BufferEquiJoin (inner)\nINVOICE buffered per custkey group\n  (Rule 10 Pattern B)\nbuffer holds full invoice_coli_t;\ni_status extracted at lineitem time\n→ invoice_buf[] per custkey",
+           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  // ORDERS semi-join: date filter only, no output columns.
+  s_ord  [label="TableScan(ORDERS)\n[custkey-sorted secondary]",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  sj_ord [label="SemiJoin (date filter)\nORDERS ⋉ pipeline\n  on (custkey, orderkey)\nsurvival: o_orderdate ∈ [date, date+1y)\nno orders columns flow downstream",
+          shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+
+  // LINEITEM final join: assembles pipeline record.
+  s_lin  [label="TableScan(LINEITEM)\n[custkey-sorted secondary]",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  join_lin [label="MergeJoin (inner)\nLINEITEM ⋈ invoice_buf\n  on l_invoicekey = key.invoicekey\nextracts i_status from buffer;\nassembles: {c_nationkey, l_suppkey,\n  l_extendedprice, l_discount, i_status}",
+            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  // Chain joins
+  hj_cust -> buf_inv  [label="custkey group context"];
+  s_inv   -> buf_inv  [label="probe (per-invoice)"];
+  buf_inv -> sj_ord   [label="custkey group + invoice_buf"];
+  s_ord   -> sj_ord   [label="probe (date filter)"];
+  sj_ord  -> join_lin [label="surviving orderkeys"];
+  s_lin   -> join_lin [label="probe (per-lineitem)"];
+
+  // ─────────── Post-pipeline operator chain (Rule 11) ───────────
+
+  sj_col_sup [label="HashSemiJoin\n<pipeline> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\n[primary admission gate]",
+              shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+
+  agg [label="HashAggregate\ngroup = [c_nationkey],\n  nominal  += revenue         (all)\n  realised += revenue if P\n  open     += revenue if O\n  late     += revenue if L\n[≤5 entries per query]",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  nation_lk [label="nation.lookup(c_nationkey)\n→ n_name\n[PK lookup, post-aggregation,\n ≤5 per query]\n(post-pipeline step 3)",
+             shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  sort [label="Sort(nominal_revenue DESC)\n[std::sort, ~5 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  join_lin   -> sj_col_sup [label="probe (per-lineitem)"];
+  sj_sup     -> sj_col_sup [label="build\n(supplier_nation_set)"];
+  sj_col_sup -> agg;
+  agg        -> nation_lk;
+  nation_lk  -> sort;
+}
