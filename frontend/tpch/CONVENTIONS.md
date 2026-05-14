@@ -453,6 +453,120 @@ or "snowflake" or how many dimension tables exist. It's purely:
 will defining the wrapper types cost more boilerplate than the
 inline hashmap probe?
 
+**Rule 10 — Group-walk join taxonomy: semi-join tables skip-group only;
+equi-join tables buffer full records.**
+
+Within any group-walk visitor (COL or COLI pipeline), how a joined table's
+records are handled depends on its join type:
+
+**Semi-join (filter only — no columns flow downstream):**
+Implement a skip-group or skip-order hook only. Do not buffer records.
+The hook returns `WalkAction::SkipGroup` / `SkipOrder` based on the current
+group key. No per-record state is accumulated.
+
+Examples: `on_orders` checks `o_orderdate` and returns `SkipOrder`;
+`on_customer` checks `c_nationkey ∈ nation_set` and returns `SkipGroup`.
+Dimension semi-joins whose probe key spans both pipeline and non-pipeline
+columns (e.g. `supplier_nation_set[(c_nationkey, l_suppkey)]` in Q5/Q5I)
+are handled outside the pipeline in the post-pipeline operator chain, not
+inside a walker hook.
+
+**Equi-join (contributes output columns):**
+Buffer the full record into a per-group vector, cleared on each new group key.
+Query-specific field extraction happens at **assembly time** (when the dependent
+downstream table is processed), not during the hook itself. Two compliant
+sub-patterns:
+
+- *Pattern A — streaming aggregate* (Q3I): `on_invoice` receives the full
+  `invoice_coli_t` record and immediately accumulates into a scalar
+  (e.g. `cust_open_due`). Valid when no Cartesian product is needed and the
+  output is a single value per group. The full record is passed to the
+  accumulator; the accumulator extracts fields.
+
+- *Pattern B — buffer for per-record lookup* (Q5I): `on_invoice` appends the
+  full `invoice_coli_t` record into `invoice_buf[]`. The downstream hook
+  (`on_lineitem`) looks up by join key (`key.invoicekey`) at assembly time and
+  extracts the needed field (`i_status`). Use when the downstream table joins
+  with individual records from the equi-joined table.
+
+**Prohibited in both patterns:** extracting query-specific fields into an
+intermediate map (e.g. `{invoicekey → i_status}`) during the hook. Always pass
+or buffer the **full record**; let the consumer decide what to extract.
+
+**Relation to Algorithm 1 (paper §merged-index interesting orderings):**
+Algorithm 1 buffers all tables and emits Cartesian products on key change.
+This rule is a refinement: semi-joined tables are excluded from buffering
+(no columns flow, so no Cartesian product contribution). Equi-joined tables
+follow Algorithm 1's buffer-and-assemble pattern, with Pattern A as a
+streaming-aggregate special case.
+
+**Compliance (existing queries):**
+
+| Query | Pipeline | Table | Join type | Pattern | Compliant? |
+|-------|----------|-------|-----------|---------|------------|
+| Q3 | COL | Customer | Semi (mktsegment) | Skip-group hook | Yes |
+| Q3 | COL | Orders | Equi (custkey) | Buffer; extract `o_orderdate` at hook | Yes |
+| Q3 | COL | Lineitem | Equi | Buffer; extract via accumulator | Yes |
+| Q5 | COL | Customer | Semi (nation filter) | Skip-group hook | Yes |
+| Q5 | COL | Orders | Equi (custkey) | Buffer; extract `o_orderdate` at hook | Yes |
+| Q5 | COL | Lineitem | Equi | Buffer; extract via `q5_admit_lineitem` | Yes |
+| Q3I | COLI | Customer | Semi (mktsegment) | Skip-group hook | Yes |
+| Q3I | COLI | Invoice | Equi (contributes `cust_open_due`) | Pattern A — streaming aggregate | Yes |
+| Q3I | COLI | Orders | Semi (date filter) | Skip-order hook | Yes |
+| Q3I | COLI | Lineitem | Equi | Extract via `LineitemRevenueAccumulator` | Yes |
+| Q5I | COLI | Invoice | Equi (contributes `i_status`) | Pattern B — buffer + lookup (by design) | Yes |
+| Q5I | COLI | Orders | Semi (date filter) | Skip-order hook | Yes |
+
+**Rule 11 — Draw a hard pipeline boundary; document the post-pipeline operator
+tree explicitly, even in monolithic implementations.**
+
+The group-walk (and any scan/join pipeline) has a hard output boundary:
+the pipeline emits assembled records one at a time. Everything that consumes
+those records is **outside the pipeline** and forms a logical operator tree.
+
+**Inside the pipeline:**
+
+- Record scanning and group detection (managed by pipeline infrastructure)
+- Skip-group / skip-order hooks for semi-joined tables (Rule 10)
+- Record buffering for equi-joined tables (Rule 10)
+- Record assembly: combining fields from buffered records into one emitted row
+
+**Outside the pipeline (OutClass and beyond):**
+
+- All semi-joins on dimensions whose probe key spans pipeline and non-pipeline
+  columns (e.g. `supplier_nation_set[(c_nationkey, l_suppkey)]`)
+- Aggregation / grouping
+- Dimension equi-joins for output column resolution (e.g. `n_name` via
+  `nation.lookup(c_nationkey)`, PK point lookup cached ~5×/query)
+- Sort / top-K
+
+**The OutClass is the designated crossing point.** It receives emitted records
+from the pipeline and implements the first post-pipeline operator. In practice
+`query_by_*` bodies are monolithic — the OutClass, aggregation, dimension join,
+and sort are all inline code — but the **conceptual operator tree must be
+explicitly documented** in plan descriptions and CLAUDE.md files. Writing the
+logical tree (with `⋉`, `⋈`, aggregate, sort nodes) before the code makes the
+operator ordering and column lineage auditable.
+
+**Why this matters for fair comparison:** Each storage structure (S1–S4) must
+apply the same post-pipeline operator tree. Any operator that appears inside
+the pipeline for one structure but outside for another distorts the comparison.
+
+**Code shape note:** The monolithic `query_by_*` pattern (OPERATORS.md §3) is
+the current implementation style. When the Calcite iterator model lands
+(`query_proc_w_merged_index/operators/`), each node in the conceptual tree
+becomes a literal `Iterator` operator. Documenting the tree now makes that
+migration mechanical.
+
+**Compliance (existing queries):**
+
+| Query | Compliant? | Evidence |
+|-------|------------|----------|
+| Q3 | Yes | `TopNSink` + `drain_sorted` outside walk; comments at `q3/query.tpp:436-447` |
+| Q5 | Yes | `NNameRevenueAggregator.emit()` + `std::sort` outside walk; comments at `q5/query.tpp:597-615` |
+| Q3I | Yes | `TopNSink` + `drain_sorted` outside COLI walk; no external dimension joins needed |
+| Q5I | Yes (by design) | Post-pipeline tree documented in `q5i/CLAUDE.md §Plan Descriptions` |
+
 ---
 
 ## §Anti-Pattern Reference
