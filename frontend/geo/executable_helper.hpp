@@ -5,79 +5,12 @@
 #include <cmath>
 #include <memory>
 #include <thread>
-#include "../shared/RocksDB.hpp"
+#include "../shared/db_traits.hpp"
 #include "../shared/logger/logger.hpp"
-#include "leanstore/concurrency-recovery/CRMG.hpp"
 #include "tpch_workload.hpp"
 
 DECLARE_int32(storage_structure);
-DECLARE_int32(warmup_seconds);
-DECLARE_int32(tx_seconds);
 DEFINE_bool(log_progress, true, "Log progress of the workload execution");
-
-static constexpr u64 BG_WORKER = 0;
-static constexpr u64 MAIN_WORKER = 1;
-
-struct DBTraits {
-   virtual void run_tx(std::function<void()> cb, u64 worker_id = MAIN_WORKER) = 0;
-   virtual void run_tx_w_rollback(std::function<void()> cb, std::string tx, u64 worker_id = MAIN_WORKER)
-   {
-      jumpmuTry()
-      {
-         run_tx(cb, worker_id);
-      }
-      jumpmuCatch()
-      {
-         rollback_tx(worker_id);
-         std::cerr << "Transaction " << tx << " failed." << std::endl;
-      }
-   }
-   virtual std::string name() = 0;
-   virtual void cleanup_thread(u64 worker_id) = 0;
-   virtual void rollback_tx(u64 worker_id) = 0;
-   virtual ~DBTraits() = default;
-};
-
-struct LeanStoreTraits : public DBTraits {
-   leanstore::cr::CRManager& crm;
-   explicit LeanStoreTraits(leanstore::cr::CRManager& crm) : crm(crm) { std::cout << "Running experiment with " << name() << std::endl; }
-   ~LeanStoreTraits() = default;
-   void run_tx(std::function<void()> cb, u64 worker_id)
-   {
-      crm.scheduleJobSync(worker_id, [&]() {
-         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLTP, leanstore::TX_ISOLATION_LEVEL::SERIALIZABLE);
-         cb();
-         leanstore::cr::Worker::my().commitTX();
-      });
-   }
-
-   void cleanup_thread(u64 worker_id)
-   {
-      crm.scheduleJobSync(worker_id, [&]() { leanstore::cr::Worker::my().shutdown(); });
-   }
-
-   void rollback_tx(u64) {}
-
-   std::string name() { return "LeanStore"; }
-};
-
-struct RocksDBTraits : public DBTraits {
-   RocksDB& rocks_db;
-   explicit RocksDBTraits(RocksDB& rocks_db) : rocks_db(rocks_db) { std::cout << "Running experiment with " << name() << std::endl; }
-   ~RocksDBTraits() = default;
-   void run_tx(std::function<void()> cb, u64)  // worker id determined by caller thread
-   {
-      rocks_db.startTX();
-      cb();
-      rocks_db.commitTX();
-   }
-   void cleanup_thread(u64)
-   {  // No cleanup needed for RocksDB threads
-   }
-
-   void rollback_tx(u64) { rocks_db.rollbackTX(); }
-   std::string name() { return "RocksDB"; }
-};
 
 template <typename PerStructureWorkloadFull,
           template <typename> class AdapterType,
@@ -95,10 +28,12 @@ struct ExecutableHelper {
    std::atomic<u64> bg_tx_count = 0;
    std::atomic<u64> running_threads_counter = 0;
 
+#ifndef ROCKSDB_ONLY
    ExecutableHelper(leanstore::cr::CRManager& crm, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
        : db_traits(std::make_unique<LeanStoreTraits>(crm)), workload(std::move(workload)), tpch(tpch)
    {
    }
+#endif
 
    ExecutableHelper(RocksDB& rocks_db, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
        : db_traits(std::make_unique<RocksDBTraits>(rocks_db)), workload(std::move(workload)), tpch(tpch)

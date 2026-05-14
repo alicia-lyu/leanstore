@@ -46,9 +46,26 @@ struct RocksDBStats {
 struct RocksDBLogger : public Logger {
    RocksDBStats prev_stats;
    RocksDBStats curr_stats;
+   // Snapshot taken at the start of helper.run() so that post-load
+   // background compactions (which inflate SST_WRITE_MICROS) are not
+   // attributed to query-phase traffic.
+   RocksDBStats baseline_stats;
    std::shared_ptr<rocksdb::Statistics> rocksdb_stats_ptr;
 
-   RocksDBLogger(RocksDB& db) : rocksdb_stats_ptr(db.tx_db->GetDBOptions().statistics) { prev_stats = RocksDBStats(*rocksdb_stats_ptr); }
+   RocksDBLogger(RocksDB& db) : rocksdb_stats_ptr(db.tx_db->GetDBOptions().statistics)
+   {
+      prev_stats     = RocksDBStats(*rocksdb_stats_ptr);
+      baseline_stats = prev_stats;
+   }
+
+   // Post-load compactions inflate SST_WRITE_MICROS otherwise; snapping
+   // prev_stats here ensures only writes that occur during the TX loop
+   // itself are attributed to per-TX SSTWrite figures.
+   void capture_baseline() override
+   {
+      baseline_stats = RocksDBStats(*rocksdb_stats_ptr);
+      prev_stats     = baseline_stats;
+   }
 
    ~RocksDBLogger() { std::cout << "RocksDB logs written to " << csv_runtime << std::endl; }
 

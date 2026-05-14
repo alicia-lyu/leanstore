@@ -6,7 +6,7 @@
 #include "leanstore/profiling/tables/DTTable.hpp"
 #include "leanstore/storage/buffer-manager/BufferManager.hpp"
 #include "logger.hpp"
-#include "../../geo/tpch_workload.hpp"
+#include "../../tpch/tpch_workload.hpp"
 
 struct LeanStoreLogger : public Logger {
    leanstore::profiling::BMTable bm_table;

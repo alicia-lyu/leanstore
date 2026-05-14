@@ -1,6 +1,7 @@
 #pragma once
 
 #include <gflags/gflags.h>
+#include <random>
 #include "../shared/randutils.hpp"
 #include "tpch_workload.hpp"
 #include "views.hpp"
@@ -25,7 +26,7 @@ struct LoadState {
        : custkeys(last_customer_id - 1), customer_idx(0), hot_city_candidates(), insert_customer_func(insert_customer_func)
    {
       std::iota(custkeys.begin(), custkeys.end(), 1);  // customer id starts from 1
-      std::random_shuffle(custkeys.begin(), custkeys.end());
+      std::shuffle(custkeys.begin(), custkeys.end(), std::mt19937{std::random_device{}()});
    }
 
    void advance_customers_in_1city(const size_t step_cnt, int n, int s, int c, int ci)

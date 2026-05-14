@@ -94,7 +94,13 @@ struct HashJoin {
       wait_us = d / 1000.0 - build_us;
    }
 
-   ~HashJoin() { HashLogger::log1(state.get_produced(), build_us, wait_us, hash_table_bytes()); }
+   ~HashJoin()
+   {
+      // Drain any joined records still queued so get_produced() doesn't warn
+      // about a non-empty queue at logger time.
+      state.drain();
+      HashLogger::log1(state.get_produced(), build_us, wait_us, hash_table_bytes());
+   }
 
    long hash_table_bytes() const { return left_hashtable.size() * (sizeof(JK) + sizeof(typename R1::Key) + sizeof(R1)); }
 
@@ -148,7 +154,11 @@ struct HashJoin {
       }
       state.refresh(JK::max()); // reset cached records at every step, because the right side come in no order, so can't assume the left cached records can still match with future right records
 
-      if (state.get_produced() != 0 && !state.has_next()) {
+      // Order matters: !has_next() must be checked first. get_produced()
+      // intentionally warns when called with a non-empty queue, so probing
+      // it during normal operation (when we just refreshed and pushed
+      // matching records) would emit spurious warnings.
+      if (!state.has_next() && state.get_produced() != 0) {
          std::cerr << "WARNING: HashJoin::probe_next() no match found for JK " << last_jk << ", violating integrity constraint" << std::endl;
          std::cerr << "Left hashtable size: " << left_hashtable.size() << std::endl;
          std::cerr << "Seek JK: " << seek_jk << std::endl;

@@ -8,6 +8,7 @@ Auto-generates a Makefile fragment with build, csv-dir, image, recovery and LLDB
 from pathlib import Path
 import json
 from typing import List
+import platform
 
 vscode_launch_obj = {
     "version": "0.2.0",
@@ -15,8 +16,9 @@ vscode_launch_obj = {
 }
 
 build_dirs = ["build", "build-debug"]
-exec_names = ["geo_btree", "geo_lsm"]
-data_disk = Path("/mnt/ssd/")
+exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm", "q3i_btree", "q3i_lsm", "q3_btree", "q3_lsm", "q5_btree", "q5_lsm"]
+data_disk = Path("$(data_disk)")
+IS_MACOS = platform.system() == "Darwin"
 shared_flags: dict[str, str] = {
     "vi": "false",
     "mv": "false",
@@ -115,9 +117,126 @@ class Experiment:
         self.generate_recover_file()
         if "debug" not in str(self.build_dir):
             self.run_experiment()
+            # A5: isolated-DB variant — one image per storage structure with
+            # only that structure's secondary loaded. Lets us measure each
+            # path without cross-structure cache pollution (H8). Only emitted
+            # for the build directory (not build-debug) and for q3i, which
+            # is the only target with the H8 hypothesis on its worklist.
+            if self.exec_fname in ("q3i_lsm", "q3i_btree"):
+                self.run_isolated_experiment()
         else:
             self.debug_experiment()
         self.reload()
+
+    def run_isolated_experiment(self) -> None:
+        """A5 isolated-DB variant: per-structure image + recover file.
+
+        For each --storage_structure N, emits:
+          - $(data_disk)/{exec}_iso/iso_{N}/{scale}: the image dir/file
+          - $(data_disk)/{exec}_iso/iso_{N}/build/{scale}.json: persist
+            target (loads ONLY structure N's secondary via
+            --load_only_structure=N)
+          - {exec}_iso_{N}: recover + run target
+          - {exec}_iso: aggregate of all structures.
+
+        Runtime / CSV output is shared at
+        build/{exec}_iso/{scale}-in-{dram}/, mirroring the non-iso
+        layout: per-structure log files cohabit one runtime dir, with
+        a single TPut.csv / size.csv carrying one row per N. Lets
+        downstream comparisons paste shared-vs-iso CSVs row-by-row.
+        """
+        self.makefile_subsection("A5 isolated-DB experiment")
+        is_lsm = "lsm" in self.exec_fname
+        iso_runtime = Path(f"{self.build_dir}/{self.exec_fname}_iso/{SCALE_ENV}-in-$(dram)")
+        # Per-iso-target csv_path override so iso TPut/size CSVs land
+        # under build/{exec}_iso/, not the inherited non-iso runtime_dir.
+        iso_class_flags = self.class_flags.copy()
+        iso_class_flags["csv_path"] = str(iso_runtime)
+        for n in STRUCTURE_OPTIONS[self.exec_fname]:
+            iso_image = data_disk / f"{self.exec_fname}_iso" / f"iso_{n}" / f"{SCALE_ENV}"
+            iso_recover = data_disk / f"{self.exec_fname}_iso" / f"iso_{n}" / "build" / f"{SCALE_ENV}.json"
+            iso_image_str = str(iso_image) if is_lsm else f"{iso_image}.image"
+            create_cmd, _ = get_image_command(is_lsm, Path(iso_image_str))
+
+            # image dir/file
+            print(f"{iso_image_str}:")
+            print(f"\t{create_cmd}")
+            print()
+            # persist target
+            iso_loading_files_str = " ".join(get_loading_files(self.exec_fname))
+            print(f"{iso_recover}: {LOADING_META_FILE} {iso_loading_files_str} | {iso_image_str}")
+            self.console_print_subsection(f"Persisting isolated structure {n} → {iso_recover}")
+            print(f"\tmkdir -p {iso_recover.parent}")
+            persist_flags = self.remaining_flags(
+                recover_file="./leanstore.json",
+                persist_file=str(iso_recover),
+                trunc=True,
+                ssd_path=iso_image_str,
+                scale=SCALE_ENV,
+                dram_gib=8,
+            )
+            if IS_MACOS:
+                prefix = f"script -q {iso_runtime}/load.log "
+                suffix = ""
+            else:
+                prefix = "script -q -c \""
+                suffix = f"\" {iso_runtime}/load.log"
+            print(f"\t@mkdir -p {iso_runtime}")
+            print(
+                f"\t{prefix}{self.exec_path}",
+                kv_to_str(self.class_flags),
+                kv_to_str(persist_flags),
+                f"--storage_structure={n}",
+                f"--load_only_structure={n}",
+                f"2>{iso_runtime}/load_stderr.txt{suffix}",
+                sep=" ",
+            )
+            print()
+            # run target
+            run_flags = self.remaining_flags(
+                recover_file=str(iso_recover),
+                persist_file="./leanstore.json",
+                trunc=False,
+                ssd_path=iso_image_str,
+                scale=SCALE_ENV,
+                dram_gib="$(dram)",
+            )
+            print(f"{self.exec_fname}_iso_{n}: check_perf_event_paranoid {self.exec_path} {iso_recover} {iso_image_str}")
+            print(f"\t@mkdir -p {iso_runtime}")
+            print(f"\ttouch {iso_runtime}/structure{n}.log")
+            if IS_MACOS:
+                print(
+                    f"\tscript -q {iso_runtime}/structure{n}.log",
+                    f"{self.exec_path}",
+                    kv_to_str(iso_class_flags),
+                    kv_to_str(run_flags),
+                    f"--storage_structure={n}",
+                    "--micro_perf=true",
+                    "--cfstats=true",
+                    "--coli_walker_variant=$(coli_walker_variant)",
+                    "--use_seek_skip=$(use_seek_skip)",
+                    f"2>{iso_runtime}/structure{n}_stderr.txt",
+                    sep=" ",
+                )
+            else:
+                print(
+                    f"\tscript -q -c \"{self.exec_path}",
+                    kv_to_str(iso_class_flags),
+                    kv_to_str(run_flags),
+                    f"--storage_structure={n}",
+                    "--micro_perf=true",
+                    "--cfstats=true",
+                    "--coli_walker_variant=$(coli_walker_variant)",
+                    "--use_seek_skip=$(use_seek_skip)",
+                    f"2>{iso_runtime}/structure{n}_stderr.txt\"",
+                    f"{iso_runtime}/structure{n}.log",
+                    sep=" ",
+                )
+            print()
+        # aggregate target
+        agg_deps = " ".join([f"{self.exec_fname}_iso_{n}" for n in STRUCTURE_OPTIONS[self.exec_fname]])
+        print(f"{self.exec_fname}_iso: {agg_deps}")
+        print()
 
     def makefile_subsection(self, title: str) -> None:
         print(f"#{self.sep} {title} {self.sep}")
@@ -182,8 +301,15 @@ class Experiment:
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
         print(f"\tmkdir -p {self.recover_file.parent}")
-        prefix = "lldb -b -o run -o bt -- " if "debug" in str(self.build_dir) else 'script -q -c "'
-        suffix = '' if "debug" in str(self.build_dir) else f'" {self.runtime_dir}/load.log'
+        if "debug" in str(self.build_dir):
+            prefix = "lldb -b -o run -o bt -- "
+            suffix = ''
+        elif IS_MACOS:
+            prefix = f'script -q {self.runtime_dir}/load.log '
+            suffix = ''
+        else:
+            prefix = 'script -q -c "'
+            suffix = f'" {self.runtime_dir}/load.log'
         rem_flags = self.remaining_flags(
                 recover_file="./leanstore.json", # do not recover
                 persist_file=self.recover_file, # do persist
@@ -207,9 +333,11 @@ class Experiment:
             b = Path(b)
             if b.resolve() == self.build_dir.resolve():
                 continue
-            print(f"\tcp -f {self.recover_file} {data_disk / self.exec_fname / b / f'{SCALE_ENV}.json'}")
-        print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path}")
-        print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk}")
+            dest = data_disk / self.exec_fname / b / f'{SCALE_ENV}.json'
+            print(f"\tmkdir -p {dest.parent}")
+            print(f"\tcp -f {self.recover_file} {dest}")
+        print("\techo \"-------------------Image size-------------------\";", f"du -sh {self.image_path} | awk '{{print $1}}'")
+        print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk} | awk '{{print $1}}'")
         print()
         
     def experiment_flags(self) -> tuple[dict[str, str], str]:
@@ -239,15 +367,33 @@ class Experiment:
             print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {self.recover_file} {image_dep}")
             print(f"\tmkdir -p {self.runtime_dir}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
-            print(
-                f'\tscript -q -c "{self.exec_path}',
-                kv_to_str(self.class_flags),
-                kv_to_str(rem_flags),
-                f"--storage_structure={structure}",
-                f'2>{self.runtime_dir}/structure{structure}_stderr.txt\"',
-                f'{self.runtime_dir}/structure{structure}.log',
-                sep=" "
-            )
+            # Diagnostic flags: opt-in via Makefile vars `micro_perf=true cfstats=true`.
+            # Default false in the Makefile; A1 sweep enables them per-run.
+            # `coli_walker_variant` default is fused_emit post-A2c.
+            # `use_seek_skip` default -1 = use Backend trait; A3-Linux sweep flips for RocksDB.
+            diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant) --use_seek_skip=$(use_seek_skip)"
+            if IS_MACOS:
+                print(
+                    f'\tscript -q {self.runtime_dir}/structure{structure}.log',
+                    f'{self.exec_path}',
+                    kv_to_str(self.class_flags),
+                    kv_to_str(rem_flags),
+                    f"--storage_structure={structure}",
+                    diag_flags,
+                    f'2>{self.runtime_dir}/structure{structure}_stderr.txt',
+                    sep=" "
+                )
+            else:
+                print(
+                    f'\tscript -q -c "{self.exec_path}',
+                    kv_to_str(self.class_flags),
+                    kv_to_str(rem_flags),
+                    f"--storage_structure={structure}",
+                    diag_flags,
+                    f'2>{self.runtime_dir}/structure{structure}_stderr.txt\"',
+                    f'{self.runtime_dir}/structure{structure}.log',
+                    sep=" "
+                )
             print()
         
     
@@ -301,16 +447,50 @@ class Experiment:
         print(f"\t$(MAKE) {self.recover_file}")
         print()
 
-LOADING_META_FILE = "./frontend/geo/tpch_workload.hpp"
+# Files whose mtime change must invalidate every persisted recovery
+# image (`$(data_disk)/<exec>/build/$(scale).json`). The CLAUDE.md
+# "Reload eagerly" workflow rule documents this list. If you add a
+# field to a record type, edit a populate_*() body, or otherwise
+# change on-disk byte layout / load logic, touching one of these
+# files (or the per-query `<q>/load.{tpp,hpp,cpp}`) is what tells
+# Make to re-derive the image. Keep this list in sync with anything
+# that affects what bytes get written during load.
+LOADING_META_FILES = [
+    "./frontend/tpch/tpch_workload.hpp",
+    "./frontend/tpch/tpchi_family/tpchi_workload.hpp",
+    "./frontend/tpch/tpch_family/views_ol.hpp",
+    "./frontend/tpch/tpch_family/views_col.hpp",
+    "./frontend/tpch/tpch_family/views_coli.hpp",
+    "./frontend/tpch/tpch_family/ol_pipeline.tpp",
+    "./frontend/tpch/tpch_family/col_pipeline.tpp",
+    "./frontend/tpch/tpchi_family/coli_pipeline.tpp",
+]
+LOADING_META_FILE = " ".join(LOADING_META_FILES)
 
 DIFF_DIRS = {
  "geo_lsm": "geo",
- "geo_btree": "geo"
+ "geo_btree": "geo",
+ "q12_lsm": "tpch/q12",
+ "q12_btree": "tpch/q12",
+ "q3i_lsm": "tpch/q3i",
+ "q3i_btree": "tpch/q3i",
+ "q3_lsm": "tpch/q3",
+ "q3_btree": "tpch/q3",
+ "q5_lsm": "tpch/q5",
+ "q5_btree": "tpch/q5",
 }
-            
+
 STRUCTURE_OPTIONS = {
     "geo_btree": [1, 2, 3, 4],
-    "geo_lsm": [1, 2, 3, 4]
+    "geo_lsm": [1, 2, 3, 4],
+    "q12_btree": [1, 2, 3, 4],
+    "q12_lsm": [1, 2, 3, 4],
+    "q3i_btree": [1, 2, 3, 4, 5],
+    "q3i_lsm": [1, 2, 3, 4, 5],
+    "q3_btree": [1, 2, 3, 4],
+    "q3_lsm": [1, 2, 3, 4],
+    "q5_btree": [1, 2, 3, 4],
+    "q5_lsm": [1, 2, 3, 4],
 }
 
 def main() -> None:
@@ -330,6 +510,11 @@ def main() -> None:
 
     # phony declaration
     phony = ["FORCE", "check_perf_event_paranoid", "executables", "clean_runtime_dirs", "all", "all_lldb"] + exec_names + [f"{e}_lldb" for e in exec_names] + [f"{e}_reload" for e in exec_names] + [f"{e}_lldb_reload" for e in exec_names]
+    # A5 iso aggregate targets are phony (per-structure run targets too).
+    for e in ("q3i_lsm", "q3i_btree"):
+        phony.append(f"{e}_iso")
+        for n in STRUCTURE_OPTIONS[e]:
+            phony.append(f"{e}_iso_{n}")
     print(f".PHONY: {' '.join(phony)}")
     
     vscode_launch = open(".vscode/launch.json", "w")

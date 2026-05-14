@@ -1,0 +1,141 @@
+// Q5 S3 physical plan — substitutes the family logical plan with a
+// single COLGroupWalk over the 3-table COL MergedAdapter, plus the
+// shared RN = REGION ⋈ NATION dimension subtree computed pre-walk.
+//
+// Why one operator replaces five: the COL MI co-locates CUSTOMER,
+// ORDERS, and LINEITEM by custkey using Calcite-style tagged keys.
+// Within a custkey group, byte-lex order is:
+//
+//     customer → (orders → lineitem*)+
+//
+// (sentinel ordering customer=1 < invoice=2 (reserved/unused) <
+// orders=3 < lineitem=4 — COL reuses COLI tag values verbatim.) This
+// means a single forward streaming pass — no buffering, no chain
+// hashmaps — can:
+//
+//   1. Apply the CUSTOMER ⋈ RN inner-join gate at the customer
+//      record (c_nationkey ∈ nation_set; suppresses the rest of the
+//      group when the gate fails — same mechanism as Q3's mktsegment
+//      gate). c_nationkey is preserved on survivors for use at
+//      lineitem time. The hash-join inner is lowered to a set-
+//      membership test inside the walker; the "inner" framing is
+//      what justifies fetching n_name at emit time via NATION's
+//      primary-index lookup.
+//   2. Apply o_orderdate ∈ window at on_order; if the order fails,
+//      no lineitems for that orderkey are admitted.
+//   3. Per qualifying lineitem: probe supplier_nation_set with
+//      (c_nationkey, l_suppkey); SKIP if absent. This single lookup
+//      is the per-lineitem lowering of HashSemiJoin(COL ⋉
+//      supplier_nation_set), which fuses the SUPPLIER ⋉ RN semi-
+//      join, the cross-equality c_nationkey = s_nationkey, and the
+//      suppkey equi-join. Accumulate l_extendedprice * (1 -
+//      l_discount) into the per-nationkey revenue map carried by
+//      the Visitor.
+//
+// Q5 has NO sibling sub-aggregate. The Visitor's per-nationkey
+// HashAggregate is a small (~5-bucket) map kept across all custkey
+// groups for the entire walk; the walker emits no rows mid-walk and
+// drains the final map at on_walk_end.
+//
+// n_name is resolved INSIDE the walk, downstream of the CUSTOMER ⋈ RN
+// inner-join gate at on_customer. The inner-join framing authorizes
+// carrying NATION columns into the chain; lookup timing is an
+// efficiency choice. Convention: lazy per-nationkey lookup cached in
+// the Visitor's revenue map (~5 lookups total — one per distinct
+// nationkey first encountered during the walk). No nation_name_map
+// (no duplicate of NATION's primary index); no n_name in any
+// intermediate build payload (primary-key payload convention).
+//
+// Operator-framing rules (same as baseline_s4.dot and
+// family_logical.dot):
+//
+//   • "Probe X" and "Build X" are NEVER operator nodes. The walker
+//     IS a single physical operator that internally lowers several
+//     logical joins (HashJoin/HashSemiJoin) into set-membership and
+//     hashset probes — but each such lowering is part of the walker,
+//     not a separate operator.
+//   • Asymmetric framing across the two fan-outs from RN:
+//        CUSTOMER ⋈ RN  is HashJoin (inner) — n_nationkey flows
+//                       downstream (consumed at emit time).
+//        SUPPLIER ⋉ RN  is HashSemiJoin   — no NATION column
+//                       flows past the supplier arm.
+//
+// FILTER PUSHDOWN STATUS: every filter from family_logical.dot is
+// fused into the walker. The composite-key semi-join (against
+// supplier_nation_set) fires per-lineitem after the per-nationkey
+// accumulation gate, which is the earliest physically possible
+// position. No filter applies post-walk.
+//
+// C++ implementation map (q5/query.tpp::query_by_merged):
+//
+//   col_group_walk<Backend>(merged_col, Visitor{
+//       nation_set,            // unordered_set<n_nationkey>
+//       supplier_nation_set,   // unordered_set<tuple<n_nationkey, s_suppkey>>
+//       params})
+//
+//     Visitor::on_customer  → CUSTOMER ⋈ RN inner-join gate
+//                             (c_nationkey ∈ nation_set);
+//                             returns false to suppress the group;
+//                             caches c_nationkey for on_lineitem use
+//     Visitor::on_order     → q5_predicate_orders (orderdate window);
+//                             no per-orderkey state to flush (per-
+//                             order revenue is not the aggregate key)
+//     Visitor::on_lineitem  → composite-key semi-join: probe
+//                             supplier_nation_set with
+//                             (c_nationkey, l_suppkey);
+//                             SKIP if absent;
+//                             accumulate revenue into per-nationkey map
+//     Visitor::on_lineitem (n_name lazy fetch) → on first encounter
+//                             of a new nationkey, NATION PK lookup
+//                             → n_name; cached in the per-nationkey
+//                             bucket (~5 lookups total, inside walk)
+//     Visitor::on_walk_end  → drain per-nationkey buckets;
+//                             emit one q5_agg_row_t per entry
+//                             (n_name already resolved)
+//
+// PremergedJoin / BinaryMergeJoin are NOT instantiated here — the COL
+// merged adapter's tagged-key encoding makes the Visitor pattern strictly
+// more expressive (3-way custkey grouping with side hashmap lookups and
+// a 5-bucket per-nationkey HashAggregate). This is the operator-level
+// expression of the §3.1.3 hierarchical pattern.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Pre-walk: shared RN = REGION ⋈ NATION dimension subtree ───────────
+  s_reg [label="TableScan(REGION) + Filter(r_name == :1)\n→ regionkey",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  s_nat [label="TableScan(NATION)",
+         shape=box, style=filled, fillcolor="#E0F2F1"];
+  rn    [label="HashJoin (inner)\nREGION ⋈ NATION\n  on n_regionkey = r_regionkey\nbuild payload = n_nationkey only\n(PK payload convention)\n→ nation_set",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  s_reg -> rn [label="build (filtered)"];
+  s_nat -> rn [label="probe"];
+
+  // ─────────── Pre-walk: SUPPLIER ⋉ RN (semi-join) ───────────
+  s_sup  [label="TableScan(SUPPLIER)",
+          shape=box, style=filled, fillcolor="#E0F2F1"];
+  sj_sup [label="HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n→ supplier_nation_set",
+          shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+
+  rn    -> sj_sup [label="build (nation_set,\nPK-only)"];
+  s_sup -> sj_sup [label="probe"];
+
+  // ─────────── COL MI pipeline ───────────
+  mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
+      shape=box3d, style=filled, fillcolor="#E8F0FE"];
+
+  walk [label="COLGroupWalk(Visitor)\nsubsumes the entire family logical pipeline:\n  • on_customer: HashJoin (inner) CUSTOMER ⋈ RN\n      gate, lowered to (c_nationkey ∈ nation_set);\n      preserves c_nationkey on survivors\n  • on_order:    o_orderdate window filter\n  • on_lineitem: HashSemiJoin (COL ⋉ supplier_nation_set)\n      lowered to one hashset probe with\n      (c_nationkey, l_suppkey) — fuses SUPPLIER\n      semi-join + cross-eq + suppkey equi-join\n  • chain joins: CUSTOMER ⋈ ORDERS ⋈ LINEITEM,\n      lowered to a 3-way custkey-byte-lex merge\n      inside the MI walker (no separate operator)\n  • n_name fetch (inside walk): on first sighting\n      of each new nationkey, NATION PK lookup\n      caches n_name in the bucket (~5 lookups total)\n  • aggregate:   per-nationkey HashAggregate\n      (small in-Visitor map keyed by n_nationkey,\n       n_name already resolved per bucket)\n  • on_walk_end: drain buckets → emit q5_agg_row_t",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  rn     -> walk [style=dashed, label="nation_set\n(build)"];
+  sj_sup -> walk [style=dashed, label="supplier_nation_set\n(build)"];
+  mi     -> walk;
+  walk   -> sort;
+
+}

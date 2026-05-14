@@ -144,8 +144,13 @@ bool RocksDB::Delete(ColumnFamilyHandle* cf_handle, const rocksdb::Slice& key)
 
 double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
 {
-   if (default_cf_size > 0.0) {
-      return default_cf_size;  // avoid frequent compactions
+   // Per-CF cache (Phase 6 fix). Previously a single `default_cf_size` field
+   // returned the first caller's result for every subsequent CF — so two
+   // MergedAdapters in the same RocksDB (e.g. COLI + aCOLI) reported byte-
+   // for-byte identical sizes. Keying by cf_handle restores per-CF accuracy
+   // while preserving the original "compact once per CF" behaviour.
+   if (auto it = cf_size_cache.find(cf_handle); it != cf_size_cache.end()) {
+      return it->second;
    }
    // compact so that every experiment starts with a clean slate for fair comparison
    std::cout << "Compacting " << name << "..." << std::flush;
@@ -174,12 +179,12 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
 
    long total_num_deletions = 0;
    for (const auto& level_meta : cf_meta.levels) {
-      std::cout << "Level " << level_meta.level << ": " << level_meta.files.size() << " files; ";
+      // Per-level file counts are written to sstables.csv below; stdout
+      // suppressed to keep experiment logs scannable.
       for (const auto& sst_file_meta : level_meta.files) {
          total_num_deletions += sst_file_meta.num_deletions;
       }
    }
-   std::cout << std::endl;
 
    long long live_data_size_bytes = std::stoll(live_data_size);
    long long total_sstables_size_bytes = std::stoll(total_sstables_size);
@@ -197,14 +202,13 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
    if (sstable_csv.tellp() == 0) {
       sstable_csv << "tableid,size (MiB),file count,levels,num keys,total deletions" << std::endl;
    }
-   std::cout << "tableid,size (MiB),file count,levels,num keys,total deletions" << std::endl;
-   std::vector<std::ostream*> out = {&std::cout, &sstable_csv};
-   for (std::ostream* o : out) {
-      *o << name << "," << (double)live_data_size_bytes / 1024.0 / 1024.0 << "," << cf_meta.file_count << "," << cf_meta.levels.size() << ","
-         << num_keys << "," << total_num_deletions << std::endl;
-   }
+   // CSV header + row written to sstables.csv only; stdout suppressed.
+   sstable_csv << name << "," << (double)live_data_size_bytes / 1024.0 / 1024.0 << ","
+               << cf_meta.file_count << "," << cf_meta.levels.size() << ","
+               << num_keys << "," << total_num_deletions << std::endl;
    sstable_csv.close();
 
-   default_cf_size = (double)live_data_size_bytes / 1024.0 / 1024.0;
-   return default_cf_size;
+   double cf_size_mib = (double)live_data_size_bytes / 1024.0 / 1024.0;
+   cf_size_cache[cf_handle] = cf_size_mib;
+   return cf_size_mib;
 }

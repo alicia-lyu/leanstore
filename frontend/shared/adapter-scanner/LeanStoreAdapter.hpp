@@ -24,18 +24,15 @@ struct LeanStoreAdapter : Adapter<Record> {
    }
    LeanStoreAdapter(LeanStore& db, string name) : produced(0), name(name)
    {
-      if (FLAGS_vi) {
-         if (FLAGS_recover) {
-            btree = &db.retrieveBTreeVI(name);
-         } else {
-            btree = &db.registerBTreeVI(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
-         }
+      // Always use BTreeLL. The geo / TPC-H workloads run with FLAGS_vi=false
+      // and BTreeVI's MVCC erase-then-reinsert path hits an unimplemented
+      // branch (BTreeVI.cpp:412 "Not implemented: maybe it has been removed
+      // but no GCed") that surfaces in `loadInvoiceAndLinkLineitem`'s
+      // lineitem rewrite pass. BTreeLL has no such limitation.
+      if (FLAGS_recover) {
+         btree = &db.retrieveBTreeLL(name);
       } else {
-         if (FLAGS_recover) {
-            btree = &db.retrieveBTreeLL(name);
-         } else {
-            btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
-         }
+         btree = &db.registerBTreeLL(name, {.enable_wal = FLAGS_wal, .use_bulk_insert = false});
       }
    }
    // -------------------------------------------------------------------------------------
@@ -248,15 +245,15 @@ struct LeanStoreAdapter : Adapter<Record> {
 
    std::unique_ptr<LeanStoreScanner<Record>> getScanner()
    {
-      std::unique_ptr<LeanStoreScanner<Record>> scanner;
-      if (FLAGS_vi) {
-         scanner = std::make_unique<LeanStoreScanner<Record>>(
-             *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeVI*>(btree)));
-      } else {
-         scanner = std::make_unique<LeanStoreScanner<Record>>(
-             *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
-      }
-      return scanner;
+      // The adapter always registers a BTreeLL (see ctor comment on
+      // FLAGS_vi/BTreeVI). Branching on FLAGS_vi here used to cast to
+      // BTreeVI* with the default --vi=true; that dynamic_cast returned
+      // null for our BTreeLL backing tree, the static_cast<BTreeGeneric*>
+      // preserved the null, and *nullptr produced a null reference that
+      // SEGV'd on the first iterator op (BTreeGenericIterator.hpp:295,
+      // btree.dt_id deref). Always cast to BTreeLL to match the ctor.
+      return std::make_unique<LeanStoreScanner<Record>>(
+          *static_cast<leanstore::storage::btree::BTreeGeneric*>(dynamic_cast<leanstore::storage::btree::BTreeLL*>(btree)));
    }
 
    u64 estimatePages() final { return btree->estimatePages(); }
@@ -268,4 +265,22 @@ struct LeanStoreAdapter : Adapter<Record> {
    }
 
    u64 estimateLeafs() final { return btree->estimateLeafs(); }
+
+   // Content-walk: iterate every record, summing key+value bytes.
+   // Mirrors the merged-adapter content_bytes_walk (see
+   // LeanStoreMergedAdapter.hpp). Returns (content_bytes, record_count).
+   // Caller is responsible for being inside an OLAP TX.
+   std::pair<long, long> content_bytes_walk()
+   {
+      long rows = 0, bytes = 0;
+      typename Record::Key start{};
+      this->scan(start,
+                 [&](const typename Record::Key&, const Record&) {
+                    rows  += 1;
+                    bytes += static_cast<long>(Record::maxFoldLength() + sizeof(Record));
+                    return true;
+                 },
+                 []{});
+      return {bytes, rows};
+   }
 };
