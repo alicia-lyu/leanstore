@@ -11,7 +11,7 @@ Update in place; do not append.
 | Q12 | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1. Production targets wired. |
 | Q3  | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1 (10 rows). Production targets wired. Phase 9 doc refresh + Linux perf sweep remaining — see [`q3/CLAUDE.md §Implementation Phases`](q3/CLAUDE.md#implementation-phases). |
 | Q3I | ✅ | ✅ | ✅ | ✅ | ✅ (deferred) | S1–S4 paper-reported axis. S5 aCOLI implemented, parity-verified, but deferred from paper sweep. See [`PLAYBOOK.md §S5`](PLAYBOOK.md) for rationale. |
-| Q5  | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1. Production targets wired. |
+| Q5  | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1 (LSM 0x85b9b6291f258258, BTree 0x2fa49bb120). First Linux sweep SF=15 DRAM=0.1: LSM **S2 (205) > S3 (156) > S1 (43) ≈ S4 (32)**; BTree **S2 (331) > S3 (250) > S1 (67) > S4 (9.5)** TX/s. View materialization beats MI scan (same shape as Q3I S2/S3 inversion — infrastructure, not Q5-specific). |
 | Q9  | ❌ | ❌ | ❌ | ❌ | — | `load.tpp` ctor/`load()`/`get_size()` bodies still reference removed pipeline methods. `query_by_*` bodies, predicates, `Params::defaults()`, CMake targets all pending. |
 | Q5I | — | — | — | — | — | Design doc only; no skeleton yet. |
 | Q10I| — | — | — | — | — | Design doc only; no skeleton yet. |

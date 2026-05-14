@@ -156,3 +156,33 @@ here for traceability.
   Result: S1/S2/S3/S4 now apples-to-apples on physical-seek
   mechanics. SF=1 parity preserved on both backends. Linux
   prerequisite for the upcoming Q3 perf sweep.
+
+## Closed by 2026-05-14 bring-up
+
+- **Q5 first Linux perf sweep**: fresh CloudLab Ubuntu 22.04 node
+  brought up per `LINUX_SETUP.md`; Q5 binaries built on top of the
+  Step 4 set; SF=1 parity verified on both backends; SF=15 sweep
+  landed in [`frontend/tpch/q5/RUNS.md`](frontend/tpch/q5/RUNS.md)
+  and the headline propagated to
+  [`frontend/tpch/STATUS.md`](frontend/tpch/STATUS.md). Measured
+  shape both backends: **S2 > S3 > S1 > S4** — view materialisation
+  beats COL group walk at SF=15, same S2/S3 inversion Q3I exhibits
+  (cross-ref `q3i/PERFORMANCE.md`). Two macOS-side regressions
+  surfaced and were fixed inline before the parity gate:
+  - `test_query_q5_leanstore.cpp` was passing 4 args to the 5-arg
+    `populate_q5_view` (the loader signature widened during Phase
+    10B to take the `nation` adapter; the `_btree` test wasn't
+    rebuilt on macOS).
+  - `test_side_tables.cpp` still referenced `Q5SideTables::n_name_map`
+    and the map-typed `supplier_nation` removed in Phase 10B.
+  Plus one substantive Q5 correctness bug that macOS hid: the
+  `q5_pipeline_view_t.n_name` field was declared `std::string`, but
+  the view is persisted via the memcpy-based record_traits.
+  libstdc++ `std::string` is not standard-layout — SSO bits don't
+  round-trip across `insert`/`getScanner`, so S2 diverged from
+  S1/S3/S4 on Linux. macOS libc++ happened to round-trip them
+  byte-stably and the SF=1 macOS data hit one bucket that masked
+  the fallout. Fix landed in `a1fbdc15`: switched the field to
+  `Varchar<25>` and converted at the two call sites
+  (`q5/load.tpp` emit, `q5/query.tpp` S2 scan). SF=1 / SF=5
+  parity verified post-fix on both backends.
