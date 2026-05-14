@@ -38,6 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   cost. If you skip this step, the first perf run after a merge
   will be deceptively long and the slowdown will look like a
   regression in the binary itself rather than scheduled reload.
+- **Push commits aggressively on Linux.** Linux experiment machines expire and wipe disk content without warning. After every commit on Linux — including intermediate "build passes" or "load complete" checkpoints — immediately run `git push`. Do not accumulate unpushed commits; a machine wipe will lose them permanently.
 - When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree. Resolved items are rotated out to [LINUX_HISTORY.md](LINUX_HISTORY.md) so the pending file stays a worklist, not an archive.
 - **Append a `RUNS.md` entry after every perf run.** Each query
   directory under `frontend/tpch/<q>/` and `frontend/geo/` has a
