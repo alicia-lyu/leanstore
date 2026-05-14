@@ -89,7 +89,11 @@ static void populate_q5_view(
           vv.l_discount      = l.l_discount;
           vv.l_suppkey       = l.l_suppkey;
           vv.c_nationkey     = c_nationkey;
-          vv.n_name          = std::move(n_name);
+          // Convert std::string → Varchar<25> for safe POD serialization.
+          // n_name is at most 25 chars per TPC-H NATION schema; if a NATION
+          // row's n_name is missing (default-constructed std::string), the
+          // Varchar is left zero-initialized which is fine for digest parity.
+          vv.n_name          = Varchar<25>(n_name.c_str());
           vv.o_orderdate     = o.o_orderdate;
           pipeline_view.insert(vk, vv);
        });

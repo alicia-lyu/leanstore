@@ -560,7 +560,11 @@ long Q5Workload<Backend>::query_by_view(std::vector<q5_agg_row_t>& out)
 
       // Composite-key SUPPLIER probe + accumulate via shared helper.
       // v.n_name is FD-attached at load time — no runtime NATION lookup.
-      q5_admit_lineitem(v, v.c_nationkey, v.n_name, sides, agg, stats);
+      // Convert Varchar<25> → std::string for the aggregator key (the helper
+      // takes const std::string& because S1/S3/S4 source n_name from
+      // q5_resolve_n_name's std::string cache).
+      std::string n_name_str(v.n_name.data, v.n_name.length);
+      q5_admit_lineitem(v, v.c_nationkey, n_name_str, sides, agg, stats);
    }
 
    agg.emit(out);

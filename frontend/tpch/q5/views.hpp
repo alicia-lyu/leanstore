@@ -177,7 +177,12 @@ struct q5_pipeline_view_t {
 
    // FD-attached customer / order columns (parameter-independent at load time).
    Integer     c_nationkey;    // customer's nation (filter + GROUP BY driver)
-   std::string n_name;         // FD-attached at load time (1:1 with c_nationkey)
+   Varchar<25> n_name;         // FD-attached at load time (1:1 with c_nationkey).
+                               // Must be a POD type (Varchar, not std::string)
+                               // because q5_pipeline_view_t is persisted via the
+                               // memcpy-based record_traits — non-standard-layout
+                               // types (libstdc++ std::string is not standard-layout)
+                               // would corrupt across insert/getScanner.
    Timestamp   o_orderdate;    // order date (filter at query time)
 
    ADD_RECORD_TRAITS(q5_pipeline_view_t)

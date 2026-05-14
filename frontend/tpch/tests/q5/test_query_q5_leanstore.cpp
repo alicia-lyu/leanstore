@@ -115,7 +115,7 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
       q5.col_pipeline().populate_split();
-      tpch::q5::populate_q5_view<B>(customer, orders, lineitem, pipeline_view);
+      tpch::q5::populate_q5_view<B>(customer, nation, orders, lineitem, pipeline_view);
       q5.col_pipeline().populate_merged();
       leanstore::cr::Worker::my().commitTX();
    });

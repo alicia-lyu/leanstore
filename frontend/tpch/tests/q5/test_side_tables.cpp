@@ -4,8 +4,7 @@
 // build_q5_side_tables for two regions and asserts:
 //   1. region_key resolves correctly (ASIA → 2, AFRICA → 0).
 //   2. |nation_set| == 5 for each region.
-//   3. n_name_map has 5 entries and each key is in nation_set.
-//   4. |supplier_nation| matches the number of suppliers whose s_nationkey
+//   3. |supplier_nation_set| matches the number of suppliers whose s_nationkey
 //      is in nation_set (i.e., every inserted entry belongs to the region).
 //
 // Does NOT require any merged or secondary index — only the three base-table
@@ -49,7 +48,7 @@ static const char* pass(bool ok) { return ok ? "[OK]  " : "[FAIL]"; }
 // ---------------------------------------------------------------------------
 // count_suppliers_in_region: full SUPPLIER scan counting rows whose
 // s_nationkey is in the given nation_set.  Used to cross-check the size of
-// supplier_nation after build_q5_side_tables populates it.
+// supplier_nation_set after build_q5_side_tables populates it.
 
 static long count_suppliers_in_region(
     tpch::RocksDBBackend::Adapter<supplier_t>& supplier,
@@ -102,32 +101,21 @@ static bool run_assertions_for_region(
              << "  (expected 5)\n";
    all_ok &= ns_ok;
 
-   // 3. n_name_map has 5 entries and every key is in nation_set.
-   bool nm_size_ok = (static_cast<long>(sides.n_name_map.size()) == 5L);
-   bool nm_keys_ok = true;
-   for (const auto& [nk, nm] : sides.n_name_map) {
-      if (!sides.nation_set.count(nk)) { nm_keys_ok = false; break; }
-   }
-   std::cout << pass(nm_size_ok)
-             << " |n_name_map|: " << sides.n_name_map.size()
-             << "  (expected 5)\n";
-   std::cout << pass(nm_keys_ok)
-             << " n_name_map keys all in nation_set\n";
-   all_ok &= (nm_size_ok && nm_keys_ok);
-
-   // 4. |supplier_nation| matches the count of in-region suppliers and every
-   //    stored nationkey is in nation_set.
+   // 3. |supplier_nation_set| matches the count of in-region suppliers and every
+   //    stored nationkey is in nation_set.  n_name_map was removed in Phase 10B;
+   //    n_name is now resolved lazily at the customer-survival point via a
+   //    NATION primary-index lookup inside each query_by_* body.
    long expected_sn = count_suppliers_in_region(supplier, sides.nation_set);
-   bool sn_size_ok  = (static_cast<long>(sides.supplier_nation.size()) == expected_sn);
+   bool sn_size_ok  = (static_cast<long>(sides.supplier_nation_set.size()) == expected_sn);
    bool sn_keys_ok  = true;
-   for (const auto& [sk, nk] : sides.supplier_nation) {
-      if (!sides.nation_set.count(nk)) { sn_keys_ok = false; break; }
+   for (const auto& t : sides.supplier_nation_set) {
+      if (!sides.nation_set.count(std::get<0>(t))) { sn_keys_ok = false; break; }
    }
    std::cout << pass(sn_size_ok)
-             << " |supplier_nation|: " << sides.supplier_nation.size()
+             << " |supplier_nation_set|: " << sides.supplier_nation_set.size()
              << "  (expected " << expected_sn << " in-region suppliers)\n";
    std::cout << pass(sn_keys_ok)
-             << " supplier_nation values all in nation_set\n";
+             << " supplier_nation_set nationkeys all in nation_set\n";
    all_ok &= (sn_size_ok && sn_keys_ok);
 
    return all_ok;
