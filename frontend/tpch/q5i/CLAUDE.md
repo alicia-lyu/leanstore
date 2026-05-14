@@ -133,12 +133,12 @@ visible without needing to run a follow-up query.
    'O' 25% / 'L' 5%. The `late_revenue` column will be small — this
    is realistic, but worth checking that all three columns are
    non-zero at SF=1 so the cross-structure parity test has signal.
-3. **Plan-side join order**: Calcite is free to put Invoice on
-   either side of the Lineitem×Supplier join. The COLI MI prefers
-   Invoice early (sibling to Orders, before the Supplier hash
-   probe); the baseline structures may pick a different order.
-   Comparison fairness requires both branches to use their natural
-   plan, not a forced one.
+3. **Join order within S4**: S1/S2/S3 implement the same logical pipeline at
+   different precomputation levels (no precomputation → pipeline view → merged
+   index). S4 uses hash join and may differ physically, but should follow the
+   same logical post-pipeline operator chain (supplier semi-join → aggregate by
+   c_nationkey → nation equi-join → sort) unless the hash-join order makes this
+   genuinely awkward, in which case document the deviation.
 
 ---
 
@@ -211,9 +211,12 @@ Post-pipeline operator chain (shared — monolithic in `query_by_*`, Rule 11):
 1. ⋉ supplier_nation_set[(c_nationkey, l_suppkey)]
    [primary admission; supplier_nation_set subsumes the nation_set check]
 2. aggregate by c_nationkey, routing revenue by i_status:
-     nominal always; realised if P; open if O; late if L
+     nominal  += revenue       (every qualifying lineitem)
+     realised += revenue if P
+     open     += revenue if O
+     late     += revenue if L
    [hash aggregation: ≤5 qualifying nationkeys per region]
-3. n_name = nation.lookup(c_nationkey)  [PK point lookup, cached ~5×/query]
+3. n_name = nation.lookup(c_nationkey)  [PK lookup in post-pipeline step 3]
 4. sort by nominal_revenue DESC
 ```
 
@@ -221,7 +224,7 @@ S3 — COLI MI group-walk (canonical):
 
 ```text
 COLIPipeline::group_walk per custkey:
-  on_customer: c_nationkey ∈ nation_set? → SkipGroup (early-exit opt.)
+  on_customer: c_nationkey ∈ nation_set? → SkipGroup
   on_invoice:  buffer full invoice_coli_t into per-group invoice_buf[]
                [CONVENTIONS.md Rule 10 Pattern B]
   on_orders:   o_orderdate ∉ [date, date+1y) → SkipOrder
@@ -244,7 +247,7 @@ post-pipeline operator chain:
   filter: o_orderdate ∈ [date, date+1y)
   ⋉ supplier_nation_set[(c_nationkey, l_suppkey)]
   → aggregate by c_nationkey by i_status
-  → n_name = nation.lookup(c_nationkey)
+  → n_name = nation.lookup(c_nationkey)  [PK lookup in post-pipeline step 3]
   → sort by nominal_revenue DESC
 ```
 
@@ -268,14 +271,17 @@ lineitem_coli_t [sorted by (custkey, orderkey, invoicekey, linenumber)]
 S4 — Hash join baseline:
 
 ```text
+side_tables_build: (same as S3)
+
+invoice_t scan  → hash-build on invoicekey: invoice_map{invoicekey → i_status}
 customer_t scan → c_nationkey ∈ nation_set? → skip
-                → hash-build on custkey (carry c_nationkey)
+                → hash-build on custkey (PK only)
 orders_t scan   → hash-probe on custkey → date filter
-                → hash-build on orderkey
-lineitem_t scan → hash-probe on orderkey
-                → seek invoice_t[l_invoicekey] → i_status
-                → emit {c_nationkey, l_suppkey, l_extendedprice,
-                         l_discount, i_status}
+                → hash-build on orderkey (PK only)
+lineitem_t scan → hash-probe on orderkey → get custkey
+                → customer.lookup(custkey) → c_nationkey  [primary-index PK lookup]
+                → hash-probe invoice_map[l_invoicekey] → i_status
+                → emit {c_nationkey, l_suppkey, l_extendedprice, l_discount, i_status}
 
 → post-pipeline operator chain (above)
 ```
@@ -291,12 +297,14 @@ lineitem_t scan → hash-probe on orderkey
    (`nominal`, `realised`, `open`, `late`). No filter pushdown on `i_status`;
    every lineitem's revenue is routed into one of 3 partial aggregates.
 3. Side-table join taxonomy (CONVENTIONS.md Rules 1, 4, 7, 10, 11):
-   Region is a semi-join (qualifying regionkey only). Nation is an equi-join —
+   Region is a semi-join (qualifying regionkey only). Nation is an **equi-join** —
    `n_name` flows downstream as the GROUP BY key (Rule 1). Build payload is
-   PK-only (Rule 4): `nation_set{n_nationkey}`; `n_name` fetched lazily via
-   nation primary-index PK lookup, cached. Supplier is a semi-join:
-   `supplier_nation_set{(s_nationkey, s_suppkey)}` encodes the cross-equality
-   `c_nationkey = s_nationkey` as a composite PK (Rule 5).
+   PK-only per Rule 4: `nation_set{n_nationkey}`. `n_name` is resolved in the
+   post-pipeline nation equi-join step (step 3 of the post-pipeline chain) via
+   nation primary-index PK lookup; ≤5 lookups per query since there are ≤5
+   qualifying nations per region. No new type minted (Rule 7). Supplier is a
+   semi-join: `supplier_nation_set{(s_nationkey, s_suppkey)}` encodes the
+   cross-equality `c_nationkey = s_nationkey` as a composite PK (Rule 5).
 4. Orders as semi-join: `o_orderdate` is a survival predicate on Lineitem.
    Applied at query time in all structures; never baked into any secondary.
 
@@ -314,7 +322,7 @@ q5i_pipeline_view_t (id ≈ 62)
              o_orderdate: Timestamp, i_status: Varchar<1> }
   Note: order-sharing pipeline output (C×O×L×I join), predicate-hoisted.
   i_status resolved from invoice join at view-load time.
-  n_name NOT stored — resolved post-pipeline via nation PK lookup.
+  n_name NOT stored; resolved in post-pipeline nation equi-join step.
 
 q5i_agg_row_t  (in-memory)
   Fields: { n_name: Varchar<25>, nominal_revenue: Numeric,

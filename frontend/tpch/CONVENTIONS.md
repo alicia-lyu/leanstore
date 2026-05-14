@@ -514,6 +514,7 @@ streaming-aggregate special case.
 | Q3I | COLI | Invoice | Equi (contributes `cust_open_due`) | Pattern A — streaming aggregate | Yes |
 | Q3I | COLI | Orders | Semi (date filter) | Skip-order hook | Yes |
 | Q3I | COLI | Lineitem | Equi | Extract via `LineitemRevenueAccumulator` | Yes |
+| Q5I | COLI | Customer | Semi (nation filter) | Skip-group hook | Yes |
 | Q5I | COLI | Invoice | Equi (contributes `i_status`) | Pattern B — buffer + lookup (by design) | Yes |
 | Q5I | COLI | Orders | Semi (date filter) | Skip-order hook | Yes |
 
