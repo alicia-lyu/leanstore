@@ -562,6 +562,10 @@ for the rationale on `--ssd_path` vs `--csv_path` separation.
 
 ## Implementation Status
 
+> **Phase model note (2026-05-15)**: the PLAYBOOK has collapsed Phase 0.5
+> (skeleton) into Phase 1. Historical references to "Phase 0.5" or "Phase 1"
+> in this file describe completed work accurately under the old model.
+
 **COLI merged adapter compiled into Q12 executables** (2026-05-01):
 `executable_rocksdb.cpp` and `executable_leanstore.cpp` include
 `coli_pipeline.hpp`, pulling in all four tagged COLI record types and their

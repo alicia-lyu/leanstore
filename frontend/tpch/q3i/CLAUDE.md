@@ -373,6 +373,10 @@ and
 
 ## Implementation Phases
 
+> **Phase model note (2026-05-15)**: the PLAYBOOK has collapsed Phase 0.5
+> (skeleton) into Phase 1. Historical references to "Phase 0.5" or "Phase 1"
+> in this file describe completed work accurately under the old model.
+
 ### Phase 1 — Minimal end-to-end: merged path only (S3)
 
 **Status (2026-05-01): complete.**

@@ -33,11 +33,17 @@ Before starting, read (in order):
 
 ```
 Phase 0   (design doc — REQUIRED before any code)
-  → Phase 0.5 (skeleton commit — REQUIRED before Phase 1)
-    → Phase 1   (load path: views.hpp + workload.hpp + load.tpp;
-    │            test_load_*_lsm passes at end)
-      → Phase 4a (join-FREE query bodies: §7.1 S3 walker,
-      │           §7.3 S2 view scan, §7.4 S5 if applicable)
+  → Phase 1   (skeleton + schema + pipeline-owned load.
+  │            8-file shape, all query_by_* stubs, real ctor + load()
+  │            populating base + splits + merged unconditionally;
+  │            test_query_*_lsm reports [OK] cardinality on base +
+  │            splits + merged; pipeline_view rows == 0 [OK] deferred;
+  │            parity gate: digest 0x0 across empty stubs)
+      → Phase 4a (join-FREE query bodies, ordered:
+      │           §7.1 S3 walker FIRST;
+      │           then §6 populate_q{N}_view (Pattern B reuses S3 walker);
+      │           then §7.3 S2 view scan;
+      │           then §7.4 S5 if applicable)
         → Phase 4b (join-DRIVEN query bodies: §7.5 S4 hash,
         │           §7.2 S1 BMJ chain)
           → Phase 5 (wiring + tests + docs:
@@ -45,14 +51,19 @@ Phase 0   (design doc — REQUIRED before any code)
                      test harness, CMake/targets, doc refresh)
 ```
 
-> **Phase numbering note (2026-05-09 consolidation).** Phase numbers
-> 2, 3, 6, 7, 8, 9 are intentionally retired — the underlying work
-> is now folded into Phase 1 (load path) and Phase 5 (wiring tail).
-> **Phase 4 is preserved** because per-query docs and code comments
-> reference its sub-§ headings as "Phase 4 §7.1" (S3 merged), "Phase
-> 4 §7.2" (S1 merge join), etc. Renumbering would churn dozens of
-> cross-references for no architectural gain. Sub-section labels
-> "(cont.)" identify continuations of the same phase.
+> **Phase numbering note (2026-05-09 consolidation; updated
+> 2026-05-15).** Phase numbers 2, 3, 6, 7, 8, 9 are intentionally
+> retired — the underlying work is now folded into Phase 1 and Phase 5
+> (wiring tail). **Phase 0.5 is also retired (2026-05-15)**: its
+> skeleton deliverables (8-file stub set, executable links, digest-0x0
+> parity gate) now land at the start of Phase 1 rather than as a
+> separate commit gate. Per-query docs that reference "Phase 0.5"
+> describe completed work accurately under the old model. **Phase 4 is
+> preserved** because per-query docs and code comments reference its
+> sub-§ headings as "Phase 4 §7.1" (S3 merged), "Phase 4 §7.2" (S1
+> merge join), etc. Renumbering would churn dozens of cross-references
+> for no architectural gain. Sub-section labels "(cont.)" identify
+> continuations of the same phase.
 
 > **Phase 4a / 4b split (2026-05-09; anti-pattern #29 driver).** Phase
 > 4 splits along the SK-validation axis. Phase 4a lands the join-free
@@ -72,14 +83,15 @@ Phase 0   (design doc — REQUIRED before any code)
 > 4a/4b split shortens that to one sub-phase.
 
 > **Process rule (NON-NEGOTIABLE).** No code change for the new
-> query lands before Phase 0 + Phase 0.5 are committed. Phase 0
-> produces the per-query design doc (`q{N}/CLAUDE.md`) — SQL,
-> storage-structure table, plan descriptions, query shapes, open
-> questions. Phase 0.5 produces an 8-file skeleton (stub bodies,
-> compiles clean, no parity claim yet) so all subsequent edits land
-> in named places. Skipping either step has, historically, made the
-> first real-code commit a 2000-line "kitchen sink" diff that's
-> impossible to review.
+> query lands before Phase 0 is committed. Phase 0 produces the
+> per-query design doc (`q{N}/CLAUDE.md`) — SQL, storage-structure
+> table, plan descriptions, query shapes, open questions. Phase 1
+> opens with the 8-file skeleton (stub bodies, compiles clean, digest
+> 0x0 parity gate) as its first commit, followed in the same phase by
+> schema widening and unconditional secondary population. The skeleton
+> deliverables are no longer a separate phase gate. Skipping Phase 0
+> has, historically, made the first real-code commit a 2000-line
+> "kitchen sink" diff that's impossible to review.
 
 ---
 
@@ -365,101 +377,81 @@ contains zero `.hpp` / `.cpp` / `.tpp` changes for the new query.
 
 ---
 
-## §3.6 — Phase 0.5: Skeleton commit (REQUIRED before Phase 1)
+## §3.6 — Phase 1: Skeleton + schema + pipeline-owned load
 
-After the design doc lands, the next commit is the **skeleton**: all
-8 files from §3 exist with stub bodies, the executable links, and
-nothing claims correctness yet. This pins the *shape* of the
-implementation so subsequent phases edit named places.
+Phase 1 is the first real implementation phase. It opens with the
+8-file skeleton as its first commit and closes when all secondaries
+populate cleanly and the test harness asserts `[OK]` on base + split +
+merged cardinalities, `pipeline_view rows == 0 [OK]` (deferred), and
+digest 0x0 parity across empty stubs.
 
-### What "skeleton" means concretely
+### 8-file source tree
 
 - All 8 files from §3 created in `q{N}/`.
-- `views.hpp`: record-type structs declared with their `id`,
-  `Key` shape, and field list — bodies (operators, `unfoldKey`,
-  `print`) may be `// TODO Phase 1`.
-- `workload.hpp`: `Q{N}Workload<Backend>` class declared with all
-  adapter members, `Params`, predicate signatures, four
-  `query_by_*` declarations. Bodies in `query.tpp` are stubs that
-  return `out.clear(); return 0;`.
+- `views.hpp`: `q{N}_pipeline_view_t` with real Key shape (see below),
+  real payload, `operator<=>`, `ADD_RECORD_TRAITS`, and `print()`
+  stub. `q{N}_agg_row_t` real shape. Intermediate join-result types
+  (`q{N}_jr*_t`, sort-key types) deferred to Phase 4b — they depend
+  on the BMJ design and must not be pre-speculated. See §Design
+  constraint: tree-shaped COLI keys in per-query CLAUDE.md.
+- `workload.hpp`: `Q{N}Workload<Backend>` class with all adapter
+  members, `Params` struct with `defaults()` real body,
+  `set_params_for_iter` real body, `Q{N}Stats` struct declared outside
+  the class (but inside the namespace), `Q{N}Stats* stats = nullptr;`
+  member, predicate declarations, four `query_by_*` declarations. All
+  bodies in `query.tpp` are stubs (`out.clear(); return 0;`).
 - `per_structure_workload.hpp`: alias-only, completed.
-- `load.tpp`: ctor + `load()` + `get_size()` real bodies (these
-  don't depend on the queries, so do them now and remove a
-  dependency from Phase 4).
-- `query.tpp`: `Params::defaults()` real body; predicates declared
-  but bodies optional; four `query_by_*` are stubs; `print()`
-  declared with `// TODO`.
-- **Param cycling hook**: `Q{N}Workload<Backend>` must declare
-  `void set_params_for_iter(long iter)` and the per-structure
-  wrappers (`BaseQ{N}` etc.) forward to it. The body — even if
-  stubbed to `params = Params::defaults()` initially — keeps the
-  wrapper concept uniform so the test harness and
-  `TpchExecutableHelper::tput_tx` can call
-  `wrapper.set_params_for_iter(count)` before each query. The
-  non-stub body lands in Phase 1 (workload.hpp). See Q12 / Q3I
-  reference implementations.
-- `executable_{rocksdb,leanstore}.cpp`: full `main()` mirroring Q3I
-  — the executable should run end-to-end, load data, and "execute"
-  each storage structure (returning empty results) without crashing.
-- `tests/q{N}/test_query_q{N}_rocksdb.cpp`: harness loads, populates
-  ALL secondaries, calls all four `query_by_*`, computes digests.
-  Asserts `[OK]` on the four-paths-agree check and `[SKIP]` on the
-  cross-structure invariants until Phase 4 lands real bodies.
-- `q{N}/CLAUDE.md`: "Implementation Status (skeleton)" section
-  appended noting which file pairs are stubs.
+- `load.tpp`: ctor + `load()` + `get_size()` real bodies.
+- `query.tpp`: `Params::defaults()` real body; predicate implementations
+  real; four `query_by_*` stubs; `print()` stub.
+- `executable_{rocksdb,leanstore}.cpp`: full `main()` mirroring Q3I —
+  loads data and executes each storage structure (returning empty
+  results) without crashing.
+- `tests/q{N}/test_query_q{N}_rocksdb.cpp`: extended harness with
+  strict-equality cardinality block (see §Exit criterion below) plus
+  the digest-0x0 parity check from the skeleton.
+- `q{N}/CLAUDE.md`: Implementation Status section updated.
 
-### Build/test gate
+### `q{N}_pipeline_view_t` Key shape
 
-- `make -C build/frontend test_query_q{N}_lsm q{N}_lsm -j$(nproc)`
-  builds clean.
-- `./test_query_q{N}_lsm --tpch_scale_factor=1` runs to exit 0
-  with all-stubs-agree (four empty result vectors digest to 0).
-- The skeleton commit message says explicitly "skeleton — no
-  parity claim yet".
-
-### Why this gating exists
-
-Without a skeleton commit, "Phase 1" tends to mushroom into
-"Phases 1–6 in one go". Reviewers can't follow a 2000-line diff
-that simultaneously introduces new types, new accumulators, new
-join drivers, and new test wiring. With a skeleton, every
-subsequent commit is a focused edit to a known shape.
-
-### Exit criterion
-
-The skeleton commit lands; the executable links and runs to exit 0;
-no parity claim is made; the next commit is Phase 1.
-
----
-
-## §4 — Phase 1: `views.hpp` (Record Types)
-
-### `q{N}_pipeline_view_t`
-
-A real struct (not an alias) keyed by `(custkey, orderkey)`. One row per
-order — cardinality ≈ |orders|. Carries the inside-pipeline aggregate
-output:
+The Key mirrors the leading record-type key of the MI's deepest record
+type. For COLI queries (Q3I, Q5I, Q10I) the deepest type is
+`lineitem_coli_t`, whose Key is `(custkey, orderkey, invoicekey,
+linenumber)`. The view Key must match so the MI and view are sortable
+in the same order and the view loader can emit in key order.
 
 ```cpp
-struct q{{N}}_pipeline_view_t {
+struct Key {
    static constexpr int id = {{ID}};
-   struct Key {
-      Integer custkey;
-      Integer orderkey;
-      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
-   };
-   Numeric     revenue;        // SUM(l_extendedprice * (1-l_discount))
-   {{Numeric  cust_open_due;}} // Track 2 only
-   Varchar<10> c_mktsegment;   // or whatever outside-pipeline filter needs
-   Timestamp   o_orderdate;
-   Integer     o_shippriority;
-   // ...other FD-attached columns the outside-pipeline filter/output needs
-   ADD_RECORD_TRAITS(q{{N}}_pipeline_view_t)
-   void print(std::ostream& os) const;
+   Integer custkey;
+   Integer orderkey;
+   Integer invoicekey;   // mirrors lineitem_coli_t
+   Integer linenumber;
+   ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey,
+                  &Key::invoicekey, &Key::linenumber)
+   auto operator<=>(const Key&) const = default;
 };
 ```
 
-### `q{N}_agg_row_t`
+### `q{N}_pipeline_view_t` payload
+
+Carries all FD-attached columns needed at query time, including
+`n_name` when the query groups by nation:
+
+```cpp
+Numeric     l_extendedprice;
+Numeric     l_discount;
+Integer     l_suppkey;
+Integer     c_nationkey;
+Varchar<25> n_name;    // FD-attached at view-load time; MUST be Varchar
+                       // (POD), NOT std::string — record_traits uses
+                       // memcpy; libstdc++ std::string is non-standard-
+                       // layout and corrupts across insert/getScanner.
+Timestamp   o_orderdate;
+Varchar<1>  i_status;
+```
+
+### `q{N}_agg_row_t` shape
 
 Final output row. Key = the SQL GROUP BY key.
 
@@ -478,84 +470,29 @@ struct q{{N}}_agg_row_t {
 };
 ```
 
-### Intermediate types for S1 BMJ chain
+### `Q{N}Stats` struct
 
-Only needed if S1 uses `BinaryMergeJoin`. See `q3i/views.hpp` lines 65–241.
-
-**Per-custkey invoice aggregate** (Track 2 only):
 ```cpp
-struct cust_open_due_t {
-   static constexpr int id = {{ID}};
-   struct Key { Integer custkey; /* fold/unfold + match + matching_keys */ };
-   Numeric cust_open_due;
-   ADD_RECORD_TRAITS(cust_open_due_t)
+struct Q{{N}}Stats {
+   long customers_scanned    = 0;
+   long orders_scanned       = 0;
+   long lineitems_scanned    = 0;
+   long invoices_scanned     = 0;    // Track 2 only
+   long customers_passing_nation   = 0;
+   long orders_passing_date        = 0;
+   long lineitems_passing_supp     = 0;
+   long aggregator_rows_out        = 0;
+   long mi_records_visited   = 0;
+   long mi_groups_skipped    = 0;
+   long view_rows_scanned    = 0;
 };
 ```
 
-**Per-(custkey, orderkey) lineitem aggregate**:
-```cpp
-struct lineitem_agg_t {
-   static constexpr int id = {{ID}};
-   struct Key { Integer custkey; Integer orderkey; /* fold/unfold + match + matching_keys */ };
-   Numeric revenue;
-   ADD_RECORD_TRAITS(lineitem_agg_t)
-};
-```
+Place outside the workload class but inside the `tpch::q{N}` namespace.
+Counters are populated by Phase 4 bodies; in Phase 1 the struct exists
+but no body writes to it.
 
-**Join result types** (`q{N}_jr1_t`, `q{N}_jr2_t`, `q{N}_jr3_t`):
-Each wraps `joined_t<id, JK, fold, Left, Right>` with:
-- Two Key constructors: one from constituent keys (for `join_current`),
-  one from JK only (for the unfold path with `fold_pks=false`).
-- Accessor methods to extract nested records.
-
-See Q3I `views.hpp` lines 154–241 for the exact pattern.
-
-**`std::hash` specializations**: one per intermediate Key type (needed by
-`HashJoin`). See Q3I `views.hpp` lines 276–292.
-
-**`SKBuilder` specializations**: one per join key type. Each needs
-`create(Key, Record)` for every record type that participates in
-merge-joins on that key, plus `project<R>` and `to_key<R>`. See Q3I
-`views.hpp` lines 309–375.
-
-→ see `CONVENTIONS.md §Sort-key wildcard semantics`
-
----
-
-## §5 — Phase 1 (cont.): `workload.hpp` (Class + Params + Predicates)
-
-### Params
-
-One field per SQL substitution parameter, plus `static Params defaults()`.
-
-```cpp
-struct Params {
-   {{Varchar<10> mktsegment;}}
-   {{Timestamp orderdate;}}
-   {{Timestamp shipdate;}}
-   {{Numeric threshold;}}
-   static Params defaults();
-};
-```
-
-A `Q{N}Workload<Backend>` exposes both `Params::defaults()` (the
-validation values, used by tests / digest seeding) and
-`set_params_for_iter(long iter)` which deterministically rotates
-through a static table of valid SUBSTITUTION-PARAMETER tuples per
-the TPC-H spec for this query. The table covers, at minimum,
-every distinct domain value listed in §Substitution parameters of
-the design doc (e.g. all 5 SEGMENTs × 5 DATEs for Q3I). `params =
-table[iter % table.size()]`. The test harness pins `params =
-Params::defaults()` for parity checks; production executables go
-through `set_params_for_iter`.
-
-**Why required**: a fixed-param production loop hid the Q3I
-`pre_revenue` bug for weeks. Per-query rotation surfaces baked-in-
-param secondaries within a 10-second `helper.run()`.
-
-### Predicates
-
-Declare one per single-table filter + one for the joined row:
+### Predicate declarations
 
 ```cpp
 inline bool q{{N}}_predicate_orders(const orders_t& o, const Params& p);
@@ -564,17 +501,6 @@ inline bool q{{N}}_predicate_invoice(const invoice_t& i);  // Track 2 only
 ```
 
 Bodies go in `query.tpp`.
-
-### Stats (optional)
-
-```cpp
-struct Q{{N}}Stats {
-   long customers_scanned = 0;
-   long orders_scanned = 0;
-   long lineitems_scanned = 0;
-   // ...per-path counters
-};
-```
 
 ### Workload class
 
@@ -613,34 +539,18 @@ class Q{{N}}Workload {
 #include "query.tpp"
 ```
 
----
+### `Params` + `set_params_for_iter` + `defaults()` real bodies
 
-## §6 — Phase 1 (cont.): `load.tpp` (Constructor + Load Dispatch)
+One field per SQL substitution parameter. `set_params_for_iter` rotates
+through a static table of valid SUBSTITUTION-PARAMETER tuples per the
+TPC-H spec (covering at minimum every distinct domain value listed in
+the query's §Substitution parameters). `params = table[iter % table.size()]`.
+Test harness pins `Params::defaults()` for parity checks; production
+executables go through `set_params_for_iter`.
 
-> **Phase 1 exit criterion**: at the end of §4 + §5 + §6, all storage
-> structures populate cleanly. The corresponding `test_load_*_lsm`
-> binary (or per-query equivalent) reports `[OK]` on every cardinality
-> and shape check. `test_query_q{N}_lsm` still passes vacuously
-> (digest `0x0`) because Phase 4 hasn't filled `query_by_*` bodies
-> yet. Commit boundary: one or more commits ending with this state.
-
-### Constructor
-
-Wire adapter refs into members, construct the pipeline, init params:
-
-```cpp
-template <typename Backend>
-Q{{N}}Workload<Backend>::Q{{N}}Workload(
-    TPCHWorkload<typename Backend::template Adapter>& tpch,
-    /* adapter refs... */)
-    : tpch(tpch), customer(customer), orders(orders), lineitem(lineitem),
-      {{invoice(invoice),}}
-      coli(customer, orders, lineitem, {{invoice,}} merged_coli,
-           split_orders, split_lineitem {{, split_invoice}}),
-      pipeline_view(pipeline_view),
-      params(Params::defaults())
-{}
-```
+**Why required**: a fixed-param loop hid the Q3I `pre_revenue` bug for
+weeks. Per-query rotation surfaces baked-in-param secondaries within a
+10-second `helper.run()`.
 
 ### `load()` dispatch
 
@@ -670,6 +580,70 @@ void Q{{N}}Workload<Backend>::load() {
 > 0-row results and 0 MiB secondary size.
 > **Fix**: populate ALL secondaries unconditionally in `load()`.
 
+### `populate_q{N}_view` — Pattern A vs Pattern B
+
+The implementation strategy depends on the join arity of the pipeline:
+
+**Pattern A — prefix-chain join (≤2 base tables in the pipeline)**:
+applies to Q3/Q12. Hand-roll via two-pointer merge (see Q3I
+`load.tpp` lines 44–112):
+
+1. **Invoice scan** (Track 2 only): build `unordered_map<Integer, Numeric>`
+   per-custkey aggregate with `i_status` filter fused.
+2. **Customer scan** (if needed): build per-custkey lookup map for
+   FD-attached columns (e.g. `c_mktsegment`).
+3. **Two-pointer merge** over orders + lineitem (both sorted by orderkey):
+   for each order, advance lineitem pointer while `l_orderkey == orderkey`;
+   accumulate revenue; emit one `q{N}_pipeline_view_t` row per
+   `(custkey, orderkey)`.
+
+Pattern A lands in Phase 1.
+
+**Pattern B — wider join (≥3 base tables in the pipeline)**:
+applies to Q3I/Q5I/Q10I. Hand-rolling a 4-way join here would
+duplicate the entire query body in `load.tpp`. Instead, defer
+`populate_q{N}_view` to Phase 4a, where it reuses the S3 group-walk
+with parameterised filters disabled and an emit callback that inserts
+into the view adapter:
+
+- FD-attached filters (e.g. `i_status` extraction from invoice) — keep.
+- Parameterised filters (region/date/nation/supplier) — drop. The view
+  must be predicate-hoisted so one load serves all param combinations.
+- A `view_load_mode` flag (or equivalent) on `Q{N}IWorkload` routes
+  the walker to a view-insert sink instead of the normal post-pipeline
+  OutClass.
+
+For Pattern B, the S2 branch in `load.tpp` at Phase 1 carries only a
+comment:
+
+```cpp
+if (load_all || only == 2) {
+   // Pattern B (PLAYBOOK §3.6): view loader reuses S3 group-walk
+   // (Phase 4a) with parameterised filters dropped. Hand-rolling
+   // a {N}-way join here would duplicate query_by_merged.
+}
+```
+
+> **PITFALL — BinaryMergeJoin for view population (Pattern A only)**
+> (commit `f74b67da`): Do NOT use `BinaryMergeJoin` for view loading
+> in Pattern A. The hierarchical-key wildcard semantics on
+> `ol_sort_key_t` cause the join-state machine to emit ~1 row per
+> order group instead of N rows per (order, lineitem) pair. Use the
+> manual two-pointer merge instead.
+> **This PITFALL does not apply to Pattern B**: the Pattern B view
+> loader reuses S3's walker, which has its own correctness contract
+> (sentinel ordering, invoice buffer completeness). Any BMJ-related
+> wildcard bugs are simply not in the code path.
+
+> **PITFALL — View missing baked-in filter (Pattern A only)** (commit
+> `4dc93ec6`): if `query_by_view` assumes a filter was baked into the
+> view at load time but `populate_q{N}_view` forgot to apply it, S2
+> produces more rows than S1/S3/S4.
+> **This PITFALL does not apply to Pattern B**: the same walker code
+> that bakes filters in S3 also drives the view loader; a filter
+> omission shows up in both paths simultaneously, making it detectable
+> by cross-structure parity.
+
 ### `get_size()` dispatch
 
 ```cpp
@@ -687,45 +661,33 @@ double Q{{N}}Workload<Backend>::get_size() const {
 }
 ```
 
-### `populate_q{N}_view` free function
+### SKBuilder / std::hash specializations (deferred to Phase 4b)
 
-Three-step pattern (see Q3I `load.tpp` lines 44–112):
+`std::hash` specializations (one per intermediate Key type, needed by
+`HashJoin`) and `SKBuilder` specializations (one per join key type)
+are deferred to Phase 4b. They depend on the BMJ design and the
+chosen join-result type shapes — which for tree-shaped COLI queries
+(Q5I, Q10I) differ from the prefix-chain pattern and must be designed
+explicitly. See §Invoice ⋈ spine: Phase 4b decision space in the
+per-query CLAUDE.md.
 
-1. **Invoice scan** (Track 2 only): build `unordered_map<Integer, Numeric>`
-   per-custkey aggregate with `i_status` filter fused.
-2. **Customer scan** (if needed): build per-custkey lookup map for
-   functionally-dependent columns (e.g. `c_mktsegment`).
-3. **Two-pointer merge** over orders + lineitem (both sorted by orderkey):
-   - For each order, advance lineitem pointer while `l_orderkey == orderkey`.
-   - Accumulate revenue per orderkey (fuse `l_shipdate` filter here).
-   - Emit one `q{N}_pipeline_view_t` row per `(custkey, orderkey)`.
+→ see `CONVENTIONS.md §Sort-key wildcard semantics`
 
-**Predicate hoisting**: the view is loaded WITHOUT parameterised filters
-(mktsegment, threshold, orderdate) so it's reusable across param sets.
-Bake in only constant or single-table filters that are invariant across
-runs (e.g. `l_shipdate > DATE_1995_03_15` with the default date constant,
-`i_status = 'O'`).
+### Exit criterion
 
-> **PITFALL — BinaryMergeJoin for view population** (commit `f74b67da`):
-> Do NOT use `BinaryMergeJoin` for view loading.  The hierarchical-key
-> wildcard semantics on `ol_sort_key_t` (`linenumber == WILDCARD_KEY`
-> matches any linenumber) interact with the OLD-DESIGN OL configuration
-> (orderkey-only hash, single-anchor `matching_keys()`) such that the
-> join-state machine emits ~1 row per order group instead of N rows per
-> (order, lineitem) pair.  Use a manual two-pointer merge instead.
-> **Symptom**: view has ~150K rows (one per order) instead of ~600K
-> (one per lineitem), and the parity test fails with S2 producing
-> different results from S1/S3/S4.  May not reproduce once OL adopts
-> the canonical `q5_sort_key_t` / `geo::sort_key_t` pattern, but for
-> now the manual two-pointer merge is the safe choice.
-
-> **PITFALL — View missing baked-in filter** (commit `4dc93ec6`):
-> If `query_by_view` assumes a filter was baked into the view at load time
-> (e.g. `l_shipdate > DATE`), but `populate_q{N}_view` forgot to apply it,
-> the view will contain unfiltered rows and S2 will produce different
-> results from the other three paths.
-> **Symptom**: S2 returns more rows than S1/S3/S4, or includes rows with
-> revenue from lineitems that should have been filtered out.
+- `make -C build/frontend test_query_q{N}_lsm q{N}_lsm -j$(nproc)`
+  builds clean.
+- `test_query_q{N}_lsm --tpch_scale_factor=1` exits 0 with:
+  - Strict-equality `[OK]` on `split_orders`, `split_lineitem`,
+    `split_invoice`, and `merged_coli` (per-type breakdown +
+    total via `coli_group_walk`).
+  - Sentinel-ordering `[OK]` (customer before invoice/orders/lineitems
+    within each custkey group).
+  - `pipeline_view rows == 0 [OK]` with an explicit message
+    "deferred to Phase 4a" so future agents don't mistake it for a
+    regression. (Pattern A queries assert `rows == |lineitem|` here
+    instead.)
+  - Parity `[OK]` at digest 0x0 across empty stubs.
 
 ---
 
@@ -748,6 +710,37 @@ wiring is wrong, so they validate data shape, accumulators, and
 filter pushdown without dragging in JK bugs. Flip the test harness
 to strict-on-{S2, S3, S5} at the end of 4a; S1 / S4 stay
 `[SKIP]`-tolerant.
+
+**Within Phase 4a, Pattern-B queries must follow this order**:
+S3 walker (§7.1) → `populate_q{N}_view` (view loader reuses S3
+walker) → S2 view scan (§7.3) → S5 if applicable (§7.4). The view
+loader depends on the S3 walker's group-walk infrastructure, so S3
+must land first. S2's `query_by_view` depends on the populated view,
+so the view loader must land before S2.
+
+### Pattern-B `populate_q{N}_view` (Phase 4a)
+
+For Pattern-B queries (≥3 base tables in the pipeline; see §3.6),
+`populate_q{N}_view` is implemented in Phase 4a by driving the S3
+group-walk with parameterised filters disabled:
+
+- Add a `view_load_mode` flag (or equivalent) to `Q{N}IWorkload`.
+- In view-load mode the walker routes assembled records to a
+  view-insert sink instead of the normal post-pipeline OutClass.
+- FD-attached filters (e.g. `i_status` routing from invoice) — keep.
+  These are structural properties of the view schema, not query params.
+- Parameterised filters (region/date/nation/supplier) — drop. The
+  view must be predicate-hoisted so one load serves all param combos.
+- Wire the call into `Q{N}Workload::load()` in the S2 branch,
+  replacing the Phase 1 TODO comment.
+- Update the test harness: flip `pipeline_view rows == 0 [OK] deferred`
+  to `pipeline_view rows == |lineitem| [OK]`.
+
+The correctness contract for the view loader is the same as S3's
+walker: sentinel ordering, invoice buffer completeness (CONVENTIONS.md
+Rule 10), no parameterised filter baked in. The shared code means a
+bug in one path shows up in both paths simultaneously, which is the
+main advantage over a hand-rolled two-pointer merge.
 
 **Then land Phase 4b** with this entry criterion: an SK wildcard
 smoke test — for each `(SK, left_record_type, right_record_type)`

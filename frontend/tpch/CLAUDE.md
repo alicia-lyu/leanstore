@@ -187,7 +187,9 @@ Per-query subdirectories:
   implemented and parity-verified but **deferred from the paper
   sweep** — see [`PLAYBOOK.md §S5`](PLAYBOOK.md). Full status in
   `q3i/CLAUDE.md §Implementation Phases`).
-- `q5i/` — Q5 + Invoice payment-status split (design doc only; no skeleton yet).
+- `q5i/` — Q5 + Invoice payment-status split (Phase 1 in progress; see `q5i/CLAUDE.md`).
+  The phase model has collapsed Phase 0.5 (skeleton) into Phase 1 as of 2026-05-15;
+  see [`PLAYBOOK.md §3.6`](PLAYBOOK.md) for the new unified Phase 1 definition.
 - `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
 
 Each per-query directory contains the same 8-file shape described in

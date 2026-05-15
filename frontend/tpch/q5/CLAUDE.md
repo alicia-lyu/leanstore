@@ -526,6 +526,10 @@ a plain `std::sort` over the per-`n_name` aggregate suffices.
 ## Implementation Phases
 
 - **Phase 0** (this commit) — design doc + DOT plans.
+> **Phase model note (2026-05-15)**: the PLAYBOOK has collapsed Phase 0.5
+> (skeleton) into Phase 1. Historical references to "Phase 0.5" or "Phase 1"
+> in this file describe completed work accurately under the old model.
+
 - **Phase 0.5** — skeleton: `views.hpp`, `workload.hpp`, `load.tpp`,
   `query.tpp` stubs, `per_structure_workload.hpp`,
   `executable_{rocksdb,leanstore}.cpp`, CMake + `generate_targets.py`

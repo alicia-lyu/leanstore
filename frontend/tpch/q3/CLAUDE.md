@@ -423,6 +423,10 @@ shareable surface.
 
 ## Implementation Phases
 
+> **Phase model note (2026-05-15)**: the PLAYBOOK has collapsed Phase 0.5
+> (skeleton) into Phase 1. Historical references to "Phase 0.5" or "Phase 1"
+> in this file describe completed work accurately under the old model.
+
 - **Phase 0** (2026-05-03) — design doc.
 - **Phase 0.5** (2026-05-03; **complete**) — skeleton over COL
   pipeline. `views.hpp` defines `q3_pipeline_view_t` and aliases

@@ -358,7 +358,12 @@ Reused verbatim:
 
 ---
 
-## Implementation Status (skeleton — 2026-05-15)
+## Implementation Status (Phase 1 in progress — 2026-05-15)
+
+> **Phase model note (2026-05-15)**: the PLAYBOOK has collapsed Phase 0.5
+> (skeleton) into Phase 1. The skeleton landed as "Phase 1 commit 1";
+> this section tracks the full Phase 1 milestone. See
+> [`PLAYBOOK.md §3.6`](../PLAYBOOK.md) for the new unified Phase 1 definition.
 
 Phase 0.5 skeleton landed. All 8 per-query files exist; `q5i_lsm` links
 and runs to exit 0; `test_query_q5i_lsm` reports `[OK]` parity at
