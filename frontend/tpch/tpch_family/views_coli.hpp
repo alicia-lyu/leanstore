@@ -385,13 +385,17 @@ struct lineitem_coli_t {
       }
    };
 
-   // Payload: Q3I-projected fields only (project-pushdown rule —
-   // see frontend/tpch/CLAUDE.md §Project pushdown). lineitem_coli_t is a
-   // co-located indexed view; widen in place when a future query reads
-   // more columns. l_orderkey/l_invoicekey/l_linenumber are in the Key.
+   // Payload: project-pushdown rule — carry only columns required by
+   // consuming queries (see frontend/tpch/CLAUDE.md §Project pushdown).
+   // lineitem_coli_t is a co-located indexed view; widen in place when a
+   // future query reads more columns. l_orderkey/l_invoicekey/l_linenumber
+   // are in the Key.
+   //   l_extendedprice, l_discount, l_shipdate — Q3I revenue accumulator
+   //   l_suppkey                                — Q5I supplier semi-join
    Numeric   l_extendedprice;
    Numeric   l_discount;
    Timestamp l_shipdate;
+   Integer   l_suppkey;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -411,7 +415,7 @@ struct lineitem_coli_t {
 
    static lineitem_coli_t from_base(const lineitem_i_t& l)
    {
-      return {l.l_extendedprice, l.l_discount, l.l_shipdate};
+      return {l.l_extendedprice, l.l_discount, l.l_shipdate, l.l_suppkey};
    }
    static Key key_from_base(Integer custkey, const lineitem_i_t::Key& k, const lineitem_i_t& v)
    {
