@@ -52,7 +52,11 @@ void Q5IWorkload<Backend>::load()
    const int only     = FLAGS_load_only_structure;
    const bool load_all = (only < 0);
    if (load_all || only == 1) coli.populate_split();
-   if (load_all || only == 2) { /* populate_q5i_view — Phase 1 */ }
+   if (load_all || only == 2) {
+      // Pattern B (PLAYBOOK §3.6): view loader reuses S3 group-walk
+      // (Phase 4a) with parameterised filters dropped. Hand-rolling
+      // a 4-way join here would duplicate query_by_merged.
+   }
    if (load_all || only == 3) coli.populate_merged();
    // S4 needs no secondary.
 }

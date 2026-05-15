@@ -32,6 +32,25 @@ struct Params {
 bool q5i_predicate_orders(const orders_t& o, const Params& p);
 
 // ---------------------------------------------------------------------------
+// Cardinality and path counters. Populated by Phase 4 query bodies.
+// Declared here so the test harness and executables can attach a Stats
+// instance before calling query_by_*. All counters default to 0.
+
+struct Q5IStats {
+   long customers_scanned          = 0;
+   long orders_scanned             = 0;
+   long lineitems_scanned          = 0;
+   long invoices_scanned           = 0;
+   long customers_passing_nation   = 0;
+   long orders_passing_date        = 0;
+   long lineitems_passing_supp     = 0;
+   long aggregator_rows_out        = 0;
+   long mi_records_visited         = 0;
+   long mi_groups_skipped          = 0;
+   long view_rows_scanned          = 0;
+};
+
+// ---------------------------------------------------------------------------
 
 template <typename Backend>
 class Q5IWorkload
@@ -51,7 +70,8 @@ class Q5IWorkload
    typename Backend::template Adapter<q5i_pipeline_view_t>& pipeline_view;
 
   public:
-   Params params;
+   Params     params;
+   Q5IStats*  stats = nullptr;
 
    CustomerOrdersLineitemInvoicePipeline<Backend>& coli_pipeline() { return coli; }
 

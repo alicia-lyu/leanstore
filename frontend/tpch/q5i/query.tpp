@@ -79,7 +79,7 @@ inline void q5i_pipeline_view_t::print(std::ostream& os) const
 {
    os << l_extendedprice << '\t' << l_discount << '\t'
       << l_suppkey << '\t' << c_nationkey << '\t'
-      << o_orderdate << '\t' << i_status << '\n';
+      << n_name << '\t' << o_orderdate << '\t' << i_status << '\n';
 }
 
 inline void q5i_agg_row_t::print(std::ostream& os) const

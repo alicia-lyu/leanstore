@@ -365,19 +365,58 @@ Reused verbatim:
 > this section tracks the full Phase 1 milestone. See
 > [`PLAYBOOK.md §3.6`](../PLAYBOOK.md) for the new unified Phase 1 definition.
 
-Phase 0.5 skeleton landed. All 8 per-query files exist; `q5i_lsm` links
-and runs to exit 0; `test_query_q5i_lsm` reports `[OK]` parity at
-digest 0x0 (all four `query_by_*` return empty). No parity claim yet.
+**Phase 1 commit 1 (2026-05-15)** — skeleton. All 8 per-query files
+exist; `q5i_lsm` links and runs to exit 0; `test_query_q5i_lsm` reports
+`[OK]` parity at digest 0x0 (all four `query_by_*` return empty).
 
-Stub files: `query.tpp` (all `query_by_*`), `views.hpp` (`print()`).
+**Phase 1 commit 2 (2026-05-15)** — schema widening + Q5IStats +
+pipeline-owned populate + cardinality assertions.
+
+- `views.hpp`: `q5i_pipeline_view_t` Key widened to
+  `(custkey, orderkey, invoicekey, linenumber)` — mirrors
+  `lineitem_coli_t::Key`. Payload gains `n_name: Varchar<25>` (FD-
+  attached at view-load time; must be POD — `record_traits` uses
+  memcpy, libstdc++ `std::string` is non-standard-layout).
+  `operator<=>` added to Key.
+- `workload.hpp`: `Q5IStats` struct declared (counters populated in
+  Phase 4); `Q5IStats* stats = nullptr;` member added.
+- `load.tpp`: S2 branch updated with Pattern B comment — defers view
+  loader to Phase 4a (reuses S3 walker with parameterised filters
+  dropped). `tpch.load()`, `coli.populate_split()`, and
+  `coli.populate_merged()` run unconditionally.
+- `test_query_q5i_rocksdb.cpp`: extended with strict-equality
+  cardinality block (splits + merged_coli); sentinel ordering check;
+  `pipeline_view rows == 0 [OK] deferred` line; size/content-row
+  report. Parity gate still at digest 0x0. Exit non-zero on any
+  `[FAIL]`.
+
+Stub files: `query.tpp` (all `query_by_*` bodies).
+
 Real bodies: `load.tpp` (ctor, `load()`, `get_size()`), `query.tpp`
-(`Params::defaults()`, `set_params_for_iter`, `q5i_predicate_orders`).
+(`Params::defaults()`, `set_params_for_iter`, `q5i_predicate_orders`,
+`q5i_pipeline_view_t::print()`).
 
-Design decisions locked during plan review (carry into Phase 1):
+**Tree-shape constraint**: `lineitem_coli_t` key encodes all four domain
+tags (`(custkey, orderkey, invoicekey, linenumber)`), which is a
+tree-shaped key — not a prefix-chain. Intermediate join-result types
+(`q5i_jr*_t`, sort-key types) are deferred to Phase 4b; their shape
+depends on the BMJ design chosen for S1. See `.claude/plans/q5i-phase-1-load-path.md`
+§Invoice ⋈ spine: Phase 4b decision space for the three concrete
+options (Cartesian+filter, JoinState extension, bespoke buffer-and-probe).
+Recommendation: option C (bespoke, mirrors S3 visitor).
+
+**Pattern B view loader**: `populate_q5i_view` is deferred to Phase 4a.
+It will reuse the S3 group-walk with parameterised filters dropped and
+emit into `pipeline_view`. FD-attached `i_status` routing stays; region/
+date/nation/supplier filters drop. See `PLAYBOOK.md §3.6 Pattern B` and
+`§7 Pattern-B populate_q{N}_view (Phase 4a)`.
+
+Design decisions locked during plan review:
 
 1. Logical join order is C→O→L→I (not C→I→L)
-2. `n_name` resolved at CUSTOMER ⋈ RN join time, cached in
-   `nationkey_to_name`, used as aggregation key directly
+2. `n_name` stored in `q5i_pipeline_view_t` payload as `Varchar<25>`
+   (FD-attached at view-load time); in `q5i_agg_row_t` as `std::string`
+   (in-memory only — never stored)
 3. Invoice hash-build is PK-only (`invoice_set{invoicekey}`);
    `i_status` via `invoice.lookup(l_invoicekey)` at probe time
 4. `supplier_nation_set` is post-pipeline only in S3 (walker uses
