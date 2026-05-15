@@ -5,17 +5,30 @@
 // The pipeline chain changes from COL (C→O→L) to COLI (C→I→L), with
 // ORDERS demoted to a semi-join filter (date window only, no output columns).
 //
-// Hierarchy C→I→L (CONVENTIONS.md Rule 10, "hierarchical with semi-join filter"):
+// Logical join order (C→O→L→I — same for S1/S2/S3/S4):
 //
 //   • CUSTOMER ⋈ RN (inner) — c_nationkey ∈ nation_set gate; ~80% prune.
 //     c_nationkey carried downstream for the post-pipeline supplier probe
 //     and nation equi-join.
-//   • INVOICE ⋈ CUSTOMER on invoicekey — equi-join (Rule 10 Pattern B):
-//     invoice records buffered per custkey group; i_status extracted at
-//     lineitem assembly time.
-//   • ORDERS ⋉ LINEITEM on orderkey — semi-join (Rule 10): orders
-//     contribute only the date filter; no orders columns flow downstream.
-//   • LINEITEM joins with INVOICE buffer on l_invoicekey → i_status.
+//   • CUSTOMER ⋉ ORDERS on c_custkey = o_custkey — SemiJoin: orders
+//     contribute only the date filter (o_orderdate ∈ window); no orders
+//     columns flow downstream.
+//   • ORDERS ⋈ LINEITEM on l_orderkey = o_orderkey — inner join.
+//   • LINEITEM ⋈ INVOICE on l_invoicekey = i_invoicekey — inner join;
+//     extracts i_status to route revenue into the four accumulators.
+//
+// Functional dependency: i_invoicekey → custkey (every invoice belongs
+// to exactly one customer). This FD means custkey-sorted secondary indexes
+// on INVOICE are valid: the S1 seek into invoice_coli_t uses
+// (custkey, invoicekey) as the composite lookup key within a custkey group.
+// Similarly, lineitem_coli_t is sorted by (custkey, orderkey, invoicekey,
+// linenumber), so the lineitem ⋈ invoice join resolves as a sorted probe
+// within the custkey partition — the custkey prefix is implicit but load-
+// bearing in all secondary structures (S1 split indexes, S2 view, S3 MI).
+//
+// Note: S3's physical COLI MI scan reads invoice records before
+// orders/lineitems in byte-lex order (invoice tag=2 < orders=3 <
+// lineitem=4), but the logical join tree is C→O→L→I regardless.
 //
 // Assembled pipeline record per lineitem:
 //   {c_nationkey, l_suppkey, l_extendedprice, l_discount, i_status}
@@ -63,7 +76,7 @@ digraph {
   // ─────────── Fan-out 1: CUSTOMER ⋈ RN (inner) ───────────
   s_cust  [label="TableScan(CUSTOMER)",
            shape=box, style=filled, fillcolor="#E8F0FE"];
-  hj_cust [label="HashJoin (inner)\nCUSTOMER ⋈ RN\n  on c_nationkey = n_nationkey\nsurvivors carry c_custkey,\n  c_nationkey (= matched n_nationkey)",
+  hj_cust [label="HashJoin (inner)\nCUSTOMER ⋈ RN\n  on c_nationkey = n_nationkey\nper match: nation.lookup(c_nationkey) → n_name\n  [PK lookup, ~5/query, cached in nationkey_to_name]\nsurvivors carry c_custkey, c_nationkey, n_name",
            shape=box, style="filled,rounded", fillcolor="#E8F0FE"];
 
   rn     -> hj_cust [label="build (nation_set,\nPK-only)"];
@@ -78,53 +91,54 @@ digraph {
   rn    -> sj_sup [label="build (nation_set,\nPK-only)"];
   s_sup -> sj_sup [label="probe"];
 
-  // ─────────── Inside pipeline: COLI chain (custkey-sorted) ───────────
+  // ─────────── Inside pipeline: C→O→L→I chain (custkey-sorted) ───────────
+  //
+  // Join order follows the SQL predicates:
+  //   CUSTOMER ⋈ ORDERS on c_custkey = o_custkey  (SemiJoin: date filter only)
+  //   ORDERS   ⋈ LINEITEM on l_orderkey = o_orderkey  (inner)
+  //   LINEITEM ⋈ INVOICE  on l_invoicekey = i_invoicekey  (inner, yields i_status)
+  //
+  // This is the same logical order as S4; S1/S3 implement it with merge-order
+  // scans instead of hash builds. The S3 physical plan reorders the MI scan
+  // (invoice tag=2 precedes orders tag=3 in byte-lex) but the logical join
+  // tree is unchanged.
 
-  // INVOICE equi-join: buffers full records per custkey group (Rule 10 Pattern B).
-  // Key order: invoice records precede orders/lineitems in custkey group
-  // (invoice tag=2 < orders=3 < lineitem=4), so buffer is complete at lineitem time.
-  s_inv  [label="TableScan(INVOICE)\n[custkey-sorted secondary]",
-          shape=box, style=filled, fillcolor="#E8F0FE"];
-  buf_inv [label="BufferEquiJoin (inner)\nINVOICE buffered per custkey group\n  (Rule 10 Pattern B)\nbuffer holds full invoice_coli_t;\ni_status extracted at lineitem time\n→ invoice_buf[] per custkey",
-           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-
-  // ORDERS semi-join: date filter only, no output columns.
   s_ord  [label="TableScan(ORDERS)\n[custkey-sorted secondary]",
           shape=box, style=filled, fillcolor="#E8F0FE"];
-  sj_ord [label="SemiJoin (date filter)\nORDERS ⋉ pipeline\n  on (custkey, orderkey)\nsurvival: o_orderdate ∈ [date, date+1y)\nno orders columns flow downstream",
+  sj_ord [label="MergeJoin (semi)\nCUSTOMER ⋉ ORDERS\n  on c_custkey = o_custkey\nsurvival: o_orderdate ∈ [date, date+1y)\nno orders columns flow downstream",
           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
-  // LINEITEM final join: assembles pipeline record.
   s_lin  [label="TableScan(LINEITEM)\n[custkey-sorted secondary]",
           shape=box, style=filled, fillcolor="#E8F0FE"];
-  join_lin [label="MergeJoin (inner)\nLINEITEM ⋈ invoice_buf\n  on l_invoicekey = key.invoicekey\nextracts i_status from buffer;\nassembles: {c_nationkey, l_suppkey,\n  l_extendedprice, l_discount, i_status}",
+  join_lin [label="MergeJoin (inner)\n<cust-ord-sj> ⋈ LINEITEM\n  on l_orderkey = o_orderkey\nsurvivors carry: l_invoicekey, l_suppkey,\n  l_extendedprice, l_discount, n_name\n(n_name + c_nationkey FD from customer input)",
             shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  // Chain joins
-  hj_cust -> buf_inv  [label="custkey group context"];
-  s_inv   -> buf_inv  [label="probe (per-invoice)"];
-  buf_inv -> sj_ord   [label="custkey group + invoice_buf"];
-  s_ord   -> sj_ord   [label="probe (date filter)"];
-  sj_ord  -> join_lin [label="surviving orderkeys"];
-  s_lin   -> join_lin [label="probe (per-lineitem)"];
+  s_inv  [label="TableScan(INVOICE)\n[custkey-sorted secondary]",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  join_inv [label="MergeJoin (inner)\n<cust-ord-lin> ⋈ INVOICE\n  on l_invoicekey = i_invoicekey\nextracts i_status;\nassembles: {n_name, l_suppkey,\n  l_extendedprice, l_discount, i_status}",
+            shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  // Chain
+  hj_cust  -> sj_ord   [label="probe (custkey context)"];
+  s_ord    -> sj_ord   [label="probe (date filter)"];
+  sj_ord   -> join_lin [label="surviving (custkey, orderkey)"];
+  s_lin    -> join_lin [label="probe (per-lineitem)"];
+  join_lin -> join_inv [label="probe"];
+  s_inv    -> join_inv [label="probe (invoice secondary)"];
 
   // ─────────── Post-pipeline operator chain (Rule 11) ───────────
 
-  sj_col_sup [label="HashSemiJoin\n<pipeline> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\n[primary admission gate]",
+  sj_col_sup [label="HashSemiJoin\n<cust-ord-lin-inv> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\n[primary admission gate]",
               shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
-  agg [label="HashAggregate\ngroup = [c_nationkey],\n  nominal  += revenue         (all)\n  realised += revenue if P\n  open     += revenue if O\n  late     += revenue if L\n[≤5 entries per query]",
+  agg [label="HashAggregate\ngroup = [n_name],\n  nominal  += revenue         (all)\n  realised += revenue if P\n  open     += revenue if O\n  late     += revenue if L\n[≤5 entries; n_name resolved upstream\nat CUSTOMER ⋈ RN, carried through]",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
-
-  nation_lk [label="nation.lookup(c_nationkey)\n→ n_name\n[PK lookup, post-aggregation,\n ≤5 per query]\n(post-pipeline step 3)",
-             shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
 
   sort [label="Sort(nominal_revenue DESC)\n[std::sort, ~5 rows]",
         shape=box, style=filled, fillcolor="#E6F4EA"];
 
-  join_lin   -> sj_col_sup [label="probe (per-lineitem)"];
+  join_inv -> sj_col_sup [label="probe (per-lineitem)"];
   sj_sup     -> sj_col_sup [label="build\n(supplier_nation_set)"];
   sj_col_sup -> agg;
-  agg        -> nation_lk;
-  nation_lk  -> sort;
+  agg        -> sort;
 }

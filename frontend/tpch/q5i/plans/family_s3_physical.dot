@@ -91,29 +91,24 @@ digraph {
   mi [label="MergedScanner(MI_COLI)\n= [customer_coli_t, invoice_coli_t,\n   orders_coli_t, lineitem_coli_t]\nbyte-lex per custkey group:\n  customer(t=1) → invoice*(t=2)\n  → (orders(t=3) → lineitem*(t=4))+\n[loaded UNFILTERED — params apply at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLIGroupWalk(Visitor)\nsubsumes COLI pipeline:\n  • on_customer: c_nationkey ∈ nation_set?\n      → SkipGroup if absent (semi-join,\n        Rule 10 — no buffering)\n  • on_invoice:  append full invoice_coli_t\n      to invoice_buf[] (equi-join,\n      Rule 10 Pattern B — full record;\n      i_status extracted at on_lineitem)\n  • on_orders:   o_orderdate ∈ window?\n      → SkipOrder if absent (semi-join,\n        Rule 10 — no buffering)\n  • on_lineitem: invoice_buf[key.invoicekey]\n      → i_status; emit assembled record:\n      {c_nationkey, l_suppkey,\n       l_extendedprice, l_discount, i_status}\n  • on_group_end: invoice_buf.clear()",
+  walk [label="COLIGroupWalk(Visitor)\nsubsumes COLI pipeline:\n  • on_customer: c_nationkey ∈ nation_set?\n      → SkipGroup if absent (semi-join,\n        Rule 10 — no buffering)\n      on match: nation.lookup(c_nationkey)\n        → n_name [PK lookup, ~5/query,\n          cached in nationkey_to_name]\n  • on_invoice:  append full invoice_coli_t\n      to invoice_buf[] (equi-join,\n      Rule 10 Pattern B — full record;\n      i_status extracted at on_lineitem)\n  • on_orders:   o_orderdate ∈ window?\n      → SkipOrder if absent (semi-join,\n        Rule 10 — no buffering)\n  • on_lineitem: invoice_buf[key.invoicekey]\n      → i_status; emit assembled record:\n      {n_name, l_suppkey,\n       l_extendedprice, l_discount, i_status}\n  • on_group_end: invoice_buf.clear()",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   // ─────────── Post-pipeline (Rule 11) ───────────
   sj_col_sup [label="HashSemiJoin\n<pipeline> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join",
               shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
-  agg [label="HashAggregate\ngroup = [c_nationkey],\n  nominal  += revenue         (all)\n  realised += revenue if P\n  open     += revenue if O\n  late     += revenue if L",
+  agg [label="HashAggregate\ngroup = [n_name],\n  nominal  += revenue         (all)\n  realised += revenue if P\n  open     += revenue if O\n  late     += revenue if L\n[n_name resolved at on_customer,\ncarried through pipeline]",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
-
-  nation_lk [label="nation.lookup(c_nationkey)\n→ n_name  [PK lookup,\npost-aggregation, ≤5 per query]\n(post-pipeline step 3)",
-             shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
 
   sort [label="Sort(nominal_revenue DESC)\n[std::sort, ~5 rows]",
         shape=box, style=filled, fillcolor="#E6F4EA"];
 
   // ─────────── Edges ───────────
-  rn     -> walk [style=dashed, label="nation_set (build)"];
-  sj_sup -> walk [style=dashed, label="supplier_nation_set (build)"];
+  rn     -> walk [style=dashed, label="nation_set (build)\n[used by on_customer]"];
   mi     -> walk;
   walk   -> sj_col_sup;
-  sj_sup -> sj_col_sup [label="build\n(supplier_nation_set)", style=dashed];
+  sj_sup -> sj_col_sup [label="build\n(supplier_nation_set)"];
   sj_col_sup -> agg;
-  agg        -> nation_lk;
-  nation_lk  -> sort;
+  agg        -> sort;
 }

@@ -355,3 +355,25 @@ Reused verbatim:
 - `customer_coli_t` (id=30) — full customerh_t; carries `c_nationkey`
 - `orders_coli_t` (id=31) — `{o_orderdate, o_shippriority}`
 - `invoice_coli_t` (id=33) — `{i_totaldue, i_status}`
+
+---
+
+## Implementation Status (skeleton — 2026-05-15)
+
+Phase 0.5 skeleton landed. All 8 per-query files exist; `q5i_lsm` links
+and runs to exit 0; `test_query_q5i_lsm` reports `[OK]` parity at
+digest 0x0 (all four `query_by_*` return empty). No parity claim yet.
+
+Stub files: `query.tpp` (all `query_by_*`), `views.hpp` (`print()`).
+Real bodies: `load.tpp` (ctor, `load()`, `get_size()`), `query.tpp`
+(`Params::defaults()`, `set_params_for_iter`, `q5i_predicate_orders`).
+
+Design decisions locked during plan review (carry into Phase 1):
+
+1. Logical join order is C→O→L→I (not C→I→L)
+2. `n_name` resolved at CUSTOMER ⋈ RN join time, cached in
+   `nationkey_to_name`, used as aggregation key directly
+3. Invoice hash-build is PK-only (`invoice_set{invoicekey}`);
+   `i_status` via `invoice.lookup(l_invoicekey)` at probe time
+4. `supplier_nation_set` is post-pipeline only in S3 (walker uses
+   only `nation_set`)
