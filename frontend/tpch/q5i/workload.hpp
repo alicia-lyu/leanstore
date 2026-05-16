@@ -14,6 +14,7 @@
 #include "../backend.hpp"
 #include "../tpchi_family/coli_pipeline.hpp"
 #include "../tpchi_family/tpchi_workload.hpp"
+#include "out_class.hpp"
 #include "views.hpp"
 
 namespace tpch::q5i

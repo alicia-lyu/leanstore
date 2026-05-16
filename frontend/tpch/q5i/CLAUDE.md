@@ -414,10 +414,34 @@ date/nation/supplier filters drop. See `PLAYBOOK.md §3.6 Pattern B` and
 Design decisions locked during plan review:
 
 1. Logical join order is C→O→L→I (not C→I→L)
-2. `n_name` stored in `q5i_pipeline_view_t` payload as `Varchar<25>`
-   (FD-attached at view-load time); in `q5i_agg_row_t` as `std::string`
-   (in-memory only — never stored)
+2. ~~`n_name` stored in `q5i_pipeline_view_t` payload as `Varchar<25>`
+   (FD-attached at view-load time)~~ — **revised in Phase 4a
+   commit 0** (see below). `n_name` lives only in `q5i_agg_row_t`
+   (in-memory `std::string`) and is resolved post-pipeline.
 3. Invoice hash-build is PK-only (`invoice_set{invoicekey}`);
    `i_status` via `invoice.lookup(l_invoicekey)` at probe time
 4. `supplier_nation_set` is post-pipeline only in S3 (walker uses
    only `nation_set`)
+
+**Phase 4a commit 0 (2026-05-15)** — shared post-pipeline machinery +
+view-payload fixup. Lands the OutClass first so commits 1/2 plug
+into a stable boundary.
+
+- `views.hpp`: drop `Varchar<25> n_name` from `q5i_pipeline_view_t`
+  payload. Reason: the COLI MI is 4-table (C,O,L,I), so an
+  n_name-bearing view would be a 5-table substitute and unfair to
+  S3. `q5i_agg_row_t.n_name` (in-memory `std::string`) stays.
+- `out_class.hpp` (**new**): `q5i_pipeline_out_t`,
+  `q5i_revenue_quad_t`, `Q5IOutClass<Sides>` — strictly the
+  aggregate (Rule 11 "first post-pipeline operator"). NATION PK
+  lookup and sort live in the free function `q5i_resolve_n_names`
+  + `std::sort` called by `query_by_*`. Templated on Sides so it
+  doesn't need `q5/side_tables.hpp` (whose template body
+  forward-declares `q5::Params` and won't parse here).
+- `workload.hpp`: `#include "out_class.hpp"` so the header
+  type-checks in this commit.
+- `query.tpp`: drop `n_name` from `q5i_pipeline_view_t::print()`.
+
+Verification: `test_query_q5i_lsm` builds; digest 0x0 parity
+unchanged (`query_by_*` still stubs). `test_query_q3i_lsm` and
+`test_query_q5_lsm` regressions clean.

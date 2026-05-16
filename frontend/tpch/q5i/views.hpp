@@ -17,6 +17,11 @@ namespace tpch::q5i
 // i_status resolved from invoice join at view-load time (Pattern B:
 // view loader deferred to Phase 4a — reuses S3 walker with parameterised
 // filters dropped; see PLAYBOOK.md §3.6).
+//
+// n_name is NOT in this payload: the COLI MI is 4-table (C,O,L,I), so
+// storing n_name here would make S2 a 5-table substitute and unfair vs S3.
+// n_name is resolved post-pipeline (≤5 NATION PK lookups per query) in
+// both S2 and S3 — see q5i/out_class.hpp and CLAUDE.md §Plan Descriptions.
 struct q5i_pipeline_view_t {
    static constexpr int id = 62;
 
@@ -35,10 +40,6 @@ struct q5i_pipeline_view_t {
    Numeric     l_discount;
    Integer     l_suppkey;
    Integer     c_nationkey;
-   Varchar<25> n_name;    // FD-attached at view-load time; MUST be Varchar
-                          // (POD), NOT std::string — record_traits uses
-                          // memcpy; libstdc++ std::string is non-standard-
-                          // layout and corrupts across insert/getScanner.
    Timestamp   o_orderdate;
    Varchar<1>  i_status;
 
