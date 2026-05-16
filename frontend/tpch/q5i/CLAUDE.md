@@ -477,3 +477,27 @@ all splits + merged_coli still strict-equal, sentinel ordering
 stubs). `test_query_q3i_lsm` (S1–S5 all match at
 `0xd0859473a4b4e2da`) and `test_query_q5_lsm` (S1–S4 all match
 at `0x417cfbb4bdcfc6a7`) regressions clean.
+
+**Phase 4a commit 2 (2026-05-16)** — S2/S3 query bodies wired,
+strict S2≡S3 parity at SF=1.
+
+- `query.tpp`: `query_by_merged` and `query_by_view` share head
+  (`build_q5_side_tables` + `Q5IOutClass`) and tail
+  (`q5i_resolve_n_names` + `std::sort`); only the in-pipeline
+  operator differs (visitor over `coli.merged_adapter()` for S3
+  vs sequential view scan with custkey-transition gate +
+  orderdate filter for S2). `q5i_sort_cmp` (nominal_revenue
+  DESC, n_name ASC tiebreaker) and `q5i_to_q5_params` (Q5I→Q5
+  Params conversion) added as inline helpers.
+- `query.tpp` includes `q5/workload.hpp` + `q5/side_tables.hpp`
+  at the same boundary as `load.tpp` for the Q5::Params parse.
+- Test harness parity check: requires S2 ≡ S3 strict at SF=1;
+  S1/S4 reported as `[SKIP]` while they return empty results
+  (Phase 4b wires those up). Any non-empty S1/S4 result is an
+  error.
+
+Verification at SF=1: S2 digest == S3 digest across runs (e.g.
+`0x14282a29cc83757c` with 2 rows, `0xac82040edf656c38` with 1
+row — data is non-deterministic but S2 ≡ S3 always holds).
+`pipeline_view rows == |lineitem|` strict. `test_query_q3i_lsm`
+and `test_query_q5_lsm` regressions clean.

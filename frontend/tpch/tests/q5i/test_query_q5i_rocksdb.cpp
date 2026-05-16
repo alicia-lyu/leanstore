@@ -21,7 +21,7 @@
 //   - strict-equality [OK] cardinality on splits + merged_coli
 //   - sentinel ordering [OK]
 //   - pipeline_view rows == |lineitem| [OK] (Pattern B view loader)
-//   - parity [OK] at digest 0x0 (query bodies stub)
+//   - parity [OK]: S2 ≡ S3 strict; S1/S4 reported [SKIP] until Phase 4b
 //   - exit 0
 
 #include <gflags/gflags.h>
@@ -383,7 +383,7 @@ int main(int argc, char** argv)
    // ------------------------------------------------------------------
    // Run all four query_by_* paths (all stubs at Phase 1 — digest 0x0).
 
-   std::cout << "\n=== Running queries (Phase 1 stubs — expect digest 0x0) ===\n";
+   std::cout << "\n=== Running queries (Phase 4a: S2/S3 live; S1/S4 stub) ===\n";
    std::vector<tpch::q5i::q5i_agg_row_t> r_base, r_view, r_merged, r_hash;
 
    q5i.query_by_base  (r_base);
@@ -407,30 +407,37 @@ int main(int argc, char** argv)
    print_digest("S3 (merged)", r_merged.size(), d_merged);
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
-   // Parity check: all four digests must match (all 0x0 at Phase 1).
+   // Parity check (Phase 4a): require S2 ≡ S3 strict equality. S1 and
+   // S4 are still stubs (Phase 4b) and are reported as deferred when
+   // they return empty results; any non-empty stub result is an error.
    std::cout << "\n=== Parity check ===\n";
    uint64_t ref  = d_merged;
-   bool     ok_b = (d_base   == ref);
+   auto is_stub = [](size_t rows, uint64_t d) { return rows == 0 && d == 0; };
+   bool s1_stub = is_stub(r_base.size(), d_base);
+   bool s4_stub = is_stub(r_hash.size(), d_hash);
+   bool     ok_b = s1_stub || (d_base   == ref);
    bool     ok_v = (d_view   == ref);
    bool     ok_m = (d_merged == ref);
-   bool     ok_h = (d_hash   == ref);
+   bool     ok_h = s4_stub || (d_hash   == ref);
 
-   auto parity_line = [&](const char* tag, bool ok, uint64_t d) {
+   auto parity_line = [&](const char* tag, bool ok, bool stub, uint64_t d) {
       std::ostringstream ss;
       ss << std::hex << ref;
-      std::cout << (ok ? "[OK]   " : "[FAIL] ") << tag
-                << " digest=0x" << std::hex << d << std::dec
-                << (ok ? "" : "  (expected S3 0x" + ss.str() + ")")
-                << "\n";
+      const char* status = stub ? "[SKIP] " : (ok ? "[OK]   " : "[FAIL] ");
+      std::cout << status << tag
+                << " digest=0x" << std::hex << d << std::dec;
+      if (stub)        std::cout << "  (stub — Phase 4b)";
+      else if (!ok)    std::cout << "  (expected S3 0x" << std::hex << ref << std::dec << ")";
+      std::cout << "\n";
    };
-   parity_line("S1 base  ", ok_b, d_base);
-   parity_line("S2 view  ", ok_v, d_view);
-   parity_line("S3 merged", ok_m, d_merged);
-   parity_line("S4 hash  ", ok_h, d_hash);
+   parity_line("S1 base  ", ok_b, s1_stub, d_base);
+   parity_line("S2 view  ", ok_v, false,   d_view);
+   parity_line("S3 merged", ok_m, false,   d_merged);
+   parity_line("S4 hash  ", ok_h, s4_stub, d_hash);
 
    bool parity_ok = ok_b && ok_v && ok_m && ok_h;
    if (parity_ok) {
-      std::cout << "[OK] parity\n";
+      std::cout << "[OK] parity (S2 ≡ S3; S1/S4 deferred to Phase 4b)\n";
    }
 
    bool all_ok = stats_ok && parity_ok;
