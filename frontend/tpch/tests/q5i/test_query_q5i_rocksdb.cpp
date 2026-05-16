@@ -1,8 +1,9 @@
-// Phase 1 harness for Q5I: loads base tables once, populates all secondaries,
-// asserts strict-equality cardinality on base + splits + merged_coli, reports
-// pipeline_view rows == 0 (deferred to Phase 4a — Pattern B view loader
-// reuses S3 walker), and verifies cross-structure XOR digest parity at 0x0
-// (all four query_by_* return empty until Phase 4 bodies land).
+// Q5I correctness harness: loads base tables once, populates all
+// secondaries (splits + merged_coli + Pattern B pipeline view), asserts
+// strict-equality cardinality on every secondary including
+// pipeline_view rows == |lineitem|, and verifies cross-structure XOR
+// digest parity (still 0x0 while S1/S2/S3/S4 query bodies are stubs;
+// strict S2 ≡ S3 lands with Phase 4a commit 2).
 //
 // IMPORTANT: this harness wipes --ssd_path before opening the DB. RocksDB
 // does not cleanly overwrite an existing DB; reusing a populated dir across
@@ -19,7 +20,7 @@
 // Expected:
 //   - strict-equality [OK] cardinality on splits + merged_coli
 //   - sentinel ordering [OK]
-//   - pipeline_view rows == 0 [OK] (deferred to Phase 4a)
+//   - pipeline_view rows == |lineitem| [OK] (Pattern B view loader)
 //   - parity [OK] at digest 0x0 (query bodies stub)
 //   - exit 0
 
@@ -140,9 +141,9 @@ int main(int argc, char** argv)
    tpch.load();
 
    std::cout << "=== Populating secondaries ===\n";
-   // S2 view: Pattern B — deferred to Phase 4a (reuses S3 walker).
    q5i.coli_pipeline().populate_split();    // S1 splits
    q5i.coli_pipeline().populate_merged();   // S3 MI
+   q5i.populate_q5i_view();                 // S2 view (Pattern B over S3 MI)
    // S4 needs no secondary.
 
    // ------------------------------------------------------------------
@@ -283,19 +284,14 @@ int main(int argc, char** argv)
              << " lineitems=" << n_lineitems_ref
              << " invoices=" << n_invoices_ref << "\n";
 
-   // Pipeline view: deferred to Phase 4a (Pattern B — view loader reuses S3
-   // walker). Rows must be 0 at Phase 1. This is expected and correct; do not
-   // treat it as a regression.
+   // Pipeline view (Phase 4a Pattern B): one row per base lineitem
+   // (region/date/nation/supplier filters dropped at load time —
+   // predicate-hoisted; only FD-attached fields baked in).
    {
-      bool ok = (n_view == 0);
+      bool ok = (n_view == n_lineitems_ref);
       stats_ok &= ok;
-      if (ok) {
-         std::cout << "[OK]   pipeline_view           rows=0"
-                   << " (deferred to Phase 4a — Pattern B view loader)\n";
-      } else {
-         std::cout << "[FAIL] pipeline_view           rows=" << n_view
-                   << " (expected 0 at Phase 1; view loader lands in Phase 4a)\n";
-      }
+      check("pipeline_view", ok, n_view,
+            "= " + std::to_string(n_lineitems_ref));
    }
 
    // Split adapters: strict 1:1 retagging of base tables.

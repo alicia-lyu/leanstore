@@ -103,6 +103,14 @@ class Q5IWorkload
 
    void   load();
    double get_size() const;
+
+   // S2 view loader — Pattern B (PLAYBOOK §3.6): reuses the S3
+   // Q5IGroupWalkVisitor in ViewLoad mode (all parameterised filters
+   // dropped) and emits one q5i_pipeline_view_t row per base lineitem.
+   // Public so test harnesses that bypass `load()` (calling
+   // populate_split / populate_merged directly) can still populate
+   // the view secondary.
+   void populate_q5i_view();
 };
 
 }  // namespace tpch::q5i

@@ -445,3 +445,35 @@ into a stable boundary.
 Verification: `test_query_q5i_lsm` builds; digest 0x0 parity
 unchanged (`query_by_*` still stubs). `test_query_q3i_lsm` and
 `test_query_q5_lsm` regressions clean.
+
+**Phase 4a commit 1 (2026-05-16)** — S3 visitor + Pattern B view
+loader (in-pipeline only; query bodies still stubs).
+
+- `visitor.hpp` (**new**): `Q5IGroupWalkVisitor<Sides, Sink, Mode>`
+  free struct. Four hooks. Templated on `Sides` so the header
+  doesn't need `q5/side_tables.hpp` (whose template body
+  references a forward-declared `q5::Params`). `on_invoice`
+  buffers the **full `invoice_coli_t` record** per Rule 10
+  Pattern B; `i_status` extraction happens at assembly time in
+  `on_lineitem`. ViewLoad mode admits all customers/orders and
+  emits via `sink.emit_view(key, row)` into the view adapter;
+  Query mode gates by `nation_set` / `orderdate` window and
+  emits `q5i_pipeline_out_t` to the OutClass.
+- `load.tpp`: `populate_q5i_view()` runs after `coli.populate_merged()`
+  in the load order, reuses the visitor in ViewLoad mode with an
+  empty `Q5SideTables`. New `Q5IViewLoadSink<ViewAdapter>` wraps
+  `pipeline_view.insert`. Includes `q5/workload.hpp` + `q5/side_tables.hpp`
+  in the order required for the template-body parse.
+- `workload.hpp`: `populate_q5i_view()` is public so the test
+  harness (which calls `populate_split` / `populate_merged`
+  directly instead of `q5i.load()`) can drive it explicitly.
+- `test_query_q5i_rocksdb.cpp`: invokes `populate_q5i_view()`
+  after `populate_merged()`; cardinality block now asserts
+  `pipeline_view rows == |lineitem|` (strict equality).
+
+Verification at SF=1: `pipeline_view rows = 6081 = |lineitem|`,
+all splits + merged_coli still strict-equal, sentinel ordering
+0 violations, parity digest still 0x0 (query bodies still
+stubs). `test_query_q3i_lsm` (S1–S5 all match at
+`0xd0859473a4b4e2da`) and `test_query_q5_lsm` (S1–S4 all match
+at `0x417cfbb4bdcfc6a7`) regressions clean.
