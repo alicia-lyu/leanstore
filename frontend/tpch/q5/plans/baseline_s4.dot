@@ -47,10 +47,19 @@
 //                                       s_suppkey).
 //
 // Per-orderkey c_nationkey caching during the LINEITEM hash-join's
-// sorted-seek lowering: when streaming matched lineitems for one
-// build orderkey, c_nationkey is fixed by the build row — no extra
-// state is needed. The cache is internal to the join, not a separate
-// operator.
+// sorted-seek lowering: orders_set carries only the orderkey (Rule 4),
+// so c_nationkey is recovered per orderkey transition via two chained
+// INL probes (orders.lookup1 → customer.lookup1; Rule 13) and cached
+// for the ~4 lineitems sharing that orderkey.
+//
+// Logical join numbering (Rule 12):
+//   #1 CUSTOMER ⋈ NATION on c_nationkey = n_nationkey (RN inner-join)
+//   #2 CUSTOMER ⋈ ORDERS on c_custkey   = o_custkey
+//   #3 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+//   #4 SUPPLIER ⋉ NATION on s_nationkey = n_nationkey (semi)
+//   #5 (LINEITEM × SUPPLIER) composite-key semi-join fusing the
+//      cross-equality c_nationkey = s_nationkey and the suppkey
+//      equi-join into one composite (s_nationkey, s_suppkey) probe.
 
 digraph {
   rankdir=BT;
@@ -69,41 +78,45 @@ digraph {
   // ─────────── CUSTOMER ⋈ RN (inner — n_name flows downstream) ───────────
   s_cust  [label="TableScan(CUSTOMER)",
            shape=box, style=filled, fillcolor="#E8F0FE"];
-  hj_cust [label="HashJoin (inner)\nCUSTOMER ⋈ RN\n  on c_nationkey = n_nationkey\nsurvivors carry c_custkey,\n  c_nationkey (= matched n_nationkey)",
+  hj_cust [label="#1 HashJoin (inner)\nCUSTOMER ⋈ RN\n  on c_nationkey = n_nationkey\nbuild = nation_set (PK-only)\nsurvivors: cust_set<custkey>\n  (PK-only — Rule 4)\nc_nationkey recovered later via\n  customer.lookup1 at probe time",
            shape=box, style="filled,rounded", fillcolor="#E8F0FE"];
 
   rn     -> hj_cust [label="build (nation_set,\nPK-only)"];
   s_cust -> hj_cust [label="probe"];
 
-  // ─────────── ORDERS ⋈ CUSTOMER-join-result (inner) ───────────
+  // ─────────── #2 ORDERS ⋈ CUSTOMER on c_custkey = o_custkey ───────────
   s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ window)",
           shape=box, style=filled, fillcolor="#E8F0FE"];
-  hj_ord [label="HashJoin (inner)\nORDERS ⋈ <cust-join>\n  on o_custkey = c_custkey\nsurvivors carry o_orderkey,\n  c_nationkey\nbuild table: cust_set\n  (custkey → c_nationkey)",
+  hj_ord [label="#2 HashJoin (inner)\nORDERS ⋈ cust_set\n  on o_custkey = c_custkey\nbuild = cust_set (PK-only)\nsurvivors: orders_set<orderkey>\n  (PK-only — Rule 4)",
           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  hj_cust -> hj_ord [label="build (cust_set)"];
+  hj_cust -> hj_ord [label="build (cust_set,\nPK-only)"];
   s_ord   -> hj_ord [label="probe (orderdate-filtered)"];
 
-  // ─────────── LINEITEM ⋈ ORDERS-join-result (inner; sorted-seek lowering) ───────────
+  // ─────────── #3 LINEITEM ⋈ ORDERS on l_orderkey = o_orderkey ───────────
+  // Probe-side seek-on-miss lowering (CONVENTIONS Rule 3): LINEITEM is
+  // naturally sorted by l_orderkey, so on a miss at orderkey K we seek
+  // to {K+1, 0}. Per-orderkey transition recovers c_nationkey via two
+  // chained INL probes (Rule 13).
   s_lin  [label="TableScan(LINEITEM)\n[naturally sorted by\n l_orderkey on base table]",
           shape=box, style=filled, fillcolor="#E8F0FE"];
-  hj_lin [label="HashJoin (inner)\nLINEITEM ⋈ <ord-join>\n  on l_orderkey = o_orderkey\nsurvivors carry c_nationkey,\n  l_suppkey, l_extendedprice,\n  l_discount\nbuild table: orders_map\n  (orderkey → c_nationkey)\nLowering: build side sorted →\n  per-build-row seek into\n  LINEITEM scanner;\n  c_nationkey resolved from\n  build row, no extra state",
+  hj_lin [label="#3 HashJoin (inner)\nLINEITEM ⋈ orders_set\n  on l_orderkey = o_orderkey\nbuild = orders_set (PK-only)\nLowering: seek-on-miss to\n  {K+1, 0}; per-orderkey-transition\n  INL recovery (Rule 13):\n    orders.lookup1(K) → custkey\n    customer.lookup1(custkey)\n      → c_nationkey\n  cached for ~4 lineitems\n  of this order",
           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  hj_ord -> hj_lin [label="build (orders_map)"];
-  s_lin  -> hj_lin [label="probe (orderkey-only seek)"];
+  hj_ord -> hj_lin [label="build (orders_set,\nPK-only)"];
+  s_lin  -> hj_lin [label="probe (seek-on-miss)"];
 
   // ─────────── SUPPLIER ⋉ RN (semi-join; no NATION column flows past) ───────────
   s_sup  [label="TableScan(SUPPLIER)",
           shape=box, style=filled, fillcolor="#E0F2F1"];
-  sj_sup [label="HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n  — composite key = PK of\n  restricted-supplier relation\n[supplier_nation_set]",
+  sj_sup [label="#4 HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n  — composite key = PK of\n  restricted-supplier relation\n[supplier_nation_set]",
           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
   rn    -> sj_sup [label="build (nation_set,\nPK-only)"];
   s_sup -> sj_sup [label="probe"];
 
   // ─────────── COL × SUPPLIER composite-key semi-join (fuses cross-eq + suppkey) ───────────
-  sj_col_sup [label="HashSemiJoin\n<lin-join> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\nsurvivors carry c_nationkey,\n  l_extendedprice, l_discount",
+  sj_col_sup [label="#5 HashSemiJoin\n<lin-join> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\nsurvivors carry c_nationkey,\n  l_extendedprice, l_discount",
               shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
   hj_lin -> sj_col_sup [label="probe (per-lineitem)"];

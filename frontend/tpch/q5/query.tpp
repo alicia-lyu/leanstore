@@ -621,25 +621,27 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
 {
    // S4: HashJoin chain on BASE tables only (no col.split_*).
    //
-   // Plan (Phase 10B — completes the fairness work started in 5312cbcd):
+   // Plan (Phase 11 — Rule-4 compliance retrofit, mirrors Q5I S4):
    //
-   //   (1) cust_map<custkey, CustHit{c_nationkey, n_name*}>
-   //       Local anonymous struct — no top-level type minted (CONVENTIONS
-   //       Rule 7: join-output types are expressed inline).
+   //   (1) cust_set<custkey>   (PK-only — Rule 4)
    //       Scan base CUSTOMER; gate by c_nationkey ∈ nation_set;
-   //       resolve n_name lazily via NATION PK lookup (~5 total, cached).
+   //       insert custkey only. c_nationkey and n_name recovered via
+   //       B-tree PK lookups at orderkey transitions in (3).
    //
-   //   (2) orders_set<o_orderkey>   (PK-only — no payload)
-   //       Scan base ORDERS; gate by orderdate window + o_custkey ∈ cust_map.
+   //   (2) orders_set<o_orderkey>   (PK-only — Rule 4)
+   //       Scan base ORDERS; gate by orderdate window + o_custkey ∈ cust_set.
    //
    //   (3) Sequential LINEITEM probe — probe-side seek-on-miss (CONVENTIONS
-   //       Rule 3).  NO sorted_orderkeys vector and NO build-side cursor.
-   //       On miss at orderkey K, seek to {K+1, 0} and continue.
-   //       Per orderkey transition: ORDERS PK lookup(K) → o_custkey →
-   //       cust_map.at(custkey) → CustHit{c_nationkey, n_name}.
-   //       Cached locally; reused across all lineitems sharing this orderkey.
+   //       Rule 3). On miss at orderkey K, seek to {K+1, 0}.
+   //       Per orderkey transition (Rule 13 — INL substitution):
+   //         orders.lookup1(K)       → o_custkey
+   //         customer.lookup1(custkey) → c_nationkey
+   //         q5_resolve_n_name(nationkey) → n_name (cached, ~5 entries)
+   //       Cached on `cached_*` for the ~4 lineitems sharing this orderkey.
+   //       `nationkey_to_name` is per-query convenience glue, NOT build
+   //       payload (Rule 4 carve-out).
    //
-   // s4_hashtable_bytes accounts for cust_map + orders_set.
+   // s4_hashtable_bytes accounts for cust_set + orders_set.
    // s4_orderkey_seeks counts the initial seek plus one per miss.
    out.clear();
 
@@ -650,27 +652,23 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
    std::unordered_map<Integer, std::string> nationkey_to_name;  // ~5 entries
 
    // ------------------------------------------------------------------
-   // (1) cust_map: HashJoin(CUSTOMER ⋈ RN on c_nationkey = n_nationkey).
-   // Local anonymous struct carries just the two downstream-needed fields.
-   // n_name pointer is stable for the lifetime of nationkey_to_name.
-   struct CustHit { Integer c_nationkey; const std::string* n_name; };
-   std::unordered_map<Integer, CustHit> cust_map;
+   // (1) cust_set: HashJoin(CUSTOMER ⋈ RN on c_nationkey = n_nationkey).
+   // PK-only build per Rule 4. c_nationkey recovered via customer.lookup1
+   // at probe time.
+   std::unordered_set<Integer> cust_set;
    {
       auto sc = customer.getScanner();
       while (auto kv = sc->next()) {
          if (stats) stats->customers_scanned++;
          if (sides.nation_set.count(kv->second.c_nationkey) == 0) continue;
          if (stats) stats->customers_passing_filter++;
-         const std::string& nm =
-             q5_resolve_n_name(kv->second.c_nationkey, nation, nationkey_to_name);
-         cust_map.emplace(kv->first.c_custkey,
-                          CustHit{kv->second.c_nationkey, &nm});
+         cust_set.insert(kv->first.c_custkey);
       }
    }
 
    // ------------------------------------------------------------------
-   // (2) orders_set: HashSemiJoin(ORDERS ⋉ cust_map on o_custkey = c_custkey).
-   // PK-only build (orderkey only, no payload). Uses BASE orders adapter.
+   // (2) orders_set: HashSemiJoin(ORDERS ⋉ cust_set on o_custkey = c_custkey).
+   // PK-only build. Uses BASE orders adapter.
    std::unordered_set<Integer> orders_set;
    {
       auto sc = orders.getScanner();
@@ -678,7 +676,7 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
          if (stats) stats->orders_scanned++;
          const Timestamp od = kv->second.o_orderdate;
          if (od < params.orderdate_lo || od >= params.orderdate_lo + 365) continue;
-         if (cust_map.find(kv->second.o_custkey) == cust_map.end()) continue;
+         if (cust_set.find(kv->second.o_custkey) == cust_set.end()) continue;
          if (stats) stats->orders_passing_filter++;
          orders_set.insert(kv->first.o_orderkey);
       }
@@ -686,18 +684,15 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
 
    if (stats) {
       stats->s4_hashtable_bytes = static_cast<long>(
-          cust_map.size()   * (sizeof(Integer) + sizeof(CustHit) + 24)
+          cust_set.size()   * (sizeof(Integer) + 24)
         + orders_set.size() * (sizeof(Integer) + 24));
    }
 
    // ------------------------------------------------------------------
-   // (3) Lineitem probe — sequential scan on BASE lineitem with
-   // probe-side seek-on-miss (CONVENTIONS Rule 3).
-   // No sorted_orderkeys vector and no build-side cursor.
-   // On miss at orderkey K, seek to {K+1, 0} and continue.
-   // Per orderkey transition, resolve the joined customer record via two
-   // PK lookups: ORDERS.lookup1(K) → o_custkey, cust_map.at(custkey) →
-   // CustHit.  Cache locally; reuse across all lineitems sharing this K.
+   // (3) Lineitem probe — sequential scan with seek-on-miss (Rule 3).
+   // Per orderkey transition: chained PK lookups (orders → customer)
+   // recover c_nationkey, then resolve n_name via cached NATION lookup.
+   // Caches reused across the ~4 lineitems sharing each orderkey.
    {
       auto sc = lineitem.getScanner();
       Integer  cached_ok         = -1;
@@ -712,23 +707,27 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
          const Integer ok = kv->first.l_orderkey;
 
          if (orders_set.count(ok) == 0) {
-            // Miss — every lineitem sharing ok is also a miss (sorted scan).
-            // Seek past the entire group.
             sc->seek(typename lineitem_t::Key{ok + 1, 0});
             if (stats) stats->s4_orderkey_seeks++;
             continue;
          }
 
          if (ok != cached_ok) {
-            // Orderkey transition: resolve the joined customer record via
-            // two PK lookups and cache for subsequent lineitems of this order.
+            // Join #2 (O ⋈ L) realised by orders_set membership above.
+            // Recover c_nationkey via chained INL (Rule 13): the cust_set
+            // membership is guaranteed by the orders_set build, so both
+            // lookups must succeed.
             Integer custkey = 0;
             orders.lookup1(typename orders_t::Key{ok},
                            [&](const orders_t& o) { custkey = o.o_custkey; });
-            const CustHit& h = cust_map.at(custkey);
+            Integer nk = 0;
+            customer.lookup1(typename customerh_t::Key{custkey},
+                             [&](const customerh_t& c) { nk = c.c_nationkey; });
+            const std::string& nm =
+                q5_resolve_n_name(nk, nation, nationkey_to_name);
             cached_ok          = ok;
-            cached_c_nationkey = h.c_nationkey;
-            cached_n_name      = h.n_name;
+            cached_c_nationkey = nk;
+            cached_n_name      = &nm;
          }
 
          q5_admit_lineitem(kv->second, cached_c_nationkey,
