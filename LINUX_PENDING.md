@@ -9,25 +9,35 @@ actionable.
 
 ## Active
 
-- **Q5I first Linux perf sweep**: macOS correctness for S1–S4
-  verified at SF=1 (commit `19104306`). Production `q5i_lsm` /
-  `q5i_btree` targets and Makefile rules (`q5i_lsm`, `q5i_lsm_{1..4}`,
-  reload variants) already wired. Need on a Linux node:
-  1. Build `q5i_lsm` + `q5i_btree`.
-  2. Run TX-loop sweep at SF=15 DRAM=0.1 across structures 1–4
-     (`make q5i_lsm scale=15 dram=0.1` and the `q5i_btree`
-     equivalent).
-  3. Append `TPut.csv` paths to `frontend/tpch/q5i/RUNS.md`.
-  4. Verify the Q5I paper thesis **S3 ≥ S2 > S1/S4** holds — and
-     note whether Q5I inherits the S2 > S3 inversion that Q5 showed
-     at the same scale (LSM: S2 205 vs S3 156 TX/s). The inversion
-     is infrastructure-level (view materialisation beats MI scan
-     for COL-family pipelines on the current walker), not
-     query-specific; expect it to recur for Q5I unless the COLI
-     walker tuning closes the gap.
-  Reload eagerly per `CLAUDE.md` Workflow Rules if any load-path
-  file mtime is newer than the persisted iso `.json`.
+- **Q5I btree S1/S2/S3 parity failure on Linux (SF≥5)**: discovered
+  2026-05-17 during the first-Linux Q5I bring-up. At SF=5 on btree,
+  S1 (BMJ chain), S2 (pipeline view scan), and S3 (COLI walker)
+  all silently return 0 rows while S4 (hash-join over base tables)
+  correctly returns 2 rows at digest `0x8a99cce624ffbeb1`. SF=1
+  passes parity vacuously (all four return 0 rows, so the failure
+  is latent at the smallest scale and would not have been caught
+  by the existing `test_query_q5i_btree` SF=1 gate). LSM passes
+  parity at SF=5 (rows=3, digest `0x2f31fe8244b728c1`) so the bug
+  is btree-specific. The three failing paths all consume the COLI
+  merged index or its split-COLI siblings (S2 reads
+  `q5i_pipeline_view_t` which is loaded from the COLI walker per
+  Phase 4a commit 1); S4 reads only base TPC-H tables. Suspect
+  hypothesis: payload memcpy round-trip mismatch between
+  libstdc++ (Linux) and libc++ (macOS), same family of issue as
+  the Q5 `q5_pipeline_view_t.n_name` `std::string` bug closed
+  2026-05-14 in [`LINUX_HISTORY.md`](LINUX_HISTORY.md). Need to:
+  1. Diagnose which payload field round-trips wrong on LeanStore;
+     `test_query_q5i_btree` has no cardinality / sentinel-ordering
+     prints (the LSM test has rich diagnostics), so consider porting
+     the LSM test's check block first to localise the failure
+     (splits vs merged vs view vs query stage).
+  2. Fix in place and verify `test_query_q5i_btree` SF=5/10 strict
+     4-way parity.
+  3. Rerun `make q5i_btree scale=15 dram=0.1` and replace the
+     placeholder btree entry in `frontend/tpch/q5i/RUNS.md` with
+     the validated perf record.
 
-*(Q5 first Linux perf sweep closed 2026-05-14; see
-[`LINUX_HISTORY.md`](LINUX_HISTORY.md). Optional SF=40 disk-bound
-replay deferred without owner.)*
+*(Q5 first Linux perf sweep closed 2026-05-14, Q5I LSM first
+Linux sweep closed 2026-05-17; see
+[`LINUX_HISTORY.md`](LINUX_HISTORY.md). Optional Q5 SF=40
+disk-bound replay deferred without owner.)*

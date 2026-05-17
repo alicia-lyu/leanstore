@@ -157,6 +157,33 @@ here for traceability.
   mechanics. SF=1 parity preserved on both backends. Linux
   prerequisite for the upcoming Q3 perf sweep.
 
+## Closed by 2026-05-17 bring-up
+
+- **Q5I LSM first Linux perf sweep**: fresh CloudLab Ubuntu 22.04
+  node brought up per `LINUX_SETUP.md`; q5i_lsm + q5i_btree built;
+  parity gate run for both (`test_query_q5i_lsm` SF=5 strict
+  4-way at digest `0x2f31fe8244b728c1`, rows=3); SF=15 LSM sweep
+  landed in
+  [`frontend/tpch/q5i/RUNS.md`](frontend/tpch/q5i/RUNS.md).
+  Measured shape **S2 (161.66) > S3 (76.29) > S1 (24.39) ≈ S4
+  (15.30) TX/s** — the predicted Q5 inversion (S2 > S3) recurred,
+  same COL-family walker infrastructure gap; not Q5I-specific. The
+  q5i_btree sweep produced a TPut.csv but is **not** closed by this
+  bring-up: `test_query_q5i_btree` at SF=5 surfaced an S1/S2/S3
+  parity failure (3 paths silently empty, S4 correct); tracked as
+  the new Active item in [`LINUX_PENDING.md`](LINUX_PENDING.md).
+  The bug was latent at the existing SF=1 gate because all four
+  paths happen to return 0 rows on the default ASIA+1994-01-01
+  layout at SF=1.
+
+- **Q5I test_query_q5i_{lsm,btree} first build on Linux**:
+  CMake targets existed (`frontend/CMakeLists.txt:285-296` LSM,
+  `:489-493` btree) but had never been built on this machine
+  before. Both built clean on the first try (no Linux-only
+  preprocessor regressions in the q5i path); LSM passed parity at
+  SF=1/5, btree passed at SF=1 (vacuous) and failed at SF=5
+  (rotated to the new Q5I-btree-parity LINUX_PENDING item).
+
 ## Closed by 2026-05-14 bring-up
 
 - **Q5 first Linux perf sweep**: fresh CloudLab Ubuntu 22.04 node

@@ -30,3 +30,40 @@ file unless their numbers are scattered across other docs.
   across reloads — data layout is non-deterministic at SF=1 but
   parity always holds). Linux SF=15 perf sweep tracked in
   `LINUX_PENDING.md`.
+
+### 2026-05-17 00:39 MDT — q5i_lsm SF=15 DRAM=0.1 GiB first-Linux sweep
+- **Commit**: `856eaa1e` (`calcite-integration`)
+- **TPut.csv**: `build/q5i_lsm/TPut.csv` rows 2–5 (S1–S4; no
+  throwaway pre-load — the `q5i_lsm:` Makefile target only chains
+  `q5i_lsm_{1..4}`, unlike Q5).
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S4, Linux (CloudLab
+  `node0.alicial-306048.advosuwmadison-pg0.utah.cloudlab.us`,
+  Xeon D-1548 @ 2.00 GHz, 16 cores, NVMe Toshiba 256 GiB ext4
+  `/mnt/ssd`).
+- **Claim check**: Partially supports the §3.1.2 paper claim —
+  measured shape **S2 (161.66) > S3 (76.29) > S1 (24.39) ≈ S4
+  (15.30) TX/s** has S2/S3 ≫ S1/S4 as predicted but inverts
+  S3 ≥ S2 to S2 > S3, matching Q5 LSM
+  ([`q5/RUNS.md`](../q5/RUNS.md) 2026-05-14 entry) and Q3I LSM.
+  Same COL-family walker infrastructure gap; not Q5I-specific.
+- **Parity gate**: `test_query_q5i_lsm` at SF=5 strict 4-way
+  parity at digest `0x2f31fe8244b728c1`, rows=3 (SF=1 was
+  vacuous-but-parity-clean — all four 0 rows for the default
+  ASIA+1994-01-01 layout; non-vacuous confirmation at SF=5).
+
+### 2026-05-17 00:43 MDT — q5i_btree SF=15 DRAM=0.1 GiB first-Linux sweep — BLOCKED (parity failure)
+- **Commit**: `856eaa1e` (`calcite-integration`)
+- **TPut.csv**: `build/q5i_btree/TPut.csv` produced (S2=302.17,
+  S3=145.43, S1=49.74, S4=44.73 TX/s) **but NUMBERS ARE NOISE** —
+  three of four paths silently return empty results (see Parity
+  gate below). Withholding these as the perf record; rerun and
+  replace this entry after the bug is fixed.
+- **Config**: SF=15, DRAM=0.1 GiB, S1–S4, Linux (same host as
+  LSM entry above), `--vi=false --mv=false` per `targets.mk:731`.
+- **Parity gate**: **FAILED.** `test_query_q5i_btree` at SF=5
+  shows S1/S2/S3 rows=0 digest=`0x0` while S4 rows=2 digest=
+  `0x8a99cce624ffbeb1`. S4 is the correct answer (matches the
+  LSM SF=5 row-count signal). S1 (BMJ chain), S2 (view scan),
+  and S3 (COLI walker) silently drop all data on btree at SF≥5.
+  SF=1 passed parity vacuously (all four 0 rows) so the bug was
+  latent until SF=5. Bug tracked in `LINUX_PENDING.md`.
