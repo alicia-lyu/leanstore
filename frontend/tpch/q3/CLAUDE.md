@@ -150,6 +150,15 @@ omitted on those grounds, not on soundness grounds.
 
 ## Plan Descriptions
 
+**Logical joins (Rule 12)** — shared across all four storage structures:
+
+- **#1** `CUSTOMER ⋈ ORDERS on c_custkey = o_custkey`
+- **#2** `ORDERS ⋈ LINEITEM on o_orderkey = l_orderkey`
+
+S3 fuses both into the single `col_group_walk` visitor; S1 lowers
+#1+#2 as a 2-BMJ chain; S2 reads them pre-materialised from the
+view; S4 realises both as `HashJoin` operators.
+
 Three DOT files in [`plans/`](plans/) document the operator graphs:
 
 - `plans/family_logical.dot` — shared logical plan for S1, S2, S3.

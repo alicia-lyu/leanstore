@@ -78,10 +78,13 @@ digraph {
            shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   // ─────────── HashJoin chain over the aggregated stream ───────────
-  hj_ol [label="HashJoin(o_orderkey = l_orderkey)\n[shared HashJoin primitive]\nattaches o_orderdate, o_shippriority,\n  o_custkey to <agg-lineitem>\nORDERS already filtered on o_orderdate",
+  // Logical joins (Rule 12):
+  //   #1 CUSTOMER ⋈ ORDERS on c_custkey = o_custkey
+  //   #2 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+  hj_ol [label="#2 HashJoin(o_orderkey = l_orderkey)\n[shared HashJoin primitive]\nattaches o_orderdate, o_shippriority,\n  o_custkey to <agg-lineitem>\nORDERS already filtered on o_orderdate",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  hj_co [label="HashJoin(c_custkey = o_custkey)\n[shared HashJoin primitive]\ngates by mktsegment\nCUSTOMER already filtered on c_mktsegment",
+  hj_co [label="#1 HashJoin(c_custkey = o_custkey)\n[shared HashJoin primitive]\ngates by mktsegment\nCUSTOMER already filtered on c_mktsegment",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
   // ─────────── Outside-pipeline tail (constant) ───────────

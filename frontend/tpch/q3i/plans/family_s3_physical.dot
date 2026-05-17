@@ -62,7 +62,7 @@ digraph {
   mi [label="MergedScanner(MI_COLI)\n= [customer_coli_t, invoice_coli_t,\n   orders_coli_t, lineitem_coli_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLIGroupWalk(Visitor)\nsubsumes:\n  • all 4 per-table filters (fused at on_*)\n  • per-CUSTKEY SortedAggregate (invoice)\n  • THRESHOLD filter (fused at flush_order)\n  • CUSTOMER ⋈ ORDERS ⋈ LINEITEM\n  • per-ORDERKEY SortedAggregate (lineitem)\n  • Project → q3i_agg_row_t",
+  walk [label="COLIGroupWalk(Visitor)\nsubsumes (Rule 12 logical joins):\n  • all 4 per-table filters (fused at on_*)\n  • per-CUSTKEY SortedAggregate (invoice)\n  • #1 CUSTOMER ⋈ OI on c_custkey=i_custkey\n     (cust_open_due attach + THRESHOLD)\n  • #2 CUSTOMER ⋈ ORDERS on c_custkey=o_custkey\n  • #3 ORDERS   ⋈ LINEITEM on o_orderkey=l_orderkey\n  • per-ORDERKEY SortedAggregate (lineitem)\n  • Project → q3i_agg_row_t",
          shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   sort  [label="Sort(revenue DESC)\n[apply_top10 partial_sort]",

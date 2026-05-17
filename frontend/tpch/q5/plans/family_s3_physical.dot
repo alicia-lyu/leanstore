@@ -116,7 +116,7 @@ digraph {
   // ─────────── Pre-walk: SUPPLIER ⋉ RN (semi-join) ───────────
   s_sup  [label="TableScan(SUPPLIER)",
           shape=box, style=filled, fillcolor="#E0F2F1"];
-  sj_sup [label="HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n→ supplier_nation_set",
+  sj_sup [label="#4 HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n→ supplier_nation_set",
           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
   rn    -> sj_sup [label="build (nation_set,\nPK-only)"];
@@ -126,7 +126,7 @@ digraph {
   mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLGroupWalk(Visitor)\nsubsumes the entire family logical pipeline:\n  • on_customer: HashJoin (inner) CUSTOMER ⋈ RN\n      gate, lowered to (c_nationkey ∈ nation_set);\n      preserves c_nationkey on survivors\n  • on_order:    o_orderdate window filter\n  • on_lineitem: HashSemiJoin (COL ⋉ supplier_nation_set)\n      lowered to one hashset probe with\n      (c_nationkey, l_suppkey) — fuses SUPPLIER\n      semi-join + cross-eq + suppkey equi-join\n  • chain joins: CUSTOMER ⋈ ORDERS ⋈ LINEITEM,\n      lowered to a 3-way custkey-byte-lex merge\n      inside the MI walker (no separate operator)\n  • n_name fetch (inside walk): on first sighting\n      of each new nationkey, NATION PK lookup\n      caches n_name in the bucket (~5 lookups total)\n  • aggregate:   per-nationkey HashAggregate\n      (small in-Visitor map keyed by n_nationkey,\n       n_name already resolved per bucket)\n  • on_walk_end: drain buckets → emit q5_agg_row_t",
+  walk [label="COLGroupWalk(Visitor)\nsubsumes (Rule 12 logical joins #1,#2,#3,#5):\n  • on_customer: #1 CUSTOMER ⋈ RN gate, lowered\n      to (c_nationkey ∈ nation_set);\n      preserves c_nationkey on survivors\n  • on_order:    o_orderdate window filter\n  • on_lineitem: #5 (LIN × SUPPLIER) composite\n      semi, lowered to one hashset probe with\n      (c_nationkey, l_suppkey) — fuses SUPPLIER\n      semi-join + cross-eq + suppkey equi-join\n  • chain joins #2 + #3: lowered to a 3-way\n      custkey-byte-lex merge inside the MI walker\n      (no separate operator)\n  • n_name fetch (inside walk): on first sighting\n      of each new nationkey, NATION PK lookup\n      caches n_name in the bucket (~5 lookups total)\n  • aggregate:   per-nationkey HashAggregate\n      (small in-Visitor map keyed by n_nationkey,\n       n_name already resolved per bucket)\n  • on_walk_end: drain buckets → emit q5_agg_row_t",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   sort [label="Sort(revenue DESC)\n[std::sort, ~5 rows]",

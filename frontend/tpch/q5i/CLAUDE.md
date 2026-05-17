@@ -522,3 +522,70 @@ Verification at SF=1: S2 digest == S3 digest across runs (e.g.
 row — data is non-deterministic but S2 ≡ S3 always holds).
 `pipeline_view rows == |lineitem|` strict. `test_query_q3i_lsm`
 and `test_query_q5_lsm` regressions clean.
+
+---
+
+## §Planning-stage lessons
+
+Q5I went through multiple plan iterations. The following rules
+emerged from user pushback during planning and have since been
+codified into the cross-query reference docs. Read this section
+before planning the next invoice-extended query (Q10I).
+
+1. **Side-table templating dodges the forward-decl cycle**
+   ([PLAYBOOK §3.6 — Side-table templating](../PLAYBOOK.md)).
+   Template `Q5IOutClass<Sides>` and
+   `Q5IGroupWalkVisitor<Sides, Sink, Mode>` on the side-tables
+   type rather than naming `Q5ISideTables` directly. The visitor
+   header includes `workload.hpp`; `workload.hpp` includes
+   `side_tables.hpp` *before* the visitor header. Q10I will hit
+   the same cycle and should follow the same idiom.
+
+2. **OutClass scope is narrow** (Rule 11 + §Post-pipeline
+   OutClass). The OutClass is *only* the first post-pipeline
+   operator (the aggregate). Steps beyond — NATION PK lookup,
+   sort — belong to free functions / inline code in `query_by_*`,
+   not OutClass methods. Q5I's `q5i_resolve_n_names` + `std::sort`
+   live outside the OutClass for this reason.
+
+3. **Hash builds carry only the primary key** (CONVENTIONS Rule 4,
+   tightened). Intermediate results are conceptual; payload
+   columns are recovered via B-tree PK lookup at probe time. Q5I
+   S4's `cust_set<custkey>` and `ord_set<orderkey>` are the
+   canonical reference; Q5 and Q3I S4 retrofits applied this rule
+   verbatim. Per-query convenience caches (e.g.,
+   `nationkey_to_name` memoising ~5 NATION lookups) are NOT build
+   payload — they are local glue and stay.
+
+4. **INL substitution is explicit** (CONVENTIONS Rule 13).
+   Replacing a HashJoin operator with `adapter.lookup1` probes
+   must be documented in the plan box AND the code comment.
+   Q5I's invoice INL — `invoice.lookup1(l_invoicekey)` per
+   surviving lineitem instead of building `invoice_set` — is the
+   canonical reference. The FK guarantees no filter benefit from
+   a separate build step, so INL pays only the per-probe B-tree
+   cost. The pushback that surfaced the rule: *"just be clear
+   that we chose index nested loop join here"*.
+
+5. **Plan-doc files enumerate logical joins numerically**
+   (CONVENTIONS Rule 12). The user-surfaced pushback was *"align
+   your plan with the query plan, not the implementation details
+   — it's not even clear how many joins there are"*. Q5I has
+   5 logical joins; `plans/baseline_s4.dot` and §Plan
+   Descriptions both enumerate them with `#1...#5`. Q3, Q3I, Q5
+   retrofitted to the same convention.
+
+6. **Phase rollout follows digest 0x0 → S2≡S3 strict → 4-way
+   strict** (PLAYBOOK §3.6 — Phase rollout and parity gating).
+   S2 and S3 share the most code (the view's emit callback IS
+   the visitor's emit row in Pattern B); landing them first with
+   strict parity validates the OutClass + visitor + view loader
+   together before S1/S4 join operators are wired. The Q5I
+   commit sequence (`469ffae9`, `15cfa612`, `65bdb7a4`,
+   `19104306`) is the reference cadence.
+
+Cross-references: CONVENTIONS Rules 4/11/12/13, PLAYBOOK §3.6
+(Side-table templating, Phase rollout and parity gating),
+[`q5i/plans/baseline_s4.dot`](plans/baseline_s4.dot) for the
+canonical numbered plan, `q5i/query.tpp::query_by_hash` for the
+canonical id-list + INL S4 idiom.

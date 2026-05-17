@@ -184,6 +184,25 @@ covers this case.**
 
 ## Plan Descriptions
 
+**Logical joins (Rule 12)** — shared across all four storage structures:
+
+- **#1** `CUSTOMER ⋈ NATION on c_nationkey = n_nationkey`
+  (the RN inner-join after `REGION ⋈ NATION` filters by `r_name`)
+- **#2** `CUSTOMER ⋈ ORDERS on c_custkey = o_custkey`
+- **#3** `ORDERS ⋈ LINEITEM on o_orderkey = l_orderkey`
+- **#4** `SUPPLIER ⋉ NATION on s_nationkey = n_nationkey` (semi)
+- **#5** `(LINEITEM × SUPPLIER) composite-key semi-join on
+  (c_nationkey, l_suppkey) = (s_nationkey, s_suppkey)` —
+  fuses the cross-equality `c_nationkey = s_nationkey` and the
+  suppkey equi-join into one composite probe against
+  `supplier_nation_set`
+
+S3 fuses #1, #2, #3, #5 into the single `col_group_walk` visitor;
+S1 lowers #2 and #3 as a 2-BMJ chain over custkey-sorted
+secondaries; S2 reads the C-O-L portion pre-materialised from the
+view; S4 realises #1+#2 as PK-only set builds (Rule 4) with INL
+recovery (Rule 13) and #5 as the same composite-key hashset probe.
+
 Three DOT files in [`plans/`](plans/) document the operator graphs:
 
 - `plans/family_logical.dot` — shared logical plan for S1, S2, S3.

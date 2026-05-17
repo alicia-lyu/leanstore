@@ -67,7 +67,7 @@ digraph {
   mi [label="MergedScanner(MI_COL)\n= [customer_col_t, orders_col_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLGroupWalk(Visitor)\nsubsumes:\n  • all 3 per-table filters (fused at on_*)\n  • per-ORDERKEY SortedAggregate (lineitem)\n      ↳ pushed below the join — fires above\n        the lineitem stream, before order/cust\n        columns are attached\n  • CUSTOMER ⋈ ORDERS ⋈ <agg-lineitem>\n  • Project → q3_agg_row_t",
+  walk [label="COLGroupWalk(Visitor)\nsubsumes (Rule 12 logical joins):\n  • all 3 per-table filters (fused at on_*)\n  • per-ORDERKEY SortedAggregate (lineitem)\n      ↳ pushed below the join — fires above\n        the lineitem stream, before order/cust\n        columns are attached\n  • #1 CUSTOMER ⋈ ORDERS on c_custkey=o_custkey\n  • #2 ORDERS   ⋈ LINEITEM on o_orderkey=l_orderkey\n  • Project → q3_agg_row_t",
          shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   sort  [label="Sort(revenue DESC, orderdate ASC)\n[apply_top10 partial_sort]",

@@ -134,6 +134,21 @@ no 3-stage join chain, just one fused walk.
 
 ## Plan Descriptions
 
+**Logical joins (Rule 12)** — shared across all five storage structures:
+
+- **#1** `CUSTOMER ⋈ OI on c_custkey = i_custkey`
+  (where `OI = (i_custkey, SUM(i_totaldue WHERE i_status='O'))`
+  — the sibling sub-aggregate attached to CUSTOMER)
+- **#2** `CUSTOMER ⋈ ORDERS on c_custkey = o_custkey`
+- **#3** `ORDERS ⋈ LINEITEM on o_orderkey = l_orderkey`
+
+S3 fuses all three into the single COLI group-walk visitor;
+S1 lowers as a 3-BMJ chain over custkey-sorted secondaries; S2
+reads them pre-materialised from the view; S4 realises #3 as a
+HashJoin with PK-only `ord_set` (Rule 4) and recovers per-order
+payload via INL (Rule 13), while #1 and #2 collapse to
+probe-time hashmap lookups against `open_due_map` and `cust_ok`.
+
 Three DOT files in [`plans/`](plans/) document the operator graphs for the
 four storage structures:
 

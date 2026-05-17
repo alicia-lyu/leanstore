@@ -126,9 +126,12 @@ digraph {
   // stream up the hierarchy. In S3 this collapses into a single walker
   // over the merged adapter; in S1 it is a 3-way merge over separate
   // secondary scanners.
-  joinB [label="Join(ORDERS ⋈ <agg-lineitem>, o_orderkey = l_orderkey)\nattaches o_orderdate, o_shippriority\nstill custkey-sorted (FD via parent)",
+  // Logical joins (Rule 12):
+  //   #1 CUSTOMER ⋈ ORDERS on c_custkey = o_custkey
+  //   #2 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+  joinB [label="#2 Join(ORDERS ⋈ <agg-lineitem>, o_orderkey = l_orderkey)\nattaches o_orderdate, o_shippriority\nstill custkey-sorted (FD via parent)",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  joinA [label="Join(CUSTOMER ⋈ <ordered-agg>, c_custkey = o_custkey)\nsorted on custkey",
+  joinA [label="#1 Join(CUSTOMER ⋈ <ordered-agg>, c_custkey = o_custkey)\nsorted on custkey",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
   proj    [label="Project(orderkey, revenue,\n  o_orderdate, o_shippriority)\n→ q3_pipeline_view_t / q3_agg_row_t"];

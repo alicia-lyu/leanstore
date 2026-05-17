@@ -112,11 +112,15 @@ digraph {
   // The 3-way custkey-sorted join. In S3 this collapses into a single
   // walker over the merged adapter; in S1 it is a 4-way merge over
   // separate secondary scanners.
-  joinA [label="Join(CUSTOMER ⋈ ORDERS, c_custkey = o_custkey)\nsorted on custkey",
+  // Logical joins (Rule 12):
+  //   #1 CUSTOMER ⋈ OI    on c_custkey = i_custkey (cust_open_due attach)
+  //   #2 CUSTOMER ⋈ ORDERS on c_custkey = o_custkey
+  //   #3 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+  joinA [label="#2 Join(CUSTOMER ⋈ ORDERS, c_custkey = o_custkey)\nsorted on custkey",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  joinB [label="Join(⋈ LINEITEM, o_orderkey = l_orderkey)\nstill custkey-sorted (FD via parent)",
+  joinB [label="#3 Join(⋈ LINEITEM, o_orderkey = l_orderkey)\nstill custkey-sorted (FD via parent)",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  joinC [label="Join(⋈ {custkey, cust_open_due}, custkey)\nattach per-customer aggregate;\ngroup is dropped if cust_open_due\nfailed the threshold above",
+  joinC [label="#1 Join(⋈ {custkey, cust_open_due}, custkey)\nattach per-customer aggregate;\ngroup is dropped if cust_open_due\nfailed the threshold above",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
   agg_ord [label="SortedAggregate(group=[o_orderkey,\n  o_orderdate, o_shippriority,\n  custkey, cust_open_due],\n  revenue = SUM(l_extendedprice * (1 - l_discount)))\n[LineitemRevenueAccumulator]",

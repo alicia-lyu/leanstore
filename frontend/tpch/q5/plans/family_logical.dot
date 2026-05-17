@@ -148,6 +148,16 @@
 digraph {
   rankdir=BT;
 
+  // Logical joins (Rule 12, shared with baseline_s4.dot):
+  //   #1 CUSTOMER ⋈ NATION on c_nationkey = n_nationkey (RN inner)
+  //   #2 CUSTOMER ⋈ ORDERS on c_custkey   = o_custkey
+  //   #3 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+  //   #4 SUPPLIER ⋉ NATION on s_nationkey = n_nationkey (semi)
+  //   #5 (LINEITEM × SUPPLIER) composite-key semi on
+  //      (c_nationkey, l_suppkey) — fuses cross-eq + suppkey eq
+  // REGION ⋈ NATION (on n_regionkey = r_regionkey) is the RN
+  // dimension subtree feeding #1 and #4; not numbered because it
+  // never participates in the chain.
   // ─────────── Shared dimension subtree: RN = REGION ⋈ NATION ───────────
   s_reg [label="TableScan(REGION)\n+ Filter(r_name == :1)\n→ 1 regionkey",
          shape=box, style=filled, fillcolor="#E0F2F1"];
@@ -162,7 +172,7 @@ digraph {
   // ─────────── Fan-out 1: CUSTOMER ⋈ RN (inner) ───────────
   s_cust  [label="TableScan(CUSTOMER)",
            shape=box, style=filled, fillcolor="#E8F0FE"];
-  hj_cust [label="HashJoin (inner)\nCUSTOMER ⋈ RN\n  on c_nationkey = n_nationkey\nsurvivors carry c_custkey,\n  c_nationkey (= matched n_nationkey)",
+  hj_cust [label="#1 HashJoin (inner)\nCUSTOMER ⋈ RN\n  on c_nationkey = n_nationkey\nsurvivors carry c_custkey,\n  c_nationkey (= matched n_nationkey)",
            shape=box, style="filled,rounded", fillcolor="#E8F0FE"];
 
   rn     -> hj_cust [label="build (nation_set,\nPK-only)"];
@@ -171,7 +181,7 @@ digraph {
   // ─────────── Fan-out 2: SUPPLIER ⋉ RN (semi-join) ───────────
   s_sup  [label="TableScan(SUPPLIER)",
           shape=box, style=filled, fillcolor="#E0F2F1"];
-  sj_sup [label="HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n[supplier_nation_set]",
+  sj_sup [label="#4 HashSemiJoin\nSUPPLIER ⋉ RN\n  on s_nationkey = n_nationkey\nsurvivors projected to\n  (s_nationkey, s_suppkey)\n[supplier_nation_set]",
           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
   rn    -> sj_sup [label="build (nation_set,\nPK-only)"];
@@ -187,15 +197,15 @@ digraph {
   // secondaries (orders_sec on (custkey, orderkey); lineitem_sec on
   // (custkey, orderkey, linenumber)). They are inner joins —
   // columns from both inputs flow downstream.
-  joinB [label="MergeJoin (inner)\nORDERS ⋈ LINEITEM\n  on (custkey, orderkey)\nstill custkey-sorted (FD via parent);\norders_sec: (custkey, orderkey)\nlineitem_sec: (custkey, orderkey, linenumber)",
+  joinB [label="#3 MergeJoin (inner)\nORDERS ⋈ LINEITEM\n  on (custkey, orderkey)\nstill custkey-sorted (FD via parent);\norders_sec: (custkey, orderkey)\nlineitem_sec: (custkey, orderkey, linenumber)",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
-  joinA [label="MergeJoin (inner)\n<cust-join> ⋈ <ord-line>\n  on custkey\nsorted on custkey;\nc_nationkey preserved on survivors\nfor the composite-key semi-join below",
+  joinA [label="#2 MergeJoin (inner)\n<cust-join> ⋈ <ord-line>\n  on custkey\nsorted on custkey;\nc_nationkey preserved on survivors\nfor the composite-key semi-join below",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
   // ─────────── COL × supplier composite-key semi-join ───────────
   // Fuses SUPPLIER ⋉ RN with the cross-equality and the suppkey
   // equi-join into ONE per-lineitem hashset probe.
-  sj_col_sup [label="HashSemiJoin\n<col-chain> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\nsurvivors: lineitem fields +\n   c_nationkey (for aggregation key)",
+  sj_col_sup [label="#5 HashSemiJoin\n<col-chain> ⋉ supplier_nation_set\n  on (c_nationkey, l_suppkey)\n     = (s_nationkey, s_suppkey)\nfuses: SUPPLIER ⋉ RN,\n   cross-eq c_nationkey = s_nationkey,\n   suppkey equi-join\nsurvivors: lineitem fields +\n   c_nationkey (for aggregation key)",
               shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
   agg [label="HashAggregate\ngroup = [n_nationkey],\nrevenue = SUM(l_extendedprice\n          * (1 - l_discount))\n[NNameRevenueAggregator keyed by nationkey;\n n_name fetched lazily on first sighting\n of each nationkey via NATION PK lookup,\n cached in the bucket — ~5 lookups total;\n buckets drain to q5_agg_row_t directly]",
