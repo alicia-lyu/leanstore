@@ -9,33 +9,27 @@ actionable.
 
 ## Active
 
-- **Q5I btree S1/S2/S3 parity failure on Linux (SF≥5)**: discovered
-  2026-05-17 during the first-Linux Q5I bring-up. At SF=5 on btree,
-  S1 (BMJ chain), S2 (pipeline view scan), and S3 (COLI walker)
-  all silently return 0 rows while S4 (hash-join over base tables)
-  correctly returns 2 rows at digest `0x8a99cce624ffbeb1`. SF=1
-  passes parity vacuously (all four return 0 rows, so the failure
-  is latent at the smallest scale and would not have been caught
-  by the existing `test_query_q5i_btree` SF=1 gate). LSM passes
-  parity at SF=5 (rows=3, digest `0x2f31fe8244b728c1`) so the bug
-  is btree-specific. The three failing paths all consume the COLI
-  merged index or its split-COLI siblings (S2 reads
-  `q5i_pipeline_view_t` which is loaded from the COLI walker per
-  Phase 4a commit 1); S4 reads only base TPC-H tables. Suspect
-  hypothesis: payload memcpy round-trip mismatch between
-  libstdc++ (Linux) and libc++ (macOS), same family of issue as
-  the Q5 `q5_pipeline_view_t.n_name` `std::string` bug closed
-  2026-05-14 in [`LINUX_HISTORY.md`](LINUX_HISTORY.md). Need to:
-  1. Diagnose which payload field round-trips wrong on LeanStore;
-     `test_query_q5i_btree` has no cardinality / sentinel-ordering
-     prints (the LSM test has rich diagnostics), so consider porting
-     the LSM test's check block first to localise the failure
-     (splits vs merged vs view vs query stage).
-  2. Fix in place and verify `test_query_q5i_btree` SF=5/10 strict
-     4-way parity.
-  3. Rerun `make q5i_btree scale=15 dram=0.1` and replace the
-     placeholder btree entry in `frontend/tpch/q5i/RUNS.md` with
-     the validated perf record.
+- **Q5I btree perf sweep rerun**: parity gate restored
+  2026-05-17 in `test_query_q5i_leanstore.cpp` — the harness was
+  silently skipping `populate_split` / `populate_merged` /
+  `populate_q5i_view`, so S1/S2/S3 scanned empty secondaries and
+  returned 0 rows on btree at SF≥5 while S4 (base-tables-only)
+  returned the correct answer. The original "memcpy round-trip"
+  hypothesis was wrong: pure harness omission, not a libstdc++
+  parity bug. Fix also ports the RocksDB harness's cardinality +
+  sentinel-ordering diagnostic block (adapted to use
+  `adapter.size()` inside a `scheduleJobSync` Worker TX in place
+  of RocksDB `raw_bytes_in_cf`) so any future drift surfaces as
+  `[FAIL]` rows instead of vacuous parity. Validated: SF=1
+  non-vacuous parity at `0x9ccdd0fdb2071b38` rows=2; SF=5 parity
+  at `0x978b90044797a768` rows=4; SF=10 parity at
+  `0x7ebfdbe518bc6d7e` rows=5. LSM SF=5 regression-clean (parity
+  holds; digest does not match the prior `0x2f31fe8244b728c1`
+  recorded in `q5i/RUNS.md` — within-backend parity is what the
+  test verifies, not cross-run digest stability).
+  *Remaining work*: rerun `make q5i_btree scale=15 dram=0.1` and
+  replace the BLOCKED entry in `frontend/tpch/q5i/RUNS.md`
+  (2026-05-17 00:43 MDT) with the validated perf record.
 
 *(Q5 first Linux perf sweep closed 2026-05-14, Q5I LSM first
 Linux sweep closed 2026-05-17; see
