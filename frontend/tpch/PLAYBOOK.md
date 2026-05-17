@@ -703,6 +703,71 @@ Phase 4b decision space in the per-query CLAUDE.md.
     instead.)
   - Parity `[OK]` at digest 0x0 across empty stubs.
 
+### Side-table templating + include order (invoice-extended queries)
+
+Pattern B equi-join queries (Q5I and later Q10I) need a post-pipeline
+side-tables struct (REGION/NATION/SUPPLIER hashmaps in Q5I) that the
+OutClass and the COLI group-walk visitor both consume. The naive
+shape — `Q5IOutClass` and `Q5IGroupWalkVisitor` both `#include
+"side_tables.hpp"` and reference `Q5ISideTables` by name —
+introduces a forward-declaration cycle when `side_tables.hpp` itself
+needs `workload.hpp` types.
+
+**Canonical fix (Q5I)**: template both consumers on a `Sides` type
+parameter rather than naming the side-tables struct directly:
+
+```cpp
+template <typename Sides>
+struct Q5IOutClass { … };
+
+template <typename Sides, typename Sink, typename Mode>
+struct Q5IGroupWalkVisitor { … };
+```
+
+`Sides` is instantiated at the call site (`workload.hpp` after both
+`side_tables.hpp` and the visitor header are included), which lets
+the template definitions compile without seeing the concrete
+side-tables type.
+
+**Include order**: `workload.hpp` must include `side_tables.hpp`
+*before* it includes the visitor header. The visitor header includes
+`workload.hpp` (cycle-free now that the visitor is templated). See
+`q5i/workload.hpp` for the canonical ordering and
+[`CONVENTIONS.md §Rule 10`](CONVENTIONS.md) Pattern B row for the
+record-buffering contract that motivates this layout.
+
+### Phase rollout and parity gating (S2≡S3 strict → 4-way strict)
+
+Multi-structure queries land in three parity stages, each gating the
+next. Skip a stage and a digest mismatch later in bring-up will
+masquerade as a wrong-fix-in-the-wrong-structure puzzle.
+
+1. **Stage 0 — digest 0x0**: all four `query_by_*` bodies are empty
+   stubs; the test harness asserts `[OK]` parity at the zero digest.
+   Surfaces wiring bugs (test harness, scratch dirs, RocksDB reload)
+   before any query logic exists.
+
+2. **Stage 1 — S2≡S3 strict** (Phase 4a). The view path (`query_by_view`)
+   and the COLI group-walk path (`query_by_merged`) share the same
+   per-record assembly; landing them first and asserting strict
+   equality between them (no `[SKIP]`) validates the OutClass + the
+   group-walk visitor + view loader together. S1 and S4 stay
+   stubbed; parity over (S2, S3) only.
+
+3. **Stage 2 — strict 4-way** (Phase 4b). S1 (BMJ chain) and S4
+   (hash chain) land last; strict XOR parity across all four
+   structures at non-zero digest is the exit criterion. Any
+   `[SKIP]` tolerance at this stage is an anti-pattern (#26).
+
+**Why this ordering**: S2 and S3 share the most code (the view's
+emit callback IS the visitor's emit row in Pattern B per
+[CONVENTIONS Rule 10](CONVENTIONS.md)) and validate the pipeline
+boundary cheaply. S1 and S4 then validate the join-operator side
+independently; if S4 diverges, the bug is in the hash build, not in
+the OutClass. The Q5I bring-up (commits `469ffae9`, `15cfa612`,
+`65bdb7a4`, `19104306`) is the canonical reference for this
+sequencing.
+
 ---
 
 ## §7 — Phase 4: `query.tpp` (The Core)

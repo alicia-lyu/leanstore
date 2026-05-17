@@ -378,6 +378,38 @@ additional columns via the primary index at consumption time. Q5:
 `orders_set = unordered_set<o_orderkey>` (fact-side build). No
 forwarded payload columns.
 
+**Mental model**: intermediate results from a hash build are
+*conceptual* — the relation is "the set of build-side rows that
+satisfied prior filters". Payload columns are recovered via B-tree
+PK lookup at probe time, not carried in the hash entry. The
+distinction matters because hash entries inflate memory by
+build-cardinality × payload-width; PK lookup keeps the build
+O(|build| × sizeof(PK)) and pays a single B-tree probe per
+*surviving* row instead.
+
+**Boundary vs Rule 7**: Rule 7's join-output carriers
+(`q5_jr1_t`, view rows, BMJ intermediates) live inside *operator
+templates* — `HashJoin<JK, JR, R1, R2>` requires a `JR`, BMJ
+requires JR, materialised views need a row shape. Hash *builds*
+(the set/multimap itself) are NOT operator templates and stay
+PK-only. The two rules don't conflict: Rule 7 governs what flows
+across the operator boundary; Rule 4 governs what sits inside the
+build container.
+
+**Canonical reference**: Q5I S4 (`q5i/query.tpp`) —
+`cust_set<custkey>` and `ord_set<orderkey>` with payload
+(`c_nationkey`, etc.) recovered via `customer.lookup1` /
+`orders.lookup1` at orderkey transitions. Q5 S4 and Q3I S4 follow
+the same idiom. Per-query convenience caches (e.g.,
+`nationkey_to_name` in Q5/Q5I) that memoise repeated PK lookups are
+NOT build payload — they are local glue and stay.
+
+**Override pathway**: if a measurement later shows that PK lookups
+dominate runtime for a specific build, the trigger to re-add
+payload is (a) a measured regression, (b) documented justification
+inline at the build site naming the measurement. Default stays
+PK-only.
+
 **Rule 5 — Join outputs are first-class relations; multi-column
 equi-joins are NOT cross-equality filters.** Once two tables join,
 the output is a relation with its own combined schema. Predicates
@@ -571,6 +603,63 @@ migration mechanical.
 | Q5 | Yes | `NNameRevenueAggregator.emit()` + `std::sort` outside walk; comments at `q5/query.tpp:597-615` |
 | Q3I | Yes | `TopNSink` + `drain_sorted` outside COLI walk; no external dimension joins needed |
 | Q5I | Yes (by design) | Post-pipeline tree documented in `q5i/CLAUDE.md §Plan Descriptions` |
+
+**Rule 12 — Plan-doc files enumerate logical joins numerically.**
+
+Every per-query `plans/*.dot` file with ≥2 joins, and every CLAUDE.md
+§Plan Descriptions section, MUST enumerate the logical joins with
+explicit ordinals (`#1`, `#2`, …, `#N`) tied to the SQL `FROM`/`WHERE`
+join predicates. This is independent of physical operator choice
+(BMJ / HashJoin / INL / PremergedJoin) — the *logical* join count is
+fixed by the SQL; the physical realisation may fuse, reorder, or
+substitute operators per storage structure.
+
+**Why**: planning conversations repeatedly drift because "the join"
+is ambiguous when N > 1. Numbering surfaces the count up front
+(reviewer pushback: *"it's not even clear how many joins there are"*)
+and lets per-structure plan boxes describe how each numbered join is
+realised (e.g., "Join #2 (O ⋈ L on orderkey) — realised as the
+PremergedJoin step in S3; realised as BMJ#2 in S1; INL-substituted
+in S4 via `orders.lookup1`").
+
+**Where**: `plans/family_logical.dot` is the authoritative source of
+join numbering — every per-structure `plans/baseline_*.dot` and the
+§Plan Descriptions narratives reference the same `#k` labels.
+
+**Carve-out**: queries with exactly 1 join (Q12) skip enumeration as
+tautological.
+
+**Canonical reference**: `q5i/plans/baseline_s4.dot` and Q5I §Plan
+Descriptions.
+
+**Rule 13 — INL substitution is an explicit physical-plan decision,
+documented at the substitution site.**
+
+When a physical plan replaces a join operator (HashJoin, BMJ) with
+Index-Nested-Loop probes against a primary-key index — typically
+because the FK guarantees no filter benefit from a separate operator
+step — the substitution MUST be called out in (a) the per-structure
+plan box ("Join #k realised as INL via `<adapter>.lookup1(<key>)`")
+and (b) a code comment at the `lookup1` site naming the join number.
+
+**Why**: INL collapses an operator into a side-effect of a probe,
+which is invisible from the call site otherwise. Readers tracking
+"how is Join #k realised in S4?" need to follow the breadcrumb from
+plan doc → code without guessing. The choice is also reviewer-
+visible: *"just be clear that we chose index nested loop join here"*.
+
+**When to substitute**: the build relation's PK is already the join
+key AND no per-build payload survives Rule 4 (PK-only build). At
+that point the build container is morally `unordered_set<PK>`, the
+probe is `set.find(key) → bool` plus a follow-up `adapter.lookup1`
+for any column recovery. Materialising the set may still be cheaper
+than O(|probe|) lookups if |probe| ≫ |build|; INL wins when |probe|
+is small or the build is unbounded by an earlier filter.
+
+**Canonical reference**: Q5I S4 invoice INL — `i_status` is fetched
+per surviving lineitem via `invoice.lookup1(l_invoicekey)`, replacing
+what would have been a build of `unordered_set<invoicekey>`. See
+`q5i/query.tpp::query_by_hash` and the corresponding plan box.
 
 ---
 
