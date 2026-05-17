@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "../../shared/merge-join/binary_merge_join.hpp"
@@ -259,11 +260,114 @@ long Q5IWorkload<Backend>::query_by_base(std::vector<q5i_agg_row_t>& out)
    return static_cast<long>(out.size());
 }
 
+// ---------------------------------------------------------------------------
+// S4: HashJoin chain on BASE tables only.
+//
+// Five logical joins (see q5i/CLAUDE.md + plans/baseline_s4.dot):
+//   #1 REGION ⋈ NATION  — folded into build_q5_side_tables (→ nation_set).
+//   #2 nation_set probed by CUSTOMER → cust_set (PK-only).
+//   #3 cust_set + date filter probed by ORDERS → ord_set (PK-only).
+//   #4 ord_set probed by LINEITEM (streaming).
+//   #5 LINEITEM ⋈ INVOICE — substituted with index-nested-loop:
+//      direct invoice.lookup1(l_invoicekey) per surviving lineitem.
+//      An invoice_set hashset would never filter (FK guarantee), so the
+//      build pass + memory cost buys nothing. INL pays only the per-
+//      lineitem B-tree probe.
+//
+// Late materialisation: build payloads are id-list only. Per surviving
+// lineitem, c_nationkey is recovered via two B-tree PK lookups
+// (orders.lookup → o_custkey, customer.lookup → c_nationkey), cached
+// at the orderkey-transition boundary (~4 lineitems per orderkey).
+
 template <typename Backend>
 long Q5IWorkload<Backend>::query_by_hash(std::vector<q5i_agg_row_t>& out)
 {
-   (void)out;
-   return 0;
+   q5::Q5SideTables sides;
+   const auto q5p = q5i_to_q5_params(params);
+   q5::build_q5_side_tables<Backend>(region_table, nation, supplier,
+                                      q5p, sides);
+
+   Q5IOutClass<q5::Q5SideTables> outclass(sides);
+
+   // (#2) cust_set: CUSTOMER scan filtered by nation_set, PK only.
+   std::unordered_set<Integer> cust_set;
+   {
+      auto sc = customer.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->customers_scanned++;
+         if (sides.nation_set.count(kv->second.c_nationkey) == 0) continue;
+         if (stats) stats->customers_passing_nation++;
+         cust_set.insert(kv->first.c_custkey);
+      }
+   }
+
+   // (#3) ord_set: ORDERS scan, gated by date window + cust_set membership.
+   const Timestamp date_lo = params.orderdate_lo;
+   const Timestamp date_hi = params.orderdate_lo + 365;
+   std::unordered_set<Integer> ord_set;
+   {
+      auto sc = orders.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->orders_scanned++;
+         const Timestamp od = kv->second.o_orderdate;
+         if (od < date_lo || od >= date_hi) continue;
+         if (cust_set.find(kv->second.o_custkey) == cust_set.end()) continue;
+         if (stats) stats->orders_passing_date++;
+         ord_set.insert(kv->first.o_orderkey);
+      }
+   }
+
+   // (#4 + #5) LINEITEM streaming probe with seek-on-miss; per-lineitem
+   // INL into INVOICE for i_status; per-orderkey-transition customer
+   // recovery via two B-tree PK lookups.
+   {
+      auto sc = lineitem.getScanner();
+      Integer cached_ok = -1;
+      Integer cached_c_nationkey = 0;
+
+      sc->seek(typename lineitem_i_t::Key{1, 0});
+
+      while (auto kv = sc->next()) {
+         if (stats) stats->lineitems_scanned++;
+         const Integer ok = kv->first.l_orderkey;
+
+         if (ord_set.count(ok) == 0) {
+            sc->seek(typename lineitem_i_t::Key{ok + 1, 0});
+            continue;
+         }
+
+         if (ok != cached_ok) {
+            Integer custkey = 0;
+            orders.lookup1(typename orders_t::Key{ok},
+                           [&](const orders_t& o) { custkey = o.o_custkey; });
+            // custkey ∈ cust_set is guaranteed by the ord_set build,
+            // so the customer lookup must succeed.
+            Integer nk = 0;
+            customer.lookup1(typename customerh_t::Key{custkey},
+                             [&](const customerh_t& c) { nk = c.c_nationkey; });
+            cached_ok          = ok;
+            cached_c_nationkey = nk;
+         }
+
+         // INL into INVOICE — direct PK lookup, no build set.
+         Varchar<1> i_status;
+         invoice.lookup1(typename invoice_t::Key{kv->second.l_invoicekey},
+                         [&](const invoice_t& inv) { i_status = inv.i_status; });
+
+         q5i_pipeline_out_t row{
+             /*c_nationkey     */ cached_c_nationkey,
+             /*l_suppkey       */ kv->second.l_suppkey,
+             /*l_extendedprice */ kv->second.l_extendedprice,
+             /*l_discount      */ kv->second.l_discount,
+             /*i_status        */ i_status,
+         };
+         outclass.emit(row);
+      }
+   }
+
+   q5i_resolve_n_names(outclass, nation, out);
+   std::sort(out.begin(), out.end(), q5i_sort_cmp);
+   return static_cast<long>(out.size());
 }
 
 // ---------------------------------------------------------------------------

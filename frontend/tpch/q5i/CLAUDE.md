@@ -478,6 +478,27 @@ stubs). `test_query_q3i_lsm` (S1–S5 all match at
 `0xd0859473a4b4e2da`) and `test_query_q5_lsm` (S1–S4 all match
 at `0x417cfbb4bdcfc6a7`) regressions clean.
 
+**Phase 4b (2026-05-16)** — S1 + S4 baselines; strict 4-way parity.
+
+- **Commit 1 (S1)**: 2-BMJ chain over custkey-sorted COLI splits.
+  New jr/jk types in `views.hpp` (q5i_cust_jk_t id=63, q5i_jr1_t
+  id=64, q5i_co_jk_t id=65, q5i_jr2_t id=66) — in-memory only,
+  no `ADD_RECORD_TRAITS`. BMJ #2 uses a plain (custkey, orderkey)
+  JK; per-emit a CustkeyInvoiceBuffer (Pattern B) supplies
+  i_status by invoicekey lookup, advancing the split-invoice
+  scanner in lockstep with custkey transitions. Parity at
+  digest=0xc70476c481ebf544 (1 row); S4 still [SKIP].
+
+- **Commit 2 (S4 + parity flip)**: id-list hash chain on base
+  tables — cust_set (CUSTOMER ⋈ nation_set), ord_set (ORDERS
+  with date filter + cust_set), streaming LINEITEM with
+  seek-on-miss. Two B-tree PK lookups per orderkey transition
+  recover c_nationkey (orders→o_custkey, customer→c_nationkey);
+  INL (direct `invoice.lookup1`) per surviving lineitem for
+  i_status — no `invoice_set` build (FK guarantee makes it
+  filterless). Test harness flipped to strict S1≡S2≡S3≡S4. Run
+  at SF=1: digest=0x2b8dfff15144e310 (2 rows).
+
 **Phase 4a commit 2 (2026-05-16)** — S2/S3 query bodies wired,
 strict S2≡S3 parity at SF=1.
 
