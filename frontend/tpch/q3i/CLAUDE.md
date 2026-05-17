@@ -127,7 +127,7 @@ no 3-stage join chain, just one fused walk.
 | 1 | Traditional indexes + merge join | None | Pre-build cust\_open\_due map from INVOICE; BinaryMergeJoin(OL) + CUSTOMER hash lookup |
 | 2 | Intermediate pipeline view | `q3i_pipeline_view_t` (joined\_ol\_t rows) | Pre-build cust\_open\_due map; view scan + CUSTOMER hash filter |
 | 3 | MI\[COLI\] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | PremergedJoin over 4-table tagged-key MI; cust\_open\_due computed in same pass |
-| 4 | Traditional indexes + hash join | None | Pre-build cust\_open\_due map; HashJoin(OL) + CUSTOMER hash lookup |
+| 4 | Traditional indexes + hash join | None | Pre-build `open_due_map` (aggregator output) + `cust_ok` (PK-only) + `ord_set<orderkey>` (PK-only, Rule 4); HashJoin(OL) seek-on-miss + per-orderkey INL recovery via `orders.lookup1` (Rule 13) returns `(custkey, orderdate, shippriority)` |
 | 5 | aCOLI MI (pre-aggregated) — **deferred from paper sweep** ([`PLAYBOOK §S5`](../PLAYBOOK.md)) | `MergedAdapter<customer_acoli_t, orders_coli_t, lineitem_acoli_t>` (`orders_acoli_t` retired Step 4b — collapsed into `orders_coli_t`) | Scan 3-type MI; pre\_open\_due read directly; revenue recomputed from unaggregated lineitems |
 
 ---
@@ -213,14 +213,20 @@ once at load time" against S1/S3's "do it every query".
 nothing is custkey-sorted. The same filter-pushdown principle applies:
 per-table filters fuse with TableScans before HashJoin, the threshold
 filter fuses with the invoice aggregate so only surviving custkeys
-land in `open_due`, and mktsegment fuses with the customer scan so
-only surviving custkeys land in `cust_seg`. Probe-time hashmap
-lookups against `open_due` and `cust_seg` are then **lookups, not
-filters** — the predicates were applied earlier; absence from a map
-just means "this row was already excluded". The remaining
-`unordered_map<orderkey, q3i_agg_row_t>` is the hashmap tax S4 pays
-for unsorted HashJoin output, not a filter. S4 measures the
-no-merged-index baseline that the family is compared against.
+land in `open_due_map` (the `Numeric` value is an aggregator output
+per Rule 6, NOT build payload), and mktsegment fuses with the customer
+scan so only surviving custkeys land in `cust_ok` (the bool marker is
+morally a set; PK-only per Rule 4). Orders survivors feed a PK-only
+`ord_set<orderkey>` (Rule 4); the (custkey, orderdate, shippriority)
+payload is recovered per-orderkey at lineitem-probe time via a single
+INL probe (Rule 13): `orders.lookup1(K)` returns all three fields from
+the same row. Probe-time hashmap lookups against `open_due_map` /
+`cust_ok` / `ord_set` are then **lookups, not filters** — the
+predicates were applied earlier; absence just means "already
+excluded". The remaining `unordered_map<orderkey, q3i_agg_row_t>` is
+the hashmap tax S4 pays for unsorted HashJoin output, not a filter.
+S4 measures the no-merged-index baseline that the family is compared
+against.
 
 ### Comparison axis summary
 
@@ -639,3 +645,17 @@ harness, then production targets) once Q3I Phase 2 lands. The accumulator
 factoring in Phase 1 is the template: each new query should land its
 namespace-scope accumulators alongside the merged-path body so the
 baseline-path bodies can compose them unchanged.
+
+---
+
+### Rule-4 compliance retrofit (2026-05-16)
+
+**Status: complete.** Replaced `ord_map<orderkey, OrderSlot{custkey,
+orderdate, shippriority}>` with PK-only `ord_set<orderkey>`. The
+three payload fields are recovered per-orderkey at lineitem-probe
+time via a single `orders.lookup1(K)` INL probe (Rule 13). `cust_ok`
+(bool-valued map, morally a set) and `open_due_map` (aggregator
+output Numeric per Rule 6) are unchanged — neither violated Rule 4.
+Strict 5-way parity verified at SF=1
+(digest=`0x97a5177b0c2b1806`, 10 rows). Q5 / Q5I regressions clean.
+Mirrors Q5I S4 idiom.

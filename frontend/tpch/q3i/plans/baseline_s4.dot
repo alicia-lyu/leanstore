@@ -30,21 +30,33 @@
 //   • l_shipdate > DATE           → fused with TableScan(LINEITEM)
 //                                    similarly, BEFORE HashJoin
 //
+// Logical join numbering (CONVENTIONS Rule 12):
+//   #1 CUSTOMER ⋈ OI    on c_custkey = i_custkey (cust_open_due attach)
+//   #2 CUSTOMER ⋈ ORDERS on c_custkey = o_custkey
+//   #3 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+//
 // C++ implementation map (q3i/query.tpp::query_by_hash):
 //
 //   Pre-build (off the comparison axis):
 //   ─────────────────────────────────────
-//     1. open_due: unordered_map<custkey, Numeric>
+//     1. open_due_map: unordered_map<custkey, Numeric>
 //        ─ scan base INVOICE filtered by i_status='O';
 //          CustomerOpenDueAccumulator across each custkey transition;
 //          ONLY entries with cust_open_due > THRESHOLD are inserted.
-//          A missing key in the map = a custkey that did not pass the
-//          threshold = group is dropped at probe time without an
-//          explicit Filter node.
-//     2. cust_seg: unordered_map<custkey, /*marker*/>
+//          The Numeric value is an aggregate output (Rule 6), not
+//          build payload (Rule 4 doesn't apply to aggregator outputs).
+//          A missing key = custkey didn't pass the threshold = dropped
+//          at probe time without an explicit Filter node.
+//     2. cust_ok: unordered_map<custkey, bool>
 //        ─ scan base CUSTOMER filtered by c_mktsegment = SEGMENT;
-//          insert custkey only. A missing key in the map = a customer
-//          outside the segment = dropped at probe time.
+//          insert custkey only (the bool is morally a set marker).
+//          PK-only per Rule 4.
+//     3. ord_set: unordered_set<orderkey>   (Rule 4 — PK-only build)
+//        ─ scan base ORDERS, gated by orderdate window + open_due_map
+//          + cust_ok; insert orderkey only. Per-orderkey payload
+//          (custkey, orderdate, shippriority) is recovered at probe
+//          time via INL (Rule 13): one orders.lookup1(K) returns all
+//          three columns from the same row.
 //
 //   Query-time HashJoin chain (over already-filtered base scanners):
 //   ────────────────────────────────────────────────────────────────
@@ -100,12 +112,12 @@ digraph {
   prebuild_cust [label="Project(custkey)\n→ unordered_set<custkey>\n[mktsegment filter already fused\n at TableScan]",
                  shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
-  // ─────────── HashJoin OL ───────────
-  hj_ol [label="HashJoin(o_orderkey = l_orderkey)\n[shared HashJoin primitive]\n→ joined_ol_t\nINPUT IS ALREADY FILTERED on\no_orderdate / l_shipdate",
+  // ─────────── #3 HashJoin OL ───────────
+  hj_ol [label="#3 HashJoin(o_orderkey = l_orderkey)\n[ord_set probe + lineitem seek-on-miss]\nbuild = ord_set (PK-only, Rule 4)\nper-orderkey INL recovery (Rule 13):\n  orders.lookup1(K) → (custkey,\n    orderdate, shippriority)",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  // ─────────── Probe-time hashmap lookups (no separate Filter node) ───────────
-  probe [label="Probe-time lookups in HashJoin callback:\n  cust_seg.contains(o.o_custkey)?\n  open_due.find(o.o_custkey)?\n[lookups, NOT filters — the maps\n already encode the predicates]"];
+  // ─────────── #1+#2 Probe-time hashmap lookups (no separate Filter node) ───────────
+  probe [label="#1 cust_open_due (open_due_map.find(custkey))\n#2 mktsegment       (cust_ok.find(custkey))\n[lookups, NOT filters — the maps\n already encode the predicates;\n custkey from orders.lookup1 above]"];
 
   // ─────────── Post-join aggregate (orderkey) ───────────
   post_agg [label="Aggregate(group=[o_orderkey],\n  revenue += l_extendedprice * (1 - l_discount))\n→ unordered_map<orderkey, q3i_agg_row_t>\n[LineitemRevenueAccumulator inner expr;\n NOT a filter — hashmap tax for\n unsorted HashJoin output]",

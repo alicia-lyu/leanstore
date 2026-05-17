@@ -904,12 +904,10 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
    auto ord_scan = orders.getScanner();
    auto lin_scan = lineitem.getScanner();
 
-   struct OrderSlot {
-      Integer custkey;
-      Timestamp orderdate;
-      Integer shippriority;
-   };
-   std::unordered_map<Integer, OrderSlot> ord_map;
+   // ord_set is PK-only per Rule 4 (Phase: Rule-4 compliance retrofit).
+   // Order payload (custkey, orderdate, shippriority) is recovered via
+   // orders.lookup1 at the lineitem-probe orderkey-transition boundary.
+   std::unordered_set<Integer> ord_set;
 
    {
       // One outer timer covers the entire HJ chain: invoice aggregate,
@@ -974,12 +972,13 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          if (!open_due_map.count(ck)) continue;
          if (!cust_ok.count(ck))      continue;
          if (stats) stats->join1_output_rows++;  // post HJ#1+HJ#2 (cust_open_due ∩ cust_seg)
-         ord_map[kv->first.o_orderkey] = {ck, od, shippri};
+         ord_set.insert(kv->first.o_orderkey);
          if (stats) stats->join2_output_rows++;  // each surviving (custkey,orderkey)
+         (void)od; (void)ck; (void)shippri;       // Rule 4: payload recovered at probe time
       }
 
       // Inverted-lineitem physical seek pass.  Ported from Q3 commit
-      // f62a0149 (S4 portion).  After ord_map is built, extract its
+      // f62a0149 (S4 portion).  After ord_set is built, extract its
       // surviving orderkeys into a sorted vector, then for each
       // qualifying orderkey physical-seek the lineitem scanner to
       // lineitem_i_t::Key{ok, 0} and scan next() until l_orderkey != ok.
@@ -987,12 +986,12 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
       // S3's group-skip mechanic.  Bumps s4_orderkey_seeks per seek
       // (== |qualifying orderkeys|).
       std::vector<Integer> qualifying_orderkeys;
-      qualifying_orderkeys.reserve(ord_map.size());
-      for (const auto& [ok, _] : ord_map) qualifying_orderkeys.push_back(ok);
+      qualifying_orderkeys.reserve(ord_set.size());
+      for (Integer ok : ord_set) qualifying_orderkeys.push_back(ok);
       std::sort(qualifying_orderkeys.begin(), qualifying_orderkeys.end());
 
       // Transient hash-table working-set instrumentation.  S4 builds
-      // four transient containers (open_due_map, cust_ok, ord_map,
+      // four transient containers (open_due_map, cust_ok, ord_set,
       // qualifying_orderkeys) — Q3I's working set is larger than Q3's
       // because it also includes the invoice aggregator map.  Mirror of
       // Q3 commit 51ea87b0 with an extra term for open_due_map.
@@ -1000,7 +999,7 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          size_t bytes =
              open_due_map.size() * (sizeof(Integer) + sizeof(Numeric) + 24)
            + cust_ok.size()      * (sizeof(Integer) + sizeof(bool) + 24)
-           + ord_map.size()      * (sizeof(Integer) + sizeof(OrderSlot) + 24)
+           + ord_set.size()      * (sizeof(Integer) + 24)
            + qualifying_orderkeys.size() * sizeof(Integer);
          stats->s4_hashtable_bytes = static_cast<long>(bytes);
       }
@@ -1010,7 +1009,19 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
          for (Integer ok : qualifying_orderkeys) {
             lin_scan->seek(typename lineitem_i_t::Key{ok, Integer(0)});
             if (stats) stats->s4_orderkey_seeks++;
-            auto it = ord_map.find(ok);  // guaranteed present
+            // Rule 13 INL recovery: single orders.lookup1 retrieves the
+            // three payload columns (custkey, orderdate, shippriority)
+            // in one B-tree probe per qualifying orderkey.  ord_set
+            // membership guarantees the lookup succeeds.
+            Integer   slot_custkey      = 0;
+            Timestamp slot_orderdate    = 0;
+            Integer   slot_shippriority = 0;
+            orders.lookup1(typename orders_t::Key{ok},
+                           [&](const orders_t& o) {
+                              slot_custkey      = o.o_custkey;
+                              slot_orderdate    = o.o_orderdate;
+                              slot_shippriority = o.o_shippriority;
+                           });
             while (auto kv = lin_scan->next()) {
                if (kv->first.l_orderkey != ok) break;  // exited orderkey group
                if (stats) stats->lineitems_scanned++;
@@ -1021,20 +1032,19 @@ long Q3IWorkload<Backend>::query_by_hash(std::vector<q3i_agg_row_t>& out)
                   stats->join_callbacks++;
                   stats->join3_output_rows++;
                }
-               const OrderSlot& slot = it->second;
                auto& row = per_order[ok];
                if (row.o_orderkey == Integer(0)) {
-                  auto due_it = open_due_map.find(slot.custkey);
+                  auto due_it = open_due_map.find(slot_custkey);
                   if (due_it == open_due_map.end()) {
-                     std::cerr << "[q3i S4 invariant violation] slot.custkey="
-                               << slot.custkey << " orderkey=" << ok
+                     std::cerr << "[q3i S4 invariant violation] slot_custkey="
+                               << slot_custkey << " orderkey=" << ok
                                << " open_due_map.size=" << open_due_map.size()
-                               << " ord_map.size=" << ord_map.size() << "\n";
+                               << " ord_set.size=" << ord_set.size() << "\n";
                      continue;
                   }
                   row.o_orderkey     = ok;
-                  row.o_orderdate    = slot.orderdate;
-                  row.o_shippriority = slot.shippriority;
+                  row.o_orderdate    = slot_orderdate;
+                  row.o_shippriority = slot_shippriority;
                   row.cust_open_due  = due_it->second;
                }
                row.revenue += acc.revenue;
