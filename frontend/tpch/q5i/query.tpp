@@ -10,9 +10,12 @@
 #include <algorithm>
 #include <limits>
 #include <ostream>
+#include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
+#include "../../shared/merge-join/binary_merge_join.hpp"
 // q5/workload.hpp must precede q5/side_tables.hpp: side_tables.hpp's
 // template body references a forward-declared q5::Params and won't
 // parse without the Params definition ahead. visitor.hpp + out_class.hpp
@@ -121,13 +124,139 @@ inline q5::Params q5i_to_q5_params(const Params& p)
 }
 
 // ---------------------------------------------------------------------------
-// Stub query bodies (S1 / S4 — wired in Phase 4b).
+// S1: 2-BMJ chain over custkey-sorted COLI split indexes.
+//
+//   BMJ #1: customerh_t ⋈ orders_coli_t   on custkey            → q5i_jr1_t
+//   BMJ #2: q5i_jr1_t   ⋈ lineitem_coli_t on (custkey, orderkey) → q5i_jr2_t
+//
+// Per-emit: a per-custkey invoice buffer (advanced in lockstep with jr2's
+// custkey transitions) supplies i_status by invoicekey lookup. The
+// invoice scanner walks coli.split_invoice() once forward, never seeks.
+//
+// Pattern B (CONVENTIONS Rule 10): full invoice rows are buffered per
+// custkey, i_status extracted at lineitem-assembly time.
+
+namespace q5i_detail
+{
+
+// Per-custkey invoice buffer over the custkey-sorted split-invoice
+// secondary. Advances forward in lockstep with the BMJ chain's
+// custkey transitions; at each new custkey, drains that custkey's
+// invoice rows into an unordered_map<invoicekey, invoice_coli_t>.
+template <typename InvoiceScanner>
+struct CustkeyInvoiceBuffer {
+   InvoiceScanner scanner;
+   std::optional<std::pair<invoice_coli_t::Key, invoice_coli_t>> peeked;
+   Integer current_custkey = std::numeric_limits<Integer>::min();
+   bool    primed          = false;
+   std::unordered_map<Integer, invoice_coli_t> current;
+
+   explicit CustkeyInvoiceBuffer(InvoiceScanner sc) : scanner(std::move(sc)) {}
+
+   void advance_peek() { peeked = scanner->next(); }
+
+   void ensure_custkey(Integer ck)
+   {
+      if (primed && ck == current_custkey) return;
+      if (!primed) { advance_peek(); primed = true; }
+      current.clear();
+      // Skip forward over any custkeys < ck (BMJ may emit non-contiguous
+      // custkeys when customer rows don't survive).
+      while (peeked && peeked->first.custkey < ck) advance_peek();
+      while (peeked && peeked->first.custkey == ck) {
+         current.emplace(peeked->first.invoicekey, peeked->second);
+         advance_peek();
+      }
+      current_custkey = ck;
+   }
+};
+
+}  // namespace q5i_detail
 
 template <typename Backend>
 long Q5IWorkload<Backend>::query_by_base(std::vector<q5i_agg_row_t>& out)
 {
-   (void)out;
-   return 0;
+   q5::Q5SideTables sides;
+   const auto q5p = q5i_to_q5_params(params);
+   q5::build_q5_side_tables<Backend>(region_table, nation, supplier,
+                                      q5p, sides);
+
+   Q5IOutClass<q5::Q5SideTables> outclass(sides);
+
+   auto cust_sc = customer.getScanner();
+   auto ord_sc  = coli.split_orders().getScanner();
+   auto lin_sc  = coli.split_lineitem().getScanner();
+
+   using InvSc = decltype(coli.split_invoice().getScanner());
+   q5i_detail::CustkeyInvoiceBuffer<InvSc> inv_buf{coli.split_invoice().getScanner()};
+
+   // fetch_cust: gate by c_nationkey ∈ nation_set inline.
+   auto fetch_cust = [&]() -> std::optional<std::pair<customerh_t::Key, customerh_t>> {
+      while (auto kv = cust_sc->next()) {
+         if (stats) stats->customers_scanned++;
+         if (sides.nation_set.count(kv->second.c_nationkey) == 0) continue;
+         if (stats) stats->customers_passing_nation++;
+         return kv;
+      }
+      return std::nullopt;
+   };
+
+   // fetch_ord: gate by orderdate window inline.
+   const Timestamp date_lo = params.orderdate_lo;
+   const Timestamp date_hi = params.orderdate_lo + 365;
+   auto fetch_ord = [&]() -> std::optional<std::pair<orders_coli_t::Key, orders_coli_t>> {
+      while (auto kv = ord_sc->next()) {
+         if (stats) stats->orders_scanned++;
+         if (kv->second.o_orderdate < date_lo || kv->second.o_orderdate >= date_hi)
+            continue;
+         if (stats) stats->orders_passing_date++;
+         return kv;
+      }
+      return std::nullopt;
+   };
+
+   // BMJ #1: customer ⋈ orders on custkey → jr1.
+   BinaryMergeJoin<q5i_cust_jk_t::Key, q5i_jr1_t, customerh_t, orders_coli_t>
+       bmj1(fetch_cust, fetch_ord);
+
+   auto fetch_jr1 = [&]() -> std::optional<std::pair<q5i_jr1_t::Key, q5i_jr1_t>> {
+      return bmj1.next();
+   };
+
+   auto fetch_lin = [&]() -> std::optional<std::pair<lineitem_coli_t::Key, lineitem_coli_t>> {
+      auto kv = lin_sc->next();
+      if (kv && stats) stats->lineitems_scanned++;
+      return kv;
+   };
+
+   // BMJ #2: jr1 ⋈ lineitem on (custkey, orderkey) → jr2.
+   // Emit callback: look up i_status from the per-custkey invoice buffer.
+   // The lineitem's invoicekey is in the constituent lineitem_coli_t::Key
+   // (slot 1 of jk.keys), not in the payload.
+   BinaryMergeJoin<q5i_co_jk_t::Key, q5i_jr2_t, q5i_jr1_t, lineitem_coli_t>
+       bmj2(fetch_jr1, fetch_lin,
+            [&](const q5i_jr2_t::Key& jk, const q5i_jr2_t& jr2) {
+               const auto& l = jr2.lineitem();
+               const lineitem_coli_t::Key& lk = std::get<1>(jk.keys);
+               inv_buf.ensure_custkey(lk.custkey);
+               auto it = inv_buf.current.find(lk.invoicekey);
+               if (it == inv_buf.current.end()) {
+                  throw std::runtime_error("Q5I S1: invoice FK miss");
+               }
+               q5i_pipeline_out_t row{
+                   /*c_nationkey     */ jr2.jr1().cust().c_nationkey,
+                   /*l_suppkey       */ l.l_suppkey,
+                   /*l_extendedprice */ l.l_extendedprice,
+                   /*l_discount      */ l.l_discount,
+                   /*i_status        */ it->second.i_status,
+               };
+               outclass.emit(row);
+            });
+   bmj2.run();
+
+   q5i_resolve_n_names(outclass, nation, out);
+   std::sort(out.begin(), out.end(), q5i_sort_cmp);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
