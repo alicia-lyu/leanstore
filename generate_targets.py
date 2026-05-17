@@ -371,7 +371,12 @@ class Experiment:
             # Default false in the Makefile; A1 sweep enables them per-run.
             # `coli_walker_variant` default is fused_emit post-A2c.
             # `use_seek_skip` default -1 = use Backend trait; A3-Linux sweep flips for RocksDB.
-            diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant) --use_seek_skip=$(use_seek_skip)"
+            # geo_* executables don't declare the TPC-H diagnostic flags;
+            # only emit them for TPC-H targets.
+            if self.exec_fname.startswith("geo_"):
+                diag_flags = ""
+            else:
+                diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant) --use_seek_skip=$(use_seek_skip)"
             if IS_MACOS:
                 print(
                     f'\tscript -q {self.runtime_dir}/structure{structure}.log',
