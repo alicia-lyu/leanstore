@@ -187,9 +187,12 @@ Per-query subdirectories:
   implemented and parity-verified but **deferred from the paper
   sweep** — see [`PLAYBOOK.md §S5`](PLAYBOOK.md). Full status in
   `q3i/CLAUDE.md §Implementation Phases`).
-- `q5i/` — Q5 + Invoice payment-status split (Phase 1 in progress; see `q5i/CLAUDE.md`).
-  The phase model has collapsed Phase 0.5 (skeleton) into Phase 1 as of 2026-05-15;
-  see [`PLAYBOOK.md §3.6`](PLAYBOOK.md) for the new unified Phase 1 definition.
+- `q5i/` — Q5 + Invoice payment-status split. S1–S4 paper-reported
+  axis, parity-verified at SF=1 (strict 4-way XOR digest). S5 deferred
+  (PLAYBOOK §S5). Production `q5i_lsm` / `q5i_btree` targets wired;
+  Linux perf sweep pending (`LINUX_PENDING.md`). See
+  [`q5i/CLAUDE.md §Implementation Status`](q5i/CLAUDE.md). Canonical
+  Pattern B reference (view loader reuses S3 group-walk).
 - `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
 
 Each per-query directory contains the same 8-file shape described in

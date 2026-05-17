@@ -600,11 +600,22 @@ applies to Q3/Q12. Hand-roll via two-pointer merge (see Q3I
 Pattern A lands in Phase 1.
 
 **Pattern B — wider join (≥3 base tables in the pipeline)**:
-applies to Q3I/Q5I/Q10I. Hand-rolling a 4-way join here would
-duplicate the entire query body in `load.tpp`. Instead, defer
-`populate_q{N}_view` to Phase 4a, where it reuses the S3 group-walk
-with parameterised filters disabled and an emit callback that inserts
-into the view adapter:
+applies to Q5I (canonical landed reference) and the still-design-only
+Q10I. Q3I is actually Pattern A — invoice reduces to a per-customer
+scalar — so the "≥3 base tables" trigger means 3 base tables flowing
+columns into the pipeline output, not just appearing in the join
+graph. Hand-rolling a 4-way join here would duplicate the entire
+query body in `load.tpp`. Instead, defer `populate_q{N}_view` to
+Phase 4a, where it reuses the S3 group-walk with parameterised
+filters disabled and an emit callback that inserts into the view
+adapter:
+
+> **Canonical Pattern B implementation**: `frontend/tpch/q5i/visitor.hpp`
+> (`Q5IGroupWalkVisitor<Sides, Sink, Q5IFilterMode>` with `ViewLoad`
+> mode) + `q5i/load.tpp` (`Q5IViewLoadSink` + `populate_q5i_view`).
+> One visitor, two sinks (OutClass for query, view-insert for load),
+> parameterised filters dropped in `ViewLoad` mode while FD-attached
+> fields (`c_nationkey`, `o_orderdate`, `i_status`) flow through.
 
 - FD-attached filters (e.g. `i_status` extraction from invoice) — keep.
 - Parameterised filters (region/date/nation/supplier) — drop. The view
@@ -667,9 +678,12 @@ double Q{{N}}Workload<Backend>::get_size() const {
 `HashJoin`) and `SKBuilder` specializations (one per join key type)
 are deferred to Phase 4b. They depend on the BMJ design and the
 chosen join-result type shapes — which for tree-shaped COLI queries
-(Q5I, Q10I) differ from the prefix-chain pattern and must be designed
-explicitly. See §Invoice ⋈ spine: Phase 4b decision space in the
-per-query CLAUDE.md.
+differ from the prefix-chain pattern and must be designed explicitly.
+Q5I lands the canonical pattern (plain 2-field `q5i_co_jk_t` JK for
+BMJ #2 over a tree-shaped lineitem key; see `q5i/views.hpp` ids 63–66
+and the per-emit `CustkeyInvoiceBuffer` in `q5i/query.tpp`); Q10I
+will diverge again and gets its own design. See §Invoice ⋈ spine:
+Phase 4b decision space in the per-query CLAUDE.md.
 
 → see `CONVENTIONS.md §Sort-key wildcard semantics`
 
@@ -720,9 +734,12 @@ so the view loader must land before S2.
 
 ### Pattern-B `populate_q{N}_view` (Phase 4a)
 
-For Pattern-B queries (≥3 base tables in the pipeline; see §3.6),
-`populate_q{N}_view` is implemented in Phase 4a by driving the S3
-group-walk with parameterised filters disabled:
+For Pattern-B queries (≥3 base tables flowing columns into the
+pipeline output; see §3.6), `populate_q{N}_view` is implemented in
+Phase 4a by driving the S3 group-walk with parameterised filters
+disabled. The canonical landed reference is Q5I — see
+`frontend/tpch/q5i/visitor.hpp` (`Q5IGroupWalkVisitor` with
+`Q5IFilterMode::ViewLoad`) plus `q5i/load.tpp::populate_q5i_view`:
 
 - Add a `view_load_mode` flag (or equivalent) to `Q{N}IWorkload`.
 - In view-load mode the walker routes assembled records to a

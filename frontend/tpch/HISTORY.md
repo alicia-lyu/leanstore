@@ -8,6 +8,42 @@ Rotate entries older than 3 months to `HISTORY-YYYYHN.md` (e.g.
 
 ## Completed (post-skeleton)
 
+- **Q5I Phase 4b — S1 BMJ chain + S4 hash chain; strict 4-way parity**
+  (2026-05-16): S1 `query_by_base` runs two BMJ stages over the
+  custkey-sorted COLI splits (`customerh_t ⋈ orders_coli_t` on
+  custkey → `q5i_jr1_t`; jr1 ⋈ `lineitem_coli_t` on (custkey,
+  orderkey) → `q5i_jr2_t`). Per emit, a `CustkeyInvoiceBuffer`
+  (Pattern B variant over the split-invoice secondary) advances the
+  invoice scanner in lockstep with custkey transitions and supplies
+  `i_status` by `invoicekey` lookup — no per-lineitem PK lookups.
+  S4 `query_by_hash` is an id-list hash chain on base tables
+  (`cust_set` → `ord_set`) with a streaming lineitem scan
+  (seek-on-miss), two B-tree PK lookups per orderkey transition
+  recovering `c_nationkey`, and INL (`invoice.lookup1`) per
+  surviving lineitem — no `invoice_set` build (FK guarantee makes
+  it filterless). Test harness flipped to strict S1 ≡ S2 ≡ S3 ≡ S4
+  XOR parity at SF=1 (e.g. `0xc70476c481ebf544`, 1 row;
+  `0x2b8dfff15144e310`, 2 rows across reloads). New in-memory
+  intermediate types in `q5i/views.hpp` (ids 63–66): `q5i_cust_jk_t`,
+  `q5i_jr1_t`, `q5i_co_jk_t`, `q5i_jr2_t`. Q3I (S1–S5) and Q5
+  (S1–S4) regressions clean.
+
+- **Q5I Phase 4a — S2/S3 query bodies + Pattern B view loader**
+  (2026-05-16): `Q5IOutClass<Sides>` post-pipeline aggregator
+  (`q5i/out_class.hpp`) keyed by `c_nationkey`, with the supplier
+  semi-join probe and `i_status`-routed 4-way revenue split inside
+  `emit()`. `Q5IGroupWalkVisitor<Sides, Sink, Mode>`
+  (`q5i/visitor.hpp`) drives both S3 (`Query` mode → outclass) and
+  the S2 view loader (`ViewLoad` mode → view-insert sink) from the
+  same walker — parameterised filters dropped in `ViewLoad`,
+  FD-attached fields (`c_nationkey`, `o_orderdate`, `i_status`)
+  kept. View payload widened to mirror `lineitem_coli_t::Key` and
+  drops `n_name` (resolved post-pipeline). S2 `query_by_view` is a
+  sequential view scan with per-row custkey-transition nation gate
+  + inline orderdate window + physical seek-past on nation miss
+  (mirrors the S3 SkipGroup analogue). S2 ≡ S3 strict at SF=1;
+  `pipeline_view rows == |lineitem|`.
+
 - **Q3I S5 aCOLI MI + wrap-up** (2026-05-02; revised 2026-05-03):
   `customer_acoli_t` / `orders_acoli_t` / `lineitem_acoli_t` in
   `views_coli.hpp` (ids 49/50/53); `populate_aggregated()` 2-pass algorithm

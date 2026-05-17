@@ -13,7 +13,7 @@ Update in place; do not append.
 | Q3I | ✅ | ✅ | ✅ | ✅ | ✅ (deferred) | S1–S4 paper-reported axis. S5 aCOLI implemented, parity-verified, but deferred from paper sweep. See [`PLAYBOOK.md §S5`](PLAYBOOK.md) for rationale. |
 | Q5  | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1 (LSM 0x85b9b6291f258258, BTree 0x2fa49bb120). First Linux sweep SF=15 DRAM=0.1: LSM **S2 (205) > S3 (156) > S1 (43) ≈ S4 (32)**; BTree **S2 (331) > S3 (250) > S1 (67) > S4 (9.5)** TX/s. View materialization beats MI scan (same shape as Q3I S2/S3 inversion — infrastructure, not Q5-specific). |
 | Q9  | ❌ | ❌ | ❌ | ❌ | — | `load.tpp` ctor/`load()`/`get_size()` bodies still reference removed pipeline methods. `query_by_*` bodies, predicates, `Params::defaults()`, CMake targets all pending. |
-| Q5I | — | — | — | — | — | Design doc only; no skeleton yet. |
+| Q5I | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1 (S1 ≡ S2 ≡ S3 ≡ S4 strict at non-zero digest). S5 deferred (PLAYBOOK §S5). Production targets wired. Linux perf sweep pending — see [`LINUX_PENDING.md`](../../LINUX_PENDING.md). |
 | Q10I| — | — | — | — | — | Design doc only; no skeleton yet. |
 
 ## Q3I S3 Performance Headline
@@ -36,4 +36,4 @@ Full investigation worklist and per-hypothesis evidence: [`q3i/PERFORMANCE.md`](
   PARTSUPP merge joins inside per-row callback; LIKE filter on `p_name`.
 - **Q3 Linux perf sweep**: Phase 9 doc refresh (see q3/CLAUDE.md) then
   a Linux SF=15/40 sweep for the paper.
-- **Q5I / Q10I**: design docs exist; skeletons not yet started.
+- **Q10I**: design doc exists; skeleton not yet started.

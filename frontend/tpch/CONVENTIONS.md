@@ -487,7 +487,10 @@ sub-patterns:
   full `invoice_coli_t` record into `invoice_buf[]`. The downstream hook
   (`on_lineitem`) looks up by join key (`key.invoicekey`) at assembly time and
   extracts the needed field (`i_status`). Use when the downstream table joins
-  with individual records from the equi-joined table.
+  with individual records from the equi-joined table. Q5I's
+  `CustkeyInvoiceBuffer` in `q5i/query.tpp` realises the same pattern over the
+  split-invoice secondary stream for S1: same buffer-and-probe shape, different
+  stream source (forward-walking split adapter rather than co-located MI).
 
 **Prohibited in both patterns:** extracting query-specific fields into an
 intermediate map (e.g. `{invoicekey → i_status}`) during the hook. Always pass
@@ -517,6 +520,7 @@ streaming-aggregate special case.
 | Q5I | COLI | Customer | Semi (nation filter) | Skip-group hook | Yes |
 | Q5I | COLI | Invoice | Equi (contributes `i_status`) | Pattern B — buffer + lookup (by design) | Yes |
 | Q5I | COLI | Orders | Semi (date filter) | Skip-order hook | Yes |
+| Q5I | COLI | Lineitem | Equi | Buffer; assemble `q5i_pipeline_out_t` at hook (`i_status` pulled from `invoice_buf` lookup by `key.invoicekey`) | Yes |
 
 **Rule 11 — Draw a hard pipeline boundary; document the post-pipeline operator
 tree explicitly, even in monolithic implementations.**
