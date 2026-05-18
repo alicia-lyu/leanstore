@@ -31,6 +31,10 @@ paper-data/*/run.log
 paper-data/*/sweep.out
 paper-data/*/sweep.err
 paper-data/*/sweep.pid
+# Raw per-run CSV+log tree — large (~3 GiB/cell), reproducible from
+# binaries via the runner. The earlier paper-data/ un-ignore chain
+# made these visible to `git status`; this re-ignores them silently.
+paper-data/*/raw/
 *.err
 *.out
 *.csv
