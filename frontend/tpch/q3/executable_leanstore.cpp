@@ -1,11 +1,11 @@
 #ifndef ROCKSDB_ONLY
 // LeanStore entry point for Q3 workload.
 //
-// Wires gflags, opens a LeanStore instance, declares the adapters Q3 needs,
-// constructs the TPCHWorkload and Q3Workload, then dispatches to the chosen
-// per-structure wrapper via tpch::TpchExecutableHelper, which drives a
-// multi-second throughput loop and emits per-structure TPut.csv rows
-// (parity with q3i_btree wiring).
+// Q3 belongs to the vanilla TPC-H family cohort {Q3, Q5}; see
+// q3/executable_rocksdb.cpp header for the family-loader rationale. The
+// LeanStore version unifies column-family names ("col_merged" / "col_split_*")
+// across q3_btree and q5_btree so a single image directory can serve either
+// binary as foreground.
 
 #include <gflags/gflags.h>
 #include <iostream>
@@ -21,7 +21,10 @@
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
+#include "../tpch_vanilla_family.hpp"
 
+#include "../q5/per_structure_workload.hpp"
+#include "../q5/workload.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -29,7 +32,7 @@ DEFINE_int32(tentative_skip_bytes, 4096, "Tentative skip bytes for smart skippin
 
 int main(int argc, char** argv)
 {
-   gflags::SetUsageMessage("Q3 workload — LeanStore backend");
+   gflags::SetUsageMessage("Q3 workload — LeanStore backend (vanilla family)");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
 
    leanstore::LeanStore db;
@@ -44,9 +47,9 @@ int main(int argc, char** argv)
    B::Adapter<nation_t>    nation;
    B::Adapter<region_t>    region;
 
-   B::Adapter<tpch::q3::q3_pipeline_view_t> pipeline_view;
+   B::Adapter<tpch::q3::q3_pipeline_view_t> q3_view;
+   B::Adapter<tpch::q5::q5_pipeline_view_t> q5_view;
 
-   // COL 3-table merged index (S3) + custkey-sorted split indexes (S1)
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_col_t>  merged_col;
    B::Adapter<tpch::orders_coli_t>        split_orders;
@@ -62,53 +65,71 @@ int main(int argc, char** argv)
       lineitem      = B::Adapter<lineitem_t>(db, "lineitem");
       nation        = B::Adapter<nation_t>(db, "nation");
       region        = B::Adapter<region_t>(db, "region");
-      pipeline_view = B::Adapter<tpch::q3::q3_pipeline_view_t>(db, "q3_pipeline_view");
+      q3_view       = B::Adapter<tpch::q3::q3_pipeline_view_t>(db, "q3_pipeline_view");
+      q5_view       = B::Adapter<tpch::q5::q5_pipeline_view_t>(db, "q5_pipeline_view");
+      // Family-shared COL pipeline names (q3_* / q5_* prefixes dropped so both
+      // q3_btree and q5_btree mount the same trees).
       merged_col    = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
-                                       tpch::lineitem_col_t>(db, "q3_merged_col");
-      split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q3_split_orders");
-      split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "q3_split_lineitem");
+                                       tpch::lineitem_col_t>(db, "col_merged");
+      split_orders   = B::Adapter<tpch::orders_coli_t>(db, "col_split_orders");
+      split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "col_split_lineitem");
    });
 
    LeanStoreLogger logger(db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, logger);
    tpch::q3::Q3Workload<B> q3(tpch, customer, orders, lineitem,
-                               pipeline_view, merged_col,
+                               q3_view, merged_col,
+                               split_orders, split_lineitem);
+   tpch::q5::Q5Workload<B> q5(tpch, customer, orders, lineitem,
+                               supplier, nation, region,
+                               q5_view, merged_col,
                                split_orders, split_lineitem);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
          leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         q3.load();
+         tpch::load_vanilla_family<B>(tpch, q3, q5);
          leanstore::cr::Worker::my().commitTX();
       });
       return 0;
    }
    tpch.recover_last_ids();
 
+   LeanStoreTraits db_traits(crm);
+
    using AggRow = tpch::q3::q3_agg_row_t;
+   auto bg_steps = FLAGS_bg_query_thread
+                       ? tpch::register_vanilla_bg_steps<B>(db_traits, q3, q5,
+                                                            FLAGS_storage_structure)
+                       : std::vector<tpch::BgStepFn>{};
+
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q3::BaseQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "base_merge_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 2: {
          tpch::q3::ViewQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "pipeline_view");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 3: {
          tpch::q3::MergedQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "mi_col_walk");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 4: {
          tpch::q3::HashQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(crm, std::move(w), tpch, "base_hash_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }

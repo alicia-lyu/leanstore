@@ -1,11 +1,11 @@
 // RocksDB entry point for Q3I workload.
 //
-// Wires gflags, opens a RocksDB TransactionDB, declares the adapters Q3I
-// needs, constructs the TPCHWorkload and Q3IWorkload, then dispatches to
-// the chosen per-structure wrapper via tpch::TpchExecutableHelper.
-//
-// Phase 1 requires only --storage_structure=3 (query_by_merged) to fully
-// work. Cases 1/2/4 load and run but query_by_* bodies return 0 (Phase 2).
+// Q3I belongs to the TPCHi invoice-extended family cohort {Q3I, Q5I}; both
+// queries use the COLI pipeline so a single loaded image can serve either
+// binary as foreground. This executable declares the family-union adapter
+// set, loads every family member's secondaries, and registers a bg-query
+// cohort so --bg_query_thread=true cycles Q3I and Q5I at the same
+// --storage_structure as the foreground.
 
 #include <gflags/gflags.h>
 #include <iomanip>
@@ -24,8 +24,11 @@
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
+#include "../tpchi_family.hpp"
 
 #include "../tpchi_family/coli_pipeline.hpp"
+#include "../q5i/per_structure_workload.hpp"
+#include "../q5i/workload.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -52,17 +55,21 @@ int main(int argc, char** argv)
    B::Adapter<region_t>      region(rocks_db);
    B::Adapter<invoice_t>     invoice(rocks_db);
 
-   // Q3I-specific adapters
-   B::Adapter<tpch::q3i::q3i_pipeline_view_t> pipeline_view(rocks_db);
+   // Per-query views (family cohort: Q3I + Q5I).
+   B::Adapter<tpch::q3i::q3i_pipeline_view_t> q3i_view(rocks_db);
+   B::Adapter<tpch::q5i::q5i_pipeline_view_t> q5i_view(rocks_db);
+
+   // Shared COLI pipeline used by both Q3I and Q5I.
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli(rocks_db);
 
-   // S1 custkey-sorted split indexes (populated by load for --storage_structure=1).
+   // S1 custkey-sorted split indexes (shared).
    B::Adapter<tpch::orders_coli_t>   split_orders(rocks_db);
    B::Adapter<tpch::lineitem_coli_t> split_lineitem(rocks_db);
    B::Adapter<tpch::invoice_coli_t>  split_invoice(rocks_db);
 
-   // S5 aCOLI 3-type MI: customer_acoli_t + orders_acoli_t + lineitem_acoli_t.
+   // S5 aCOLI 3-type MI (Q3I-only, kept loaded so the foreground binary can
+   // run S5; Q5I never enters the bg cohort at S5 — see tpchi_family.hpp).
    B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
                     tpch::lineitem_acoli_t> acoli(rocks_db);
 
@@ -79,11 +86,15 @@ int main(int argc, char** argv)
    TPCHIWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                    orders, lineitem, nation, region, invoice, logger);
    tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
-                                   pipeline_view, merged_coli,
+                                   q3i_view, merged_coli,
+                                   split_orders, split_lineitem, split_invoice, acoli);
+   tpch::q5i::Q5IWorkload<B> q5i(tpch, customer, orders, lineitem, invoice,
+                                   supplier, nation, region,
+                                   q5i_view, merged_coli,
                                    split_orders, split_lineitem, split_invoice, acoli);
 
    if (!FLAGS_recover) {
-      q3i.load();
+      tpch::load_tpchi_family<B>(tpch, q3i, q5i);
       return 0;
    }
    tpch.recover_last_ids();
@@ -112,12 +123,19 @@ int main(int argc, char** argv)
 
    auto cfstats_before = snapshot_cfstats();
 
+   RocksDBTraits db_traits(rocks_db);
+   auto bg_steps = FLAGS_bg_query_thread
+                       ? tpch::register_tpchi_bg_steps<B>(db_traits, q3i, q5i,
+                                                          FLAGS_storage_structure)
+                       : std::vector<tpch::BgStepFn>{};
+
    using AggRow = tpch::q3i::q3i_agg_row_t;
    long tx_count = 0;
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q3i::BaseQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_merge_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -125,6 +143,7 @@ int main(int argc, char** argv)
       case 2: {
          tpch::q3i::ViewQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "pipeline_view");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -132,6 +151,7 @@ int main(int argc, char** argv)
       case 3: {
          tpch::q3i::MergedQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "mi_coli_walk");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -139,6 +159,7 @@ int main(int argc, char** argv)
       case 4: {
          tpch::q3i::HashQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_hash_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -146,6 +167,7 @@ int main(int argc, char** argv)
       case 5: {
          tpch::AggregatedStructure<tpch::q3i::Q3IWorkload<B>, AggRow> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "acoli_aggregated");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          tx_count = helper.tx_count();
          break;

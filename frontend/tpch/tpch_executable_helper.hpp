@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -16,6 +17,15 @@
 namespace tpch
 {
 
+// A type-erased "one TX of a registered background query" callback. The
+// closure must internally route the TX through DBTraits on BG_WORKER,
+// manage its own out-vector, and swallow per-TX jumpmu rollbacks (see
+// register_bg_query_step() helpers in family-loader headers for the
+// canonical wrapping). Family loaders push one step per (query × foreground
+// structure) so the bg thread can round-robin family queries at the same
+// storage structure as the foreground.
+using BgStepFn = std::function<void()>;
+
 template <typename PerStructureWrapper, typename AggRow,
           template <typename> class AdapterType,
           class LineitemRecord = lineitem_t>
@@ -25,6 +35,12 @@ struct TpchExecutableHelper {
    TPCHWorkload<AdapterType, LineitemRecord>& tpch;
    std::string structure_name;
    long last_count = 0;  // TX count from the most recent tput_tx() call
+
+   // Optional registry of background-query steps. When --bg_query_thread=true,
+   // the bg thread cycles through these in round-robin instead of re-running
+   // the foreground query. Set via set_bg_query_steps() before run().
+   std::vector<BgStepFn> bg_query_steps;
+   void set_bg_query_steps(std::vector<BgStepFn> steps) { bg_query_steps = std::move(steps); }
 
    TpchExecutableHelper(RocksDB& rocks_db, PerStructureWrapper wrapper,
                         TPCHWorkload<AdapterType, LineitemRecord>& tpch, std::string name)
@@ -83,25 +99,38 @@ struct TpchExecutableHelper {
          keep_running = false;
       }).detach();
 
-      // --bg_query_thread: spawn a single read-only background worker that
-      // re-runs the foreground query back-to-back on BG_WORKER for the
-      // duration of the foreground TX window. The thread reads whatever
-      // Params the foreground has most recently set; it does not call
-      // set_params_for_iter() itself, both to avoid the params-race and
-      // because the foreground is the source of truth for the param
-      // rotation. This is a contention test, not a parity check — the bg
-      // thread's results are discarded.
+      // --bg_query_thread: spawn a single read-only background worker for
+      // the duration of the foreground TX window. The thread reads whatever
+      // Params each query has most recently set; bg never mutates params
+      // (avoids the params-race; the foreground is the source of truth).
+      // This is a contention test, not a parity check — bg results are
+      // discarded.
+      //
+      // Routing:
+      //   - If bg_query_steps is non-empty (family-loader case), the thread
+      //     round-robins through the registered steps. Each step internally
+      //     runs one TX on BG_WORKER and increments its own counter; we just
+      //     bump the aggregate bg_count once per step call.
+      //   - Otherwise (single-binary fallback), the thread re-runs the
+      //     foreground query back-to-back on BG_WORKER.
       std::thread bg_thread;
       if (FLAGS_bg_query_thread) {
          bg_thread = std::thread([&]() {
             bg_running = true;
             std::vector<AggRow> bg_out;
             bg_out.reserve(8);
+            size_t bg_iter = 0;
+            const bool use_registry = !bg_query_steps.empty();
             while (keep_running.load()) {
-               bg_out.clear();
                jumpmuTry()
                {
-                  db_traits->run_tx([&]() { wrapper.query(bg_out); }, BG_WORKER);
+                  if (use_registry) {
+                     bg_query_steps[bg_iter % bg_query_steps.size()]();
+                     ++bg_iter;
+                  } else {
+                     bg_out.clear();
+                     db_traits->run_tx([&]() { wrapper.query(bg_out); }, BG_WORKER);
+                  }
                   bg_count++;
                }
                jumpmuCatchNoPrint()

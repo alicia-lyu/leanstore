@@ -42,13 +42,41 @@ def kv_to_str(kv_dict: dict[str, str]) -> str:
 def get_build_vars(build_dir: Path):
     return CMAKE_DEBUG_ENV if "debug" in str(build_dir) else CMAKE_REL_ENV
     
+# Family grouping for the shared TPC-H load image. Both binaries in a family
+# declare the full family adapter set and run tpch::load_<family>_family() so
+# either can mount the same .json image. The image path is keyed on the family
+# tag rather than the per-query exec name. Q12 stays self-contained (different
+# pipeline — OL — and excluded from the paper-ready experiments).
+TPCH_FAMILY = {
+    # Vanilla COL family
+    "q3_lsm":    "tpch_lsm",
+    "q5_lsm":    "tpch_lsm",
+    "q3_btree":  "tpch_btree",
+    "q5_btree":  "tpch_btree",
+    # Invoice-extended COLI family
+    "q3i_lsm":   "tpchi_lsm",
+    "q5i_lsm":   "tpchi_lsm",
+    "q3i_btree": "tpchi_btree",
+    "q5i_btree": "tpchi_btree",
+}
+
+def image_basename(exec_fname: str) -> str:
+    """Image / recover-file parent directory.
+
+    Family-shared binaries write into a family-tagged directory so a single
+    persisted image is interchangeable across the family's binaries. Other
+    binaries (geo_*, q12_*) keep per-exec directories.
+    """
+    return TPCH_FAMILY.get(exec_fname, exec_fname)
+
 def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, Path]:
     exec_path = build_dir / "frontend" / exec_fname
+    image_base = image_basename(exec_fname)
     if "lsm" in exec_fname:
-        image_path = data_disk / exec_fname / f"{SCALE_ENV}"
+        image_path = data_disk / image_base / f"{SCALE_ENV}"
     else:
-        image_path = data_disk / exec_fname / f"{SCALE_ENV}.image"
-    recover_file = data_disk / exec_fname / build_dir / f"{SCALE_ENV}.json" # do recover
+        image_path = data_disk / image_base / f"{SCALE_ENV}.image"
+    recover_file = data_disk / image_base / build_dir / f"{SCALE_ENV}.json" # do recover
     runtime_dir = build_dir / exec_fname / f"{SCALE_ENV}-in-{DRAM_ENV}"
     return (
         exec_path,

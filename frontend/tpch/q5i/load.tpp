@@ -69,9 +69,8 @@ Q5IWorkload<Backend>::Q5IWorkload(
 }
 
 template <typename Backend>
-void Q5IWorkload<Backend>::load()
+void Q5IWorkload<Backend>::populate_secondaries()
 {
-   tpch.load();
    const int only     = FLAGS_load_only_structure;
    const bool load_all = (only < 0);
    if (load_all || only == 1) coli.populate_split();
@@ -80,6 +79,13 @@ void Q5IWorkload<Backend>::load()
    // Q5IGroupWalkVisitor in ViewLoad mode (Pattern B, PLAYBOOK §3.6).
    if (load_all || only == 2) populate_q5i_view();
    // S4 needs no secondary.
+}
+
+template <typename Backend>
+void Q5IWorkload<Backend>::load()
+{
+   tpch.load();
+   populate_secondaries();
 }
 
 template <typename Backend>

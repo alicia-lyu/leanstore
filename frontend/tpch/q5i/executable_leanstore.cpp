@@ -1,9 +1,7 @@
 #ifndef ROCKSDB_ONLY
-// LeanStore entry point for Q5I workload.
-//
-// Same shape as executable_rocksdb.cpp but uses LeanStoreBackend. Shared
-// scaffolding (gflags + dispatch) lives in tpch_flags.hpp /
-// tpch_executable_helper.hpp.
+// LeanStore entry point for Q5I workload — TPCHi family cohort {Q3I, Q5I}.
+// See q3i/executable_rocksdb.cpp for the family-loader rationale. Mounts
+// the same image layout as q3i_btree.
 
 #include <gflags/gflags.h>
 #include <iostream>
@@ -21,8 +19,11 @@
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
+#include "../tpchi_family.hpp"
 
 #include "../tpchi_family/coli_pipeline.hpp"
+#include "../q3i/per_structure_workload.hpp"
+#include "../q3i/workload.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -30,13 +31,13 @@ DEFINE_int32(tentative_skip_bytes, 4096, "Tentative skip bytes for smart skippin
 
 int main(int argc, char** argv)
 {
-   gflags::SetUsageMessage("Q5I workload — LeanStore backend");
+   gflags::SetUsageMessage("Q5I workload — LeanStore backend (TPCHi family)");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
 
    leanstore::LeanStore db;
    using B = tpch::LeanStoreBackend;
 
-   // Base TPC-H tables (default-constructed; assigned inside crm callback).
+   // Base TPC-H tables.
    B::Adapter<part_t>        part;
    B::Adapter<supplier_t>    supplier;
    B::Adapter<partsupp_t>    partsupp;
@@ -47,17 +48,18 @@ int main(int argc, char** argv)
    B::Adapter<region_t>      region;
    B::Adapter<invoice_t>     invoice;
 
-   // Q5I-specific adapters.
-   B::Adapter<tpch::q5i::q5i_pipeline_view_t> pipeline_view;
+   // Per-query views (family cohort: Q3I + Q5I).
+   B::Adapter<tpch::q3i::q3i_pipeline_view_t> q3i_view;
+   B::Adapter<tpch::q5i::q5i_pipeline_view_t> q5i_view;
+
+   // Shared COLI pipeline.
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_coli_t, tpch::invoice_coli_t> merged_coli;
-
-   // S1 custkey-sorted split indexes.
    B::Adapter<tpch::orders_coli_t>   split_orders;
    B::Adapter<tpch::lineitem_coli_t> split_lineitem;
    B::Adapter<tpch::invoice_coli_t>  split_invoice;
 
-   // aCOLI adapter (required by COLIPipeline constructor; not used for S5 — Q5I defers S5).
+   // S5 aCOLI MI (declared to keep CF set identical with q3i_btree).
    B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                     tpch::lineitem_acoli_t> acoli;
 
@@ -72,57 +74,71 @@ int main(int argc, char** argv)
       nation        = B::Adapter<nation_t>(db, "nation");
       region        = B::Adapter<region_t>(db, "region");
       invoice       = B::Adapter<invoice_t>(db, "invoice");
-      pipeline_view = B::Adapter<tpch::q5i::q5i_pipeline_view_t>(db, "q5i_pipeline_view");
+      q3i_view      = B::Adapter<tpch::q3i::q3i_pipeline_view_t>(db, "q3i_pipeline_view");
+      q5i_view      = B::Adapter<tpch::q5i::q5i_pipeline_view_t>(db, "q5i_pipeline_view");
       merged_coli   = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
-                                       tpch::lineitem_coli_t, tpch::invoice_coli_t>(db, "q5i_merged_coli");
-      split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q5i_orders_sec");
-      split_lineitem = B::Adapter<tpch::lineitem_coli_t>(db, "q5i_lineitem_sec");
-      split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "q5i_invoice_sec");
+                                       tpch::lineitem_coli_t, tpch::invoice_coli_t>(db, "coli_merged");
+      split_orders   = B::Adapter<tpch::orders_coli_t>(db, "coli_split_orders");
+      split_lineitem = B::Adapter<tpch::lineitem_coli_t>(db, "coli_split_lineitem");
+      split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "coli_split_invoice");
       acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
-                                        tpch::lineitem_acoli_t>(db, "q5i_acoli");
+                                        tpch::lineitem_acoli_t>(db, "coli_acoli");
    });
 
    LeanStoreLogger logger(db);
    TPCHIWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                    orders, lineitem, nation, region, invoice, logger);
+   tpch::q3i::Q3IWorkload<B> q3i(tpch, customer, orders, lineitem, invoice,
+                                   q3i_view, merged_coli,
+                                   split_orders, split_lineitem, split_invoice, acoli);
    tpch::q5i::Q5IWorkload<B> q5i(tpch, customer, orders, lineitem, invoice,
                                    supplier, nation, region,
-                                   pipeline_view, merged_coli,
+                                   q5i_view, merged_coli,
                                    split_orders, split_lineitem, split_invoice, acoli);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
          leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         q5i.load();
+         tpch::load_tpchi_family<B>(tpch, q3i, q5i);
          leanstore::cr::Worker::my().commitTX();
       });
       return 0;
    }
    tpch.recover_last_ids();
 
+   LeanStoreTraits db_traits(crm);
+   auto bg_steps = FLAGS_bg_query_thread
+                       ? tpch::register_tpchi_bg_steps<B>(db_traits, q3i, q5i,
+                                                          FLAGS_storage_structure)
+                       : std::vector<tpch::BgStepFn>{};
+
    using AggRow = tpch::q5i::q5i_agg_row_t;
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q5i::BaseQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "base_merge_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 2: {
          tpch::q5i::ViewQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "pipeline_view");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 3: {
          tpch::q5i::MergedQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "mi_coli_walk");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 4: {
          tpch::q5i::HashQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(crm, std::move(w), tpch, "base_hash_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }

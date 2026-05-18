@@ -129,9 +129,8 @@ Q5Workload<Backend>::Q5Workload(
 }
 
 template <typename Backend>
-void Q5Workload<Backend>::load()
+void Q5Workload<Backend>::populate_secondaries()
 {
-   tpch.load();
    // Populate every secondary so a single DB image can serve all
    // --storage_structure query-time variants (production Makefile flow).
    // S4 has no secondary; nothing extra to populate for it.
@@ -139,6 +138,13 @@ void Q5Workload<Backend>::load()
    populate_q5_view<Backend>(customer, nation, orders, lineitem, pipeline_view);  // S2
    col.populate_merged();   // S3: COL merged index
    // S4: base tables only — nothing to populate.
+}
+
+template <typename Backend>
+void Q5Workload<Backend>::load()
+{
+   tpch.load();
+   populate_secondaries();
 }
 
 template <typename Backend>

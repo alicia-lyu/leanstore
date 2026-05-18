@@ -1,10 +1,12 @@
 // RocksDB entry point for Q3 workload.
 //
-// Wires gflags, opens a RocksDB TransactionDB, declares the adapters Q3
-// needs, constructs the TPCHWorkload and Q3Workload, then dispatches to
-// the chosen per-structure wrapper via tpch::TpchExecutableHelper, which
-// drives a multi-second throughput loop and emits per-structure TPut.csv
-// rows (parity with q3i_lsm wiring).
+// Q3 belongs to the vanilla TPC-H family cohort {Q3, Q5}; both queries use
+// the COL pipeline so a single loaded image can serve either binary as
+// foreground. This executable declares the family-union adapter set, loads
+// every family member's secondaries, and registers a bg-query cohort so
+// --bg_query_thread=true cycles Q3 and Q5 at the same --storage_structure
+// as the foreground. Q12 is excluded from the cohort because it uses a
+// different pipeline (OL merged index over orders + lineitem).
 
 #include <gflags/gflags.h>
 #include <iostream>
@@ -18,7 +20,10 @@
 
 #define TPCH_DEFINE_FLAGS
 #include "../tpch_executable_helper.hpp"
+#include "../tpch_vanilla_family.hpp"
 
+#include "../q5/per_structure_workload.hpp"
+#include "../q5/workload.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -28,13 +33,13 @@ thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 
 int main(int argc, char** argv)
 {
-   gflags::SetUsageMessage("Q3 workload — RocksDB backend");
+   gflags::SetUsageMessage("Q3 workload — RocksDB backend (vanilla family)");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
 
    RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
    using B = tpch::RocksDBBackend;
 
-   // Base TPC-H tables (vanilla schema — Q3 uses lineitem_t, not lineitem_i_t)
+   // Base TPC-H tables.
    B::Adapter<part_t>      part(rocks_db);
    B::Adapter<supplier_t>  supplier(rocks_db);
    B::Adapter<partsupp_t>  partsupp(rocks_db);
@@ -44,10 +49,11 @@ int main(int argc, char** argv)
    B::Adapter<nation_t>    nation(rocks_db);
    B::Adapter<region_t>    region(rocks_db);
 
-   // Q3-specific adapters
-   B::Adapter<tpch::q3::q3_pipeline_view_t> pipeline_view(rocks_db);
+   // Per-query views (one for Q3, one for Q5 — family-cohort).
+   B::Adapter<tpch::q3::q3_pipeline_view_t> q3_view(rocks_db);
+   B::Adapter<tpch::q5::q5_pipeline_view_t> q5_view(rocks_db);
 
-   // COL 3-table merged index (S3) + custkey-sorted split indexes (S1)
+   // Shared COL pipeline: one MI + two split adapters, used by both Q3 and Q5.
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_col_t>  merged_col(rocks_db);
    B::Adapter<tpch::orders_coli_t>        split_orders(rocks_db);
@@ -59,38 +65,56 @@ int main(int argc, char** argv)
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, logger);
    tpch::q3::Q3Workload<B> q3(tpch, customer, orders, lineitem,
-                               pipeline_view, merged_col,
+                               q3_view, merged_col,
+                               split_orders, split_lineitem);
+   tpch::q5::Q5Workload<B> q5(tpch, customer, orders, lineitem,
+                               supplier, nation, region,
+                               q5_view, merged_col,
                                split_orders, split_lineitem);
 
    if (!FLAGS_recover) {
-      q3.load();
+      tpch::load_vanilla_family<B>(tpch, q3, q5);
       return 0;
    }
    tpch.recover_last_ids();
 
+   // db_traits is constructed inside TpchExecutableHelper; we need a stable
+   // reference to it from the bg-step closures, so build a single instance
+   // here and reuse it for both the helper and the bg registry.
+   RocksDBTraits db_traits(rocks_db);
+
    using AggRow = tpch::q3::q3_agg_row_t;
+   auto bg_steps = FLAGS_bg_query_thread
+                       ? tpch::register_vanilla_bg_steps<B>(db_traits, q3, q5,
+                                                            FLAGS_storage_structure)
+                       : std::vector<tpch::BgStepFn>{};
+
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q3::BaseQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_merge_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 2: {
          tpch::q3::ViewQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "pipeline_view");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 3: {
          tpch::q3::MergedQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "mi_col_walk");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }
       case 4: {
          tpch::q3::HashQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_hash_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;
       }

@@ -122,6 +122,13 @@ class Q3Workload
    // Loading / sizing
    // ------------------------------------------------------------------
 
+   // Loads only the per-query secondaries (col split, view, col merged).
+   // The shared TPCHWorkload base tables must be loaded separately via
+   // tpch.load() before this call. Used by family loaders that share one
+   // tpch.load() across multiple per-query workloads.
+   void   populate_secondaries();
+   // Convenience: tpch.load() + populate_secondaries(). Used by single-query
+   // executables that don't compose with a family loader.
    void   load();
    double get_size() const;
 };

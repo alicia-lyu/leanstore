@@ -127,9 +127,8 @@ Q3IWorkload<Backend>::Q3IWorkload(
 }
 
 template <typename Backend>
-void Q3IWorkload<Backend>::load()
+void Q3IWorkload<Backend>::populate_secondaries()
 {
-   tpch.load();
    // Default (FLAGS_load_only_structure < 0): populate ALL secondaries so a
    // single shared DB image can serve every --storage_structure query-time
    // variant. This is the production Makefile flow — load once with no
@@ -149,6 +148,13 @@ void Q3IWorkload<Backend>::load()
    if (load_all || only == 3) coli.populate_merged();
    // S4 needs no secondary; nothing extra to populate.
    if (load_all || only == 5) coli.populate_aggregated();
+}
+
+template <typename Backend>
+void Q3IWorkload<Backend>::load()
+{
+   tpch.load();
+   populate_secondaries();
 }
 
 template <typename Backend>

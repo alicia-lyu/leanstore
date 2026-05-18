@@ -204,6 +204,9 @@ class Q5Workload
    // Loading / sizing
    // ------------------------------------------------------------------
 
+   // See Q3Workload::populate_secondaries() for the load-vs-secondaries split
+   // rationale (family loader composition).
+   void   populate_secondaries();
    void   load();
    double get_size() const;
 };
