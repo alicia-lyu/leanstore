@@ -41,9 +41,9 @@ Two benchmark families plus one decoupled microbenchmark:
 ## The matrix
 
 For every (binary × cell) combination listed below, run all four
-storage structures S1–S4 *and* both `--bg_query_thread` settings
-(false → isolated baseline, true → contention measurement). That
-gives 8 runs per cell per binary.
+storage structures S1–S4 under the single `bg2` contention regime
+(see §Background-contention axis). That gives 4 runs per cell per
+binary × 3 reps = 12 runs per cell per binary.
 
 ### TPC-H binaries (per family)
 
@@ -101,14 +101,23 @@ The cross gives two natural paper plots:
 
 ### Background-contention axis
 
-For every (binary, cell, structure) combination, run two variants:
+Sweep -b runs a **single** contention regime: `bg2`. The earlier
+`bg0` (isolated baseline) and `bg1` (same-query thread only)
+variants were dropped — the paper's claim is about
+storage-shared-by-many-queries, not isolated micro-benchmarks, and
+the doubling of sweep wall-time wasn't paying off scientifically.
 
-- `bg0` — `--bg_query_thread=false` (TPC-H) / `--geo_bg_thread=false` (geo).
-  Foreground query only; baseline.
-- `bg1` — `--bg_query_thread=true` (TPC-H) / `--geo_bg_thread=true` (geo).
-  Background worker cycles family queries at the same
-  `--storage_structure` as the foreground (TPC-H) or runs geo-only
-  insert/erase on `customer2` (geo).
+- `bg2` (TPC-H) — `--bg_query_thread=true --bg_point_lookups=true`.
+  Background cohort issues the same-family queries (Q3+Q5 for tpch,
+  Q3I+Q5I for tpchi) **plus** a uniform-random point-lookup step
+  over all 8/9 base tables. Cohort dispatch is time-balanced 1:1:1
+  (cumulative-elapsed picker in `tpch_executable_helper.hpp`), so
+  wall-clock allocation is ~1:1:1 across heterogeneous steps with
+  very different per-call costs. Point lookups use `tryLookup` to
+  tolerate the sparse PK ranges (orderkey, partsupp pairs).
+- `bg2` (geo) — `--geo_bg_thread=true`. Single geo-local
+  insert/erase worker on `customer2`. Geo has no point-lookup
+  analog yet (deferred); the flag collapses to the geo bg thread.
 
 ### Repetitions
 
@@ -124,10 +133,12 @@ in `tpch_flags.hpp`). Per-cell TX time is fixed; the dominant cost
 is **load time per family × SF**, which grows roughly linearly with
 SF.
 
-- TPC-H foreground TX: 4 binaries × 4 cells × 4 structures × 2 bg
-  × 3 reps × 15s ≈ ~96 min per backend.
-- Geo foreground TX: 2 binaries × 4 cells × 4 structures × 2 bg
-  × 3 reps × 9 queries × 15s ≈ ~3.6 hours per backend.
+- TPC-H foreground TX: 4 binaries × 4 cells × 4 structures × 1 bg
+  × 3 reps × 15s ≈ ~48 min per backend.
+- Geo foreground TX: 2 binaries × 4 cells × 4 structures × 1 bg
+  × 3 reps × 6 queries × 15s ≈ ~72 min per backend. (-n queries
+  are skipped by default — see `frontend/geo/executable_helper.hpp`
+  `--geo_skip_n_queries=true`.)
 - Load time: c0 / c3 share SF (both 3850 LSM / 1550 BTree), so
   one load per family per SF tier. The Target-SF table loads at
   ≈ 2–5 hours per family per SF tier on the CloudLab node; c0/c3
@@ -144,7 +155,7 @@ large), summary CSVs land in `paper-data/` (git-tracked, small).
 
 ```
 build/                                       # gitignored; raw CSVs per make-target
-  <binary>/<sweep-tag>/c<N>-bg<0|1>-r<R>/   # one dir per run
+  <binary>/<sweep-tag>/c<N>-bg<2>-r<R>/     # one dir per run
     TPut.csv                                 # high-level throughput
     Elapsed.csv                              # elapsed-time variant
     size.csv                                 # per-structure size
@@ -179,7 +190,7 @@ so successive sweeps don't collide. The runner pipes `build/.../*.csv`
 through `scripts/analyze_sweep.py` to produce the summary CSVs.
 
 The repo growth budget is ~tens of KB per sweep: 4 summary CSVs ×
-(8 binaries × 3 cells × 4 structures × 2 bg × 3 reps ≈ 576 rows) +
+(10 binaries × 4 cells × 4 structures × 1 bg × 3 reps ≈ 480 rows) +
 manifest. Multi-sweep history fits comfortably under 10 MB even
 after a dozen iterations of the matrix.
 
@@ -202,7 +213,7 @@ paper figures consume.
 | `structure` | runner | int  | 1 / 2 / 3 / 4 |
 | `method` | TPut.csv | str  | e.g. `mi_col_walk` (verbose name) |
 | `tx` | TPut.csv | str  | always `query` for TPC-H; per-tx for geo |
-| `bg` | runner | int  | 0 / 1 |
+| `bg` | runner | int  | 2 (-b sweep collapses to bg2; 0/1 retained for legacy -a data) |
 | `rep` | runner | int  | 1 / 2 / 3 |
 | `tx_per_s` | TPut.csv `TPut (TX/s)` | float | the headline |
 | `tx_count` | runner | int | TXs completed in the window |

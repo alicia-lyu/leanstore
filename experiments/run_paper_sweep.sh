@@ -178,27 +178,41 @@ structures_for() {
 }
 
 bg_for() {
+    # Sweep -b matrix collapses to bg=2 only: heterogeneous cohort
+    # (Q3+Q5+point_lookups, time-balanced) for TPC-H binaries; single
+    # contention thread for geo. bg=0 (isolated) and bg=1 (same-family
+    # query thread only) are dropped — they don't reflect the realistic
+    # storage-shared-by-queries shape the paper targets.
     if [[ $SMOKE_TEST -eq 1 ]]; then
-        echo "0"
+        echo "2"
     else
-        echo "0 1"
+        echo "2"
     fi
 }
 
 # ---------------- helpers ----------------
 
-bg_flag_name() {
-    local binary="$1"
+# Returns the make-flag assignments for a given (binary, bg) tuple.
+# - bg=0: no background activity.
+# - bg=1: same-family query thread only (no point lookups).
+# - bg=2: same-family query thread + cross-table point lookups (TPC-H only;
+#         geo collapses to geo_bg_thread=true since geo has no point-lookup
+#         analog yet).
+bg_make_flags() {
+    local binary="$1" bg="$2"
     if [[ "$binary" == geo_* ]]; then
-        echo "geo_bg_thread"
-    else
-        echo "bg_query_thread"
+        # Geo only has one bg knob.
+        case "$bg" in
+            0) echo "geo_bg_thread=false" ;;
+            1|2) echo "geo_bg_thread=true" ;;
+        esac
+        return
     fi
-}
-
-bg_val() {
-    local bg="$1"
-    if [[ "$bg" == "1" ]]; then echo "true"; else echo "false"; fi
+    case "$bg" in
+        0) echo "bg_query_thread=false bg_point_lookups=false" ;;
+        1) echo "bg_query_thread=true bg_point_lookups=false" ;;
+        2) echo "bg_query_thread=true bg_point_lookups=true" ;;
+    esac
 }
 
 family_dep_target() {
@@ -368,21 +382,20 @@ for cell in "${CELL_LIST[@]}"; do
                 continue
             fi
             log "    binary $binary  sf=$sf"
-            bg_flag=$(bg_flag_name "$binary")
             for bg in $(bg_for); do
-                bg_str=$(bg_val "$bg")
+                bg_flags=$(bg_make_flags "$binary" "$bg")
                 for rep in $(seq 1 "$REPS"); do
                     dest="${RAW_DIR}/${binary}/${cell}-bg${bg}-r${rep}"
                     if [[ $CONTINUE -eq 1 && -f "$dest/TPut.csv" ]]; then
                         log "      skip existing $dest"
                         continue
                     fi
-                    log "      rep $rep / bg=$bg  ($bg_flag=$bg_str)"
+                    log "      rep $rep / bg=$bg  ($bg_flags)"
                     reset_run_dir "$binary" "$sf" "$dram"
                     csv_db_dir="build/${binary}"
                     for n in $(structures_for "$binary"); do
                         target="${binary}_${n}"
-                        cmd="make $target scale=$sf dram=$dram $bg_flag=$bg_str"
+                        cmd="make $target scale=$sf dram=$dram $bg_flags"
                         log "        $cmd"
                         if [[ $DRY_RUN -eq 1 ]]; then
                             continue

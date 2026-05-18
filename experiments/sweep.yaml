@@ -13,8 +13,13 @@
 #   - `structures:` is the list of --storage_structure values to run
 #     per binary. Q3I S5 (aCOLI) is omitted by design — deferred from
 #     the paper sweep per frontend/tpch/PLAYBOOK.md §S5.
-#   - `bg:` lists the --bg_query_thread / --geo_bg_thread settings to
-#     measure. `0` is foreground-isolated; `1` is the contention run.
+#   - `bg:` lists the contention regime. Sweep -b collapses to bg=[2]
+#     only — heterogeneous TPC-H cohort (same-family query thread +
+#     cross-table point lookups, time-balanced 1:1:1) plus geo's
+#     geo_bg_thread=true. bg=0 (isolated) and bg=1 (same-query only)
+#     were dropped: the paper's storage-shared-by-queries claim wants
+#     a realistic mixed bg, not an isolated baseline or self-contention
+#     proxy. Reintroduce bg=0/1 in a separate sweep tag if needed.
 #   - `reps:` repetitions per (binary, cell, structure, bg). The runner
 #     aggregates median + IQR across reps in stats.csv.
 
@@ -85,7 +90,7 @@ families:
     description: "Vanilla COL family {Q3, Q5}"
     binaries: [q3_lsm, q3_btree, q5_lsm, q5_btree]
     structures: [1, 2, 3, 4]
-    bg: [0, 1]
+    bg: [2]
     image_dir_pattern: "$(data_disk)/tpch_{lsm,btree}/"
     scale_flag: tpch_scale_factor
 
@@ -93,7 +98,7 @@ families:
     description: "Invoice-extended COLI family {Q3I, Q5I}"
     binaries: [q3i_lsm, q3i_btree, q5i_lsm, q5i_btree]
     structures: [1, 2, 3, 4]
-    bg: [0, 1]
+    bg: [2]
     image_dir_pattern: "$(data_disk)/tpchi_{lsm,btree}/"
     scale_flag: tpch_scale_factor
 
@@ -101,7 +106,7 @@ families:
     description: "Geo microbenchmark (decoupled from TPC-H)"
     binaries: [geo_lsm, geo_btree]
     structures: [1, 2, 3, 4]
-    bg: [0, 1]
+    bg: [2]
     image_dir_pattern: "$(data_disk)/geo_{lsm,btree}/"
     scale_flag: geo_scale_factor
     bg_flag: geo_bg_thread
