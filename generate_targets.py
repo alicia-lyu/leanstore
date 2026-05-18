@@ -139,6 +139,9 @@ class Experiment:
         # TPC-H per-query binaries; geo uses --geo_bg_thread instead.
         if not self.exec_fname.startswith("geo_"):
             self.class_flags["bgw_pct"] = "$(bgw_pct)"
+            # TPC-H contention axis for the paper sweep. C++ default in
+            # tpch_flags.hpp is `false`; the Makefile pins the same default.
+            self.class_flags["bg_query_thread"] = "$(bg_query_thread)"
         else:
             self.class_flags["geo_bg_thread"] = "$(geo_bg_thread)"
     
@@ -452,7 +455,7 @@ class Experiment:
         vscode_flags: dict[str, str] = self.class_flags.copy()
         vscode_flags.update(rem_flags.copy())
         for k, v in vscode_flags.items():
-            vscode_flags[k] = str(v).replace("$(dram)", "0.1").replace("$(scale)", "15").replace("$(tentative_skip_bytes)", "0").replace("$(bgw_pct)", "0").replace("$(geo_bg_thread)", "false") # for debugging, use no bgw to prevent keyInCurrentBoundaries = false error
+            vscode_flags[k] = str(v).replace("$(dram)", "0.1").replace("$(scale)", "15").replace("$(tentative_skip_bytes)", "0").replace("$(bgw_pct)", "0").replace("$(bg_query_thread)", "false").replace("$(geo_bg_thread)", "false") # for debugging, use no bgw to prevent keyInCurrentBoundaries = false error
         
         # rule to run the experiment in LLDB
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")
