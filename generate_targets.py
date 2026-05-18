@@ -105,7 +105,14 @@ class Experiment:
         self.class_flags["csv_truncate"] = "false"
         self.class_flags["log_progress"] = "true" if "debug" in str(self.build_dir) else "false"
         self.class_flags["tentative_skip_bytes"] = "$(tentative_skip_bytes)"
-        self.class_flags["bgw_pct"] = "$(bgw_pct)"
+        # The bgw_pct flag is a TPC-H/geo-shared write-percentage knob that
+        # the geo benchmark no longer accepts (geo is now a decoupled
+        # microbenchmark — see frontend/geo/CLAUDE.md). Pass it only for
+        # TPC-H per-query binaries; geo uses --geo_bg_thread instead.
+        if not self.exec_fname.startswith("geo_"):
+            self.class_flags["bgw_pct"] = "$(bgw_pct)"
+        else:
+            self.class_flags["geo_bg_thread"] = "$(geo_bg_thread)"
     
     def generate_all_targets(self) -> None:
         """Generates all Makefile targets for this experiment."""
@@ -288,9 +295,14 @@ class Experiment:
             "persist_file": persist_file,
             "trunc": "true" if trunc else "false",
             "ssd_path": str(ssd_path),
-            "tpch_scale_factor": str(scale),
             "dram_gib": str(dram_gib)
         }
+        # Geo binaries take --geo_scale_factor (post-decouple); TPC-H per-query
+        # binaries take --tpch_scale_factor.
+        if self.exec_fname.startswith("geo_"):
+            flags["geo_scale_factor"] = str(scale)
+        else:
+            flags["tpch_scale_factor"] = str(scale)
         return flags
         
     def generate_recover_file(self) -> None:
@@ -412,7 +424,7 @@ class Experiment:
         vscode_flags: dict[str, str] = self.class_flags.copy()
         vscode_flags.update(rem_flags.copy())
         for k, v in vscode_flags.items():
-            vscode_flags[k] = str(v).replace("$(dram)", "0.1").replace("$(scale)", "15").replace("$(tentative_skip_bytes)", "0").replace("$(bgw_pct)", "0") # for debugging, use no bgw to prevent keyInCurrentBoundaries = false error
+            vscode_flags[k] = str(v).replace("$(dram)", "0.1").replace("$(scale)", "15").replace("$(tentative_skip_bytes)", "0").replace("$(bgw_pct)", "0").replace("$(geo_bg_thread)", "false") # for debugging, use no bgw to prevent keyInCurrentBoundaries = false error
         
         # rule to run the experiment in LLDB
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")

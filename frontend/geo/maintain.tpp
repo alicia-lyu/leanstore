@@ -57,7 +57,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::select_merged_to_insert()
 {
-   size_t city_count = workload.last_customer_id / 20;
+   size_t city_count = last_customer_id / 20;
    maintenance_state.reset_cities(city_count);
    std::cout << "Doing a full scan of merged to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = merged.template getScanner<sort_key_t, view_t>();
@@ -90,7 +90,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::select_to_insert()
 {
-   size_t city_count = workload.last_customer_id / 20;
+   size_t city_count = last_customer_id / 20;
    maintenance_state.reset_cities(city_count);
    std::cout << "Doing a full scan of cities to randomly select " << maintenance_state.city_count << " for insertion...";
    auto scanner = city.getScanner();

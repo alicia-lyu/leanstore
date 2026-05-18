@@ -14,7 +14,7 @@ SCALE_LSM=40
 
 SHARED="--vi=false --mv=false --isolation_level=ser --optimistic_scan=false \
         --pp_threads=1 --csv_truncate=false --worker_threads=2 \
-        --log_progress=false --tentative_skip_bytes=0 --bgw_pct=0"
+        --log_progress=false --tentative_skip_bytes=0 --geo_bg_thread=false"
 
 run_engine() {
     local exe=$1 engine=$2 scale=$3 dram=${4:-0.1}
@@ -44,7 +44,7 @@ run_engine() {
             --persist_file="$recover_file" \
             --trunc=true \
             --ssd_path="$image_path" \
-            --tpch_scale_factor=$scale \
+            --geo_scale_factor=$scale \
             --dram_gib=8 \
             --csv_path="$runtime_dir"
         echo "=== [$(date '+%H:%M:%S')] Load complete for $engine ==="
@@ -64,7 +64,7 @@ run_engine() {
             --persist_file=./leanstore.json \
             --trunc=false \
             --ssd_path="$image_path" \
-            --tpch_scale_factor=$scale \
+            --geo_scale_factor=$scale \
             --dram_gib=$dram \
             --csv_path="$runtime_dir" \
             --storage_structure=$structure \

@@ -62,7 +62,6 @@ struct PerStructureWorkload {
    void cleanup_updates() { workload.cleanup_updates(); }
    double get_size() { return workload.get_size(); }
    bool insertion_complete() { return workload.insertion_complete(); }
-   void bg_lookup() { workload.bg_lookup(); }
    int remaining_customers_to_erase() { return workload.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() { workload.reset_maintain_ptrs(); }
    void select_to_insert() { workload.select_to_insert(); }
@@ -99,7 +98,6 @@ struct GeoJoinWrapper {
    void new_nsc_distinct(long distinct) { workload.stats.new_nsc_distinct(distinct); };
 
    bool insertion_complete() { return workload.maintenance_state.insertion_complete(); }
-   void bg_lookup() { workload.point_lookups_of_rest(); }
    int remaining_customers_to_erase() { return workload.maintenance_state.remaining_customers_to_erase(); }
    void reset_maintain_ptrs() { workload.maintenance_state.reset(); }
    void select_to_insert() { workload.select_to_insert(); }

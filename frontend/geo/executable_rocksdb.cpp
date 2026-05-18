@@ -4,7 +4,6 @@
 #include "../shared/adapter-scanner/RocksDBMergedAdapter.hpp"
 #include "../shared/adapter-scanner/RocksDBMergedScanner.hpp"
 #include "../shared/logger/rocksdb_logger.hpp"
-#include "tpch_tables.hpp"
 #include "executable_helper.hpp"
 #include "per_structure_workload.hpp"
 #include "views.hpp"
@@ -12,7 +11,7 @@
 
 using namespace leanstore;
 
-DEFINE_int32(tpch_scale_factor, 50, "TPC-H scale factor");
+DEFINE_int32(geo_scale_factor, 15, "Geo benchmark scale factor (customer count = 30000 * geo_scale_factor)");
 DEFINE_int32(tx_seconds, 15, "Number of seconds to run each type of transactions");
 DEFINE_int32(
     storage_structure,
@@ -20,7 +19,10 @@ DEFINE_int32(
     "Storage structure: 0 to force reload, 1 for traditional indexes, 2 for materialized views, 3 for merged indexes, 4 for 2 merged indexes");
 DEFINE_int32(warmup_seconds, 0, "Warmup seconds");                                     // flush out loading data from the buffer pool
 DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping");  // empirical optimal value
-DEFINE_int32(bgw_pct, 10, "Percentage of writes in background transactions (0-100)");
+DEFINE_bool(geo_bg_thread, false, "Run a background thread issuing geo-only maintain/erase TXs on customer2");
+// Compat shims — see executable_leanstore.cpp for rationale.
+DEFINE_int32(tpch_scale_factor, 15, "[geo compat] mirrored from --geo_scale_factor for the shared logger");
+DEFINE_int32(bgw_pct, 0, "[geo compat] always 0 in the geo microbenchmark");
 
 using namespace geo_join;
 
@@ -35,29 +37,20 @@ thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 int main(int argc, char** argv)
 {
    LoggerFlusher<HashLogger> final_flusher;
-   gflags::SetUsageMessage("Leanstore GeoJoin TPC-H");
+   gflags::SetUsageMessage("RocksDB GeoJoin (microbenchmark)");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
+   FLAGS_tpch_scale_factor = FLAGS_geo_scale_factor;
 
    auto type = RocksDB::DB_TYPE::TransactionDB;
    RocksDB rocks_db(type);
 
-   // Tables
-   RocksDBAdapter<part_t> part(rocks_db);
-   RocksDBAdapter<supplier_t> supplier(rocks_db);
-   RocksDBAdapter<partsupp_t> partsupp(rocks_db);
-   RocksDBAdapter<customerh_t> customer(rocks_db);
-   RocksDBAdapter<orders_t> orders(rocks_db);
-   RocksDBAdapter<lineitem_t> lineitem(rocks_db);
-   RocksDBAdapter<nation_t> nation(rocks_db);
-   RocksDBAdapter<region_t> region(rocks_db);
-   // Additional indexes
+   // Geo hierarchy indexes
    RocksDBAdapter<nation2_t> nation2(rocks_db);
    RocksDBAdapter<states_t> states(rocks_db);
    RocksDBAdapter<county_t> county(rocks_db);
    RocksDBAdapter<city_t> city(rocks_db);
    RocksDBAdapter<customer2_t> customer2(rocks_db);
    // Views
-   // RocksDBAdapter<mixed_view_t> mixed_view(rocks_db);
    RocksDBAdapter<nscci_t> geo_view(rocks_db);
    RocksDBAdapter<customer_count_t> cust_count_view(rocks_db);
    RocksDBAdapter<view_t> view(rocks_db);
@@ -66,45 +59,44 @@ int main(int argc, char** argv)
    rocks_db.open();  // only after all adapters are created (along with their column families)
 
    RocksDBLogger logger(rocks_db);
-   TPCHWorkload<RocksDBAdapter> tpch(part, supplier, partsupp, customer, orders, lineitem, nation, region, logger);
-   GJ tpchGeoJoin(tpch, mergedGeoJoin, geo_view, cust_count_view, view, nation2, states, county, city, customer2);
+   GJ geoJoin(logger, mergedGeoJoin, geo_view, cust_count_view, view, nation2, states, county, city, customer2);
    if (!FLAGS_recover) {
-      tpchGeoJoin.load();
+      geoJoin.load();
       return 0;
    } else {
-      tpch.recover_last_ids();
+      geoJoin.recover_last_customer_id();
    }
 
    switch (FLAGS_storage_structure) {
       case 1: {
          auto base_workload =
-             std::make_unique<BaseWorkload>(tpchGeoJoin, "base_idx");
+             std::make_unique<BaseWorkload>(geoJoin, "base_idx");
          using EH = ExecutableHelper<BaseWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
-         EH helper(rocks_db, std::unique_ptr(std::move(base_workload)), tpch);
+         EH helper(rocks_db, std::unique_ptr(std::move(base_workload)), logger);
          helper.run();
          break;
       }
       case 2: {
          auto view_workload =
-             std::make_unique<ViewWorkload>(tpchGeoJoin, "mat_view");
+             std::make_unique<ViewWorkload>(geoJoin, "mat_view");
          using EH = ExecutableHelper<ViewWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
-         EH helper(rocks_db, std::unique_ptr(std::move(view_workload)), tpch);
+         EH helper(rocks_db, std::unique_ptr(std::move(view_workload)), logger);
          helper.run();
          break;
       }
       case 3: {
          auto merged_workload =
-             std::make_unique<MergedWorkload>(tpchGeoJoin, "merged_idx");
+             std::make_unique<MergedWorkload>(geoJoin, "merged_idx");
          using EH = ExecutableHelper<MergedWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
-         EH helper(rocks_db, std::unique_ptr(std::move(merged_workload)), tpch);
+         EH helper(rocks_db, std::unique_ptr(std::move(merged_workload)), logger);
          helper.run();
          break;
       }
       case 4: {
          auto hash_workload =
-             std::make_unique<HashWorkload>(tpchGeoJoin, "hash");
+             std::make_unique<HashWorkload>(geoJoin, "hash");
          using EH = ExecutableHelper<HashWorkload, RocksDBAdapter, RocksDBMergedAdapter, RocksDBScanner, RocksDBMergedScanner>;
-         EH helper(rocks_db, std::unique_ptr(std::move(hash_workload)), tpch);
+         EH helper(rocks_db, std::unique_ptr(std::move(hash_workload)), logger);
          helper.run();
          break;
       }

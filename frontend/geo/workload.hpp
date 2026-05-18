@@ -1,7 +1,7 @@
 #pragma once
 
+#include "../shared/logger/logger.hpp"
 #include "load.hpp"
-#include "tpch_workload.hpp"
 #include "views.hpp"
 #include "workload_helpers.hpp"
 
@@ -21,9 +21,13 @@ template <template <typename> class AdapterType,
 class GeoJoin
 {
    friend struct GeoJoinWrapper<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>;
-   using TPCH = TPCHWorkload<AdapterType>;
-   TPCH& workload;
    using MergedTree = MergedAdapterType<nation2_t, states_t, county_t, city_t, customer2_t>;
+
+   // Effective customer count for this run. Driven by --geo_scale_factor at
+   // construction time; also tracked as the running "last customer id"
+   // counter consumed by the maintenance path. Replaces the former
+   // TPCHWorkload::last_customer_id dependency.
+   Integer last_customer_id;
 
    MergedTree& merged;
 
@@ -47,7 +51,7 @@ class GeoJoin
    std::vector<sort_key_t> to_insert;
 
   public:
-   GeoJoin(TPCH& workload,
+   GeoJoin(Logger& logger,
            MergedTree& m,
            AdapterType<nscci_t>& geo_view,
            AdapterType<customer_count_t>& cust_count_view,
@@ -57,7 +61,7 @@ class GeoJoin
            AdapterType<county_t>& c,
            AdapterType<city_t>& ci,
            AdapterType<customer2_t>& customer2)
-       : workload(workload),
+       : last_customer_id(0),
          merged(m),
          geo_view(geo_view),
          cust_count_view(cust_count_view),
@@ -67,29 +71,36 @@ class GeoJoin
          county(c),
          city(ci),
          customer2(customer2),
-         logger(workload.logger),
-         maintenance_state(workload.last_customer_id)
+         logger(logger),
+         maintenance_state(last_customer_id)
    {
-      if (FLAGS_tpch_scale_factor > 1000) {
+      if (FLAGS_geo_scale_factor > 1000) {
          throw std::runtime_error("GeoJoin does not support scale factor larger than 1000");
       }
-      TPCH::CUSTOMER_SCALE *= 200;  // already linear to scale factor
+      // Customer count formula reproduces the pre-decouple effective number:
+      //   TPCH::CUSTOMER_SCALE (150K/SF) * SF * 200 (legacy multiplier) == 30000 * SF.
+      // At --geo_scale_factor=15 (paper sweep default), this yields 450K customers.
+      last_customer_id = 30000 * FLAGS_geo_scale_factor;
    }
 
    ~GeoJoin() = default;
 
-   // -------------------------------------------------------------
-   // ---------------------- POINT LOOKUPS ------------------------
-   // point lookups: one per view, one per all base tables
-
-   void point_lookups_of_rest()
+   // Resets last_customer_id after recovery from a persisted image (so the
+   // maintenance path knows the upper bound of pre-loaded custkeys). Mirrors
+   // the prior TPCHWorkload::recover_last_ids() role in geo's lifecycle.
+   void recover_last_customer_id()
    {
-      workload.part.scan(part_t::Key{workload.getPartID()}, [](const part_t::Key&, const part_t&) { return false; }, []() {});
-      workload.supplier.scan(supplier_t::Key{workload.getSupplierID()}, [](const supplier_t::Key&, const supplier_t&) { return false; }, []() {});
-      workload.partsupp.scan(
-          partsupp_t::Key{workload.getPartID(), workload.getSupplierID()}, [](const partsupp_t::Key&, const partsupp_t&) { return false; }, []() {});
-      workload.orders.scan(orders_t::Key{workload.getOrderID()}, [](const orders_t::Key&, const orders_t&) { return false; }, []() {});
-      workload.lineitem.scan(lineitem_t::Key{workload.getOrderID(), 1}, [](const lineitem_t::Key&, const lineitem_t&) { return false; }, []() {});
+      Integer max_id = 0;
+      customer2.scanDesc(
+          customer2_t::Key{std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max(),
+                            std::numeric_limits<Integer>::max(), std::numeric_limits<Integer>::max()},
+          [&](const customer2_t::Key& k, const customer2_t&) {
+             max_id = std::max(max_id, k.custkey);
+             return false;
+          },
+          []() {});
+      last_customer_id = max_id;
+      std::cout << "Recovered last_customer_id = " << last_customer_id << std::endl;
    }
 
    // ------------------------ JOIN QUERIES -----------------------------

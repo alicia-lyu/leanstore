@@ -1736,3 +1736,36 @@ its own follow-up plan file in `.claude/plans/`.
 - Refuted candidates (e.g. Q3I H9 per-record-width tax, H10
   compression-masking-locality) get recorded in §3 so they aren't
   re-investigated.
+
+## §16 — Paper-sweep metrics pass
+
+The paper sweep produces, per (query × structure × SF × DRAM) cell,
+a `TPut.csv` (throughput per method/tx) plus five detail CSVs under
+each `<tx>/<method>/` subdirectory: `bm.csv`, `cpu.csv`,
+`latency.csv`, `cr.csv`, `dt.csv`.
+
+The headline claim is **S3 ≥ S2 ≫ S1/S4** — *cluster shape*, not
+*strict order*. S3 landing slightly below S2 in a single cell is
+acceptable iff the auxiliary CSVs attribute it. Use
+`scripts/analyze_sweep.py` to surface those attributions:
+
+```bash
+# Join TPut + details across one cell, emit a flat per-(method, tx) CSV
+# and flag any S3/S2 inversions worse than 5%.
+scripts/analyze_sweep.py build/q3i_lsm/15-in-0.1 > diag/q3i_sf15_dram01.csv
+
+# Across the full SF × DRAM grid for a query:
+scripts/analyze_sweep.py build/q3i_lsm/*-in-* > diag/q3i_grid.csv
+```
+
+The inversion report goes to stderr and shows, side-by-side, the
+attribution columns:
+- `cpu_workers Cycles / TX`, `cpu_workers LLC-misses / TX` —
+  CPU-bound or cache-bound regression.
+- `bm_free_pct`, `bm_p2_pct`, `bm_evicted_mib` — buffer-pool fill
+  and eviction-phase pressure.
+- `cr_restarts`, `cr_gct_committed` — abort/GC overhead.
+
+If a cell's S3 < S2 by >5% **and** the attribution columns don't
+flag any of the above, that's a real anomaly worth investigating;
+otherwise the gap is explainable.

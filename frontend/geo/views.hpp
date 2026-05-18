@@ -1,10 +1,10 @@
 #pragma once
 
 #include <variant>
+#include "../shared/randutils.hpp"
 #include "../shared/variant_tuple_utils.hpp"
 #include "../shared/view_templates.hpp"
 #include "../shared/wildcard_key.hpp"
-#include "tpch_tables.hpp"
 
 // id range: 10s + 20s (only one such namespace are included in each executable)
 namespace geo_join
@@ -130,15 +130,6 @@ struct customer2_t {
        : c_name(c_name), c_address(c_address), c_phone(c_phone), c_acctbal(c_acctbal), c_mktsegment(c_mktsegment), c_comment(c_comment)
    {
    }
-   customer2_t(const customerh_t& old_v)
-       : c_name(old_v.c_name),
-         c_address(old_v.c_address),
-         c_phone(old_v.c_phone),
-         c_acctbal(old_v.c_acctbal),
-         c_mktsegment(old_v.c_mktsegment),
-         c_comment(old_v.c_comment)
-   {
-   }
 
    struct Key {
       static constexpr int id = 11;
@@ -152,10 +143,6 @@ struct customer2_t {
       Key() = default;
       Key(Integer nationkey, Integer statekey, Integer countykey, Integer citykey, Integer custkey)
           : nationkey(nationkey), statekey(statekey), countykey(countykey), citykey(citykey), custkey(custkey)
-      {
-      }
-      Key(const customerh_t::Key& old_k, Integer nationkey, Integer statekey, Integer countykey, Integer citykey)
-          : nationkey(nationkey), statekey(statekey), countykey(countykey), citykey(citykey), custkey(old_k.c_custkey)
       {
       }
       Key(const sort_key_t& sk) : nationkey(sk.nationkey), statekey(sk.statekey), countykey(sk.countykey), citykey(sk.citykey), custkey(sk.custkey) {}
@@ -207,7 +194,6 @@ struct nation2_t {
        : n_name(n_name), n_comment(n_comment), last_statekey(last_statekey)
    {
    }
-   nation2_t(const nation_t& n) : n_name(n.n_name), n_comment(n.n_comment), last_statekey(0) {}
    struct Key {
       static constexpr int id = 12;
       Integer nationkey;

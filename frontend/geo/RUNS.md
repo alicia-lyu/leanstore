@@ -17,6 +17,24 @@ file unless their numbers are scattered across other docs.
 
 ## Runs
 
+### 2026-05-17 — TPC-H fully removed from geo; geo is now a true microbenchmark
+
+- **Commit**: `09c7495a+` (`calcite-integration`, pending push)
+- **TPut.csv**: not produced — code change only, no perf run yet.
+- **Config**: n/a — cutover commit. Both `geo_lsm` and `geo_btree` build clean
+  on Linux post-change; no perf numbers collected here.
+- **Claim check**: this entry marks the cutover. Pre-cutover geo numbers
+  (entry below) were collected with the 8 TPC-H base tables loaded
+  alongside the geo hierarchy and a TPC-H-table point-lookup background
+  thread. Post-cutover geo loads only the geo hierarchy, scaled by
+  `--geo_scale_factor` (default 15, customer_count = 30000 * SF); the
+  background thread is gated on `--geo_bg_thread` (default false → no
+  background TXs, true microbenchmark) and when enabled does only
+  geo-local insert/erase on `customer2`. Subsequent paper-sweep geo runs
+  use this configuration; they are not directly comparable to the
+  pre-cutover entry below because the buffer-pool pressure profile
+  changed.
+
 ### 2026-05-17 09:28 PDT — geo_lsm SF=15 sweep on macOS; MI matches view, beats base/hash on join-nsc
 
 - **Commit**: `010e1bac` (`calcite-integration`)

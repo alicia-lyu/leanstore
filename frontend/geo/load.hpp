@@ -3,8 +3,9 @@
 #include <gflags/gflags.h>
 #include <random>
 #include "../shared/randutils.hpp"
-#include "tpch_workload.hpp"
 #include "views.hpp"
+
+DECLARE_int32(geo_scale_factor);
 
 // 1 nation + 1--80 states --- 1--6 pages
 // 1 county + 1--4 cities + 0--8 customers --- 1 page
@@ -63,9 +64,9 @@ struct Params {
    int city_max;      // in a county
    int customer_max;  // in a city
 
-   const int nation_multiplier = std::min(FLAGS_tpch_scale_factor, 2);
-   const int county_multiplier = std::min(FLAGS_tpch_scale_factor / nation_multiplier, 10);
-   const double city_multiplier = (double)FLAGS_tpch_scale_factor / (county_multiplier * nation_multiplier);
+   const int nation_multiplier = std::min(FLAGS_geo_scale_factor, 2);
+   const int county_multiplier = std::min(FLAGS_geo_scale_factor / nation_multiplier, 10);
+   const double city_multiplier = (double)FLAGS_geo_scale_factor / (county_multiplier * nation_multiplier);
 
    Params()
    {

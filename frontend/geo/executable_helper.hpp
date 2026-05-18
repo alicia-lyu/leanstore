@@ -7,9 +7,9 @@
 #include <thread>
 #include "../shared/db_traits.hpp"
 #include "../shared/logger/logger.hpp"
-#include "tpch_workload.hpp"
 
 DECLARE_int32(storage_structure);
+DECLARE_bool(geo_bg_thread);
 DEFINE_bool(log_progress, true, "Log progress of the workload execution");
 
 template <typename PerStructureWorkloadFull,
@@ -21,7 +21,7 @@ struct ExecutableHelper {
    std::unique_ptr<DBTraits> db_traits;
    std::unique_ptr<PerStructureWorkloadFull> workload;
 
-   TPCHWorkload<AdapterType>& tpch;
+   Logger& logger;
 
    std::atomic<bool> keep_running_bg_tx = true;
    std::atomic<bool> run_main_thread = false;
@@ -29,14 +29,14 @@ struct ExecutableHelper {
    std::atomic<u64> running_threads_counter = 0;
 
 #ifndef ROCKSDB_ONLY
-   ExecutableHelper(leanstore::cr::CRManager& crm, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
-       : db_traits(std::make_unique<LeanStoreTraits>(crm)), workload(std::move(workload)), tpch(tpch)
+   ExecutableHelper(leanstore::cr::CRManager& crm, std::unique_ptr<PerStructureWorkloadFull> workload, Logger& logger)
+       : db_traits(std::make_unique<LeanStoreTraits>(crm)), workload(std::move(workload)), logger(logger)
    {
    }
 #endif
 
-   ExecutableHelper(RocksDB& rocks_db, std::unique_ptr<PerStructureWorkloadFull> workload, TPCHWorkload<AdapterType>& tpch)
-       : db_traits(std::make_unique<RocksDBTraits>(rocks_db)), workload(std::move(workload)), tpch(tpch)
+   ExecutableHelper(RocksDB& rocks_db, std::unique_ptr<PerStructureWorkloadFull> workload, Logger& logger)
+       : db_traits(std::make_unique<RocksDBTraits>(rocks_db)), workload(std::move(workload)), logger(logger)
    {
    }
 
@@ -53,7 +53,7 @@ struct ExecutableHelper {
    void run()
    {
       std::cout << std::string(20, '=') << workload->get_name() << "," << workload->get_size() << std::string(20, '=') << std::endl;
-      tpch.prepare();
+      logger.prepare();
 
       schedule_bg_txs();
 
@@ -94,14 +94,25 @@ struct ExecutableHelper {
 
    void schedule_bg_txs()
    {
+      // Microbenchmark contract: --geo_bg_thread=false runs no background
+      // thread at all (true isolated microbenchmark). When true, a single
+      // background thread issues geo-local maintain/erase TXs against
+      // customer2 — no writes against any TPC-H table, no TPC-H lookups.
+      // The geo benchmark no longer depends on TPC-H data.
+      if (!FLAGS_geo_bg_thread) {
+         // Still need to seed the main-thread gate. The foreground loop spins
+         // on run_main_thread; we must also prime select_to_insert() once so
+         // the maintain TX run after the join sweep has cities to draw from.
+         workload->select_to_insert();
+         run_main_thread = true;
+         return;
+      }
       std::thread([this]() {
          running_threads_counter++;
          bool customer_to_erase = false;
          long long bg_insert_count = 0;
          long long bg_erase_count = 0;
-         long long bg_lookup_count = 0;
          std::function<void()> periodic_reset = [&]() {
-            // start time
             auto start = std::chrono::system_clock::now();
             erase_remaining_customers(customer_to_erase, bg_erase_count);
             workload->select_to_insert();
@@ -111,29 +122,26 @@ struct ExecutableHelper {
             run_main_thread = true;
          };
          while (keep_running_bg_tx) {
-            int lottery = rand() % 100;
             std::string tx_type;
             jumpmuTry()
             {
                if (run_main_thread == false) {
                   periodic_reset();
                }
-               if (lottery < FLAGS_bgw_pct) {
-                  if ((lottery < FLAGS_bgw_pct / 2 && customer_to_erase) ||  // half of the time erase if we have customers to erase
-                      workload->insertion_complete()) {                      // or when insertion needs to be reset
-                     db_traits->run_tx([&]() { customer_to_erase = workload->erase1(); }, BG_WORKER);
-                     tx_type = "erase";
-                     bg_erase_count++;
-                  } else {
-                     db_traits->run_tx(std::bind(&PerStructureWorkloadFull::insert1, workload.get()), BG_WORKER);
-                     tx_type = "update";
-                     customer_to_erase = true;
-                     bg_insert_count++;
-                  }
+               // Geo-only simple background: alternate insert/erase on the
+               // customer2 hierarchy. No bgw_pct lottery — the upstream
+               // write-side race made that flag effectively dead, and a
+               // microbenchmark wants deterministic contention shape, not a
+               // probability mix.
+               if (customer_to_erase && workload->insertion_complete()) {
+                  db_traits->run_tx([&]() { customer_to_erase = workload->erase1(); }, BG_WORKER);
+                  tx_type = "erase";
+                  bg_erase_count++;
                } else {
-                  db_traits->run_tx(std::bind(&PerStructureWorkloadFull::bg_lookup, workload.get()), BG_WORKER);
-                  tx_type = "lookup";
-                  bg_lookup_count++;
+                  db_traits->run_tx(std::bind(&PerStructureWorkloadFull::insert1, workload.get()), BG_WORKER);
+                  tx_type = "update";
+                  customer_to_erase = true;
+                  bg_insert_count++;
                }
                bg_tx_count++;
             }
@@ -147,8 +155,8 @@ struct ExecutableHelper {
          }
          periodic_reset();
 
-         std::cout << "#" << bg_tx_count.load() << " bg tx in total performed. " << bg_insert_count << " inserts, " << bg_erase_count << " erases, "
-                   << bg_lookup_count << " lookups." << std::endl;
+         std::cout << "#" << bg_tx_count.load() << " bg tx in total performed. " << bg_insert_count << " inserts, " << bg_erase_count << " erases."
+                   << std::endl;
          db_traits->cleanup_thread(BG_WORKER);
          running_threads_counter--;
       }).detach();
@@ -170,7 +178,7 @@ struct ExecutableHelper {
    {
       while (!run_main_thread) {
       }
-      tpch.logger.reset();
+      logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
       atomic<int> count = 0;
 
@@ -206,8 +214,15 @@ struct ExecutableHelper {
       auto end = std::chrono::high_resolution_clock::now();
       long duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       double tput = (double)count.load() / duration * 1e6;
-      tpch.logger.log(tput, count.load(), tx, workload->get_name(), workload->get_size());
+      logger.log(tput, count.load(), tx, workload->get_name(), workload->get_size());
       running_threads_counter--;
-      run_main_thread = false;
+      // The background thread flips run_main_thread back to true between
+      // foreground phases via periodic_reset(). When no background thread is
+      // running (--geo_bg_thread=false), leave the gate open so the next
+      // tput_tx can proceed without a sync barrier — there's nothing to
+      // clean up between phases since the foreground queries don't insert.
+      if (FLAGS_geo_bg_thread) {
+         run_main_thread = false;
+      }
    }
 };

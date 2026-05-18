@@ -38,8 +38,7 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::load()
 {
-   workload.load();
-   load_state = LoadState(workload.last_customer_id, [this](int n, int s, int c, int ci, int cu) { load_1customer(n, s, c, ci, cu); });
+   load_state = LoadState(last_customer_id, [this](int n, int s, int c, int ci, int cu) { load_1customer(n, s, c, ci, cu); });
    seq_load();
    load_state.advance_customers_to_hot_cities();
    // load geo view and join view
@@ -99,7 +98,6 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
    write_table_to_stream<AdapterType<county_t>, county_t>(county);
    write_table_to_stream<AdapterType<city_t>, city_t>(city);
    write_table_to_stream<AdapterType<customer2_t>, customer2_t>(customer2);
-   write_table_to_stream<AdapterType<customerh_t>, customerh_t>(workload.customer);
 };
 
 template <template <typename> class AdapterType,
@@ -187,8 +185,7 @@ void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::lo
 {
    customer2_t::Key cust_key{n, s, c, ci, cu};
    assert(s > 0);
-   customer2_t cuv;
-   workload.customer.lookup1(customerh_t::Key{cu}, [&](const customerh_t& v) { cuv = customer2_t{v}; });
+   customer2_t cuv = customer2_t::generateRandomRecord();
    customer2.insert(cust_key, cuv);
    merged.insert(cust_key, cuv);
 }
@@ -199,7 +196,6 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 void GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::log_sizes()
 {
-   workload.log_sizes();
    double nation_size = nation.size();
    double states_size = states.size();
    double county_size = county.size();
