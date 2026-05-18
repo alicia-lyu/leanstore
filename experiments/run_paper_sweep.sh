@@ -247,17 +247,24 @@ trigger_load() {
 }
 
 snapshot_run_dir() {
-    # Snapshot build/<binary>/<sf>-in-<dram>/ into
-    # paper-data/<tag>/raw/<binary>/<cell>-bg<bg>-r<rep>/.
+    # The binary's logger splits output across two dirs:
+    #   csv_db      = build/<binary>/        (TPut.csv, size.csv, sstables.csv)
+    #   csv_runtime = build/<binary>/<sf>-in-<dram>/
+    #                                        (structure logs, per-tx/per-method
+    #                                         detail CSVs for LeanStore)
+    # Snapshot both into paper-data/<tag>/raw/<binary>/<cell>-bg<bg>-r<rep>/.
     local binary="$1" sf="$2" dram="$3" dest="$4"
-    local src="build/${binary}/${sf}-in-${dram}"
-    if [[ ! -d "$src" ]]; then
-        log "  WARN: source dir missing for snapshot: $src"
-        return 1
-    fi
+    local csv_db="build/${binary}"
+    local csv_runtime="build/${binary}/${sf}-in-${dram}"
     mkdir -p "$dest"
-    # cp -a preserves symlinks/perms; --no-target-directory avoids nesting.
-    cp -a "$src/." "$dest/"
+    if [[ -d "$csv_runtime" ]]; then
+        cp -a "$csv_runtime/." "$dest/"
+    else
+        log "  WARN: csv_runtime missing for snapshot: $csv_runtime"
+    fi
+    for f in TPut.csv size.csv Elapsed.csv sstables.csv; do
+        [[ -f "$csv_db/$f" ]] && cp -f "$csv_db/$f" "$dest/$f"
+    done
 }
 
 # Slice the most-recently-appended rows of a CSV (since prev_count rows) into
@@ -279,16 +286,16 @@ slice_csv_since() {
 }
 
 # After a single structure run, slice the new rows in TPut/Elapsed/size CSVs
-# into per-structure suffix files so the snapshot is self-describing.
+# (which live at the csv_db level) into per-structure suffix files dropped
+# into csv_runtime so the snapshot is self-describing.
 mark_structure_slice() {
     local binary="$1" sf="$2" dram="$3" structure="$4" prev_tput="$5"
-    local src="build/${binary}/${sf}-in-${dram}"
-    [[ ! -d "$src" ]] && return 0
-    slice_csv_since "$src/TPut.csv"    "$src/TPut.s${structure}.csv"    "$prev_tput"
-    # size.csv and Elapsed.csv slices are best-effort; they may not exist.
-    # Use the same prev counter for consistency (assumes one row per structure).
-    slice_csv_since "$src/size.csv"    "$src/size.s${structure}.csv"    "$prev_tput"
-    slice_csv_since "$src/Elapsed.csv" "$src/Elapsed.s${structure}.csv" "$prev_tput"
+    local csv_db="build/${binary}"
+    local csv_runtime="build/${binary}/${sf}-in-${dram}"
+    mkdir -p "$csv_runtime"
+    slice_csv_since "$csv_db/TPut.csv"    "$csv_runtime/TPut.s${structure}.csv"    "$prev_tput"
+    slice_csv_since "$csv_db/size.csv"    "$csv_runtime/size.s${structure}.csv"    "$prev_tput"
+    slice_csv_since "$csv_db/Elapsed.csv" "$csv_runtime/Elapsed.s${structure}.csv" "$prev_tput"
 }
 
 current_body_count() {
@@ -300,16 +307,26 @@ current_body_count() {
 }
 
 reset_run_dir() {
-    # Wipe the per-run CSVs so the next rep starts with a clean csv_path.
-    # Keep load-only artifacts (load.log etc.) where they exist — they're
-    # not part of the per-rep snapshot anyway.
+    # Wipe per-run CSVs at both csv_db (binary parent) and csv_runtime
+    # (<sf>-in-<dram>) so the next rep starts clean. Load-only artifacts
+    # (load.log etc.) inside csv_runtime are not part of the per-rep
+    # snapshot, but removing them is harmless because the load won't
+    # re-run after the json image exists.
     local binary="$1" sf="$2" dram="$3"
-    local src="build/${binary}/${sf}-in-${dram}"
-    [[ ! -d "$src" ]] && return 0
-    rm -f "$src/TPut.csv" "$src/Elapsed.csv" "$src/size.csv"
-    rm -f "$src"/structure*.log "$src"/structure*_stderr.txt
-    # Per-tx/per-method detail CSV trees (geo: <tx>/<method>/, TPC-H: query/<method>/).
-    find "$src" -mindepth 1 -maxdepth 2 -type d -exec rm -rf {} + 2>/dev/null || true
+    local csv_db="build/${binary}"
+    local csv_runtime="build/${binary}/${sf}-in-${dram}"
+    if [[ -d "$csv_db" ]]; then
+        rm -f "$csv_db/TPut.csv" "$csv_db/Elapsed.csv" "$csv_db/size.csv" \
+              "$csv_db/sstables.csv"
+    fi
+    if [[ -d "$csv_runtime" ]]; then
+        rm -f "$csv_runtime"/structure*.log "$csv_runtime"/structure*_stderr.txt
+        rm -f "$csv_runtime"/TPut.s*.csv "$csv_runtime"/size.s*.csv \
+              "$csv_runtime"/Elapsed.s*.csv
+        # Per-tx/per-method detail CSV trees (LeanStore B-tree).
+        find "$csv_runtime" -mindepth 1 -maxdepth 2 -type d \
+            -exec rm -rf {} + 2>/dev/null || true
+    fi
 }
 
 # ---------------- main loop ----------------
@@ -362,7 +379,7 @@ for cell in "${CELL_LIST[@]}"; do
                     fi
                     log "      rep $rep / bg=$bg  ($bg_flag=$bg_str)"
                     reset_run_dir "$binary" "$sf" "$dram"
-                    src_dir="build/${binary}/${sf}-in-${dram}"
+                    csv_db_dir="build/${binary}"
                     for n in $(structures_for "$binary"); do
                         target="${binary}_${n}"
                         cmd="make $target scale=$sf dram=$dram $bg_flag=$bg_str"
@@ -370,7 +387,7 @@ for cell in "${CELL_LIST[@]}"; do
                         if [[ $DRY_RUN -eq 1 ]]; then
                             continue
                         fi
-                        prev_tput=$(current_body_count "$src_dir/TPut.csv")
+                        prev_tput=$(current_body_count "$csv_db_dir/TPut.csv")
                         if ! eval "$cmd" >> "$LOG" 2>&1; then
                             log "        ERROR: $cmd failed; continuing"
                             RUN_ERR=$((RUN_ERR + 1))

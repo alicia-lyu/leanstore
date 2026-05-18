@@ -69,6 +69,25 @@ def image_basename(exec_fname: str) -> str:
     """
     return TPCH_FAMILY.get(exec_fname, exec_fname)
 
+
+# Canonical loader per family. Make's "last recipe wins" behavior over
+# duplicated recover-file recipes from multiple family members is fragile
+# (and historically miscompiles when a later-defined member's load path has
+# a bug — see paper-sweep 2026-05-18 smoke-test). Pin one canonical loader
+# per image base and skip recover-file emission for the rest.
+TPCH_FAMILY_LOADER = {
+    "tpch_lsm":    "q3_lsm",
+    "tpch_btree":  "q3_btree",
+    "tpchi_lsm":   "q3i_lsm",
+    "tpchi_btree": "q3i_btree",
+}
+
+def is_family_loader(exec_fname: str) -> bool:
+    """True if this binary is the canonical loader for its family, or owns
+    its image dir solo (geo_*, q12_*)."""
+    base = image_basename(exec_fname)
+    return TPCH_FAMILY_LOADER.get(base, exec_fname) == exec_fname
+
 def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, Path]:
     exec_path = build_dir / "frontend" / exec_fname
     image_base = image_basename(exec_fname)
@@ -337,6 +356,14 @@ class Experiment:
         return flags
         
     def generate_recover_file(self) -> None:
+        # Only the canonical loader for a family emits the recover-file rule.
+        # Skipping duplicates avoids make's "overriding recipe / ignoring old
+        # recipe" warnings and the silent miscompile when a later-defined
+        # family member has a buggy load path (see paper-sweep 2026-05-18
+        # smoke test where q5_btree's load aborted on COLI keys it should
+        # never have seen).
+        if not is_family_loader(self.exec_fname):
+            return
         self.makefile_subsection("Generate recovery file")
         loading_files = get_loading_files(self.exec_fname)
         loading_files_str = " ".join(loading_files)
