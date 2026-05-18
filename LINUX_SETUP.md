@@ -258,7 +258,7 @@ mkdir -p /mnt/ssd/lq_btree && touch /mnt/ssd/lq_btree/db.image
 
 Each should print `[OK]` lines for every check and exit 0.
 
-> **Status as of 2026-05-08:** the historical
+> **Status as of 2026-05-17:** the historical
 > `loadInvoiceAndLinkLineitem` `ensure(false)` and the SEGV during
 > orders loading are both resolved. The SEGV root cause was
 > `LeanStoreAdapter::getScanner()` / `LeanStoreMergedAdapter` casting
@@ -267,17 +267,16 @@ Each should print `[OK]` lines for every check and exit 0.
 > returned null and the first iterator op deref'd `btree.dt_id`.
 > Fix lives in `frontend/shared/adapter-scanner/`. `_btree` smoke
 > tests now run with the same flags as `_lsm` — no `--vi=false`
-> workaround needed.
+> workaround needed. The earlier `views_coli.hpp:110` COLI
+> tagged-key variant-dispatch assertion that blocked
+> `test_query_q3i_btree` has also been fixed; the test now passes
+> at SF=1 alongside its LSM peer.
 >
 > **Currently passing at SF=1**: `test_load_merged_btree`,
 > `test_load_q12_btree`, `test_load_col_btree`,
-> `test_query_q12_btree`, `test_query_q3_btree` — all `[OK]`
-> with `--wal=true` and the default flags.
->
-> **Still failing**: `test_query_q3i_btree` aborts with a COLI
-> tagged-key variant-dispatch assertion in
-> `views_coli.hpp:110` during `coli_group_walk`. Different bug —
-> tracked in `LINUX_PENDING.md`. Q3I LSM is unaffected.
+> `test_query_q12_btree`, `test_query_q3_btree`,
+> `test_query_q3i_btree` — all `[OK]` with `--wal=true` and the
+> default flags.
 
 > **Pitfall when running smoke tests:** `cmd | tail` makes `$?`
 > report `tail`'s exit code, not the binary's, so a SEGV looks like
@@ -287,11 +286,23 @@ Each should print `[OK]` lines for every check and exit 0.
 
 ### 5b. Query parity (Q12 + Q3I, both backends)
 
+RocksDB:
+
 ```
 ./test_query_q12_lsm   --ssd_path=/mnt/ssd/q12_lsm   --tpch_scale_factor=1
-./test_query_q12_btree --ssd_path=/mnt/ssd/q12_btree --tpch_scale_factor=1
 ./test_query_q3i_lsm   --ssd_path=/mnt/ssd/q3i_lsm   --tpch_scale_factor=1
-./test_query_q3i_btree --ssd_path=/mnt/ssd/q3i_btree --tpch_scale_factor=1
+```
+
+LeanStore (same `--wal=true` + pre-touched-file requirement as §5a):
+
+```
+mkdir -p /mnt/ssd/q12_btree && touch /mnt/ssd/q12_btree/db.image
+./test_query_q12_btree --ssd_path=/mnt/ssd/q12_btree/db.image \
+    --tpch_scale_factor=1 --wal=true
+
+mkdir -p /mnt/ssd/q3i_btree && touch /mnt/ssd/q3i_btree/db.image
+./test_query_q3i_btree --ssd_path=/mnt/ssd/q3i_btree/db.image \
+    --tpch_scale_factor=1 --wal=true
 ```
 
 Expect: identical `Q12Stats` / `Q3IStats` digests within each backend
