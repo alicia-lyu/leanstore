@@ -79,6 +79,12 @@ SECONDARY_AXIS_CELLS = ["c2", "c1", "c0"]   # DRAM:sec ratio pinned at 1:5
 
 ANCHOR_CELL = "c0"  # used by duration_baseline
 
+# Headline plots present **query duration (ms/query)** as the primary y-axis
+# since "how long does each query take?" is the more intuitive lens for
+# database benchmarks. TX/s lives on the right twin axis so reviewers can
+# still read throughput at a glance. Set to False to swap them back.
+TIME_AXIS_DEFAULT = True
+
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -104,6 +110,38 @@ class SweepData:
             if v:
                 parts.append(f"{k.split('_')[0]} {v}")
         return "  |  ".join(parts)
+
+
+def _quantile(vals: pd.Series, p: float) -> float:
+    vals = vals.dropna()
+    if vals.empty:
+        return float("nan")
+    return float(vals.quantile(p))
+
+
+def aggregate_ms_per_query(headline: pd.DataFrame,
+                           group_cols: Sequence[str]) -> pd.DataFrame:
+    """Aggregate per-rep ms/query (= 1000/tx_per_s) over ``group_cols``.
+
+    Returns ``group_cols + ['ms_median', 'ms_iqr', 'n']``. Median + IQR
+    are computed in ms space (not derived from TX/s aggregates) so the
+    error bars are correct under the non-linear transform.
+    """
+    if headline.empty:
+        return pd.DataFrame(columns=list(group_cols) + ["ms_median", "ms_iqr", "n"])
+    df = headline.copy()
+    # ms_per_tx is already in headline.csv (see analyzer), but recompute
+    # from tx_per_s defensively in case rows have it blank.
+    if "ms_per_tx" not in df.columns or df["ms_per_tx"].isna().any():
+        df["ms_per_tx"] = 1000.0 / df["tx_per_s"].replace(0, np.nan)
+    grouped = df.groupby(list(group_cols), dropna=False)["ms_per_tx"]
+    out = grouped.agg(
+        ms_median="median",
+        n="count",
+    ).reset_index()
+    iqr = grouped.apply(lambda s: _quantile(s, 0.75) - _quantile(s, 0.25)).rename("ms_iqr")
+    out = out.merge(iqr.reset_index(), on=list(group_cols), how="left")
+    return out
 
 
 def load_sweep(tag: str, root: Path) -> SweepData:
@@ -243,12 +281,13 @@ def heatmap(ax, df: pd.DataFrame, row_col: str, col_col: str, value_col: str,
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _twin_ms_axis(ax) -> None:
-    """Add a right-hand 'ms/query' axis mirroring the TX/s axis.
+def _add_twin_axis(ax, label: str) -> None:
+    """Add a right-hand y-axis derived by 1000/y from the primary axis.
 
-    Silently skips when the primary axis has no finite range (e.g. all
-    points missing) — matplotlib's secondary_yaxis can't compute its
-    forward/inverse on NaN bounds.
+    Used to overlay TX/s on a ms/query primary axis (or vice versa,
+    since 1000/x is its own inverse). Silently skips when the primary
+    axis has no finite range — matplotlib's secondary_yaxis can't
+    compute its forward/inverse on NaN bounds.
     """
     ylim = ax.get_ylim()
     if not all(np.isfinite(ylim)) or ylim[0] >= ylim[1]:
@@ -261,11 +300,21 @@ def _twin_ms_axis(ax) -> None:
             "right",
             functions=(_safe_invert, _safe_invert),
         )
-        secax.set_ylabel("ms/query", fontsize=STYLE["axis_label_fontsize"])
+        secax.set_ylabel(label, fontsize=STYLE["axis_label_fontsize"])
         secax.tick_params(labelsize=STYLE["tick_label_fontsize"])
     except (ValueError, FloatingPointError):
         # Axis transformation rejected — silently drop the twin axis.
         pass
+
+
+# Back-compat alias (kept so callers that imported the old name keep
+# working; new code should use _add_twin_axis).
+def _twin_ms_axis(ax) -> None:
+    _add_twin_axis(ax, "ms/query")
+
+
+def _add_twin_txps_axis(ax) -> None:
+    _add_twin_axis(ax, "TX/s")
 
 
 def _save(fig: plt.Figure, dest: Path, footer: str, fmt: str = "pdf") -> List[Path]:
@@ -305,10 +354,14 @@ TPCH_BINARIES = ["q3_lsm", "q3_btree", "q5_lsm", "q5_btree",
 GEO_BINARIES = ["geo_lsm", "geo_btree"]
 
 
-def _headline_tpch_panel(ax, stats: pd.DataFrame, binary: str,
+def _headline_tpch_panel(ax, ms_df: pd.DataFrame, binary: str,
                          cells: Sequence[str], xlabel: str) -> bool:
-    """Plot one panel of the headline TPC-H grid. Returns True if any data."""
-    sub = stats[(stats["binary"] == binary) & (stats["cell"].isin(cells))]
+    """Plot one panel of the headline TPC-H grid. Returns True if any data.
+
+    Primary axis = ms/query (lower is better). Twin axis (added later
+    by the figure builder once layout is finalized) is TX/s.
+    """
+    sub = ms_df[(ms_df["binary"] == binary) & (ms_df["cell"].isin(cells))]
     if sub.empty:
         _all_or_empty(plt.gcf(), ax, f"{binary}: no data")
         ax.set_title(binary, fontsize=STYLE["title_fontsize"])
@@ -319,18 +372,19 @@ def _headline_tpch_panel(ax, stats: pd.DataFrame, binary: str,
         if sub_bg.empty:
             continue
         line_with_iqr(
-            ax, sub_bg, x_col="cell", y_col="tx_per_s_median",
-            iqr_col="tx_per_s_iqr", hue_col="structure",
+            ax, sub_bg, x_col="cell", y_col="ms_median",
+            iqr_col="ms_iqr", hue_col="structure",
             x_order=cells, hue_labels=STRUCTURE_LABELS,
             linestyle=STYLE["bg_linestyles"].get(int(bg), "-"),
         )
         drew_any = True
     ax.set_title(binary, fontsize=STYLE["title_fontsize"])
     ax.set_xlabel(xlabel, fontsize=STYLE["axis_label_fontsize"])
-    ax.set_ylabel("TX/s", fontsize=STYLE["axis_label_fontsize"])
+    ax.set_ylabel("ms / query", fontsize=STYLE["axis_label_fontsize"])
+    ax.set_yscale("log")  # ms spans 2-3 orders across structures + backends
     ax.tick_params(labelsize=STYLE["tick_label_fontsize"])
-    ax.grid(True, axis="y", alpha=0.25)
-    # Twin ms/query axis is added later in fig_headline_tpch, after all
+    ax.grid(True, axis="y", alpha=0.25, which="both")
+    # Twin TX/s axis is added later in fig_headline_tpch, after all
     # panels' y-limits are finalized — needed because matplotlib's
     # secondary_yaxis evaluates limits at layout time and chokes on NaN
     # bounds inherited from empty sibling panels.
@@ -349,25 +403,29 @@ def fig_headline_tpch(data: SweepData, axis: str) -> Optional[Path]:
         name = "headline_tpch_vs_secondary"
     else:
         raise ValueError(axis)
-    stats = data.stats[data.stats["family"].isin(["vanilla", "tpchi"])]
+    # Aggregate ms_per_tx from headline.csv (per-rep) so the IQR is
+    # correct in ms-space (not derived from tx_per_s IQR via a non-linear
+    # transform).
+    head = data.headline[data.headline["family"].isin(["vanilla", "tpchi"])
+                          & (data.headline["tx"] == "query")]
+    ms_df = aggregate_ms_per_query(head,
+                                   group_cols=["binary", "cell", "structure", "bg"])
     # No sharey: a sibling panel with no data produces NaN y-limits that
     # poison the row-shared axis (and any secondary_yaxis on the row).
     fig, axes = plt.subplots(2, 4, figsize=STYLE["figsize_grid"])
     panel_has_data = []
     for ax, binary in zip(axes.flat, TPCH_BINARIES):
-        panel_has_data.append(_headline_tpch_panel(ax, stats, binary, cells, xlabel))
-    # Add the right-hand ms/query twin axis on each populated panel.
-    # The forward function 1000/y blows up at y=0, so we keep the lower
-    # bound strictly positive — never pin to 0 here. Matplotlib's
-    # auto-scaling already yields a positive lower bound when all data
-    # is positive (which it is for TX/s).
+        panel_has_data.append(_headline_tpch_panel(ax, ms_df, binary, cells, xlabel))
+    # Add the right-hand TX/s twin axis on each populated panel (primary
+    # is ms/query, secondary is its 1000/y reflection). Skip when the
+    # primary y-range collapses to non-positive bounds.
     for ax, has_data in zip(axes.flat, panel_has_data):
         if not has_data:
             continue
         lo, hi = ax.get_ylim()
         if not (np.isfinite(lo) and np.isfinite(hi) and lo > 0 and hi > lo):
             continue
-        _twin_ms_axis(ax)
+        _add_twin_txps_axis(ax)
     # one shared legend at the top
     handles, labels = [], []
     seen = set()
@@ -384,7 +442,7 @@ def fig_headline_tpch(data: SweepData, axis: str) -> Optional[Path]:
     fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 7),
                fontsize=STYLE["legend_fontsize"],
                bbox_to_anchor=(0.5, 1.02), frameon=False)
-    fig.suptitle(f"TPC-H throughput vs {axis} (median ± IQR over 3 reps)",
+    fig.suptitle(f"TPC-H query duration vs {axis} (median ± IQR over 3 reps; lower is better)",
                  fontsize=STYLE["title_fontsize"] + 1, y=1.07)
     return _save(fig, data.figures_root / name, data.footer)[0]
 
@@ -404,10 +462,14 @@ def fig_headline_geo(data: SweepData, axis: str) -> Optional[Path]:
         name = "headline_geo_vs_secondary"
     else:
         raise ValueError(axis)
-    stats = data.stats[data.stats["family"] == "geo"]
-    if stats.empty:
+    head = data.headline[data.headline["family"] == "geo"]
+    if head.empty:
         return None
-    tx_types = sorted(stats["tx"].unique())
+    ms_df = aggregate_ms_per_query(
+        head,
+        group_cols=["binary", "cell", "structure", "bg", "tx"],
+    )
+    tx_types = sorted(ms_df["tx"].unique())
     # Grid: rows = binary (lsm/btree), cols = tx type
     n_rows = len(GEO_BINARIES)
     n_cols = len(tx_types)
@@ -419,28 +481,29 @@ def fig_headline_geo(data: SweepData, axis: str) -> Optional[Path]:
     for i, binary in enumerate(GEO_BINARIES):
         for j, tx in enumerate(tx_types):
             ax = axes[i, j]
-            sub = stats[(stats["binary"] == binary) & (stats["tx"] == tx)
-                        & (stats["cell"].isin(cells))]
+            sub = ms_df[(ms_df["binary"] == binary) & (ms_df["tx"] == tx)
+                        & (ms_df["cell"].isin(cells))]
             if sub.empty:
                 _all_or_empty(fig, ax, "—")
                 continue
             for bg in sorted(sub["bg"].unique()):
                 sub_bg = sub[sub["bg"] == bg]
                 line_with_iqr(ax, sub_bg, x_col="cell",
-                              y_col="tx_per_s_median",
-                              iqr_col="tx_per_s_iqr",
+                              y_col="ms_median",
+                              iqr_col="ms_iqr",
                               hue_col="structure",
                               x_order=cells,
                               hue_labels=STRUCTURE_LABELS,
                               linestyle=STYLE["bg_linestyles"].get(int(bg), "-"))
+            ax.set_yscale("log")
             if i == 0:
                 ax.set_title(tx, fontsize=8)
             if j == 0:
-                ax.set_ylabel(f"{binary}\nTX/s",
+                ax.set_ylabel(f"{binary}\nms / query",
                               fontsize=STYLE["axis_label_fontsize"])
             ax.tick_params(labelsize=6)
-            ax.grid(True, axis="y", alpha=0.2)
-    fig.suptitle(f"Geo throughput vs {axis} (per tx type)",
+            ax.grid(True, axis="y", alpha=0.2, which="both")
+    fig.suptitle(f"Geo query duration vs {axis} (per tx type; lower is better)",
                  fontsize=STYLE["title_fontsize"] + 1, y=0.995)
     fig.supxlabel(xlabel, fontsize=STYLE["axis_label_fontsize"])
     handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
@@ -463,18 +526,20 @@ def fig_headline_geo(data: SweepData, axis: str) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 
 def fig_contention_dropoff(data: SweepData) -> Optional[Path]:
-    """Per (binary, cell, structure): bg=1/bg=0 ratio of median TX/s.
-    Lower values = worse degradation under contention."""
-    stats = data.stats[data.stats["family"].isin(["vanilla", "tpchi"])
-                       & (data.stats["tx"] == "query")]
-    if stats.empty:
+    """Per (binary, cell, structure): bg=1 ms / bg=0 ms slowdown.
+    Values > 1 = each query takes longer under contention; larger = worse."""
+    head = data.headline[data.headline["family"].isin(["vanilla", "tpchi"])
+                         & (data.headline["tx"] == "query")]
+    if head.empty:
         return None
-    pivot = stats.pivot_table(index=["binary", "cell", "structure"],
-                              columns="bg", values="tx_per_s_median",
+    ms_df = aggregate_ms_per_query(
+        head, group_cols=["binary", "cell", "structure", "bg"])
+    pivot = ms_df.pivot_table(index=["binary", "cell", "structure"],
+                              columns="bg", values="ms_median",
                               aggfunc="median")
     if 0 not in pivot.columns or 1 not in pivot.columns:
         return None
-    pivot["ratio"] = pivot[1] / pivot[0]
+    pivot["slowdown"] = pivot[1] / pivot[0]
     pivot = pivot.reset_index()
 
     binaries = [b for b in TPCH_BINARIES if b in pivot["binary"].unique()]
@@ -488,19 +553,19 @@ def fig_contention_dropoff(data: SweepData) -> Optional[Path]:
             _all_or_empty(fig, ax, f"{binary}: no data")
             ax.set_title(binary, fontsize=STYLE["title_fontsize"])
             continue
-        grouped_bar(ax, sub[["cell", "structure", "ratio"]], x_col="cell",
-                    y_col="ratio", hue_col="structure", x_order=cells,
+        grouped_bar(ax, sub[["cell", "structure", "slowdown"]], x_col="cell",
+                    y_col="slowdown", hue_col="structure", x_order=cells,
                     hue_labels=STRUCTURE_LABELS)
         ax.axhline(1.0, color="#444", linewidth=0.6, linestyle=":",
                    label="bg=0 baseline")
         ax.set_title(binary, fontsize=STYLE["title_fontsize"])
-        ax.set_ylabel("TX/s ratio (bg=1 / bg=0)",
+        ax.set_ylabel("slowdown (bg=1 ms / bg=0 ms)",
                       fontsize=STYLE["axis_label_fontsize"])
         ax.set_xlabel("cell", fontsize=STYLE["axis_label_fontsize"])
         ax.tick_params(labelsize=STYLE["tick_label_fontsize"])
         ax.grid(True, axis="y", alpha=0.25)
-        ax.set_ylim(0, max(1.5, ax.get_ylim()[1]))
-    fig.suptitle("Contention drop-off: TX/s under bg=1 relative to bg=0",
+        ax.set_ylim(0, max(2.0, ax.get_ylim()[1]))
+    fig.suptitle("Contention slowdown: query duration under bg=1 relative to bg=0 (larger = worse)",
                  fontsize=STYLE["title_fontsize"] + 1, y=1.02)
     handles = [plt.Rectangle((0, 0), 1, 1,
                              color=STYLE["structure_colors"][s])
@@ -525,15 +590,19 @@ def fig_inversions(data: SweepData) -> Optional[Path]:
     inv["label"] = inv["binary"].astype(str) + "/" + inv["cell"].astype(str) \
                    + "/bg" + inv["bg"].astype(str) + "/r" + inv["rep"].astype(str) \
                    + "/" + inv["tx"].astype(str)
-    inv = inv.sort_values("ratio")
-    colors = ["#c0392b" if r < 0.8 else ("#e67e22" if r < 0.9 else "#f1c40f")
-              for r in inv["ratio"]]
-    ax.barh(inv["label"], inv["ratio"], color=colors, edgecolor="white")
+    # Present as ms slowdown: ms_s3 / ms_s2 = tx_per_s_s2 / tx_per_s_s3 = 1/ratio.
+    # Values > 1 = S3 SLOWER than S2 (which is the inversion).
+    inv["ms_slowdown"] = inv["s2_tx_per_s"].astype(float) / inv["s3_tx_per_s"].astype(float)
+    inv = inv.sort_values("ms_slowdown", ascending=False)
+    colors = ["#c0392b" if r > 1.25 else ("#e67e22" if r > 1.10 else "#f1c40f")
+              for r in inv["ms_slowdown"]]
+    ax.barh(inv["label"], inv["ms_slowdown"], color=colors, edgecolor="white")
     ax.axvline(1.0, color="#27ae60", linewidth=0.8, linestyle="--",
-               label="S3 == S2")
-    ax.axvline(0.95, color="#888", linewidth=0.5, linestyle=":",
-               label="threshold (5% under)")
-    ax.set_xlabel("S3 TX/s / S2 TX/s", fontsize=STYLE["axis_label_fontsize"])
+               label="S3 == S2 ms")
+    ax.axvline(1 / 0.95, color="#888", linewidth=0.5, linestyle=":",
+               label="threshold (S3 ≥ 5% slower)")
+    ax.set_xlabel("S3 ms / S2 ms  (>1 = S3 slower = inversion)",
+                  fontsize=STYLE["axis_label_fontsize"])
     ax.set_title(f"S3 vs S2 inversions ({len(inv)} flagged)",
                  fontsize=STYLE["title_fontsize"])
     ax.tick_params(labelsize=6)
@@ -543,15 +612,19 @@ def fig_inversions(data: SweepData) -> Optional[Path]:
 
 
 def fig_s3_vs_s2_speedup(data: SweepData) -> Optional[Path]:
-    stats = data.stats[(data.stats["family"].isin(["vanilla", "tpchi"]))
-                       & (data.stats["tx"] == "query")
-                       & (data.stats["bg"] == 0)
-                       & (data.stats["structure"].isin([2, 3]))]
-    if stats.empty:
+    """Heatmap of S2 / S3 ms ratio (= S3 speedup over S2 in ms terms).
+    Values > 1.00× mean S3 is faster (shorter ms/query) than S2."""
+    head = data.headline[(data.headline["family"].isin(["vanilla", "tpchi"]))
+                         & (data.headline["tx"] == "query")
+                         & (data.headline["bg"] == 0)
+                         & (data.headline["structure"].isin([2, 3]))]
+    if head.empty:
         return None
-    pivot = stats.pivot_table(index="binary", columns=["cell", "structure"],
-                              values="tx_per_s_median", aggfunc="median")
-    # Flatten: per (binary, cell), compute S3/S2
+    ms_df = aggregate_ms_per_query(
+        head, group_cols=["binary", "cell", "structure"])
+    pivot = ms_df.pivot_table(index="binary", columns=["cell", "structure"],
+                              values="ms_median", aggfunc="median")
+    # S3 speedup over S2 in ms terms = S2_ms / S3_ms. > 1.00× → S3 faster.
     rows = []
     for binary in pivot.index:
         for cell in sorted({c for c, _ in pivot.columns}):
@@ -560,19 +633,19 @@ def fig_s3_vs_s2_speedup(data: SweepData) -> Optional[Path]:
                 s3 = pivot.loc[binary, (cell, 3)]
             except KeyError:
                 continue
-            if pd.isna(s2) or pd.isna(s3) or s2 <= 0:
+            if pd.isna(s2) or pd.isna(s3) or s3 <= 0:
                 continue
-            rows.append({"binary": binary, "cell": cell, "ratio": s3 / s2})
+            rows.append({"binary": binary, "cell": cell, "speedup": s2 / s3})
     if not rows:
         return None
     df = pd.DataFrame(rows)
     fig, ax = plt.subplots(figsize=(7.5, 5.0))
     binaries = [b for b in TPCH_BINARIES if b in df["binary"].unique()]
     cells = [c for c in ["c2", "c1", "c3", "c0"] if c in df["cell"].unique()]
-    heatmap(ax, df, row_col="binary", col_col="cell", value_col="ratio",
+    heatmap(ax, df, row_col="binary", col_col="cell", value_col="speedup",
             row_order=binaries, col_order=cells,
             cmap="RdBu_r", center=1.0, fmt="{:.2f}×")
-    ax.set_title("S3 / S2 throughput ratio (bg=0; values > 1.00× favor S3)",
+    ax.set_title("S3 speedup over S2 in ms (bg=0; > 1.00× favors S3)",
                  fontsize=STYLE["title_fontsize"])
     return _save(fig, data.figures_root / "s3_vs_s2_speedup", data.footer)[0]
 

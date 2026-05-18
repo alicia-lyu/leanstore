@@ -26,8 +26,10 @@ paper*
 !paper-data/*/summary/
 !paper-data/*/summary/*
 !paper-data/*/manifest.yaml
-!paper-data/*/figures/
-!paper-data/*/figures/*
+# Figures (paper-data/<tag>/figures/) are deliberately NOT git-tracked:
+# regenerable from the summary CSVs via `python3 scripts/plot_paper_sweep.py
+# --tag <tag>`, and PDF/PNG blobs bloat git objects unnecessarily.
+paper-data/*/figures/
 # Python bytecode cache from scripts/
 scripts/__pycache__/
 # Operational log of the runner — large and not paper material.
@@ -61,8 +63,3 @@ test*.json
 /test*data
 /test*csv
 *.bak
-# Re-allow figure artifacts under paper-data/*/figures/ — this MUST come
-# after the broad *.pdf rule above, since gitignore rules are last-match-wins.
-!paper-data/*/figures/*.pdf
-!paper-data/*/figures/*.png
-!paper-data/*/figures/*.svg
