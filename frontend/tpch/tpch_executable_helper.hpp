@@ -88,8 +88,8 @@ struct TpchExecutableHelper {
       std::cout << "Running " << tx_name << " on " << structure_name
                 << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
       if (FLAGS_bg_query_thread) {
-         std::cout << "  (--bg_query_thread=true: a background worker runs the same "
-                   << "query concurrently for the full TX window)" << std::endl;
+         std::cout << "  (--bg_query_thread=true: bg cohort: "
+                   << bg_query_steps.size() << " steps)" << std::endl;
       }
 
       std::atomic<bool> keep_running = true;
@@ -108,9 +108,14 @@ struct TpchExecutableHelper {
       //
       // Routing:
       //   - If bg_query_steps is non-empty (family-loader case), the thread
-      //     round-robins through the registered steps. Each step internally
-      //     runs one TX on BG_WORKER and increments its own counter; we just
-      //     bump the aggregate bg_count once per step call.
+      //     dispatches steps by time-balance fairness: always pick the step
+      //     with the smallest cumulative elapsed seconds. When there is only
+      //     one step, this collapses to "always pick index 0". When there
+      //     are multiple steps with similar per-call cost (e.g. Q3 vs Q5 at
+      //     SF=380) the visit ratio is ~1:1; when step costs differ widely
+      //     (e.g. heavy family-query step vs cheap point-lookup step), the
+      //     cheaper step runs more often to keep wall-clock allocation
+      //     balanced 1:1:...:1.
       //   - Otherwise (single-binary fallback), the thread re-runs the
       //     foreground query back-to-back on BG_WORKER.
       std::thread bg_thread;
@@ -119,14 +124,25 @@ struct TpchExecutableHelper {
             bg_running = true;
             std::vector<AggRow> bg_out;
             bg_out.reserve(8);
-            size_t bg_iter = 0;
             const bool use_registry = !bg_query_steps.empty();
+            // Cumulative elapsed seconds per registered step. Pick the step
+            // with the smallest cumulative time each iteration.
+            std::vector<double> bg_step_elapsed(bg_query_steps.size(), 0.0);
             while (keep_running.load()) {
                jumpmuTry()
                {
                   if (use_registry) {
-                     bg_query_steps[bg_iter % bg_query_steps.size()]();
-                     ++bg_iter;
+                     // Smallest-cumulative-elapsed pick. With one step this
+                     // is just index 0; with N steps it time-balances 1:...:1.
+                     size_t pick = 0;
+                     for (size_t i = 1; i < bg_step_elapsed.size(); ++i) {
+                        if (bg_step_elapsed[i] < bg_step_elapsed[pick]) pick = i;
+                     }
+                     auto step_start = std::chrono::steady_clock::now();
+                     bg_query_steps[pick]();
+                     auto step_end = std::chrono::steady_clock::now();
+                     bg_step_elapsed[pick] +=
+                         std::chrono::duration<double>(step_end - step_start).count();
                   } else {
                      bg_out.clear();
                      db_traits->run_tx([&]() { wrapper.query(bg_out); }, BG_WORKER);

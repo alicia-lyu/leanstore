@@ -79,8 +79,9 @@ int main(int argc, char** argv)
 
    using AggRow = tpch::q5::q5_agg_row_t;
    auto bg_steps = FLAGS_bg_query_thread
-                       ? tpch::register_vanilla_bg_steps<B>(db_traits, q3, q5,
-                                                            FLAGS_storage_structure)
+                       ? tpch::register_vanilla_bg_steps<B>(db_traits, tpch, q3, q5,
+                                                            FLAGS_storage_structure,
+                                                            FLAGS_bg_point_lookups)
                        : std::vector<tpch::BgStepFn>{};
 
    switch (FLAGS_storage_structure) {

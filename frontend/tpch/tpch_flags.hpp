@@ -33,6 +33,12 @@ TPCH_FLAG_BOOL(bg_query_thread, false,
                "on a second worker, back-to-back, for the duration of the foreground "
                "TX loop. Measures how the foreground throughput holds up under "
                "concurrent same-query contention. No writes, no cross-query work.");
+TPCH_FLAG_BOOL(bg_point_lookups, false,
+               "If true and --bg_query_thread=true, the bg cohort also includes "
+               "a point-lookup step that picks a random base table and random PK "
+               "and calls adapter.lookup1. Models noisy-neighbor contention from "
+               "a workload using different secondaries than the foreground query. "
+               "When --bg_query_thread=false, this flag has no effect.");
 TPCH_FLAG_BOOL(log_progress, true, "Log loading/query progress");
 TPCH_FLAG_BOOL(micro_perf, false,
                "Capture RocksDB PerfContext / IOStatsContext per query and print totals");

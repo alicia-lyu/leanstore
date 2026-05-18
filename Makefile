@@ -35,6 +35,7 @@ tentative_skip_bytes	:= 0 # do no tentative skip bytes
 bgw_pct 		  		:= 0 # background write percentage (TPC-H per-query binaries only; pinned to 0 by upstream race)
 geo_bg_thread       	:= false # run a geo-only maintain/erase background thread (geo binaries only)
 bg_query_thread     	:= false # TPC-H contention axis: cycle family read-only queries on a bg worker
+bg_point_lookups    	:= false # bg cohort includes point-lookup step (only meaningful when bg_query_thread=true)
 
 # Diagnostic flags (Q3I A1 / cross-backend perf attribution).
 # Opt-in: pass `micro_perf=true cfstats=true` on the make command line.

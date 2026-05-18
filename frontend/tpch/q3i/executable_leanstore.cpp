@@ -113,8 +113,9 @@ int main(int argc, char** argv)
 
    LeanStoreTraits db_traits(crm);
    auto bg_steps = FLAGS_bg_query_thread
-                       ? tpch::register_tpchi_bg_steps<B>(db_traits, q3i, q5i,
-                                                          FLAGS_storage_structure)
+                       ? tpch::register_tpchi_bg_steps<B>(db_traits, tpch, q3i, q5i,
+                                                          FLAGS_storage_structure,
+                                                          FLAGS_bg_point_lookups)
                        : std::vector<tpch::BgStepFn>{};
 
    using AggRow = tpch::q3i::q3i_agg_row_t;

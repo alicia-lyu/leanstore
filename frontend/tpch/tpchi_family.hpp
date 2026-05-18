@@ -119,21 +119,113 @@ inline std::vector<BgStepFn> register_tpchi_bg_steps_at(
    return steps;
 }
 
+// Sample a random invoicekey from the loaded invoice range. Lives here
+// (not in tpchi_workload.hpp) because tpchi_workload.hpp is in
+// LOADING_META_FILES — bumping its mtime invalidates every persisted
+// tpchi_*/build/<sf>.json and forces a fresh multi-minute reload.
+// tpchi_family.hpp is bg-cohort-only, so changes here don't invalidate
+// load images.
+//
+// Per loadInvoiceAndLinkLineitem(), invoicekeys are dense
+// [1 .. 2 * |orders|] (~2 invoices per order). `last_order_id` is the
+// sparse last orderkey, which slightly over-estimates the upper bound
+// — the sparse mapping multiplies by 32/8. For a contention workload
+// that's fine: occasional misses are tolerated by tryLookup.
+template <template <typename> class AdapterType>
+inline Integer tpchi_random_invoicekey(TPCHIWorkload<AdapterType>& tpch)
+{
+   return urand(1, std::max(Integer(1), 2 * tpch.last_order_id));
+}
+
+// bg=2 cohort helper for the invoice-extended family. Same shape as
+// make_tpch_point_lookup_step in tpch_vanilla_family.hpp, with the
+// 9-table TPCHi base set (vanilla 8 + invoice). The lineitem adapter
+// here is typed on lineitem_i_t (FK-bearing variant); the cohort still
+// works on PK ((l_orderkey, l_linenumber)) which is unchanged from
+// lineitem_t.
+template <typename Backend>
+inline BgStepFn make_tpchi_point_lookup_step(
+    DBTraits& db_traits,
+    TPCHIWorkload<Backend::template Adapter>& tpch)
+{
+   return [&db_traits, &tpch]() {
+      // 9 invoice-extended base tables; pick one uniformly per call.
+      const Integer pick = urand(0, 8);
+      db_traits.run_tx([&]() {
+         switch (pick) {
+            case 0: {
+               part_t::Key k{tpch.getPartID()};
+               tpch.part.tryLookup(k, [](const part_t&) {});
+               break;
+            }
+            case 1: {
+               supplier_t::Key k{tpch.getSupplierID()};
+               tpch.supplier.tryLookup(k, [](const supplier_t&) {});
+               break;
+            }
+            case 2: {
+               partsupp_t::Key k{tpch.getPartID(), tpch.getSupplierID()};
+               tpch.partsupp.tryLookup(k, [](const partsupp_t&) {});
+               break;
+            }
+            case 3: {
+               customerh_t::Key k{tpch.getCustomerID()};
+               tpch.customer.tryLookup(k, [](const customerh_t&) {});
+               break;
+            }
+            case 4: {
+               orders_t::Key k{tpch.getOrderID()};
+               tpch.orders.tryLookup(k, [](const orders_t&) {});
+               break;
+            }
+            case 5: {
+               lineitem_i_t::Key k{tpch.getOrderID(), urand(1, 7)};
+               tpch.lineitem.tryLookup(k, [](const lineitem_i_t&) {});
+               break;
+            }
+            case 6: {
+               nation_t::Key k{tpch.getNationID()};
+               tpch.nation.tryLookup(k, [](const nation_t&) {});
+               break;
+            }
+            case 7: {
+               region_t::Key k{tpch.getRegionID()};
+               tpch.region.tryLookup(k, [](const region_t&) {});
+               break;
+            }
+            case 8:
+            default: {
+               invoice_t::Key k{tpchi_random_invoicekey(tpch)};
+               tpch.invoice.tryLookup(k, [](const invoice_t&) {});
+               break;
+            }
+         }
+      }, BG_WORKER);
+   };
+}
+
 template <typename Backend>
 inline std::vector<BgStepFn> register_tpchi_bg_steps(
     DBTraits& db_traits,
+    TPCHIWorkload<Backend::template Adapter>& tpch,
     tpch::q3i::Q3IWorkload<Backend>& q3i_workload,
     tpch::q5i::Q5IWorkload<Backend>& q5i_workload,
-    int structure)
+    int structure,
+    bool include_point_lookups)
 {
+   std::vector<BgStepFn> steps;
    switch (structure) {
-      case 1: return register_tpchi_bg_steps_at<Backend, 1>(db_traits, q3i_workload, q5i_workload);
-      case 2: return register_tpchi_bg_steps_at<Backend, 2>(db_traits, q3i_workload, q5i_workload);
-      case 3: return register_tpchi_bg_steps_at<Backend, 3>(db_traits, q3i_workload, q5i_workload);
-      case 4: return register_tpchi_bg_steps_at<Backend, 4>(db_traits, q3i_workload, q5i_workload);
-      case 5: return register_tpchi_bg_steps_at<Backend, 5>(db_traits, q3i_workload, q5i_workload);
+      case 1: steps = register_tpchi_bg_steps_at<Backend, 1>(db_traits, q3i_workload, q5i_workload); break;
+      case 2: steps = register_tpchi_bg_steps_at<Backend, 2>(db_traits, q3i_workload, q5i_workload); break;
+      case 3: steps = register_tpchi_bg_steps_at<Backend, 3>(db_traits, q3i_workload, q5i_workload); break;
+      case 4: steps = register_tpchi_bg_steps_at<Backend, 4>(db_traits, q3i_workload, q5i_workload); break;
+      case 5: steps = register_tpchi_bg_steps_at<Backend, 5>(db_traits, q3i_workload, q5i_workload); break;
       default: throw std::runtime_error("register_tpchi_bg_steps: invalid storage_structure");
    }
+   if (include_point_lookups) {
+      steps.push_back(make_tpchi_point_lookup_step<Backend>(db_traits, tpch));
+   }
+   return steps;
 }
 
 }  // namespace tpch

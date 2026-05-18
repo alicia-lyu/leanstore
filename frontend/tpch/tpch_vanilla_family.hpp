@@ -132,21 +132,92 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps_at(
    return steps;
 }
 
+// bg=2 cohort helper: append a heterogeneous point-lookup step that picks a
+// random base table and random PK from the loaded vanilla TPC-H set (8
+// tables) and calls adapter.lookup1. Tolerates not-found via tryLookup
+// (LeanStore lookup1 throws on miss; TPC-H PK ranges are sparse, e.g.
+// orderkey populates only 8/32 sequential slots, so random PKs miss often).
+// Routed through DBTraits::run_tx on BG_WORKER as one TX per call.
+template <typename Backend>
+inline BgStepFn make_tpch_point_lookup_step(
+    DBTraits& db_traits,
+    TPCHWorkload<Backend::template Adapter>& tpch)
+{
+   return [&db_traits, &tpch]() {
+      // 8 vanilla base tables; pick one uniformly per call.
+      const Integer pick = urand(0, 7);
+      db_traits.run_tx([&]() {
+         switch (pick) {
+            case 0: {
+               part_t::Key k{tpch.getPartID()};
+               tpch.part.tryLookup(k, [](const part_t&) {});
+               break;
+            }
+            case 1: {
+               supplier_t::Key k{tpch.getSupplierID()};
+               tpch.supplier.tryLookup(k, [](const supplier_t&) {});
+               break;
+            }
+            case 2: {
+               partsupp_t::Key k{tpch.getPartID(), tpch.getSupplierID()};
+               tpch.partsupp.tryLookup(k, [](const partsupp_t&) {});
+               break;
+            }
+            case 3: {
+               customerh_t::Key k{tpch.getCustomerID()};
+               tpch.customer.tryLookup(k, [](const customerh_t&) {});
+               break;
+            }
+            case 4: {
+               orders_t::Key k{tpch.getOrderID()};
+               tpch.orders.tryLookup(k, [](const orders_t&) {});
+               break;
+            }
+            case 5: {
+               lineitem_t::Key k{tpch.getOrderID(), urand(1, 7)};
+               tpch.lineitem.tryLookup(k, [](const lineitem_t&) {});
+               break;
+            }
+            case 6: {
+               nation_t::Key k{tpch.getNationID()};
+               tpch.nation.tryLookup(k, [](const nation_t&) {});
+               break;
+            }
+            case 7:
+            default: {
+               region_t::Key k{tpch.getRegionID()};
+               tpch.region.tryLookup(k, [](const region_t&) {});
+               break;
+            }
+         }
+      }, BG_WORKER);
+   };
+}
+
 // Convenience entry point that switches on FLAGS_storage_structure at runtime.
+// If include_point_lookups is true (bg=2), append the heterogeneous
+// point-lookup step to the cohort returned for that structure.
 template <typename Backend>
 inline std::vector<BgStepFn> register_vanilla_bg_steps(
     DBTraits& db_traits,
+    TPCHWorkload<Backend::template Adapter>& tpch,
     tpch::q3::Q3Workload<Backend>& q3_workload,
     tpch::q5::Q5Workload<Backend>& q5_workload,
-    int structure)
+    int structure,
+    bool include_point_lookups)
 {
+   std::vector<BgStepFn> steps;
    switch (structure) {
-      case 1: return register_vanilla_bg_steps_at<Backend, 1>(db_traits, q3_workload, q5_workload);
-      case 2: return register_vanilla_bg_steps_at<Backend, 2>(db_traits, q3_workload, q5_workload);
-      case 3: return register_vanilla_bg_steps_at<Backend, 3>(db_traits, q3_workload, q5_workload);
-      case 4: return register_vanilla_bg_steps_at<Backend, 4>(db_traits, q3_workload, q5_workload);
+      case 1: steps = register_vanilla_bg_steps_at<Backend, 1>(db_traits, q3_workload, q5_workload); break;
+      case 2: steps = register_vanilla_bg_steps_at<Backend, 2>(db_traits, q3_workload, q5_workload); break;
+      case 3: steps = register_vanilla_bg_steps_at<Backend, 3>(db_traits, q3_workload, q5_workload); break;
+      case 4: steps = register_vanilla_bg_steps_at<Backend, 4>(db_traits, q3_workload, q5_workload); break;
       default: throw std::runtime_error("register_vanilla_bg_steps: invalid storage_structure");
    }
+   if (include_point_lookups) {
+      steps.push_back(make_tpch_point_lookup_step<Backend>(db_traits, tpch));
+   }
+   return steps;
 }
 
 }  // namespace tpch
