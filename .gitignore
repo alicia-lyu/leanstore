@@ -17,9 +17,21 @@ debug*
 release*
 clang*
 paper*
+# Whitelist the small, paper-tracked summary tier under paper-data/<tag>/.
+# Raw per-run CSVs (paper-data/<tag>/raw/) stay ignored — they are large
+# (3+ GiB per cell) and reproducible from the binaries via the runner.
+# See PAPER_SWEEP.md §Output format.
+!paper-data/
+!paper-data/*/
+!paper-data/*/summary/
+!paper-data/*/summary/*
+!paper-data/*/manifest.yaml
+!paper-data/*/run.log
 *.err
 *.out
 *.csv
+# Re-allow summary CSVs after the broad *.csv ignore above.
+!paper-data/*/summary/*.csv
 /size/
 /.vscode/
 stderr.txt
