@@ -442,4 +442,18 @@ else
     log "analyzer not found at $ANALYZER; skipping summary CSV emission"
 fi
 
+# Run plotter — emits paper-data/<tag>/figures/{...}.{pdf,png}.
+# See scripts/PLOTTING.md for the figure catalog.
+PLOTTER="${REPO_ROOT}/scripts/plot_paper_sweep.py"
+if [[ -x "$PLOTTER" || -f "$PLOTTER" ]]; then
+    log "running plotter..."
+    if python3 "$PLOTTER" --tag "$TAG" --root "$OUT_DIR" >> "$LOG" 2>&1; then
+        log "plotter: ok"
+    else
+        log "plotter: FAILED (see $LOG) — non-fatal, summary CSVs still valid"
+    fi
+else
+    log "plotter not found at $PLOTTER; skipping figure emission"
+fi
+
 log "all done"

@@ -156,11 +156,23 @@ build/                                       # gitignored; raw CSVs per make-tar
 
 paper-data/<sweep-tag>/                      # git-tracked; one per sweep run
   manifest.yaml                              # cell list + commit SHA + host info
-  headline.csv                               # one row per (binary,cell,struct,bg,rep) — paper-direct
-  diagnostics.csv                            # one row per (binary,cell,struct,bg,rep) — attribution columns
-  inversions.csv                             # S3-vs-S2 inversions flagged by analyzer (empty if none)
-  stats.csv                                  # median + IQR across reps, one row per (binary,cell,struct,bg)
+  summary/
+    headline.csv                             # one row per (binary,cell,struct,bg,rep) — paper-direct
+    diagnostics.csv                          # one row per (binary,cell,struct,bg,rep) — attribution columns
+    inversions.csv                           # S3-vs-S2 inversions flagged by analyzer (empty if none)
+    stats.csv                                # median + IQR across reps, one row per (binary,cell,struct,bg)
+  figures/                                   # emitted by scripts/plot_paper_sweep.py
+    headline_{tpch,geo}_vs_{dram,secondary}.{pdf,png}
+    contention_dropoff.{pdf,png}
+    inversions.{pdf,png}
+    s3_vs_s2_speedup.{pdf,png}
+    duration_baseline.{pdf,png}
+    diagnostics_attribution.{pdf,png}
 ```
+
+See [`scripts/PLOTTING.md`](scripts/PLOTTING.md) for the figure
+catalog and the design of `plot_paper_sweep.py`. The runner script
+invokes the plotter automatically after the analyzer succeeds.
 
 `<sweep-tag>` is the day plus a letter suffix (e.g. `2026-05-18-a`)
 so successive sweeps don't collide. The runner pipes `build/.../*.csv`
