@@ -11,6 +11,12 @@
 DECLARE_int32(storage_structure);
 DECLARE_bool(geo_bg_thread);
 DEFINE_bool(log_progress, true, "Log progress of the workload execution");
+// Skip join-n / mixed-n / distinct-n in tput_tx. Those phases override the
+// tx_seconds budget via keep_running_condition() — they run until a full
+// nation-scan completes (~42 min/phase at SF=19 on mat_view, c2). Default
+// true to keep the sweep wall-time bounded; flip off only when we explicitly
+// want full nation-scan numbers.
+DEFINE_bool(geo_skip_n_queries, true, "Skip join-n / mixed-n / distinct-n phases (they ignore tx_seconds)");
 
 template <typename PerStructureWorkloadFull,
           template <typename> class AdapterType,
@@ -57,15 +63,21 @@ struct ExecutableHelper {
 
       schedule_bg_txs();
 
-      tput_tx(std::bind(&PerStructureWorkloadFull::join_n, workload.get()), "join-n");
+      if (!FLAGS_geo_skip_n_queries) {
+         tput_tx(std::bind(&PerStructureWorkloadFull::join_n, workload.get()), "join-n");
+      }
       tput_tx(std::bind(&PerStructureWorkloadFull::join_ns, workload.get()), "join-ns");
       tput_tx(std::bind(&PerStructureWorkloadFull::join_nsc, workload.get()), "join-nsc");
 
-      tput_tx(std::bind(&PerStructureWorkloadFull::mixed_n, workload.get()), "mixed-n");
+      if (!FLAGS_geo_skip_n_queries) {
+         tput_tx(std::bind(&PerStructureWorkloadFull::mixed_n, workload.get()), "mixed-n");
+      }
       tput_tx(std::bind(&PerStructureWorkloadFull::mixed_ns, workload.get()), "mixed-ns");
       tput_tx(std::bind(&PerStructureWorkloadFull::mixed_nsc, workload.get()), "mixed-nsc");
 
-      tput_tx(std::bind(&PerStructureWorkloadFull::distinct_n, workload.get()), "distinct-n");
+      if (!FLAGS_geo_skip_n_queries) {
+         tput_tx(std::bind(&PerStructureWorkloadFull::distinct_n, workload.get()), "distinct-n");
+      }
       tput_tx(std::bind(&PerStructureWorkloadFull::distinct_ns, workload.get()), "distinct-ns");
       tput_tx(std::bind(&PerStructureWorkloadFull::distinct_nsc, workload.get()), "distinct-nsc");
 
