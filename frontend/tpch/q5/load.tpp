@@ -141,6 +141,12 @@ void Q5Workload<Backend>::populate_secondaries()
 }
 
 template <typename Backend>
+void Q5Workload<Backend>::populate_view_only()
+{
+   populate_q5_view<Backend>(customer, nation, orders, lineitem, pipeline_view);  // S2
+}
+
+template <typename Backend>
 void Q5Workload<Backend>::load()
 {
    tpch.load();

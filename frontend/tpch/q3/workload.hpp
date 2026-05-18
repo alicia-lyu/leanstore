@@ -127,6 +127,12 @@ class Q3Workload
    // tpch.load() before this call. Used by family loaders that share one
    // tpch.load() across multiple per-query workloads.
    void   populate_secondaries();
+   // Populates only the per-query pipeline view (S2). Family-shared
+   // structures (col.populate_split, col.populate_merged) are NOT
+   // populated. Used by family loaders so the family-shared secondaries
+   // are written exactly once (writing them twice hits LeanStore
+   // duplicate-key errors; LSM tolerates it via upsert semantics).
+   void   populate_view_only();
    // Convenience: tpch.load() + populate_secondaries(). Used by single-query
    // executables that don't compose with a family loader.
    void   load();

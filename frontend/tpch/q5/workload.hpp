@@ -207,6 +207,10 @@ class Q5Workload
    // See Q3Workload::populate_secondaries() for the load-vs-secondaries split
    // rationale (family loader composition).
    void   populate_secondaries();
+   // See Q3Workload::populate_view_only() — populates only q5's pipeline
+   // view so family-shared col.populate_{split,merged} runs exactly once
+   // across all family members.
+   void   populate_view_only();
    void   load();
    double get_size() const;
 };

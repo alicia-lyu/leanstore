@@ -36,8 +36,14 @@ inline void load_tpchi_family(TPCHIWorkload<Backend::template Adapter>& tpch,
                               tpch::q5i::Q5IWorkload<Backend>& q5i)
 {
    tpch.load();
+   // q3i owns the family-shared coli.populate_{split,merged,aggregated} via
+   // its full populate_secondaries() and additionally populates its own
+   // pipeline view. q5i only populates its own view so the family-shared
+   // adapters (held by reference inside both q3i.coli and q5i.coli) aren't
+   // written twice. LeanStore B-tree returns OP_RESULT::DUPLICATE on the
+   // second insert; RocksDB silently overwrites and hid this bug.
    q3i.populate_secondaries();
-   q5i.populate_secondaries();
+   q5i.populate_view_only();
 }
 
 namespace detail::tpchi

@@ -82,6 +82,12 @@ void Q5IWorkload<Backend>::populate_secondaries()
 }
 
 template <typename Backend>
+void Q5IWorkload<Backend>::populate_view_only()
+{
+   populate_q5i_view();
+}
+
+template <typename Backend>
 void Q5IWorkload<Backend>::load()
 {
    tpch.load();

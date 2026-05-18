@@ -107,6 +107,12 @@ void Q3Workload<Backend>::populate_secondaries()
 }
 
 template <typename Backend>
+void Q3Workload<Backend>::populate_view_only()
+{
+   populate_q3_view<Backend>(customer, orders, lineitem, pipeline_view);  // S2
+}
+
+template <typename Backend>
 void Q3Workload<Backend>::load()
 {
    tpch.load();

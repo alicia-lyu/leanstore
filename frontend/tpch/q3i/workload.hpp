@@ -269,6 +269,11 @@ class Q3IWorkload
    // See Q3Workload::populate_secondaries() for the load-vs-secondaries split
    // rationale (family loader composition).
    void   populate_secondaries();
+   // See Q3Workload::populate_view_only(). Populates only the q3i pipeline
+   // view so the family-shared coli adapters (held by reference inside both
+   // q3i.coli and q5i.coli) aren't written twice across one
+   // load_tpchi_family() call.
+   void   populate_view_only();
    void   load();
    double get_size() const;
 };

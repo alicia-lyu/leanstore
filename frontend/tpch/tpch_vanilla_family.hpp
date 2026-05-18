@@ -49,8 +49,15 @@ inline void load_vanilla_family(TPCHWorkload<Backend::template Adapter>& tpch,
                                 tpch::q5::Q5Workload<Backend>& q5)
 {
    tpch.load();
+   // q3 owns the family-shared col.populate_{split,merged} via its full
+   // populate_secondaries() and additionally populates its own pipeline
+   // view. q5 only populates its own view here so the family-shared
+   // adapters (merged_col, split_orders, split_lineitem — which both
+   // workloads hold references to) aren't written twice. LeanStore
+   // B-tree returns OP_RESULT::DUPLICATE on the second insert; RocksDB
+   // silently overwrites and hid this bug.
    q3.populate_secondaries();
-   q5.populate_secondaries();
+   q5.populate_view_only();
 }
 
 // Per-structure wrapper holders. Owned by the BgStepFn closures (each step

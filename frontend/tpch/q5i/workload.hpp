@@ -104,6 +104,10 @@ class Q5IWorkload
    // See Q3Workload::populate_secondaries() for the load-vs-secondaries split
    // rationale (family loader composition).
    void   populate_secondaries();
+   // See Q3Workload::populate_view_only(). Populates only the q5i view via
+   // populate_q5i_view() so the family-shared coli adapters aren't written
+   // twice across one load_tpchi_family() call.
+   void   populate_view_only();
    void   load();
    double get_size() const;
 
