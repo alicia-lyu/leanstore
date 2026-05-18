@@ -332,9 +332,15 @@ class Experiment:
         print(f"\t{create_image_cmd}")
         print()
 
-        # rule to copy image file to a temporary "test field"
+        # rule to copy image file to a temporary "test field". image_temp must
+        # depend on the BUILD-mode recover-file (production binary writes it),
+        # not self.recover_file (which is build-debug here because generate_image
+        # only runs from the build-debug Experiment iteration). Depending on
+        # build-debug pulled in the lldb-driven debug load recipe, which fails
+        # with exit 127 on hosts that don't have lldb installed.
         if "lsm" not in self.exec_fname:
-            print(f"{self.image_path}_temp: {self.recover_file} {self.image_path} FORCE") # force duplicate; check recover target before image_path target
+            build_recover_file = data_disk / image_basename(self.exec_fname) / "build" / f"{SCALE_ENV}.json"
+            print(f"{self.image_path}_temp: {build_recover_file} {self.image_path} FORCE") # force duplicate; check recover target before image_path target
             self.console_print_subsection(f"Copying image file {self.image_path} to {self.image_path}_temp")
             print(f"\t{copy_image_cmd}")
             print()
