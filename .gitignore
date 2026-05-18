@@ -26,7 +26,11 @@ paper*
 !paper-data/*/summary/
 !paper-data/*/summary/*
 !paper-data/*/manifest.yaml
-!paper-data/*/run.log
+# Operational log of the runner — large and not paper material.
+paper-data/*/run.log
+paper-data/*/sweep.out
+paper-data/*/sweep.err
+paper-data/*/sweep.pid
 *.err
 *.out
 *.csv
