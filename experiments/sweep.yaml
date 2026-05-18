@@ -1,0 +1,132 @@
+# Paper-sweep manifest — machine-readable matrix.
+#
+# Source of truth for the paper-ready perf sweep.
+# Keep in sync with ../PAPER_SWEEP.md (the prose spec).
+#
+# Conventions:
+#   - SF and DRAM are absolute values; the runner translates them into
+#     make-target variables (`scale=…`, `dram=…`).
+#   - Each `binaries:` group shares one persisted .json image; the
+#     family loader (frontend/tpch/tpch_vanilla_family.hpp /
+#     tpchi_family.hpp) ensures every binary in the group can mount
+#     the same image at any --storage_structure.
+#   - `structures:` is the list of --storage_structure values to run
+#     per binary. Q3I S5 (aCOLI) is omitted by design — deferred from
+#     the paper sweep per frontend/tpch/PLAYBOOK.md §S5.
+#   - `bg:` lists the --bg_query_thread / --geo_bg_thread settings to
+#     measure. `0` is foreground-isolated; `1` is the contention run.
+#   - `reps:` repetitions per (binary, cell, structure, bg). The runner
+#     aggregates median + IQR across reps in stats.csv.
+
+reps: 3
+tx_seconds: 15           # per --tx_seconds; foreground TX-loop duration
+
+# Each cell pins (DRAM, target main-secondary size). SF is backend×
+# benchmark-specific because per-SF density differs:
+#
+#   TPC-H families:
+#     LSM:   ~1.3 MiB main-secondary per SF    (from frontend/tpch/RUNS.md
+#     BTree: ~3.3 MiB main-secondary per SF     Target-SF table)
+#
+#   Geo merged-index (S3), measured empirically at geo_scale_factor=15
+#   on 2026-05-18 (CloudLab node0, both backends):
+#     LSM:    145.77 MiB at SF=15  →  ~9.7 MiB/SF
+#     BTree:  386.38 MiB at SF=15  →  ~25.8 MiB/SF  (2.65x LSM)
+#
+#   Per-structure context at the same load (LSM | BTree, MiB):
+#     S1 indexes      :  150.90 |  367.16  (similar to S3)
+#     S2 view total   :  252.28 | 1266.53  (5x BTree relative to LSM —
+#                                          BTree's encoding favours
+#                                          point lookup over compaction)
+#     S3 merged       :  145.77 |  386.38  (paper headline)
+#
+# Geo SFs below are sized to target the same per-structure secondary
+# size as the TPC-H cells, using the S3 merged density as reference.
+cells:
+  - tag: c0
+    dram_gib: 1.0
+    target_secondary_gib: 5
+    sf_lsm: 3850
+    sf_btree: 1550
+    sf_geo_lsm: 515
+    sf_geo_btree: 194
+    regime: anchor-1to5
+    purpose: "user-requested anchor; main secondary 5x DRAM"
+  - tag: c1
+    dram_gib: 0.4
+    target_secondary_gib: 2
+    sf_lsm: 1500
+    sf_btree: 620
+    sf_geo_lsm: 206
+    sf_geo_btree: 78
+    regime: paper-baseline
+    purpose: "matches prior q5i_btree commit a8513db5; 1:5 ratio"
+  - tag: c2
+    dram_gib: 0.1
+    target_secondary_gib: 0.5
+    sf_lsm: 380
+    sf_btree: 150
+    sf_geo_lsm: 52
+    sf_geo_btree: 19
+    regime: small-beyond-memory
+    purpose: "smallest beyond-memory cell; faster reload for development"
+  - tag: c3
+    dram_gib: 0.4
+    target_secondary_gib: 5
+    sf_lsm: 3850
+    sf_btree: 1550
+    sf_geo_lsm: 515
+    sf_geo_btree: 194
+    regime: dram-pressured-same-sf-as-c0
+    purpose: "same SF as c0, less DRAM; isolates DRAM pressure at fixed secondary size"
+
+families:
+  - tag: tpch
+    description: "Vanilla COL family {Q3, Q5}"
+    binaries: [q3_lsm, q3_btree, q5_lsm, q5_btree]
+    structures: [1, 2, 3, 4]
+    bg: [0, 1]
+    image_dir_pattern: "$(data_disk)/tpch_{lsm,btree}/"
+    scale_flag: tpch_scale_factor
+
+  - tag: tpchi
+    description: "Invoice-extended COLI family {Q3I, Q5I}"
+    binaries: [q3i_lsm, q3i_btree, q5i_lsm, q5i_btree]
+    structures: [1, 2, 3, 4]
+    bg: [0, 1]
+    image_dir_pattern: "$(data_disk)/tpchi_{lsm,btree}/"
+    scale_flag: tpch_scale_factor
+
+  - tag: geo
+    description: "Geo microbenchmark (decoupled from TPC-H)"
+    binaries: [geo_lsm, geo_btree]
+    structures: [1, 2, 3, 4]
+    bg: [0, 1]
+    image_dir_pattern: "$(data_disk)/geo_{lsm,btree}/"
+    scale_flag: geo_scale_factor
+    bg_flag: geo_bg_thread
+
+# Excluded from paper sweep (kept here so the omission is documented,
+# not accidental):
+excluded:
+  - binary: q12_lsm
+    reason: "OL pipeline (different from COL/COLI); not directly comparable"
+  - binary: q12_btree
+    reason: "OL pipeline (different from COL/COLI); not directly comparable"
+  - structure: q3i.5
+    reason: "aCOLI MI deferred from paper sweep — PLAYBOOK.md §S5"
+  - binary: q9_*
+    reason: "skeleton only; query_by_* bodies TODO"
+  - binary: q10i_*
+    reason: "design-doc only; skeleton not implemented"
+
+# Output binding — see PAPER_SWEEP.md §Output format for the full schema.
+output:
+  raw_dir_pattern:  "build/{binary}/{sweep_tag}/{cell_tag}-bg{bg}-r{rep}/"
+  summary_dir:      "paper-data/{sweep_tag}/"
+  files:
+    - headline.csv
+    - diagnostics.csv
+    - inversions.csv
+    - stats.csv
+    - manifest.yaml

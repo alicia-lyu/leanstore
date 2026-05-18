@@ -38,11 +38,25 @@ fill-factor headroom and lack of block compression in this tree.
 
 To land secondary sizes of 2 / 5 / 20 GiB:
 
-| Target secondary | LSM SF (~1.3 MiB/SF) | BTree SF (~3.3 MiB/SF) | DRAM (1/5 rule) |
-|------------------|---------------------:|-----------------------:|-----------------|
-| 2 GiB            | ~1500                | ~620                   | 0.4 GiB         |
-| 5 GiB            | ~3850                | ~1550                  | 1 GiB           |
-| 20 GiB           | ~15000               | ~6200                  | 4 GiB           |
+| Target secondary | LSM SF (~1.3 MiB/SF) | BTree SF (~3.3 MiB/SF) | Geo LSM (~9.7 MiB/SF) | Geo BTree (~25.8 MiB/SF) | DRAM (1/5 rule) |
+|------------------|---------------------:|-----------------------:|----------------------:|-------------------------:|-----------------|
+| 0.5 GiB          | ~380                 | ~150                   | ~52                   | ~19                      | 0.1 GiB         |
+| 2 GiB            | ~1500                | ~620                   | ~206                  | ~78                      | 0.4 GiB         |
+| 5 GiB            | ~3850                | ~1550                  | ~515                  | ~194                     | 1 GiB           |
+| 20 GiB           | ~15000               | ~6200                  | ~2060                 | ~775                     | 4 GiB           |
+
+Geo densities are empirical from a fresh load at
+`geo_scale_factor=15` on `node0` (2026-05-18):
+- LSM merged MI = 145.77 MiB at SF=15 → ~9.7 MiB/SF
+- BTree merged MI = 386.38 MiB at SF=15 → ~25.8 MiB/SF
+
+Geo is ~7× denser per SF than TPC-H because `customer2_t` carries
+the full TPC-H customer payload and the geo merged index covers the
+entire 5-table hierarchy in one tree.
+
+The paper-sweep cells (`c0..c3` in `PAPER_SWEEP.md`) consume the
+0.5 / 2 / 5 GiB rows of this table; the 20 GiB row is reserved for
+post-paper "deeply oversized" experiments.
 
 ## Machine-capacity check (CloudLab `node0`)
 
