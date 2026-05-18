@@ -28,6 +28,11 @@ TPCH_FLAG_INT(storage_structure, 1,
 TPCH_FLAG_INT(tx_seconds, 15, "Seconds to run each transaction type");
 TPCH_FLAG_INT(warmup_seconds, 0, "Warmup seconds");
 TPCH_FLAG_INT(bgw_pct, 0, "Percentage of background write transactions");
+TPCH_FLAG_BOOL(bg_query_thread, false,
+               "Spawn a read-only background thread that runs the same foreground query "
+               "on a second worker, back-to-back, for the duration of the foreground "
+               "TX loop. Measures how the foreground throughput holds up under "
+               "concurrent same-query contention. No writes, no cross-query work.");
 TPCH_FLAG_BOOL(log_progress, true, "Log loading/query progress");
 TPCH_FLAG_BOOL(micro_perf, false,
                "Capture RocksDB PerfContext / IOStatsContext per query and print totals");
