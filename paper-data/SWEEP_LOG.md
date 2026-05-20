@@ -100,8 +100,8 @@ Summary CSVs: `headline.csv` 472 rows, `stats.csv` 185 rows, `inversions.csv` 51
 
 ## Paper coverage — gaps
 
-**Real gap (must close before paper)**:
-- **c2 bg=2** (TPC-H + geo_lsm + geo_btree) is missing. `-a` covered c2 only at bg=0/1; `-b` skips c2 entirely. The `headline_*_vs_secondary` plot needs c2→c1→c0 at the same bg regime — currently it would render starting at c1. Queue a small `-c` sweep at the end of `-b` to fill this (`--cells c2 --families tpch,tpchi,geo`; ~3–5 h since SF=150–380 loads are still cached).
+**Real gap (queued)**:
+- **c2 bg=2** (TPC-H + geo_lsm + geo_btree) — queued. `experiments/chain_c2_after_b.sh` (PID 245948 on 2026-05-19) polls -b's PID and auto-launches tag `2026-05-18-c` with `--cells c2 --families tpch,tpchi,geo` when -b exits. c2 images are cached so it's a runs-only sweep (~3–5 h). When it lands, the `headline_*_vs_secondary` plot will have c2→c1→c0 under the same bg=2 regime.
 
 **Not gaps — accepted**:
 - **bg=0 / bg=1 at c1/c3/c0**: dropped by design when we moved to bg=2-only. Paper claim is "S3 holds up under realistic mixed contention", not "S3 wins vs isolated baseline at every SF".
