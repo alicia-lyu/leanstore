@@ -23,10 +23,11 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - **Total estimate: ~60–80 h** from start (originally 18–24 h — q5_btree at SF=1550 s4 hash join is dominant, ~74 min/rep).
 
 **Latest status** (most-recent first):
-- **2026-05-20 13:30 UTC** (~42 h in): tpchi loads complete; q3i_lsm c3 runs starting.
+- **2026-05-20 16:35 UTC** (~45 h in): q3i_lsm c3 complete; q3i_btree c3 started.
   - c1: ✓ all 8 TPC-H binaries.
-  - c3: ✓ vanilla COL family (q3/q5 × lsm/btree). tpchi_lsm SF=3850 load done at 08:07 (2h28m); tpchi_btree SF=1550 load done at 12:55 (4h47m — slow due to rwsem-serialised dio writes, but progressed). **q3i_lsm c3 in rep 1 / structure 3** at the moment.
-  - c0: pending. Remaining ≈ 4 tpchi at c3 + all 8 at c0 + geo phase.
+  - c3: ✓ vanilla COL family (q3/q5 × lsm/btree) + q3i_lsm. **q3i_btree c3 SF=1550 started at 15:51**; q5i_lsm, q5i_btree pending at c3.
+  - c0: pending. Remaining ≈ 3 tpchi at c3 + all 8 at c0 + geo phase.
+- 2026-05-20 13:30 UTC — tpchi loads done; q3i_lsm c3 starting.
 - 2026-05-20 05:39 UTC — c3 vanilla COL family done; tpchi loading.
 - 2026-05-18 19:21 UTC — Phase 1 started.
 
