@@ -23,11 +23,11 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - **Total estimate: ~60–80 h** from start (originally 18–24 h — q5_btree at SF=1550 s4 hash join is dominant, ~74 min/rep).
 
 **Latest status** (most-recent first):
-- **2026-05-20 02:15 UTC** (~31 h in): zero errors in 18,549 log lines. Phase 1 cell c3 ~40% done.
-  - c1: ✓ complete for all 8 TPC-H binaries (3 reps × 4 structures × bg=2 each).
-  - c3: ✓ q3_btree, q3_lsm, q5_lsm complete; **q5_btree in rep 2/3 structure 4** at the moment.
-  - c0: pending. Remaining TPC-H = q5_btree finish + 4 tpchi at c3 + all 8 at c0 ≈ 12.5 binary-cells.
-  - First analyzer pass: 136 raw rows → 49 stats rows, 12 inversions flagged. Numbers below.
+- **2026-05-20 05:39 UTC** (~35 h in): zero errors in 19,150 log lines. Cell c3 vanilla COL family complete; tpchi starting at c3.
+  - c1: ✓ all 8 TPC-H binaries (3 reps each).
+  - c3: ✓ q3_lsm, q3_btree, q5_lsm, q5_btree (vanilla COL family done); **tpchi_lsm SF=3850 loading** — fresh load (c1 used SF=1500, c3/c0 share SF=3850, so this load amortizes across both cells).
+  - c0: pending. Remaining ≈ 4 tpchi at c3 + all 8 at c0 + geo phase.
+- 2026-05-20 02:15 UTC — c3 q3/q5 vanilla complete; q5_btree c3 r2/3 s4.
 - 2026-05-18 19:21 UTC — Phase 1 started.
 
 **Headline so far** (ms/query medians at bg=2, lower=better):
