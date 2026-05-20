@@ -1,0 +1,13 @@
+binary,cell,bg,rep,tx,s2_method,s3_method,s2_tx_per_s,s3_tx_per_s,ratio,s2_cpu_cycles_per_tx,s3_cpu_cycles_per_tx,s2_cpu_llc_miss_per_tx,s3_cpu_llc_miss_per_tx,s2_bm_p2_pct,s3_bm_p2_pct,attribution_hint
+q3_lsm,c1,2,1,query,pipeline_view,mi_col_walk,0.2124,0.153,0.7203389830508474,,,,,,,
+q3_lsm,c1,2,2,query,pipeline_view,mi_col_walk,0.2409,0.1794,0.7447073474470735,,,,,,,
+q3_lsm,c1,2,3,query,pipeline_view,mi_col_walk,0.2402,0.2209,0.9196502914238136,,,,,,,
+q3_lsm,c3,2,1,query,pipeline_view,mi_col_walk,0.09632,0.07765,0.8061669435215947,,,,,,,
+q3i_btree,c1,2,1,query,pipeline_view,mi_coli_walk,0.003209,0.002999,0.9345590526643814,,,,,,,
+q3i_btree,c1,2,2,query,pipeline_view,mi_coli_walk,0.003225,0.003008,0.9327131782945736,,,,,,,
+q3i_btree,c1,2,3,query,pipeline_view,mi_coli_walk,0.003232,0.002971,0.9192450495049506,,,,,,,
+q3i_lsm,c1,2,1,query,pipeline_view,mi_coli_walk,0.1776,0.1623,0.9138513513513513,,,,,,,
+q3i_lsm,c1,2,3,query,pipeline_view,mi_coli_walk,0.2155,0.1752,0.8129930394431555,,,,,,,
+q5i_lsm,c1,2,1,query,pipeline_view,mi_coli_walk,0.1928,0.1714,0.8890041493775933,,,,,,,
+q5i_lsm,c1,2,2,query,pipeline_view,mi_coli_walk,0.2278,0.1732,0.7603160667251975,,,,,,,
+q5i_lsm,c1,2,3,query,pipeline_view,mi_coli_walk,0.2388,0.1753,0.7340871021775545,,,,,,,

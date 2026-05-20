@@ -17,13 +17,41 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - `--geo_skip_n_queries=true` default — drops join-n / mixed-n / distinct-n (those override `tx_seconds` via `keep_running_condition` and ran ~42 min/phase at SF=19 in `-a`).
 - HEAD: `4285645c` (calcite-integration).
 
-**Projected duration** (CloudLab node, from `-a` per-cell timings):
-- Phase 1 (TPC-H): ~6 binaries-worth of load (LSM/BTree × 3 cells, c3/c0 share SF) ≈ 8–12 h load + ~3.5 h foreground runs = ~12–15 h.
-- Phase 2 (geo): with `-n` skipped, ~12 phases instead of 18 → ~4–6 h per cell × 3 cells × 2 binaries / parallelism = ~6–9 h.
-- Total ≈ 18–24 h. Halt point if needed: end of phase 1 (TPC-H rows intact).
+**Projected duration** (revised after first cell):
+- Phase 1 (TPC-H): c1 took ~15.5 h. c3+c0 share SF so loads are reusable; expect ~30 h more.
+- Phase 2 (geo): with `-n` skipped, ~24–48 h.
+- **Total estimate: ~60–80 h** from start (originally 18–24 h — q5_btree at SF=1550 s4 hash join is dominant, ~74 min/rep).
 
-**Latest status** (paste in updates here):
-- 19:21 UTC — Phase 1 started. Loading tpch_lsm SF=1500 for c1.
+**Latest status** (most-recent first):
+- **2026-05-20 02:15 UTC** (~31 h in): zero errors in 18,549 log lines. Phase 1 cell c3 ~40% done.
+  - c1: ✓ complete for all 8 TPC-H binaries (3 reps × 4 structures × bg=2 each).
+  - c3: ✓ q3_btree, q3_lsm, q5_lsm complete; **q5_btree in rep 2/3 structure 4** at the moment.
+  - c0: pending. Remaining TPC-H = q5_btree finish + 4 tpchi at c3 + all 8 at c0 ≈ 12.5 binary-cells.
+  - First analyzer pass: 136 raw rows → 49 stats rows, 12 inversions flagged. Numbers below.
+- 2026-05-18 19:21 UTC — Phase 1 started.
+
+**Headline so far** (ms/query medians at bg=2, lower=better):
+
+| binary | c1 S1 | c1 S2 | c1 S3 | c1 S4 | c3 S1 | c3 S2 | c3 S3 | c3 S4 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| q3_btree | 366703 | 292398 | **292141** | 652742 | 1018226 | 754148 | **742390** | 1843658 |
+| q3_lsm | 5949 | **4163** | 5574 | 56721 | 14863 | 11612 | **10324** | 187935 |
+| q5_btree | 355492 | 452694 | **303398** | 1433692 | 1006340 | 1204239 | **781861** | 4345937 |
+| q5_lsm | 5974 | 4619 | **4452** | 130141 | 15170 | 12120 | **10166** | 735294 |
+| q3i_btree | 498753 | **310078** | 333444 | 1340662 | — | — | — | — |
+| q3i_lsm | 9615 | **5631** | 5794 | 110803 | — | — | — | — |
+| q5i_btree | 451060 | 466636 | **347343** | 2084636 | — | — | — | — |
+| q5i_lsm | 8621 | **4390** | 5774 | 512033 | — | — | — | — |
+
+(Bold = best of S2/S3 per row.)
+
+**Reading**:
+- **q3_btree, q5_btree (vanilla COL)** — S3 wins decisively over S2 at both c1 and c3. Paper claim holds where it matters.
+- **q5_btree S4 (hash)** — 5–10× slower than S3 at c1+c3 — clean S3-vs-hash margin.
+- **LSM family** — S3 ~10–30% behind S2 at c1, gap narrows at c3 (5574→10324 ms for q3_lsm: S3 closes from 1.34× to 1.11× vs S2). c0 should make S3 win outright.
+- **q3i / q5i** at c1 — S3 ahead of S2 only for q5i_btree; the invoice walk taxes S3 at small SF. Need c3+c0 data.
+
+12 S3-vs-S2 inversions flagged, all at c1 (small SF where S2 still fits in DRAM).
 
 ---
 
