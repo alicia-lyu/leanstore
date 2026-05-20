@@ -98,12 +98,31 @@ Summary CSVs: `headline.csv` 472 rows, `stats.csv` 185 rows, `inversions.csv` 51
 
 ---
 
-## Open issues / future work
+## Paper coverage — gaps
 
-- **geo_btree c2 incomplete**: only bg=0 r1 collected. If we want a complete `-a` matrix later, rerun `q3i_btree` … no wait, `geo_btree` at SF=19. Cost: ~9 h. Defer.
-- **S5 (aCOLI MI)**: deferred from paper sweep per `frontend/tpch/PLAYBOOK.md §S5`. Infrastructure work (S5 lacking the hand-tuned COLI walker).
-- **bg=0/1 at c1/c3/c0**: not collected in either `-a` or `-b`. If reviewer asks for isolated baseline at large SF, this is a follow-up sweep (`-c`).
-- **q5_btree S3 bg=1 race**: occasional `std::out_of_range` on `nationkey_to_name` (race between fg+bg workers). Doesn't affect `-b` directly since bg=2's cohort uses the same path, but watch for missed reps. Listed in `frontend/tpch/q5/RUNS.md` (not yet logged).
+**Real gap (must close before paper)**:
+- **c2 bg=2** (TPC-H + geo_lsm + geo_btree) is missing. `-a` covered c2 only at bg=0/1; `-b` skips c2 entirely. The `headline_*_vs_secondary` plot needs c2→c1→c0 at the same bg regime — currently it would render starting at c1. Queue a small `-c` sweep at the end of `-b` to fill this (`--cells c2 --families tpch,tpchi,geo`; ~3–5 h since SF=150–380 loads are still cached).
+
+**Not gaps — accepted**:
+- **bg=0 / bg=1 at c1/c3/c0**: dropped by design when we moved to bg=2-only. Paper claim is "S3 holds up under realistic mixed contention", not "S3 wins vs isolated baseline at every SF".
+- **geo_btree c2 partial** (only bg=0 r1 from `-a`): once `-c` fills c2 bg=2 for geo_btree, the bg=0/1 hole is in the abandoned regime, not the paper one.
+- **S5 (aCOLI MI)**, **Q10I**, **Q12**: deferred / excluded by design — documented in `frontend/tpch/PLAYBOOK.md §S5`, the q-dir CLAUDE.md files, and `experiments/sweep.yaml §excluded`.
+- **q5_btree S3 bg=1 race** (`std::out_of_range` on `nationkey_to_name`, fg/bg map race): doesn't affect `-b`. Log in `frontend/tpch/q5/RUNS.md` if it ever fires.
+
+## Timing investigation (2026-05-19)
+
+**Findings**: per-rep wall time at SF=1550/c3 is dominated by individual query latency, not the `tx_seconds=15` budget.
+
+| Structure (q5_btree c3) | per-query latency | per-rep wall time |
+|---|---:|---:|
+| S1 (BMJ) | ~6 min | ~18 min |
+| S2 (view) | ~10 min | ~22 min |
+| S3 (mi_col_walk) | **783 s** (one query) | ~15 min |
+| S4 (hash) | ~30 min | **~74 min** |
+
+`tx_seconds` is a budget, not a kill-switch — once a query starts it runs to completion. At 0.4 GiB DRAM vs 4.4 GiB merged index, page-fault thrashing dominates. **This is the correct paper measurement** (the 783 ms/query is the headline number), but it pushed the sweep estimate from 18–24 h to ~60–80 h.
+
+**Not changing the matrix.** Options to shorten (rejected unless user asks): reps 3→2 (-33 % wall time, weaker IQR), skip q5_btree S4 at large SF (-50 % q5_btree time, lose a paper headline cell), preempt mid-query (needs binary changes).
 
 ---
 
