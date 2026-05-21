@@ -23,10 +23,12 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - **Total estimate: ~60–80 h** from start (originally 18–24 h — q5_btree at SF=1550 s4 hash join is dominant, ~74 min/rep).
 
 **Latest status** (most-recent first):
-- **2026-05-21 02:01 UTC** (~55 h in): q5i_lsm c3 ✓; q5i_btree c3 started — last c3 binary.
+- **2026-05-21 11:38 UTC** (~64 h in): **c3 done; c0 started!**
   - c1: ✓ all 8 TPC-H binaries.
-  - c3: ✓ 7/8 (q3/q5 vanilla + q3i × {lsm,btree} + q5i_lsm). **q5i_btree c3 SF=1550 in rep 1**.
-  - c0: pending. Remaining = q5i_btree finish (~6h) + all 8 at c0 (~20h) + geo phase (~12-24h).
+  - c3: ✓ all 8 TPC-H binaries (q5i_btree c3 closed at 10:55 UTC, took ~9h total for 3 reps).
+  - c0: q3_lsm c0 SF=3850 in **rep 2 of 3** (r1 done in 43 min — c0's 1.0 GiB DRAM gives ~2.5× speedup over c3 reps). Remaining: ~7 binaries at c0 (~12–15h) + geo phase (~12–24h).
+- 2026-05-21 02:01 UTC — q5i_lsm c3 ✓; q5i_btree c3 started.
+- 2026-05-20 22:14 UTC — q3i_btree c3 ✓; q5i_lsm c3 started.
 - 2026-05-20 22:14 UTC — q3i_btree c3 ✓; q5i_lsm c3 started.
 - 2026-05-20 16:35 UTC — q3i_lsm c3 ✓; q3i_btree c3 started.
 - 2026-05-20 13:30 UTC — tpchi loads done; q3i_lsm c3 starting.
