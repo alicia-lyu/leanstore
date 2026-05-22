@@ -23,10 +23,12 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - **Total estimate: ~60–80 h** from start (originally 18–24 h — q5_btree at SF=1550 s4 hash join is dominant, ~74 min/rep).
 
 **Latest status** (most-recent first):
-- **2026-05-22 14:46 UTC** (~91 h in): c0 7/8 — last TPC-H binary in flight.
-  - c1: ✓ all 8 TPC-H binaries.
-  - c3: ✓ all 8 TPC-H binaries.
-  - c0: ✓ 7/8 (q3*, q5*, q3i*, q5i_lsm). **q5i_btree c0 SF=1550 in rep 1** — last TPC-H binary in phase 1. After ~6h, phase 1 closes and phase 2 (geo) begins.
+- **2026-05-22 22:56 UTC** (~99 h in): **🎉 Phase 1 (TPC-H) complete; Phase 2 (geo) started!**
+  - c1, c3, c0: ✓ all 8 TPC-H binaries × 3 reps each = 72 binary-reps.
+  - Phase 2 geo c1: geo_lsm SF=206 load done (16 min); **geo_btree SF=78 load in progress**.
+  - Remaining: geo across c1, c3, c0 (~12–24h based on `-n`-skipped phase budget).
+  - Then `-c` (c2 bg=2) auto-launches via chain watcher (~3–5h).
+- 2026-05-22 14:46 UTC — q5i_lsm c0 ✓; q5i_btree c0 started.
 - 2026-05-22 10:38 UTC — q3i_btree c0 ✓; q5i_lsm c0 started.
 - 2026-05-22 04:35 UTC — q3i_lsm c0 ✓; q3i_btree c0 started.
 - 2026-05-22 01:52 UTC — c0 vanilla COL ✓; tpchi at c0 started.
