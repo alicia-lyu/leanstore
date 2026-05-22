@@ -23,12 +23,12 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - **Total estimate: ~60–80 h** from start (originally 18–24 h — q5_btree at SF=1550 s4 hash join is dominant, ~74 min/rep).
 
 **Latest status** (most-recent first):
-- **2026-05-22 01:52 UTC** (~78 h in): c0 vanilla COL ✓; tpchi at c0 started.
+- **2026-05-22 10:38 UTC** (~87 h in): c0 6/8; q5i_lsm c0 in flight.
   - c1: ✓ all 8 TPC-H binaries.
   - c3: ✓ all 8 TPC-H binaries.
-  - c0: ✓ q3_lsm, q3_btree, q5_lsm, q5_btree (12 reps, vanilla COL family complete). **q3i_lsm c0 SF=3850 in rep 1**. Remaining: 4 tpchi at c0 (~6h based on q3i_lsm c0 ≈ q3_lsm c0 pace) + geo phase (~12-24h).
-- 2026-05-21 19:38 UTC — q5_lsm c0 ✓; q5_btree c0 started.
-- 2026-05-21 17:01 UTC — q3_btree c0 ✓; q5_lsm c0 started.
+  - c0: ✓ q3_lsm, q3_btree, q5_lsm, q5_btree, q3i_lsm, q3i_btree (18 reps). **q5i_lsm c0 SF=3850 in rep 1**. Remaining at c0: q5i_lsm finish (~3h) + q5i_btree (~6h). Then geo phase (~12-24h).
+- 2026-05-22 04:35 UTC — q3i_lsm c0 ✓; q3i_btree c0 started.
+- 2026-05-22 01:52 UTC — c0 vanilla COL ✓; tpchi at c0 started.
 - 2026-05-21 11:38 UTC — c3 closed; c0 started.
 - 2026-05-21 02:01 UTC — q5i_lsm c3 ✓; q5i_btree c3 started.
 - 2026-05-20 22:14 UTC — q3i_btree c3 ✓; q5i_lsm c3 started.
