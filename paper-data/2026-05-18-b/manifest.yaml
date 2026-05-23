@@ -1,0 +1,10 @@
+tag: 2026-05-18-b
+commit_sha: 4285645c
+host: node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
+started_at: 2026-05-18T19:21:15Z
+finished_at: 2026-05-22T22:55:13Z
+cells: c1,c3,c0
+families: tpch,tpchi
+reps: 3
+runs_ok: 288
+runs_err: 0
