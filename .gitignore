@@ -63,3 +63,4 @@ test*.json
 /test*data
 /test*csv
 *.bak
+__pycache__/
