@@ -157,6 +157,30 @@ here for traceability.
   mechanics. SF=1 parity preserved on both backends. Linux
   prerequisite for the upcoming Q3 perf sweep.
 
+## Closed by 2026-05-23 analyzer fix
+
+- **paper-data diagnostics columns empty across all sweep rows**:
+  rotated from [`LINUX_PENDING.md`](LINUX_PENDING.md). Root cause
+  was twofold — (1) the four LeanStore btree binaries emit
+  `query/<method>/{bm,cpu,cr,dt}.csv`, but the leading `c_hash`
+  column is unquoted comma-separated subfields that shifted every
+  real column right by 6 positions; (2) `analyze_paper_sweep.py`'s
+  hardcoded header keys (`"workers Cycles / TX"`, `"bm_free_pct"`,
+  `"cr_restarts"`, `"TXT P50"`) did not match the actual schemas
+  (`cycle`, `free_pct`, `cc_snapshot_restart`, no `latency.csv` at
+  all). Analyzer rewritten with a `read_detail_csv()` that detects
+  the c_hash shift per-row, `aggregate_workers()` that means cpu
+  rows whose `key` starts with `worker_`, and corrected column-name
+  mappings. Coverage after fix on `-b`: btree binaries 144/144 across
+  cpu/bm/cr/dt diagnostics; LSM binaries 144/144 for surrogate
+  `cpu_cycles_per_tx`/`cpu_util_pct`/`sst_*` from TPut, with LeanStore
+  counters legitimately N/A. Followups for the gaps that surfaced
+  (LSM detail emission, latency capture, c_hash quoting) appended
+  to LINUX_PENDING.md. Plot verified: `diag_explore_all.pdf` shows
+  real S1-S4 spread in LLC misses + cycles; `diag_explore_q3i_lsm.pdf`
+  confirms the S2/S3 cycles inversion at q3i_lsm large-DRAM that
+  SWEEP_LOG.md flags. Analyzer-only fix; no re-sweep.
+
 ## Closed by 2026-05-17 bring-up
 
 - **Q5I btree first Linux perf sweep**: harness-bug parity gate

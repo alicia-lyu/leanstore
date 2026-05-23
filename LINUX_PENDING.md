@@ -9,26 +9,39 @@ actionable.
 
 ## Active
 
-- **paper-data diagnostics columns are empty across all sweep rows
-  (2026-05-23)**: `paper-data/2026-05-18-b/summary/diagnostics.csv`
-  has every attribution column blank — `cpu_*`, `bm_*`, `cr_*`,
-  `dt_*`, `latency_*`. Headline columns (`tx_per_s`, `ms_per_tx`,
-  `size_mib`) are populated correctly, so the analyzer ran and the
-  TPut files are intact. The gap is in the per-tx detail join:
-  `analyze_paper_sweep.py:238-242` looks for
-  `<run_dir>/<tx>/<method>/{cpu,bm,cr,dt,latency}.csv` and falls back
-  to `None` if missing.
-  *Investigate on Linux*: pick one run dir (e.g.
-  `paper-data/2026-05-18-b/raw/q3_lsm/c1-bg2-r1/`), list its
-  subdirectories — confirm whether the per-tx detail directories
-  exist, and if so whether their CSV headers match the lookup keys
-  in `analyze_paper_sweep.py:247-267` (e.g. `"workers LLC-misses /
-  TX"`, `"bm_free_pct"`, etc.). Fix may be in the binary's perf-event
-  emit code, the analyzer's column-name lookup, or both. Once fixed,
-  re-run the analyzer on `-b` to refresh the summary CSV (no need
-  to re-sweep).
-  *Blocks*: `plot_paper_sweep.py --mode diagnostics-explore` renders
-  all six panels as "no data". Plotter is correct, ready for data.
+- **LSM binaries don't emit per-tx detail CSVs or rocksdb stderr
+  counters (2026-05-23)**: q3/q5/q3i/q5i_lsm and geo_lsm write only
+  `TPut.s<N>.csv` + `size.s<N>.csv` + an *empty* `structure<N>_stderr.txt`.
+  No `query/<method>/{bm,cpu,cr,dt}.csv` subdir, no rocksdb
+  `block.read.count` / `block.cache.{hit,miss}` lines in stderr.
+  Analyzer now backfills `cpu_cycles_per_tx` + `cpu_util_pct` +
+  `sst_{read,write}_us_per_tx` + `sst_compaction_us` from TPut as
+  surrogates, but `cpu_llc_miss_per_tx`, `bm_*`, `cr_*`, `dt_*`, and
+  `lsm_block_*` remain empty for LSM rows. *Investigate*: the LSM
+  binary's perf-event emit path (likely `frontend/tpch/*/q*_lsm.cpp`
+  + the RocksDB adapter) — turn on perf counter capture and dump
+  rocksdb statistics to stderr at end-of-structure. Re-running a
+  small targeted sweep (one rep × one cell) is enough to validate.
+
+- **No `latency.csv` from any binary (2026-05-23)**: btree binaries
+  emit `cpu/bm/cr/dt.csv` but no `latency.csv`; LSM emits none of
+  them. Analyzer no longer references `latency_p50_ms` /
+  `latency_p99_ms` (columns dropped from `DIAG_FIELDS`). The
+  diagnostics-explore plot's P99 panel renders as "latency_p99_ms
+  not in CSV" — explicit signal, not silent gap. To populate:
+  thread latency-quantile capture through the TPut/`tx_seconds`
+  loop in `frontend/tpch/tpch_workload.hpp` (or equivalent).
+
+- **LeanStore `c_hash` is emitted as 7 unquoted comma-separated
+  subfields (2026-05-23)**: `<run>/<tx>/<method>/{bm,cpu,cr,dt}.csv`
+  rows have a leading `c_hash` value like `7,978,927,218,222,587,432`
+  that breaks DictReader column alignment. Analyzer now detects the
+  shift per-row (`skip = len(row) - len(header)`), but the cleaner
+  fix is to quote the field at emit time. Search for the c_hash
+  printer in `backend/profiling/` (likely a `fmt::format` call that
+  dumps the hex blob) — wrap in quotes or hex-encode without commas.
+  Not urgent (analyzer is robust), but every sweep currently writes
+  invalid CSV by strict parsers.
 
 *(All Q5I bring-up items closed 2026-05-17 — see
 [`LINUX_HISTORY.md`](LINUX_HISTORY.md). Q5 first Linux perf sweep

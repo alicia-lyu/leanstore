@@ -97,6 +97,55 @@ def read_last_row(path: Path) -> Optional[Dict[str, str]]:
     return rows[-1] if rows else None
 
 
+def read_detail_csv(path: Path) -> List[Dict[str, str]]:
+    """Read a {bm,cpu,cr,dt}.csv where `c_hash` is emitted as 7 unquoted
+    comma-separated subfields, shifting every real column right by 6
+    positions. Detects the shift per-row and rebuilds dicts keyed on the
+    header. Returns [] on missing/empty file."""
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        with path.open() as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if not header:
+                return []
+            h = len(header)
+            out = []
+            for row in reader:
+                if not row:
+                    continue
+                skip = max(0, len(row) - h)
+                out.append(dict(zip(header, row[skip:])))
+            return out
+    except (OSError, csv.Error):
+        return []
+
+
+def read_detail_last(path: Path) -> Optional[Dict[str, str]]:
+    rows = read_detail_csv(path)
+    return rows[-1] if rows else None
+
+
+def aggregate_workers(rows: List[Dict[str, str]], cols: List[str]) -> Dict[str, Optional[float]]:
+    """Filter rows whose `key` starts with 'worker_', compute mean per column."""
+    workers = [r for r in rows if str(r.get("key", "")).startswith("worker_")]
+    out: Dict[str, Optional[float]] = {c: None for c in cols}
+    if not workers:
+        return out
+    for c in cols:
+        vals = [to_float(r.get(c)) for r in workers]
+        vals = [v for v in vals if v is not None]
+        out[c] = (sum(vals) / len(vals)) if vals else None
+    return out
+
+
+def sum_column(rows: List[Dict[str, str]], col: str) -> Optional[float]:
+    vals = [to_float(r.get(col)) for r in rows]
+    vals = [v for v in vals if v is not None]
+    return sum(vals) if vals else None
+
+
 def parse_stderr_counts(path: Path) -> Dict[str, Optional[int]]:
     out: Dict[str, Optional[int]] = {
         "bg_tx_count": None,
@@ -178,7 +227,7 @@ DIAG_FIELDS = HEADLINE_FIELDS + [
     "bm_evicted_mib", "bm_rounds",
     "cr_committed", "cr_restarts", "cr_gct_committed", "cr_wal_write_gib",
     "dt_struct_split", "dt_misses_counter",
-    "latency_p50_ms", "latency_p99_ms",
+    "sst_read_us_per_tx", "sst_write_us_per_tx", "sst_compaction_us",
     "lsm_block_read_count", "lsm_block_cache_hit", "lsm_block_cache_miss",
 ]
 
@@ -234,37 +283,61 @@ def _build_row(binary, family, backend, query, cell, sf, dram_gib, structure,
         "ms_per_tx": ms_per_tx, "size_mib": size_mib, "commit_sha": commit_sha,
     }
 
-    # Diagnostics — best effort.
-    cpu = read_last_row(run_dir / tx / method / "cpu.csv") if method and tx else None
-    bm = read_last_row(run_dir / tx / method / "bm.csv") if method and tx else None
-    cr = read_last_row(run_dir / tx / method / "cr.csv") if method and tx else None
-    dt = read_last_row(run_dir / tx / method / "dt.csv") if method and tx else None
-    lat = read_last_row(run_dir / tx / method / "latency.csv") if method and tx else None
+    # Diagnostics from per-tx detail CSVs (LeanStore btree binaries only:
+    # q3/q5/q3i/q5i_btree write query/<method>/{bm,cpu,cr,dt}.csv. LSM and geo
+    # binaries don't emit these — fall back to TPut surrogates below).
+    cpu_dir = run_dir / tx / method if method and tx else None
+    cpu_rows = read_detail_csv(cpu_dir / "cpu.csv") if cpu_dir else []
+    bm_last = read_detail_last(cpu_dir / "bm.csv") if cpu_dir else None
+    cr_last = read_detail_last(cpu_dir / "cr.csv") if cpu_dir else None
+    dt_rows = read_detail_csv(cpu_dir / "dt.csv") if cpu_dir else []
+
+    cpu_agg = aggregate_workers(
+        cpu_rows,
+        ["cycle", "instr", "L1-miss", "LLC-miss", "br-miss", "CPU"],
+    )
+    row["cpu_cycles_per_tx"] = cpu_agg["cycle"]
+    row["cpu_instr_per_tx"] = cpu_agg["instr"]
+    row["cpu_l1_miss_per_tx"] = cpu_agg["L1-miss"]
+    row["cpu_llc_miss_per_tx"] = cpu_agg["LLC-miss"]
+    row["cpu_branch_miss_per_tx"] = cpu_agg["br-miss"]
+    row["cpu_util_pct"] = cpu_agg["CPU"]
 
     def _g(d, k):
-        return d.get(k) if d else None
+        return to_float(d.get(k)) if d else None
 
-    row["cpu_cycles_per_tx"] = _g(cpu, "workers Cycles / TX")
-    row["cpu_instr_per_tx"] = _g(cpu, "workers Instructions / TX")
-    row["cpu_l1_miss_per_tx"] = _g(cpu, "workers L1-misses / TX")
-    row["cpu_llc_miss_per_tx"] = _g(cpu, "workers LLC-misses / TX")
-    row["cpu_branch_miss_per_tx"] = _g(cpu, "workers branch-misses / TX")
-    row["cpu_util_pct"] = _g(cpu, "workers CPU Util (%)")
-    row["bm_free_pct"] = _g(bm, "bm_free_pct")
-    row["bm_consumed_pages"] = _g(bm, "bm_consumed_pages")
-    row["bm_p1_pct"] = _g(bm, "bm_p1_pct")
-    row["bm_p2_pct"] = _g(bm, "bm_p2_pct")
-    row["bm_p3_pct"] = _g(bm, "bm_p3_pct")
-    row["bm_evicted_mib"] = _g(bm, "bm_evicted_mib")
-    row["bm_rounds"] = _g(bm, "bm_rounds")
-    row["cr_committed"] = _g(cr, "cr_committed")
-    row["cr_restarts"] = _g(cr, "cr_restarts")
-    row["cr_gct_committed"] = _g(cr, "cr_gct_committed")
-    row["cr_wal_write_gib"] = _g(cr, "cr_wal_write_gib")
-    row["dt_struct_split"] = _g(dt, "dt_struct_split")
-    row["dt_misses_counter"] = _g(dt, "dt_misses_counter")
-    row["latency_p50_ms"] = _g(lat, "TXT P50")
-    row["latency_p99_ms"] = _g(lat, "TXT P99")
+    row["bm_free_pct"] = _g(bm_last, "free_pct")
+    row["bm_consumed_pages"] = _g(bm_last, "consumed_pages")
+    row["bm_p1_pct"] = _g(bm_last, "p1_pct")
+    row["bm_p2_pct"] = _g(bm_last, "p2_pct")
+    row["bm_p3_pct"] = _g(bm_last, "p3_pct")
+    row["bm_evicted_mib"] = _g(bm_last, "evicted_mib")
+    row["bm_rounds"] = _g(bm_last, "rounds")
+    row["cr_committed"] = _g(cr_last, "gct_committed_tx")
+    row["cr_restarts"] = _g(cr_last, "cc_snapshot_restart")
+    row["cr_gct_committed"] = _g(cr_last, "gct_committed_tx")
+    row["cr_wal_write_gib"] = _g(cr_last, "wal_write_gib")
+    row["dt_struct_split"] = sum_column(dt_rows, "dt_split")
+    row["dt_misses_counter"] = sum_column(dt_rows, "dt_page_reads")
+
+    # LSM / geo surrogates from TPut.s<N>.csv. The LSM TPut schema has
+    # t0/t1 per-thread cycles + CPU util + SSTRead/SSTWrite/Compaction
+    # microseconds. Populate these always — for btree they'll be None
+    # (different TPut schema) and the LeanStore-specific columns above
+    # carry the diagnostic load instead.
+    t0_cyc = to_float(trow.get("t0 Cycles / TX"))
+    t1_cyc = to_float(trow.get("t1 Cycles / TX"))
+    if t0_cyc is not None and t1_cyc is not None:
+        # Backfill cpu_cycles_per_tx only when the detail CSV was absent.
+        if row["cpu_cycles_per_tx"] is None:
+            row["cpu_cycles_per_tx"] = (t0_cyc + t1_cyc) / 2
+        t0_util = to_float(trow.get("t0 CPU Util (%)"))
+        t1_util = to_float(trow.get("t1 CPU Util (%)"))
+        if row["cpu_util_pct"] is None and t0_util is not None and t1_util is not None:
+            row["cpu_util_pct"] = (t0_util + t1_util) / 2
+    row["sst_read_us_per_tx"] = to_float(trow.get("SSTRead(us) / TX"))
+    row["sst_write_us_per_tx"] = to_float(trow.get("SSTWrite(us) / TX"))
+    row["sst_compaction_us"] = to_float(trow.get("Compaction(us)"))
 
     if stderr_counts:
         row["lsm_block_read_count"] = stderr_counts.get("lsm_block_read_count")
