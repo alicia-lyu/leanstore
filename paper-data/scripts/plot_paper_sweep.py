@@ -775,21 +775,40 @@ def fig_diagnostics(data: SweepData) -> Optional[Path]:
 PAPER_TPCH_QUERIES = ["q3", "q5", "q3i", "q5i"]   # left-to-right panel order
 PAPER_HEADLINE_BG = 2                              # paper's contention cohort
 PAPER_STRUCTURES = [1, 2, 3, 4]                    # S5 deferred
-# Sweep -b actually runs c1, c3, c0 (c2 was dropped). Axis order is
-# scan-pressure → DRAM-relief: c1 (smaller data, low pressure) →
-# c3 (larger data at same DRAM, HIGH memory pressure) → c0 (larger
-# data with more DRAM, LOW memory pressure).
-PAPER_CELLS = ["c1", "c3", "c0"]
-# Tick labels show secondary index size in GiB, with H/L suffix to
-# distinguish c3 (high mem pressure) from c0 (low mem pressure) at
-# the same data size. Per user feedback: "secondary size" isn't a
-# standard term, so the xlabel just says "data size (GiB)" — the
-# secondary index is the dominant data the queries scan.
+# Legend order requested by the writer: worst → best baseline → winner.
+# Hash-join (S4) first because it's the slowest and most visually
+# obvious in the plots; merged index (S3) last because it's the
+# headline. Decouples legend ordering from internal numeric order.
+PAPER_LEGEND_ORDER = [4, 1, 2, 3]
+# Sweep -b runs c1, c3, c0 (c2 was dropped). Axis order is
+# 2 → 5L → 5H: scale data first under steady (low) memory pressure,
+# then crank pressure up at fixed data size. Lets the reader read
+# the "scale-up" effect first and the "pressure" effect second.
+PAPER_CELLS = ["c1", "c0", "c3"]
+# Tick labels show secondary index size in GiB, with H/L suffix on
+# the two 5 GiB cells to distinguish low vs high memory pressure.
+# Full label "data size (GiB), H/L = memory pressure" is left to the
+# LaTeX caption per user request (keeps the figure box visually clean).
 PAPER_CELL_TICK = {
     "c1": "2",      # sec 2 GiB, DRAM 0.4 — baseline (low pressure)
-    "c3": "5H",     # sec 5 GiB, DRAM 0.4 — high memory pressure
     "c0": "5L",     # sec 5 GiB, DRAM 1.0 — low memory pressure
+    "c3": "5H",     # sec 5 GiB, DRAM 0.4 — high memory pressure
 }
+
+
+def _apply_paper_overlap_style(ax) -> None:
+    """Patch lines in-place: same marker for all structures, alpha < 1 so
+    overlapping lines stay visible. The colour map (red / blue / green /
+    orange) already distinguishes structures; the per-structure marker
+    shape duplicates that signal and adds visual clutter when lines
+    coincide. One marker + transparency makes overlap explicit."""
+    for line in ax.get_lines():
+        line.set_marker("o")
+        line.set_markersize(4)
+        line.set_alpha(0.7)
+    # IQR bands rendered via fill_between also get alpha-blended.
+    for coll in ax.collections:
+        coll.set_alpha(0.18)
 
 
 def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
@@ -818,11 +837,10 @@ def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
                        fontsize=7)
     ax.set_yscale("log")
     ax.tick_params(axis="y", labelsize=6)
-    ax.grid(True, axis="y", alpha=0.2, which="both")
-    # remove the per-panel legend (we attach a single shared one to btree
-    # figure at save time)
+    ax.grid(False)  # no log-scale gridlines per user request
     if ax.get_legend():
         ax.get_legend().remove()
+    _apply_paper_overlap_style(ax)
     return True
 
 
@@ -856,15 +874,12 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     if not has_any:
         plt.close(fig)
         return None
-    fig.supxlabel(
-        "data size (GiB)   —   H: high memory pressure, L: low memory pressure",
-        fontsize=6, y=-0.02)
     if include_legend:
         handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
-                              marker=STYLE["structure_markers"][s],
-                              markersize=3, linewidth=1.2,
+                              marker="o", markersize=4, linewidth=1.2,
+                              alpha=0.7,
                               label=STRUCTURE_LABELS[s].split(" ", 1)[1])
-                   for s in PAPER_STRUCTURES]
+                   for s in PAPER_LEGEND_ORDER]
         fig.legend(handles=handles, loc="upper center", ncol=4,
                    fontsize=6, bbox_to_anchor=(0.5, 1.08),
                    frameon=False, columnspacing=1.2, handletextpad=0.4)
@@ -916,7 +931,7 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
                 linestyle="-",
             )
             ax.set_yscale("log")
-            ax.grid(True, axis="y", alpha=0.2, which="both")
+            ax.grid(False)
             if i == 0:
                 ax.set_title(tx, fontsize=8)
             if j == 0:
@@ -929,6 +944,7 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
             ax.tick_params(axis="y", labelsize=6)
             if ax.get_legend():
                 ax.get_legend().remove()
+            _apply_paper_overlap_style(ax)
             drew_any = True
     if not drew_any:
         plt.close(fig)
@@ -941,9 +957,6 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
     fig.legend(handles=handles, loc="upper center", ncol=4,
                fontsize=6, bbox_to_anchor=(0.5, 1.04),
                frameon=False, columnspacing=1.2, handletextpad=0.4)
-    fig.supxlabel(
-        "data size (GiB)   —   H: high memory pressure, L: low memory pressure",
-        fontsize=6, y=-0.02)
     dest = data.figures_root / "paper" / "paper_geo_condensed"
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
