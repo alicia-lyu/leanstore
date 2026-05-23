@@ -40,41 +40,41 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - 2026-05-20 05:39 UTC — c3 vanilla COL family done; tpchi loading.
 - 2026-05-18 19:21 UTC — Phase 1 started.
 
-**Headline** (ms/query medians, bg=2, lower=better; 216 rows / 20 inversions):
+**Headline** (ms/query medians, bg=2, lower=better; 316 rows / 34 inversions; TPC-H complete across c1/c3/c0):
 
 | binary | c1 S1 | c1 S2 | c1 S3 | c1 S4 | c3 S1 | c3 S2 | c3 S3 | c3 S4 | c0 S1 | c0 S2 | c0 S3 | c0 S4 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | q3_btree | 366703 | 292398 | **292141** | 652742 | 1018226 | 754148 | **742390** | 1843658 | 967118 | 751315 | **744048** | 1842639 |
 | q3_lsm | 5949 | **4163** | 5574 | 56721 | 14863 | 11612 | **10324** | 187935 | 15613 | 13036 | **11183** | 194062 |
-| q5_btree | 355492 | 452694 | **303398** | 1433692 | 1006340 | 1206127 | **783085** | 4345937 | — | — | — | — |
-| q5_lsm | 5974 | 4619 | **4452** | 130141 | 15170 | 12120 | **10166** | 735294 | — | — | — | — |
-| q3i_btree | 498753 | **310078** | 333444 | 1340662 | 1479947 | **791139** | 853242 | 3866976 | — | — | — | — |
-| q3i_lsm | 9615 | **5631** | 5794 | 110803 | 25000 | **14172** | 17419 | 352983 | — | — | — | — |
-| q5i_btree | 451060 | 466636 | **347343** | 2084636 | 1578034 | 1292992 | **892061** | 6321113 | — | — | — | — |
-| q5i_lsm | 8621 | **4390** | 5774 | 512033 | 28035 | **16226** | 17621 | 1645007 | — | — | — | — |
+| q5_btree | 355492 | 452694 | **303398** | 1433692 | 1006340 | 1206127 | **783085** | 4345937 | 965251 | 1214182 | **784929** | 3889537 |
+| q5_lsm | 5974 | 4619 | **4452** | 130141 | 15170 | 12120 | **10166** | 735294 | 15492 | 12456 | **10396** | 738552 |
+| q3i_btree | 498753 | **310078** | 333444 | 1340662 | 1479947 | **791139** | 853242 | 3866976 | 1288826 | **791139** | 859107 | 3735525 |
+| q3i_lsm | 9615 | **5631** | 5794 | 110803 | 25000 | **14172** | 17419 | 352983 | 24027 | **12786** | 18392 | 313972 |
+| q5i_btree | 451060 | 466636 | **347343** | 2084636 | 1578034 | 1292992 | **892061** | 6321113 | 1176886 | 1300052 | **896861** | 5851375 |
+| q5i_lsm | 8621 | **4390** | 5774 | 512033 | 28035 | **16226** | 17621 | 1645007 | 26302 | **16753** | 17406 | 1716444 |
 
 (Bold = best of S2/S3 per row.)
 
 **S3/S2 ratio** (lower = S3 wins; **bold = S3 wins**):
 
-| binary | c1 | c3 | c0 |
-|---|---:|---:|---:|
-| q3_btree | 1.00× | **0.98×** | **0.99×** |
-| q3_lsm | 1.34× | **0.89×** | **0.86×** ← clearer S3 win at c0 |
-| q5_btree | **0.67×** | **0.65×** | pending |
-| q5_lsm | 0.96× | **0.84×** | pending |
-| q3i_btree | 1.08× | 1.08× | pending |
-| q3i_lsm | 1.03× | 1.23× | pending |
-| q5i_btree | **0.74×** | **0.69×** | pending |
-| q5i_lsm | 1.32× | 1.09× | pending |
+| binary | c1 | c3 | c0 | trend |
+|---|---:|---:|---:|---|
+| q3_btree | 1.00× | **0.98×** | **0.99×** | flat — tied |
+| q3_lsm | 1.34× | **0.89×** | **0.86×** | improves with DRAM ✓ |
+| q5_btree | **0.67×** | **0.65×** | **0.65×** | strong S3 win, stable |
+| q5_lsm | 0.96× | **0.84×** | **0.83×** | improves with DRAM ✓ |
+| q3i_btree | 1.08× | 1.08× | 1.09× | S2 wins consistently by ~8% |
+| q3i_lsm | 1.03× | 1.23× | **1.44×** | **worsens with DRAM** — anomaly |
+| q5i_btree | **0.74×** | **0.69×** | **0.69×** | strong S3 win |
+| q5i_lsm | 1.32× | 1.09× | 1.04× | improves with DRAM, close to tied at c0 |
 
 **Reading**:
-- **Vanilla COL (q3, q5)** — S3 wins decisively at c3 across both backends (4/4). q3_lsm c0 drops to 0.86×, confirming the trend: S3 advantage strengthens as DRAM ratio improves.
-- **q5_btree S4 (hash)** — 5–10× slower than S3 at large SF — clean S3-vs-hash margin.
-- **Invoice (q3i, q5i)** — Mixed at c3: S3 wins for q5i_btree (0.69×) but trails S2 for q3i (1.08×) and q3i_lsm (1.23×). The COLI invoice walk is taxing S3 at large SF. **Paper-concern: q3i_lsm c3 ratio**. c0 data will clarify whether higher DRAM closes this.
-- **q5i_lsm** closes from 1.32× at c1 to 1.09× at c3 — likely flips at c0.
+- **Vanilla COL (q3, q5)**: S3 wins for q3_lsm, q5_btree, q5_lsm at c3/c0. q3_btree essentially tied. Paper claim holds — **S3 ≥ S2 at large SF** for vanilla family.
+- **q5_btree S4 (hash)**: 5–10× slower than S3 at large SF — clean S3-vs-hash margin.
+- **Invoice family**: q5i_btree wins decisively (0.69×). q5i_lsm closes to 1.04× at c0 (S2 still ahead but marginal).
+- **Paper-concern: q3i_lsm and q3i_btree** — both have S2 winning consistently. q3i_lsm is the worst: ratio **worsens** with DRAM (1.03× → 1.44×). This suggests S3's COLI walk doesn't benefit from extra DRAM the way S2's view does (S2 is fully materialised; more DRAM = more of it cached; S3 must still traverse). Worth investigating before paper submission.
 
-20 S3-vs-S2 inversions flagged (was 12 last refresh) — new c3 q3i/q5i_lsm inversions account for the increase.
+34 S3-vs-S2 inversions flagged (was 20) — c0 q3i*/q5i* additions account for the 14-row increase.
 
 ---
 
