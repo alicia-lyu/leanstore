@@ -482,106 +482,134 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
 # scan visually after the run, pick 1-2 panels that earn paper-mode
 # treatment. Outputs live under figures/diagnostics/.
 
-DIAG_EXPLORE_FAMILIES: List[Tuple[str, str, str, bool]] = [
-    # (panel title, column, ylabel, log)
-    ("CPU: LLC misses / TX",   "cpu_llc_miss_per_tx",  "LLC miss / TX",   True),
-    ("CPU: cycles / TX",       "cpu_cycles_per_tx",    "cycles / TX",     True),
-    ("BM: eviction rounds",    "bm_rounds",            "rounds",          True),
-    ("BM: evicted MiB",        "bm_evicted_mib",       "MiB",             True),
-    ("TX: restarts",           "cr_restarts",          "restarts",        False),
-    ("Tail: P99 latency",      "latency_p99_ms",       "P99 ms",          True),
+# Per-query × per-backend diagnostics. btree and lsm have disjoint
+# signal sets in the post-fix CSV (see paper-data/CLAUDE.md and the
+# plan file): btree gets the full CPU + BM + CR + DT counter family;
+# lsm gets cycles + util + SST timing surrogates. Each entry below is
+# (figure-name suffix, column, panel-y-label, log-scale?).
+DIAG_BTREE_METRICS: List[Tuple[str, str, str, bool]] = [
+    ("llc_miss",  "cpu_llc_miss_per_tx", "LLC miss / TX",     True),
+    ("bm_rounds", "bm_rounds",           "BM eviction rounds", True),
+    ("dt_split",  "dt_struct_split",     "B-tree splits",      True),
+]
+DIAG_LSM_METRICS: List[Tuple[str, str, str, bool]] = [
+    ("sst_read",       "sst_read_us_per_tx",  "SST read µs / TX",    True),
+    ("sst_compaction", "sst_compaction_us",   "SST compaction µs",   True),
+    ("cpu_cycles",     "cpu_cycles_per_tx",   "CPU cycles / TX",     True),
 ]
 
 
-def _diag_filter(diag: pd.DataFrame, binary_filter: Optional[str] = None
-                 ) -> pd.DataFrame:
-    df = diag[(diag["family"].isin(["vanilla", "tpchi"]))
-              & (diag["bg"] == PAPER_HEADLINE_BG)
-              & (diag["tx"] == "query")
-              & (diag["structure"].isin(PAPER_STRUCTURES))]
-    if binary_filter:
-        df = df[df["binary"] == binary_filter]
-    return df
+def _diag_filter(diag: pd.DataFrame) -> pd.DataFrame:
+    """Restrict to the paper's contention cohort and the 4 paper structures."""
+    return diag[(diag["family"].isin(["vanilla", "tpchi"]))
+                & (diag["bg"] == PAPER_HEADLINE_BG)
+                & (diag["tx"] == "query")
+                & (diag["structure"].isin(PAPER_STRUCTURES))]
 
 
-def _draw_metric_panel(ax, agg: pd.DataFrame, col: str, ylabel: str,
-                       logy: bool, cells: Sequence[str]) -> bool:
-    if col not in agg.columns:
-        _all_or_empty(plt.gcf(), ax, f"{col} not in CSV")
-        return False
-    sub = agg[["cell", "structure", col]].dropna(subset=[col])
+def _aggregate_metric(diag: pd.DataFrame, col: str
+                      ) -> pd.DataFrame:
+    """Median across reps per (binary, cell, structure)."""
+    if col not in diag.columns:
+        return pd.DataFrame()
+    sub = diag[["binary", "cell", "structure", col]].dropna(subset=[col])
     if sub.empty:
-        _all_or_empty(plt.gcf(), ax, f"{col}: no data")
+        return sub
+    return (sub.groupby(["binary", "cell", "structure"])
+               .median(numeric_only=True).reset_index())
+
+
+def _diag_panel(ax, agg: pd.DataFrame, binary: str, col: str,
+                ylabel: str, cells: Sequence[str], logy: bool,
+                show_ylabel: bool) -> bool:
+    """One panel of a per-query diagnostic row, matching `_paper_panel`'s
+    visual conventions (same marker for all structures, alpha overlap,
+    no gridlines, per-panel y-auto-scale)."""
+    sub = agg[(agg["binary"] == binary) & (agg["cell"].isin(cells))]
+    if sub.empty or col not in sub.columns:
+        _all_or_empty(plt.gcf(), ax, "—")
+        ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+                     fontsize=10)
         return False
+    drew = False
     for struct in PAPER_STRUCTURES:
         s = sub[sub["structure"] == struct].set_index("cell").reindex(cells)
         y = s[col].astype(float).values
         if np.all(np.isnan(y)):
             continue
+        style = _structure_style(struct)
         ax.plot(np.arange(len(cells)), y,
                 label=STRUCTURE_LABELS[struct].split(" ", 1)[1],
-                **_structure_style(struct))
+                color=style["color"], marker="o", markersize=4,
+                linewidth=1.2, alpha=0.7)
+        drew = True
+    ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+                 fontsize=10)
+    if show_ylabel:
+        ax.set_ylabel(ylabel, fontsize=8)
     ax.set_xticks(np.arange(len(cells)))
-    ax.set_xticklabels(cells, fontsize=7)
-    ax.set_ylabel(ylabel, fontsize=8)
+    ax.set_xticklabels([PAPER_CELL_TICK.get(c, c) for c in cells],
+                       fontsize=8)
     if logy:
         ax.set_yscale("log")
-    ax.tick_params(labelsize=7)
-    ax.grid(True, alpha=0.2, which="both")
-    return True
+        ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
+        ax.yaxis.set_major_formatter(
+            mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
+        ax.yaxis.set_minor_locator(
+            mticker.LogLocator(base=10.0, subs=tuple(range(2, 10))))
+        ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.tick_params(axis="y", which="major", labelsize=7)
+    ax.tick_params(axis="y", which="minor", length=2)
+    ax.grid(False)
+    return drew
 
 
-def _emit_diag_grid(data: SweepData, diag: pd.DataFrame, name: str,
-                    title: str) -> Optional[Path]:
-    if diag.empty:
-        return None
-    # Median across binaries per (cell, structure)
-    agg = (diag.groupby(["cell", "structure"])
-                .median(numeric_only=True).reset_index())
-    cells = [c for c in ["c2", "c1", "c3", "c0"] if c in agg["cell"].unique()]
-    if not cells:
-        return None
-    fig, axes = plt.subplots(2, 3, figsize=(11.0, 6.5))
-    for ax, (title_p, col, ylabel, logy) in zip(axes.flat, DIAG_EXPLORE_FAMILIES):
-        ax.set_title(title_p, fontsize=9)
-        _draw_metric_panel(ax, agg, col, ylabel, logy, cells)
-    handles, labels = [], []
-    for ax in axes.flat:
-        for h, l in zip(*ax.get_legend_handles_labels()):
-            if l not in labels:
-                handles.append(h); labels.append(l)
-    if handles:
-        fig.legend(handles, labels, loc="upper center",
-                   ncol=len(labels), fontsize=8,
-                   bbox_to_anchor=(0.5, 1.02), frameon=False)
-    fig.suptitle(title, fontsize=11, y=1.05)
-    dest = data.figures_root / "diagnostics" / name
-    return _save(fig, dest, data.footer, include_footer=True)[0]
-
-
-def fig_diag_explore_all(data: SweepData) -> Optional[Path]:
-    """6-panel metric grid, median across all TPC-H/TPCHI binaries at bg=2."""
+def _emit_diag_row(data: SweepData, backend: str, name_suffix: str,
+                   col: str, ylabel: str, logy: bool) -> Optional[Path]:
     diag = _diag_filter(data.diagnostics)
-    return _emit_diag_grid(
-        data, diag, "diag_explore_all",
-        "Diagnostics — median across q3/q5/q3i/q5i × {lsm, btree} (bg=2)")
+    diag = diag[diag["backend"] == backend]
+    agg = _aggregate_metric(diag, col)
+    if agg.empty:
+        return None
+    binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
+    fig, axes = plt.subplots(1, 4, figsize=(6.5, 2.0), sharey=False,
+                             constrained_layout=True)
+    drew_any = False
+    for j, binary in enumerate(binaries):
+        drew = _diag_panel(axes[j], agg, binary, col, ylabel, PAPER_CELLS,
+                           logy, show_ylabel=(j == 0))
+        drew_any = drew_any or drew
+    if not drew_any:
+        plt.close(fig)
+        return None
+    handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
+                          marker="o", markersize=4, linewidth=1.2, alpha=0.7,
+                          label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+               for s in PAPER_LEGEND_ORDER]
+    fig.legend(handles=handles, loc="upper center", ncol=4,
+               fontsize=8, bbox_to_anchor=(0.5, 1.14),
+               frameon=False, columnspacing=1.5, handletextpad=0.4)
+    dest = data.figures_root / "diagnostics" / f"diag_{backend}_{name_suffix}"
+    return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
-def fig_diag_explore_q3i_lsm(data: SweepData) -> Optional[Path]:
-    """Per-binary diagnostics for q3i_lsm — the one flagged anomaly."""
-    diag = _diag_filter(data.diagnostics, binary_filter="q3i_lsm")
-    return _emit_diag_grid(
-        data, diag, "diag_explore_q3i_lsm",
-        "Diagnostics — q3i_lsm only (anomaly attribution)")
+def fig_diag_btree_llc_miss(data):       return _emit_diag_row(data, "btree", *DIAG_BTREE_METRICS[0])
+def fig_diag_btree_bm_rounds(data):      return _emit_diag_row(data, "btree", *DIAG_BTREE_METRICS[1])
+def fig_diag_btree_dt_split(data):       return _emit_diag_row(data, "btree", *DIAG_BTREE_METRICS[2])
+def fig_diag_lsm_sst_read(data):         return _emit_diag_row(data, "lsm",   *DIAG_LSM_METRICS[0])
+def fig_diag_lsm_sst_compaction(data):   return _emit_diag_row(data, "lsm",   *DIAG_LSM_METRICS[1])
+def fig_diag_lsm_cpu_cycles(data):       return _emit_diag_row(data, "lsm",   *DIAG_LSM_METRICS[2])
 
 
 def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
-    """One-row-per-(binary, cell, structure) summary of the metrics we plot.
-    Lets the writer table-ify any of them without re-running the analyzer."""
+    """One row per (binary, cell, structure) carrying every metric we plot.
+    Backend-specific metrics will be NaN for the other backend's rows —
+    that's the signal."""
     diag = _diag_filter(data.diagnostics)
     if diag.empty:
         return None
-    cols = [c for _, c, _, _ in DIAG_EXPLORE_FAMILIES if c in diag.columns]
+    cols = ([c for _, c, _, _ in DIAG_BTREE_METRICS if c in diag.columns]
+            + [c for _, c, _, _ in DIAG_LSM_METRICS  if c in diag.columns])
     keep = ["binary", "cell", "structure"] + cols
     sub = diag[keep].copy()
     agg = (sub.groupby(["binary", "cell", "structure"])
@@ -597,23 +625,32 @@ def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
 
 FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     # Paper-mode builders (typeset-ready, bg=2 only, S1-S4 only).
-    "paper_tpch_btree":     lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
-    "paper_tpch_lsm":       lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
-    "paper_geo_condensed":  fig_paper_geo_condensed,
-    # Diagnostics exploration (multi-metric scan, scratch outputs).
-    "diag_explore_all":     fig_diag_explore_all,
-    "diag_explore_q3i_lsm": fig_diag_explore_q3i_lsm,
+    "paper_tpch_btree":      lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
+    "paper_tpch_lsm":        lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
+    "paper_geo_condensed":   fig_paper_geo_condensed,
+    # Diagnostics exploration — per-query 1×4 rows. btree gets the
+    # full LeanStore counter family; lsm gets RocksDB SST timing
+    # surrogates (only metrics that actually populate per backend).
+    "diag_btree_llc_miss":    fig_diag_btree_llc_miss,
+    "diag_btree_bm_rounds":   fig_diag_btree_bm_rounds,
+    "diag_btree_dt_split":    fig_diag_btree_dt_split,
+    "diag_lsm_sst_read":      fig_diag_lsm_sst_read,
+    "diag_lsm_sst_compaction": fig_diag_lsm_sst_compaction,
+    "diag_lsm_cpu_cycles":    fig_diag_lsm_cpu_cycles,
 }
 
-# Curated subsets selectable via --mode. The earlier "default" set
-# (2×4 headline + contention + inversions + heatmap + duration +
-# diagnostics) has moved to scripts/archive/legacy_figures.py — see
-# the archive's README for when to revive them.
+# Curated subsets selectable via --mode. Legacy default-mode builders
+# (2×4 headline + contention + inversions + heatmap + duration + 2×2
+# diagnostics) have moved to scripts/archive/legacy_figures.py.
+DIAG_EXPLORE_FIGS = [
+    "diag_btree_llc_miss", "diag_btree_bm_rounds", "diag_btree_dt_split",
+    "diag_lsm_sst_read", "diag_lsm_sst_compaction", "diag_lsm_cpu_cycles",
+]
 MODE_FIGURES: Dict[str, List[str]] = {
-    "paper-figures": ["paper_tpch_btree", "paper_tpch_lsm",
-                      "paper_geo_condensed"],
-    "diagnostics-explore": ["diag_explore_all", "diag_explore_q3i_lsm"],
-    "all": list(FIGURE_BUILDERS.keys()),
+    "paper-figures":       ["paper_tpch_btree", "paper_tpch_lsm",
+                            "paper_geo_condensed"],
+    "diagnostics-explore": DIAG_EXPLORE_FIGS,
+    "all":                 list(FIGURE_BUILDERS.keys()),
 }
 # 'default' is an alias for paper-figures so the runner script
 # (experiments/run_paper_sweep.sh) keeps working without a flag.

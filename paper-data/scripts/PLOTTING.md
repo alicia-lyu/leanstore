@@ -54,9 +54,15 @@ numpy 1.21.5.
 | `paper/paper_tpch_btree_headline.pdf` | headline.csv | 1×4 row (q3, q5, q3i, q5i btree). bg=2 only, structures S1–S4. X = data size (GiB) with H/L pressure suffix (`2`, `5L`, `5H`). Y = seconds/query (log). Per-panel auto-scaled. Shared legend above. Designed to stack vertically with the lsm sibling. |
 | `paper/paper_tpch_lsm_headline.pdf` | headline.csv | Same shape and geometry as the btree sibling, for the lsm backend. Legend omitted — parent doc uses the btree figure's legend. |
 | `paper/paper_geo_condensed.pdf` | headline.csv | 2×3 grid: rows = geo backend (btree, lsm), cols = tx pattern (join-nsc, mixed-nsc, distinct-nsc) at depth nsc. Same data-size axis and colour map as the TPC-H figures. |
-| `diagnostics/diag_explore_all.pdf` | diagnostics.csv | 6-panel metric grid: LLC misses/TX, cycles/TX, BM eviction rounds, BM evicted MiB, TX restarts, P99 latency. Median across all TPC-H/TPCHI binaries at bg=2. Scratch output to pick which 1–2 metrics earn a paper spot. |
-| `diagnostics/diag_explore_q3i_lsm.pdf` | diagnostics.csv | Same 6 metrics for q3i_lsm only — the binary with the flagged S3-vs-S2 inversion at large DRAM. |
-| `summary/diagnostics_paper.csv` | diagnostics.csv | Side effect of diagnostics-explore mode. One row per (binary, cell, structure) with the six explored metrics, so the writer can table-ify any of them without re-running the analyzer. |
+| `diagnostics/diag_btree_llc_miss.pdf` | diagnostics.csv | 1×4 row (q3, q5, q3i, q5i btree). Y = `cpu_llc_miss_per_tx` (log). Strongest btree attribution: cleanly ranks `merged_idx` ≈ `mat_view` < `mj` < `hj`, supporting the headline `merged ≈ view` claim by underlying cache behaviour. **Main-text candidate**. |
+| `diagnostics/diag_btree_bm_rounds.pdf` | diagnostics.csv | Same shape, Y = `bm_rounds`. Noisy at n=3 — lines cross. Useful for spot-check, not main-text. |
+| `diagnostics/diag_btree_dt_split.pdf` | diagnostics.csv | Same shape, Y = `dt_struct_split`. Mostly zero on read-only queries (write path not exercised) — kept for future write-workload runs. |
+| `diagnostics/diag_lsm_sst_read.pdf` | diagnostics.csv | 1×4 row (lsm). Y = `sst_read_us_per_tx` (log). Hash-join 10-100× above the rest; merged sits slightly above view on q3i/q5i — **attributes the Q3I lsm headline anomaly** (§5.5 candidate). |
+| `diagnostics/diag_lsm_sst_compaction.pdf` | diagnostics.csv | Same shape, Y = `sst_compaction_us`. Mostly flat across structures; non-distinguishing. |
+| `diagnostics/diag_lsm_cpu_cycles.pdf` | diagnostics.csv | Same shape, Y = `cpu_cycles_per_tx`. The only fully-populated CPU column on lsm rows. |
+| `summary/diagnostics_paper.csv` | diagnostics.csv | Side effect of diagnostics-explore mode. One row per (binary, cell, structure) with every metric we plot. Backend-specific metrics are NaN for the other backend's rows — that's the signal. |
+
+Backend-specific note: `diagnostics.csv` carries disjoint signal sets per backend (see `paper-data/CLAUDE.md`). btree rows have the full LeanStore counter family (`cpu_*`, `bm_*`, `cr_*`, `dt_*`); lsm rows have CPU cycles + utilisation + RocksDB SST timing surrogates (`sst_read_us_per_tx`, `sst_write_us_per_tx`, `sst_compaction_us`). The per-query diagnostic figures above pick the columns that actually populate per backend.
 
 **Y-axis convention:** primary axis is **seconds/query** (lower is
 better) on a log scale; TPC-H queries here run from ~5 s up to hours
