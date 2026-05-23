@@ -813,7 +813,9 @@ def _apply_paper_overlap_style(ax) -> None:
 
 def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
                  cells: Sequence[str], show_ylabel: bool) -> bool:
-    """One compact panel of the paper TPC-H row. bg=2 only, S1-S4 only."""
+    """One compact panel of the paper TPC-H row. bg=2 only, S1-S4 only.
+    Y values are converted ms → seconds; TPC-H queries here run from
+    ~5 s up to ~hours, so 'seconds / query' is the natural unit."""
     sub = ms_df[(ms_df["binary"] == binary) & (ms_df["cell"].isin(cells))
                 & (ms_df["bg"] == PAPER_HEADLINE_BG)
                 & (ms_df["structure"].isin(PAPER_STRUCTURES))]
@@ -822,15 +824,18 @@ def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
         ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
                      fontsize=8)
         return False
+    sub = sub.copy()
+    sub["s_median"] = sub["ms_median"] / 1000.0
+    sub["s_iqr"] = sub["ms_iqr"] / 1000.0
     line_with_iqr(
-        ax, sub, x_col="cell", y_col="ms_median", iqr_col="ms_iqr",
+        ax, sub, x_col="cell", y_col="s_median", iqr_col="s_iqr",
         hue_col="structure", x_order=cells,
         hue_labels=STRUCTURE_LABELS, linestyle="-",
     )
     ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
                  fontsize=8)
     if show_ylabel:
-        ax.set_ylabel("ms / query", fontsize=7)
+        ax.set_ylabel("seconds / query", fontsize=7)
     # No per-panel xlabel — set once via fig.supxlabel after layout.
     ax.set_xticks(np.arange(len(cells)))
     ax.set_xticklabels([PAPER_CELL_TICK.get(c, c) for c in cells],
@@ -865,7 +870,10 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
     # Single column ≈ 3.4"; 4 panels at ~0.85" each + slight margin.
     # Height ~1.7" gives readable panels without dwarfing surrounding text.
-    fig, axes = plt.subplots(1, 4, figsize=(3.5, 1.75), sharey=True)
+    # sharey=False so each query's panel auto-scales independently —
+    # otherwise the slowest query stretches the y-range and the other
+    # panels' lines visually collapse together.
+    fig, axes = plt.subplots(1, 4, figsize=(3.5, 1.75), sharey=False)
     has_any = False
     for j, binary in enumerate(binaries):
         drew = _paper_panel(axes[j], ms_df, binary, PAPER_CELLS,
@@ -924,9 +932,12 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
             if sub.empty:
                 _all_or_empty(fig, ax, "—")
                 continue
+            sub = sub.copy()
+            sub["s_median"] = sub["ms_median"] / 1000.0
+            sub["s_iqr"] = sub["ms_iqr"] / 1000.0
             line_with_iqr(
-                ax, sub, x_col="cell", y_col="ms_median",
-                iqr_col="ms_iqr", hue_col="structure",
+                ax, sub, x_col="cell", y_col="s_median",
+                iqr_col="s_iqr", hue_col="structure",
                 x_order=PAPER_CELLS, hue_labels=STRUCTURE_LABELS,
                 linestyle="-",
             )
@@ -935,7 +946,7 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
             if i == 0:
                 ax.set_title(tx, fontsize=8)
             if j == 0:
-                ax.set_ylabel(f"{backend}\nms / query", fontsize=7)
+                ax.set_ylabel(f"{backend}\nseconds / query", fontsize=7)
             if i == len(backend_order) - 1:
                 ax.set_xticks(np.arange(len(PAPER_CELLS)))
                 ax.set_xticklabels(
