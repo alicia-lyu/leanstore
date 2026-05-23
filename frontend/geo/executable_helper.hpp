@@ -18,6 +18,14 @@ DEFINE_bool(log_progress, true, "Log progress of the workload execution");
 // true to keep the sweep wall-time bounded; flip off only when we explicitly
 // want full nation-scan numbers.
 DEFINE_bool(geo_skip_n_queries, true, "Skip join-n / mixed-n / distinct-n phases (they ignore tx_seconds)");
+// A/B toggle for the S3 (merged_idx) query dispatch path. "premerged" uses
+// the legacy MergedJoiner/MergedCounter wrappers around PremergedJoin.
+// "walk" uses the new geo_group_walk single-pass walker. Default is
+// "premerged" so the in-flight 2026-05-18-b sweep keeps producing
+// comparable numbers; smoke tests / next-tag sweeps pass --geo_walker=walk
+// to exercise the new path.
+DEFINE_string(geo_walker, "premerged",
+              "S3 merged-index query dispatch: 'walk' (geo_group_walk) or 'premerged' (PremergedJoin)");
 
 template <typename PerStructureWorkloadFull,
           template <typename> class AdapterType,

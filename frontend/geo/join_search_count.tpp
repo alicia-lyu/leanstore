@@ -1,12 +1,17 @@
 #pragma once
 #include <cassert>
 #include <cstddef>
+#include <gflags/gflags.h>
 
 #include "../shared/merge-join/binary_merge_join.hpp"
 #include "../shared/merge-join/hash_join.hpp"
 #include "../shared/merge-join/premerged_join.hpp"
+#include "geo_visitors.hpp"
+#include "geo_walk.tpp"
 #include "views.hpp"
 #include "workload.hpp"
+
+DECLARE_string(geo_walker);
 
 // Copy each non-wildcard field of found_k into sk; WILDCARD_KEY fields in
 // sk stay as wildcards.  Used by the seek-completion path to fill in
@@ -231,13 +236,15 @@ long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::ra
 {
    sort_key_t sk = sort_key_t{nationkey, statekey, countykey, citykey, 0};
 
+   if (FLAGS_geo_walker == "walk") {
+      GeoJoinCountVisitor v;
+      geo_group_walk<MergedAdapterType, MergedScannerType>(merged, sk, v);
+      return v.produced;
+   }
+
    MergedJoiner<AdapterType, MergedAdapterType, MergedScannerType> merged_joiner(merged, sk);
-
    merged_joiner.run();
-
-   size_t produced = merged_joiner.produced();
-   // std::cout << "range_query_by_merged produced " << produced << " records for sk: " << sk << std::endl;
-   return produced;
+   return merged_joiner.produced();
 }
 
 template <template <typename> class AdapterType,

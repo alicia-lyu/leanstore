@@ -247,3 +247,4 @@ class GeoJoin
 #include "maintain.tpp"     // IWYU pragma: keep
 #include "mixed_query.tpp"  // IWYU pragma: keep
 #include "point_lookup.tpp" // IWYU pragma: keep
+#include "geo_walk.tpp"     // IWYU pragma: keep

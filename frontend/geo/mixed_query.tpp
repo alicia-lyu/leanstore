@@ -1,8 +1,13 @@
 #pragma once
 
 #include <optional>
+#include <gflags/gflags.h>
+#include "geo_visitors.hpp"
+#include "geo_walk.tpp"
 #include "views.hpp"
 #include "workload.hpp"
+
+DECLARE_string(geo_walker);
 
 // SELECT nationkey, statekey, countykey, citykey, city_name, COUNT(*) as customer_count
 // FROM city, customer
@@ -246,6 +251,18 @@ template <template <typename> class AdapterType,
           template <typename...> class MergedScannerType>
 long GeoJoin<AdapterType, MergedAdapterType, ScannerType, MergedScannerType>::range_mixed_query_by_merged(sort_key_t select_sk, bool distinct)
 {
+   if (FLAGS_geo_walker == "walk") {
+      if (distinct) {
+         GeoMixedDistinctVisitor v;
+         geo_group_walk<MergedAdapterType, MergedScannerType>(merged, select_sk, v);
+         return v.distinct_sum;
+      } else {
+         GeoMixedSumVisitor v;
+         geo_group_walk<MergedAdapterType, MergedScannerType>(merged, select_sk, v);
+         return v.customer_sum;
+      }
+   }
+
    MergedCounter<AdapterType, MergedAdapterType, MergedScannerType> counter(merged, distinct, select_sk);
 
    long cust_sum = 0;
