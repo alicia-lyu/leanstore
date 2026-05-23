@@ -127,12 +127,12 @@ Summary CSVs: `headline.csv` 472 rows, `stats.csv` 185 rows, `inversions.csv` 51
 
 ## Paper coverage — gaps
 
-**Real gap (queued)**:
-- **c2 bg=2** (TPC-H + geo_lsm + geo_btree) — queued. `experiments/chain_c2_after_b.sh` (PID 245948 on 2026-05-19) polls -b's PID and auto-launches tag `2026-05-18-c` with `--cells c2 --families tpch,tpchi,geo` when -b exits. c2 images are cached so it's a runs-only sweep (~3–5 h). When it lands, the `headline_*_vs_secondary` plot will have c2→c1→c0 under the same bg=2 regime.
+**No remaining gaps**: matrix is `bg=2 × {c1,c3,c0}`.
 
 **Not gaps — accepted**:
+- **c2 entirely (was queued, now dropped 2026-05-23)**: chain watcher killed. `c2` SFs (150/380 TPC-H, 19/52 geo) are too small to be informative — the cells of paper interest are c1/c3/c0 where the secondary structures actually exceed DRAM. The `headline_*_vs_secondary` plot will just span c1→c0; if a reviewer asks for c2, revisit.
 - **bg=0 / bg=1 at c1/c3/c0**: dropped by design when we moved to bg=2-only. Paper claim is "S3 holds up under realistic mixed contention", not "S3 wins vs isolated baseline at every SF".
-- **geo_btree c2 partial** (only bg=0 r1 from `-a`): once `-c` fills c2 bg=2 for geo_btree, the bg=0/1 hole is in the abandoned regime, not the paper one.
+- **geo_btree c2 partial** (only bg=0 r1 from `-a`): abandoned regime.
 - **S5 (aCOLI MI)**, **Q10I**, **Q12**: deferred / excluded by design — documented in `frontend/tpch/PLAYBOOK.md §S5`, the q-dir CLAUDE.md files, and `experiments/sweep.yaml §excluded`.
 - **q5_btree S3 bg=1 race** (`std::out_of_range` on `nationkey_to_name`, fg/bg map race): doesn't affect `-b`. Log in `frontend/tpch/q5/RUNS.md` if it ever fires.
 
