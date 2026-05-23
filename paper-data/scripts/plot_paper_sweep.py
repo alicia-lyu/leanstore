@@ -817,8 +817,12 @@ def _apply_paper_overlap_style(ax) -> None:
         line.set_marker("o")
         line.set_markersize(4)
         line.set_alpha(0.7)
-    for coll in ax.collections:
-        coll.set_alpha(0.18)
+    # Suppress the IQR fill_between bands — at 3 reps the IQR is
+    # noisy and the "shadow" around lines (most visible behind
+    # pipeline view) reads as a visual artefact rather than an
+    # uncertainty signal.
+    for coll in list(ax.collections):
+        coll.set_visible(False)
     ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
     ax.yaxis.set_major_formatter(
         mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
