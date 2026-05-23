@@ -326,11 +326,15 @@ def _save(fig: plt.Figure, dest: Path, footer: str, fmt: str = "pdf",
     Set ``include_footer=False`` for paper-mode output where the footer
     would just be noise in a typeset figure.
     """
+    # Skip tight_layout entirely when constrained_layout is already
+    # in charge — calling both leads to a warning and stray whitespace.
+    using_cl = bool(fig.get_constrained_layout())
     if include_footer:
         fig.text(0.5, 0.005, footer, ha="center", va="bottom",
                  fontsize=STYLE["footer_fontsize"], color="#666")
-        fig.tight_layout(rect=[0, 0.025, 1, 1])
-    else:
+        if not using_cl:
+            fig.tight_layout(rect=[0, 0.025, 1, 1])
+    elif not using_cl:
         fig.tight_layout()
     dest.parent.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
@@ -821,7 +825,7 @@ def _apply_paper_overlap_style(ax) -> None:
     ax.yaxis.set_minor_locator(
         mticker.LogLocator(base=10.0, subs=tuple(range(2, 10))))
     ax.yaxis.set_minor_formatter(mticker.NullFormatter())
-    ax.tick_params(axis="y", which="major", labelsize=5)
+    ax.tick_params(axis="y", which="major", labelsize=7)
     ax.tick_params(axis="y", which="minor", length=2)
 
 
@@ -836,7 +840,7 @@ def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
     if sub.empty:
         _all_or_empty(plt.gcf(), ax, "—")
         ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
-                     fontsize=8)
+                     fontsize=10)
         return False
     sub = sub.copy()
     sub["s_median"] = sub["ms_median"] / 1000.0
@@ -847,13 +851,12 @@ def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
         hue_labels=STRUCTURE_LABELS, linestyle="-",
     )
     ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
-                 fontsize=8)
+                 fontsize=10)
     if show_ylabel:
-        ax.set_ylabel("seconds / query", fontsize=7)
-    # No per-panel xlabel — set once via fig.supxlabel after layout.
+        ax.set_ylabel("seconds / query", fontsize=8)
     ax.set_xticks(np.arange(len(cells)))
     ax.set_xticklabels([PAPER_CELL_TICK.get(c, c) for c in cells],
-                       fontsize=7)
+                       fontsize=8)
     ax.set_yscale("log")
     ax.tick_params(axis="y", labelsize=6)
     ax.grid(False)  # no log-scale gridlines per user request
@@ -882,12 +885,13 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
     binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
-    # Single column ≈ 3.4"; 4 panels at ~0.85" each + slight margin.
-    # Height ~1.7" gives readable panels without dwarfing surrounding text.
-    # sharey=False so each query's panel auto-scales independently —
-    # otherwise the slowest query stretches the y-range and the other
-    # panels' lines visually collapse together.
-    fig, axes = plt.subplots(1, 4, figsize=(3.5, 1.75), sharey=False)
+    # Author the figure at full-page width (~6.5") so each panel has
+    # room for tick labels + line markers; LaTeX scales it down to
+    # column width at \includegraphics time. constrained_layout
+    # handles the external legend bbox without leaving stray
+    # whitespace that tight_layout sometimes does with sharey=False.
+    fig, axes = plt.subplots(1, 4, figsize=(6.5, 2.0), sharey=False,
+                             constrained_layout=True)
     has_any = False
     for j, binary in enumerate(binaries):
         drew = _paper_panel(axes[j], ms_df, binary, PAPER_CELLS,
@@ -903,8 +907,8 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
                               label=STRUCTURE_LABELS[s].split(" ", 1)[1])
                    for s in PAPER_LEGEND_ORDER]
         fig.legend(handles=handles, loc="upper center", ncol=4,
-                   fontsize=6, bbox_to_anchor=(0.5, 1.08),
-                   frameon=False, columnspacing=1.2, handletextpad=0.4)
+                   fontsize=8, bbox_to_anchor=(0.5, 1.06),
+                   frameon=False, columnspacing=1.5, handletextpad=0.4)
     name = f"paper_tpch_{backend}_headline"
     dest = data.figures_root / "paper" / name
     return _save(fig, dest, data.footer, include_footer=False)[0]
@@ -933,8 +937,8 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
         return None
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg", "tx"])
-    fig, axes = plt.subplots(2, 3, figsize=(5.2, 3.0), sharey="row",
-                             sharex="col")
+    fig, axes = plt.subplots(2, 3, figsize=(6.5, 3.0), sharey="row",
+                             sharex="col", constrained_layout=True)
     tx_order = PAPER_GEO_TX
     backend_order = [("geo_btree", "btree"), ("geo_lsm", "lsm")]
     drew_any = False
@@ -958,15 +962,15 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
             ax.set_yscale("log")
             ax.grid(False)
             if i == 0:
-                ax.set_title(tx, fontsize=8)
+                ax.set_title(tx, fontsize=10)
             if j == 0:
-                ax.set_ylabel(f"{backend}\nseconds / query", fontsize=7)
+                ax.set_ylabel(f"{backend}\nseconds / query", fontsize=8)
             if i == len(backend_order) - 1:
                 ax.set_xticks(np.arange(len(PAPER_CELLS)))
                 ax.set_xticklabels(
                     [PAPER_CELL_TICK.get(c, c) for c in PAPER_CELLS],
-                    fontsize=7)
-            ax.tick_params(axis="y", labelsize=6)
+                    fontsize=8)
+            ax.tick_params(axis="y", labelsize=7)
             if ax.get_legend():
                 ax.get_legend().remove()
             _apply_paper_overlap_style(ax)
