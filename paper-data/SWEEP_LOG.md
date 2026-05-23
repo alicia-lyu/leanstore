@@ -23,6 +23,13 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 - **Total estimate: ~60–80 h** from start (originally 18–24 h — q5_btree at SF=1550 s4 hash join is dominant, ~74 min/rep).
 
 **Latest status** (most-recent first):
+- **2026-05-23 — geo BG semantics redesigned** (SHA `8944030c`):
+  - Old `--geo_bg_thread=true` did write-only insert/erase on customer2; asymmetric with TPC-H bg=2 read cohort and not a realistic concurrency model.
+  - New: read-only **hierarchical point lookup** loop. At thread start, reservoir-sample 10K valid customer keys (one full scan of customer2 / merged tree). Per TX: pick a key uniformly, issue 5 lookups (customer → city → county → state → nation) in one TX. S1/S2/S4 use 5 separate adapters; S3 uses merged `lookup1<T>`.
+  - Pre-redesign c1 captures (`geo_lsm` 3 reps, `geo_btree` 2 reps) quarantined to `raw/geo_{lsm,btree}/legacy-writebg/`; frozen ms/query summary preserved at `summary/legacy/geo_{lsm,btree}_writebg_c1.md`.
+  - Smoke-tested SF=52 S1 + S3 with bg=true on Linux: `[bg-sample] {base,merged}: sampled 10000 of 1559999 customer keys`, then `#6783` / `#7902 bg lookup tx in total performed` across the 7-phase sweep. No errors.
+  - Geo COL-walker optimization (analogous to TPC-H S3) deferred until first read-bg numbers come in; revisit if S3 still doesn't pull clear of S2 under the new semantics.
+  - **Next**: relaunch `--families geo --continue` to backfill c1+c3+c0 under new semantics. ETA depends on first-rep timing under read-bg (lookups likely ≤ write-bg cost per TX).
 - **2026-05-23 10:13 UTC** (~111 h in): geo phase ~15% done; per-rep slower than projected.
   - Phase 1: ✓ all 24 TPC-H binary-cells × 3 reps = 72 binary-reps.
   - Phase 2 geo:
