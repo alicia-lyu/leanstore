@@ -7,10 +7,18 @@ figures (PDF + PNG sibling) under `paper-data/<tag>/figures/`.
 ## Run
 
 ```bash
-# Default: produce all 9 figures, PDF + PNG, for the named tag
+# Default mode: sweep-diagnostic figures (the 9 builders below)
 python3 scripts/plot_paper_sweep.py --tag 2026-05-18-a
 
-# Subset
+# Paper-figures mode: 3 typeset-ready figures under figures/paper/
+# (1×4 TPC-H btree row, 1×4 TPC-H lsm row, 2×3 condensed geo grid)
+python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b --mode paper-figures
+
+# Diagnostics-explore mode: 6-panel metric grids + diagnostics_paper.csv
+# (scratch outputs under figures/diagnostics/; pick 1-2 panels for the paper)
+python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b --mode diagnostics-explore
+
+# Subset (overrides --mode)
 python3 scripts/plot_paper_sweep.py --tag 2026-05-18-a \
     --figures headline_tpch_vs_secondary,inversions
 
@@ -44,6 +52,12 @@ numpy 1.21.5.
 | `s3_vs_s2_speedup.pdf` | headline.csv | Heatmap binary × cell, value = S3 speedup over S2 in ms terms (S2 ms / S3 ms; bg=0). Cells > 1.00× favor S3. |
 | `duration_baseline.pdf` | stats.csv | Reference bars: raw ms/query at anchor cell c0, bg=0, per (binary, structure). Anchors intuition for the headline plot axes. |
 | `diagnostics_attribution.pdf` | diagnostics.csv | 2×2 grid: LLC misses/TX, BM free %, BM evicted MiB, P99 latency. X=cell, lines=structure, median across binaries. LSM panels blank for LeanStore-only counters and vice versa. |
+| **`paper/paper_tpch_btree_headline.pdf`** | headline.csv | **Paper-mode.** 1×4 single-column row (q3, q5, q3i, q5i btree). bg=2 only, structures S1–S4 only. X-axis = data size (GiB) with H/L memory-pressure suffix: `2` (sec 2 GiB), `5H` (sec 5 GiB, DRAM 0.4), `5L` (sec 5 GiB, DRAM 1.0). Y = ms/query (log). Shared legend on top. Stacks vertically with the lsm sibling for backend comparison. |
+| **`paper/paper_tpch_lsm_headline.pdf`** | headline.csv | **Paper-mode.** Same shape and geometry as the btree sibling above, for the lsm backend. Legend omitted (parent doc uses the btree figure's legend). |
+| **`paper/paper_geo_condensed.pdf`** | headline.csv | **Paper-mode.** 2×3 grid: rows = geo backend (btree, lsm), cols = tx pattern (join-nsc, mixed-nsc, distinct-nsc) — all at depth nsc. Same data-size x-axis and colour map as the TPC-H figures. |
+| **`diagnostics/diag_explore_all.pdf`** | diagnostics.csv | **Diagnostics-explore mode.** 6-panel metric grid: LLC misses/TX, cycles/TX, BM eviction rounds, BM evicted MiB, TX restarts, P99 latency. Median across all TPC-H/TPCHI binaries at bg=2. Use to scan for which 1–2 metrics earn a paper spot. |
+| **`diagnostics/diag_explore_q3i_lsm.pdf`** | diagnostics.csv | **Diagnostics-explore mode.** Same 6 metrics for q3i_lsm only — the binary with the flagged S3-vs-S2 inversion at large DRAM. |
+| **`summary/diagnostics_paper.csv`** | diagnostics.csv | **Diagnostics-explore mode side effect.** One row per (binary, cell, structure) with the six explored metrics, so the writer can table-ify any of them without re-running the analyzer. |
 
 **Y-axis convention:** primary axis is **ms/query** (lower is better, the
 intuitive lens for "how slow is each query"). TX/s lives on the right twin
@@ -64,6 +78,17 @@ The plotter doesn't error on missing cells / missing binaries. A
 sub-panel with no data renders as a centered "no data" note; lines
 across cells render with a gap where data is absent (no fabricated
 zero).
+
+## Known data gap (as of 2026-05-23)
+
+`diagnostics.csv` for `2026-05-18-b` has all attribution columns
+(`cpu_*`, `bm_*`, `cr_*`, `dt_*`, `latency_*`, `lsm_*`) **empty**:
+the per-rep detail counters under `<binary>/<cell>-bgN-rR/<tx>/<method>/`
+exist on disk but the analyzer isn't joining them into the
+diagnostics CSV. `diag_explore_*` renders as "no data" panels until
+that's fixed. Plotter is correct; analyzer needs a follow-up to
+populate these columns. Until then, treat `diagnostics-explore` mode
+as scaffolding that's ready for data, not a live signal.
 
 ## Adding a new figure
 

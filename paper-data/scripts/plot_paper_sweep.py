@@ -317,12 +317,21 @@ def _add_twin_txps_axis(ax) -> None:
     _add_twin_axis(ax, "TX/s")
 
 
-def _save(fig: plt.Figure, dest: Path, footer: str, fmt: str = "pdf") -> List[Path]:
+def _save(fig: plt.Figure, dest: Path, footer: str, fmt: str = "pdf",
+          include_footer: bool = True) -> List[Path]:
     """Save fig with a discreet footer line. Always emits PDF + PNG sibling
-    when fmt='pdf'. Otherwise emits only the requested format."""
-    fig.text(0.5, 0.005, footer, ha="center", va="bottom",
-             fontsize=STYLE["footer_fontsize"], color="#666")
-    fig.tight_layout(rect=[0, 0.025, 1, 1])
+    when fmt='pdf'. Otherwise emits only the requested format.
+
+    Set ``include_footer=False`` for paper-mode output where the footer
+    would just be noise in a typeset figure.
+    """
+    if include_footer:
+        fig.text(0.5, 0.005, footer, ha="center", va="bottom",
+                 fontsize=STYLE["footer_fontsize"], color="#666")
+        fig.tight_layout(rect=[0, 0.025, 1, 1])
+    else:
+        fig.tight_layout()
+    dest.parent.mkdir(parents=True, exist_ok=True)
     written: List[Path] = []
     primary = dest.with_suffix(f".{fmt}")
     fig.savefig(primary, format=fmt, bbox_inches="tight")
@@ -750,6 +759,313 @@ def fig_diagnostics(data: SweepData) -> Optional[Path]:
 
 
 # ---------------------------------------------------------------------------
+# Paper-mode builders — typeset-ready figures for the revision
+# ---------------------------------------------------------------------------
+#
+# Paper-mode design choices (differ from default builders above):
+# - bg=2 only (the paper's headline contention cohort; bg=0/1 are
+#   sweep-internal calibration knobs and don't belong in a typeset figure)
+# - structures 1-4 only (S5 deferred from paper per PLAYBOOK)
+# - secondary-axis cells (c2 → c1 → c0) — scale-up axis is the headline
+# - no footer (typesetter doesn't want it)
+# - compact figure size for single-column placement, sharey across panels
+# - written under figures/paper/ so they don't mix with the default sweep
+#   diagnostic outputs
+
+PAPER_TPCH_QUERIES = ["q3", "q5", "q3i", "q5i"]   # left-to-right panel order
+PAPER_HEADLINE_BG = 2                              # paper's contention cohort
+PAPER_STRUCTURES = [1, 2, 3, 4]                    # S5 deferred
+# Sweep -b actually runs c1, c3, c0 (c2 was dropped). Axis order is
+# scan-pressure → DRAM-relief: c1 (smaller data, low pressure) →
+# c3 (larger data at same DRAM, HIGH memory pressure) → c0 (larger
+# data with more DRAM, LOW memory pressure).
+PAPER_CELLS = ["c1", "c3", "c0"]
+# Tick labels show secondary index size in GiB, with H/L suffix to
+# distinguish c3 (high mem pressure) from c0 (low mem pressure) at
+# the same data size. Per user feedback: "secondary size" isn't a
+# standard term, so the xlabel just says "data size (GiB)" — the
+# secondary index is the dominant data the queries scan.
+PAPER_CELL_TICK = {
+    "c1": "2",      # sec 2 GiB, DRAM 0.4 — baseline (low pressure)
+    "c3": "5H",     # sec 5 GiB, DRAM 0.4 — high memory pressure
+    "c0": "5L",     # sec 5 GiB, DRAM 1.0 — low memory pressure
+}
+
+
+def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
+                 cells: Sequence[str], show_ylabel: bool) -> bool:
+    """One compact panel of the paper TPC-H row. bg=2 only, S1-S4 only."""
+    sub = ms_df[(ms_df["binary"] == binary) & (ms_df["cell"].isin(cells))
+                & (ms_df["bg"] == PAPER_HEADLINE_BG)
+                & (ms_df["structure"].isin(PAPER_STRUCTURES))]
+    if sub.empty:
+        _all_or_empty(plt.gcf(), ax, "—")
+        ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+                     fontsize=8)
+        return False
+    line_with_iqr(
+        ax, sub, x_col="cell", y_col="ms_median", iqr_col="ms_iqr",
+        hue_col="structure", x_order=cells,
+        hue_labels=STRUCTURE_LABELS, linestyle="-",
+    )
+    ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+                 fontsize=8)
+    if show_ylabel:
+        ax.set_ylabel("ms / query", fontsize=7)
+    # No per-panel xlabel — set once via fig.supxlabel after layout.
+    ax.set_xticks(np.arange(len(cells)))
+    ax.set_xticklabels([PAPER_CELL_TICK.get(c, c) for c in cells],
+                       fontsize=7)
+    ax.set_yscale("log")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(True, axis="y", alpha=0.2, which="both")
+    # remove the per-panel legend (we attach a single shared one to btree
+    # figure at save time)
+    if ax.get_legend():
+        ax.get_legend().remove()
+    return True
+
+
+def fig_paper_tpch_row(data: SweepData, backend: str,
+                       include_legend: bool) -> Optional[Path]:
+    """1×4 row of (q3, q5, q3i, q5i) for one backend, single-column-wide.
+
+    The btree and lsm figures are designed to be the same width and
+    panel geometry so the writer can stack them vertically in LaTeX and
+    have axes line up panel-by-panel. ``include_legend=True`` attaches a
+    single compact legend above the figure; the sibling figure should
+    set it False so vertical space isn't duplicated.
+    """
+    assert backend in ("btree", "lsm")
+    head = data.headline[data.headline["family"].isin(["vanilla", "tpchi"])
+                         & (data.headline["backend"] == backend)
+                         & (data.headline["tx"] == "query")]
+    if head.empty:
+        return None
+    ms_df = aggregate_ms_per_query(
+        head, group_cols=["binary", "cell", "structure", "bg"])
+    binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
+    # Single column ≈ 3.4"; 4 panels at ~0.85" each + slight margin.
+    # Height ~1.7" gives readable panels without dwarfing surrounding text.
+    fig, axes = plt.subplots(1, 4, figsize=(3.5, 1.75), sharey=True)
+    has_any = False
+    for j, binary in enumerate(binaries):
+        drew = _paper_panel(axes[j], ms_df, binary, PAPER_CELLS,
+                            show_ylabel=(j == 0))
+        has_any = has_any or drew
+    if not has_any:
+        plt.close(fig)
+        return None
+    fig.supxlabel(
+        "data size (GiB)   —   H: high memory pressure, L: low memory pressure",
+        fontsize=6, y=-0.02)
+    if include_legend:
+        handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
+                              marker=STYLE["structure_markers"][s],
+                              markersize=3, linewidth=1.2,
+                              label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+                   for s in PAPER_STRUCTURES]
+        fig.legend(handles=handles, loc="upper center", ncol=4,
+                   fontsize=6, bbox_to_anchor=(0.5, 1.08),
+                   frameon=False, columnspacing=1.2, handletextpad=0.4)
+    name = f"paper_tpch_{backend}_headline"
+    dest = data.figures_root / "paper" / name
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
+PAPER_GEO_TX = ["join-nsc", "mixed-nsc", "distinct-nsc"]
+
+
+def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
+    """Condensed geo: join-nsc, mixed-nsc, distinct-nsc — nsc depth only.
+
+    2×3 grid:
+        rows  = backend (geo_btree on top, geo_lsm below)
+        cols  = tx pattern (join, mixed, distinct) — all at depth nsc
+    Same secondary-axis cells (c2, c1, c0), same colour map as the
+    TPC-H row figures so the visual vocabulary carries between sections.
+    The user's preference: keep all three patterns (so the join /
+    aggregation / distinct-aggregation progression is visible) but stay
+    at nsc depth to keep the figure compact and on-message.
+    """
+    head = data.headline[(data.headline["family"] == "geo")
+                         & (data.headline["tx"].isin(PAPER_GEO_TX))
+                         & (data.headline["bg"] == PAPER_HEADLINE_BG)
+                         & (data.headline["structure"].isin(PAPER_STRUCTURES))]
+    if head.empty:
+        return None
+    ms_df = aggregate_ms_per_query(
+        head, group_cols=["binary", "cell", "structure", "bg", "tx"])
+    fig, axes = plt.subplots(2, 3, figsize=(5.2, 3.0), sharey="row",
+                             sharex="col")
+    tx_order = PAPER_GEO_TX
+    backend_order = [("geo_btree", "btree"), ("geo_lsm", "lsm")]
+    drew_any = False
+    for i, (binary, backend) in enumerate(backend_order):
+        for j, tx in enumerate(tx_order):
+            ax = axes[i, j]
+            sub = ms_df[(ms_df["binary"] == binary) & (ms_df["tx"] == tx)
+                        & (ms_df["cell"].isin(PAPER_CELLS))]
+            if sub.empty:
+                _all_or_empty(fig, ax, "—")
+                continue
+            line_with_iqr(
+                ax, sub, x_col="cell", y_col="ms_median",
+                iqr_col="ms_iqr", hue_col="structure",
+                x_order=PAPER_CELLS, hue_labels=STRUCTURE_LABELS,
+                linestyle="-",
+            )
+            ax.set_yscale("log")
+            ax.grid(True, axis="y", alpha=0.2, which="both")
+            if i == 0:
+                ax.set_title(tx, fontsize=8)
+            if j == 0:
+                ax.set_ylabel(f"{backend}\nms / query", fontsize=7)
+            if i == len(backend_order) - 1:
+                ax.set_xticks(np.arange(len(PAPER_CELLS)))
+                ax.set_xticklabels(
+                    [PAPER_CELL_TICK.get(c, c) for c in PAPER_CELLS],
+                    fontsize=7)
+            ax.tick_params(axis="y", labelsize=6)
+            if ax.get_legend():
+                ax.get_legend().remove()
+            drew_any = True
+    if not drew_any:
+        plt.close(fig)
+        return None
+    handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
+                          marker=STYLE["structure_markers"][s],
+                          markersize=3, linewidth=1.2,
+                          label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+               for s in PAPER_STRUCTURES]
+    fig.legend(handles=handles, loc="upper center", ncol=4,
+               fontsize=6, bbox_to_anchor=(0.5, 1.04),
+               frameon=False, columnspacing=1.2, handletextpad=0.4)
+    fig.supxlabel(
+        "data size (GiB)   —   H: high memory pressure, L: low memory pressure",
+        fontsize=6, y=-0.02)
+    dest = data.figures_root / "paper" / "paper_geo_condensed"
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics exploration mode
+# ---------------------------------------------------------------------------
+#
+# Plot the candidate metric families from §Diagnostics in the plan. Goal:
+# scan visually after the run, pick 1-2 panels that earn paper-mode
+# treatment. Outputs live under figures/diagnostics/.
+
+DIAG_EXPLORE_FAMILIES: List[Tuple[str, str, str, bool]] = [
+    # (panel title, column, ylabel, log)
+    ("CPU: LLC misses / TX",   "cpu_llc_miss_per_tx",  "LLC miss / TX",   True),
+    ("CPU: cycles / TX",       "cpu_cycles_per_tx",    "cycles / TX",     True),
+    ("BM: eviction rounds",    "bm_rounds",            "rounds",          True),
+    ("BM: evicted MiB",        "bm_evicted_mib",       "MiB",             True),
+    ("TX: restarts",           "cr_restarts",          "restarts",        False),
+    ("Tail: P99 latency",      "latency_p99_ms",       "P99 ms",          True),
+]
+
+
+def _diag_filter(diag: pd.DataFrame, binary_filter: Optional[str] = None
+                 ) -> pd.DataFrame:
+    df = diag[(diag["family"].isin(["vanilla", "tpchi"]))
+              & (diag["bg"] == PAPER_HEADLINE_BG)
+              & (diag["tx"] == "query")
+              & (diag["structure"].isin(PAPER_STRUCTURES))]
+    if binary_filter:
+        df = df[df["binary"] == binary_filter]
+    return df
+
+
+def _draw_metric_panel(ax, agg: pd.DataFrame, col: str, ylabel: str,
+                       logy: bool, cells: Sequence[str]) -> bool:
+    if col not in agg.columns:
+        _all_or_empty(plt.gcf(), ax, f"{col} not in CSV")
+        return False
+    sub = agg[["cell", "structure", col]].dropna(subset=[col])
+    if sub.empty:
+        _all_or_empty(plt.gcf(), ax, f"{col}: no data")
+        return False
+    for struct in PAPER_STRUCTURES:
+        s = sub[sub["structure"] == struct].set_index("cell").reindex(cells)
+        y = s[col].astype(float).values
+        if np.all(np.isnan(y)):
+            continue
+        ax.plot(np.arange(len(cells)), y,
+                label=STRUCTURE_LABELS[struct].split(" ", 1)[1],
+                **_structure_style(struct))
+    ax.set_xticks(np.arange(len(cells)))
+    ax.set_xticklabels(cells, fontsize=7)
+    ax.set_ylabel(ylabel, fontsize=8)
+    if logy:
+        ax.set_yscale("log")
+    ax.tick_params(labelsize=7)
+    ax.grid(True, alpha=0.2, which="both")
+    return True
+
+
+def _emit_diag_grid(data: SweepData, diag: pd.DataFrame, name: str,
+                    title: str) -> Optional[Path]:
+    if diag.empty:
+        return None
+    # Median across binaries per (cell, structure)
+    agg = (diag.groupby(["cell", "structure"])
+                .median(numeric_only=True).reset_index())
+    cells = [c for c in ["c2", "c1", "c3", "c0"] if c in agg["cell"].unique()]
+    if not cells:
+        return None
+    fig, axes = plt.subplots(2, 3, figsize=(11.0, 6.5))
+    for ax, (title_p, col, ylabel, logy) in zip(axes.flat, DIAG_EXPLORE_FAMILIES):
+        ax.set_title(title_p, fontsize=9)
+        _draw_metric_panel(ax, agg, col, ylabel, logy, cells)
+    handles, labels = [], []
+    for ax in axes.flat:
+        for h, l in zip(*ax.get_legend_handles_labels()):
+            if l not in labels:
+                handles.append(h); labels.append(l)
+    if handles:
+        fig.legend(handles, labels, loc="upper center",
+                   ncol=len(labels), fontsize=8,
+                   bbox_to_anchor=(0.5, 1.02), frameon=False)
+    fig.suptitle(title, fontsize=11, y=1.05)
+    dest = data.figures_root / "diagnostics" / name
+    return _save(fig, dest, data.footer, include_footer=True)[0]
+
+
+def fig_diag_explore_all(data: SweepData) -> Optional[Path]:
+    """6-panel metric grid, median across all TPC-H/TPCHI binaries at bg=2."""
+    diag = _diag_filter(data.diagnostics)
+    return _emit_diag_grid(
+        data, diag, "diag_explore_all",
+        "Diagnostics — median across q3/q5/q3i/q5i × {lsm, btree} (bg=2)")
+
+
+def fig_diag_explore_q3i_lsm(data: SweepData) -> Optional[Path]:
+    """Per-binary diagnostics for q3i_lsm — the one flagged anomaly."""
+    diag = _diag_filter(data.diagnostics, binary_filter="q3i_lsm")
+    return _emit_diag_grid(
+        data, diag, "diag_explore_q3i_lsm",
+        "Diagnostics — q3i_lsm only (anomaly attribution)")
+
+
+def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
+    """One-row-per-(binary, cell, structure) summary of the metrics we plot.
+    Lets the writer table-ify any of them without re-running the analyzer."""
+    diag = _diag_filter(data.diagnostics)
+    if diag.empty:
+        return None
+    cols = [c for _, c, _, _ in DIAG_EXPLORE_FAMILIES if c in diag.columns]
+    keep = ["binary", "cell", "structure"] + cols
+    sub = diag[keep].copy()
+    agg = (sub.groupby(["binary", "cell", "structure"])
+               .median(numeric_only=True).reset_index())
+    dest = data.summary_root / "diagnostics_paper.csv"
+    agg.to_csv(dest, index=False)
+    return dest
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -763,6 +1079,23 @@ FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     "s3_vs_s2_speedup":           fig_s3_vs_s2_speedup,
     "duration_baseline":          fig_duration_baseline,
     "diagnostics_attribution":    fig_diagnostics,
+    # Paper-mode builders (typeset-ready, bg=2 only, S1-S4 only).
+    "paper_tpch_btree":           lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
+    "paper_tpch_lsm":             lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
+    "paper_geo_condensed":        fig_paper_geo_condensed,
+    # Diagnostics exploration (multi-metric scan, scratch outputs).
+    "diag_explore_all":           fig_diag_explore_all,
+    "diag_explore_q3i_lsm":       fig_diag_explore_q3i_lsm,
+}
+
+# Curated subsets selectable via --mode.
+MODE_FIGURES: Dict[str, List[str]] = {
+    "default": [k for k in FIGURE_BUILDERS
+                if not k.startswith(("paper_", "diag_explore_"))],
+    "paper-figures": ["paper_tpch_btree", "paper_tpch_lsm",
+                      "paper_geo_condensed"],
+    "diagnostics-explore": ["diag_explore_all", "diag_explore_q3i_lsm"],
+    "all": list(FIGURE_BUILDERS.keys()),
 }
 
 
@@ -772,8 +1105,13 @@ def main() -> int:
     p.add_argument("--tag", required=True, help="sweep tag, e.g. 2026-05-18-a")
     p.add_argument("--root", type=Path, default=None,
                    help="paper-data/<tag>/ root (default: paper-data/<tag> relative to cwd)")
-    p.add_argument("--figures", default="all",
-                   help="comma list of figure names to emit, or 'all'")
+    p.add_argument("--mode", default="default",
+                   choices=list(MODE_FIGURES.keys()),
+                   help="curated figure subset: default (sweep diagnostics), "
+                        "paper-figures (typeset-ready), diagnostics-explore "
+                        "(6-panel metric grids + diagnostics_paper.csv), all")
+    p.add_argument("--figures", default=None,
+                   help="comma list of figure names to emit; overrides --mode")
     p.add_argument("--format", default="pdf", choices=["pdf", "png", "svg", "pgf"],
                    help="primary output format; pdf also emits a PNG sibling")
     args = p.parse_args()
@@ -791,14 +1129,22 @@ def main() -> int:
         })
 
     data = load_sweep(args.tag, root)
-    if args.figures == "all":
-        names = list(FIGURE_BUILDERS.keys())
-    else:
+    if args.figures:
         names = [n.strip() for n in args.figures.split(",") if n.strip()]
         unknown = [n for n in names if n not in FIGURE_BUILDERS]
         if unknown:
             print(f"[plotter] unknown figure(s): {unknown}", file=sys.stderr)
             return 1
+    else:
+        names = MODE_FIGURES[args.mode]
+
+    # Side effect: diagnostics-explore mode also writes the per-cell
+    # summary CSV so the writer can table-ify any metric without
+    # rerunning the analyzer.
+    if args.mode == "diagnostics-explore" and not args.figures:
+        csv_path = emit_diag_summary_csv(data)
+        if csv_path:
+            print(f"[plotter] wrote {csv_path}", file=sys.stderr)
 
     emitted: List[Path] = []
     for name in names:
