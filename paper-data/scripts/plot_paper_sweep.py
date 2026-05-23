@@ -23,6 +23,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 import matplotlib
 matplotlib.use("Agg")  # no display required on the experiment host
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import yaml
@@ -801,14 +802,27 @@ def _apply_paper_overlap_style(ax) -> None:
     overlapping lines stay visible. The colour map (red / blue / green /
     orange) already distinguishes structures; the per-structure marker
     shape duplicates that signal and adds visual clutter when lines
-    coincide. One marker + transparency makes overlap explicit."""
+    coincide. One marker + transparency makes overlap explicit.
+
+    Also tightens y-axis tick presentation: label only the major
+    powers of 10 (suppress 2×10³, 6×10², etc.) and use a small font.
+    Otherwise narrow-range panels (e.g. q3 btree 300-2000 s) emit
+    five intermediate labels and eat the horizontal space of the
+    next panel."""
     for line in ax.get_lines():
         line.set_marker("o")
         line.set_markersize(4)
         line.set_alpha(0.7)
-    # IQR bands rendered via fill_between also get alpha-blended.
     for coll in ax.collections:
         coll.set_alpha(0.18)
+    ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
+    ax.yaxis.set_major_formatter(
+        mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
+    ax.yaxis.set_minor_locator(
+        mticker.LogLocator(base=10.0, subs=tuple(range(2, 10))))
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.tick_params(axis="y", which="major", labelsize=5)
+    ax.tick_params(axis="y", which="minor", length=2)
 
 
 def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
