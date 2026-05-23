@@ -911,7 +911,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
                               label=STRUCTURE_LABELS[s].split(" ", 1)[1])
                    for s in PAPER_LEGEND_ORDER]
         fig.legend(handles=handles, loc="upper center", ncol=4,
-                   fontsize=8, bbox_to_anchor=(0.5, 1.06),
+                   fontsize=8, bbox_to_anchor=(0.5, 1.14),
                    frameon=False, columnspacing=1.5, handletextpad=0.4)
     name = f"paper_tpch_{backend}_headline"
     dest = data.figures_root / "paper" / name
