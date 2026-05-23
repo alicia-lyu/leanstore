@@ -223,6 +223,21 @@ class GeoJoin
    long range_mixed_query_by_merged(sort_key_t select_sk, bool distinct);
    long range_mixed_query_by_base(sort_key_t select_sk, bool distinct);
    long range_mixed_query_hash(sort_key_t select_sk, bool distinct);
+
+   // -------------------------------------------------------------
+   // ---------------------- BG POINT-LOOKUP ----------------------
+   // Read-only hierarchical lookup: customer -> city -> county -> state -> nation.
+   // All 5 lookups share one TX (caller wraps in run_tx). Parent keys derive
+   // from the customer key prefix, no inter-lookup data dependency.
+   void point_lookup_hierarchy_base(const customer2_t::Key& ck);
+   void point_lookup_hierarchy_merged(const customer2_t::Key& ck);
+
+   // Reservoir-sample N valid customer2 keys for bg-thread random selection.
+   // Called once at bg-thread startup; subsequent lookups pick uniformly from
+   // the returned vector. _base scans the customer2 adapter; _merged filters
+   // the merged scanner for customer2 records via WILDCARD_KEY check.
+   std::vector<customer2_t::Key> sample_customer_keys_base(size_t N);
+   std::vector<customer2_t::Key> sample_customer_keys_merged(size_t N);
 };
 }  // namespace geo_join
 // #include "groupby_query.tpp"  // IWYU pragma: keep
@@ -231,3 +246,4 @@ class GeoJoin
 #include "load.tpp"         // IWYU pragma: keep
 #include "maintain.tpp"     // IWYU pragma: keep
 #include "mixed_query.tpp"  // IWYU pragma: keep
+#include "point_lookup.tpp" // IWYU pragma: keep

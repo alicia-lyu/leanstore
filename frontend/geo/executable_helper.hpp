@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <random>
 #include <thread>
 #include "../shared/db_traits.hpp"
 #include "../shared/logger/logger.hpp"
@@ -95,80 +96,61 @@ struct ExecutableHelper {
       db_traits->cleanup_thread(MAIN_WORKER);
    }
 
-   void erase_remaining_customers(bool& customer_to_erase, long long& bg_erase_count)
-   {
-      std::cout << "Remaining customers to erase = " << workload->remaining_customers_to_erase() << std::endl;
-      while (customer_to_erase) {
-         db_traits->run_tx_w_rollback([&]() { customer_to_erase = workload->erase1(); }, "erase", BG_WORKER);
-         bg_erase_count++;
-      }
-   }
-
    void schedule_bg_txs()
    {
       // Microbenchmark contract: --geo_bg_thread=false runs no background
       // thread at all (true isolated microbenchmark). When true, a single
-      // background thread issues geo-local maintain/erase TXs against
-      // customer2 — no writes against any TPC-H table, no TPC-H lookups.
-      // The geo benchmark no longer depends on TPC-H data.
+      // background thread issues read-only hierarchical point-lookup TXs:
+      // for a randomly-picked already-loaded customer, look up that customer
+      // plus its city, county, state, and nation — 5 lookups per TX, all
+      // inside one TX (mirrors maintain_view's lookup pattern). No writes
+      // touch any geo table.
+      //
+      // Prime select_to_insert() once unconditionally so the post-sweep
+      // "maintain" foreground TX has cities to draw from regardless of bg
+      // mode (the bg thread no longer maintains city_reservoir state).
+      workload->select_to_insert();
       if (!FLAGS_geo_bg_thread) {
-         // Still need to seed the main-thread gate. The foreground loop spins
-         // on run_main_thread; we must also prime select_to_insert() once so
-         // the maintain TX run after the join sweep has cities to draw from.
-         workload->select_to_insert();
          run_main_thread = true;
          return;
       }
       std::thread([this]() {
          running_threads_counter++;
-         bool customer_to_erase = false;
-         long long bg_insert_count = 0;
-         long long bg_erase_count = 0;
-         std::function<void()> periodic_reset = [&]() {
-            auto start = std::chrono::system_clock::now();
-            erase_remaining_customers(customer_to_erase, bg_erase_count);
-            workload->select_to_insert();
-            auto end = std::chrono::system_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-            std::cout << "Periodic reset took " << elapsed << " seconds." << std::endl;
+         // One-time reservoir sample of valid customer keys. Cost: one full
+         // scan of customer2 (base/view/hash) or the merged tree (merged).
+         // At SF=206 LSM that's ~6M rows, ~seconds on cached pages.
+         auto sample = workload->sample_customer_keys(10000);
+         if (sample.empty()) {
+            std::cerr << "[bg] sample_customer_keys returned 0 keys — bg thread will idle" << std::endl;
             run_main_thread = true;
-         };
+            db_traits->cleanup_thread(BG_WORKER);
+            running_threads_counter--;
+            return;
+         }
+         std::mt19937 rng(std::random_device{}());
+         std::uniform_int_distribution<size_t> pick(0, sample.size() - 1);
+
+         // Open the gate now — foreground phases can run while bg loops.
+         // No per-phase reset is needed since bg performs no writes.
+         run_main_thread = true;
+
          while (keep_running_bg_tx) {
-            std::string tx_type;
+            const auto& ck = sample[pick(rng)];
             jumpmuTry()
             {
-               if (run_main_thread == false) {
-                  periodic_reset();
-               }
-               // Geo-only simple background: alternate insert/erase on the
-               // customer2 hierarchy. No bgw_pct lottery — the upstream
-               // write-side race made that flag effectively dead, and a
-               // microbenchmark wants deterministic contention shape, not a
-               // probability mix.
-               if (customer_to_erase && workload->insertion_complete()) {
-                  db_traits->run_tx([&]() { customer_to_erase = workload->erase1(); }, BG_WORKER);
-                  tx_type = "erase";
-                  bg_erase_count++;
-               } else {
-                  db_traits->run_tx(std::bind(&PerStructureWorkloadFull::insert1, workload.get()), BG_WORKER);
-                  tx_type = "update";
-                  customer_to_erase = true;
-                  bg_insert_count++;
-               }
+               db_traits->run_tx([&]() { workload->point_lookup_hierarchy(ck); }, BG_WORKER);
                bg_tx_count++;
             }
             jumpmuCatchNoPrint()
             {
                db_traits->rollback_tx(BG_WORKER);
-               std::cerr << "#" << bg_tx_count.load() << " bg " << tx_type << " tx failed." << std::endl;
+               std::cerr << "#" << bg_tx_count.load() << " bg lookup tx failed." << std::endl;
             }
-            if (bg_tx_count.load() % 100 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
-               std::cout << "\r#" << bg_tx_count.load() << " bg tx performed.";
+            if (bg_tx_count.load() % 1000 == 1 && running_threads_counter == 1 && FLAGS_log_progress)
+               std::cout << "\r#" << bg_tx_count.load() << " bg lookup tx performed.";
          }
-         periodic_reset();
 
-         std::cout << "#" << bg_tx_count.load() << " bg tx in total performed. " << bg_insert_count << " inserts, " << bg_erase_count << " erases."
-                   << std::endl;
+         std::cout << "#" << bg_tx_count.load() << " bg lookup tx in total performed." << std::endl;
          db_traits->cleanup_thread(BG_WORKER);
          running_threads_counter--;
       }).detach();
@@ -228,13 +210,9 @@ struct ExecutableHelper {
       double tput = (double)count.load() / duration * 1e6;
       logger.log(tput, count.load(), tx, workload->get_name(), workload->get_size());
       running_threads_counter--;
-      // The background thread flips run_main_thread back to true between
-      // foreground phases via periodic_reset(). When no background thread is
-      // running (--geo_bg_thread=false), leave the gate open so the next
-      // tput_tx can proceed without a sync barrier — there's nothing to
-      // clean up between phases since the foreground queries don't insert.
-      if (FLAGS_geo_bg_thread) {
-         run_main_thread = false;
-      }
+      // Read-only bg means no per-phase reset is needed. The gate is opened
+      // once at startup (in schedule_bg_txs after the sample completes) and
+      // stays open across all foreground phases. The bg thread runs its
+      // lookup loop in parallel with each phase; no flip-back required.
    }
 };

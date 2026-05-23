@@ -66,6 +66,8 @@ struct PerStructureWorkload {
    void reset_maintain_ptrs() { workload.reset_maintain_ptrs(); }
    void select_to_insert() { workload.select_to_insert(); }
    bool n_scan_finished() const { return workload.n_scan_finished(); }
+   void point_lookup_hierarchy(const customer2_t::Key& ck) { workload.point_lookup_hierarchy(ck); }
+   std::vector<customer2_t::Key> sample_customer_keys(size_t N) { return workload.sample_customer_keys(N); }
 };
 
 template <template <typename> class AdapterType,
@@ -102,6 +104,8 @@ struct GeoJoinWrapper {
    void reset_maintain_ptrs() { workload.maintenance_state.reset(); }
    void select_to_insert() { workload.select_to_insert(); }
    bool n_scan_finished() const { return workload.get_n(true).second; }
+   void point_lookup_hierarchy(const customer2_t::Key& ck) { workload.point_lookup_hierarchy_base(ck); }
+   std::vector<customer2_t::Key> sample_customer_keys(size_t N) { return workload.sample_customer_keys_base(N); }
 };
 
 template <template <typename> class AdapterType,
@@ -195,6 +199,8 @@ struct MergedGeoJoin : public GeoJoinWrapper<AdapterType, MergedAdapterType, Sca
    void cleanup_updates() { workload.cleanup_merged(); }
    double get_size() { return workload.get_merged_size(); }
    void select_to_insert() { workload.select_merged_to_insert(); }
+   void point_lookup_hierarchy(const customer2_t::Key& ck) { workload.point_lookup_hierarchy_merged(ck); }
+   std::vector<customer2_t::Key> sample_customer_keys(size_t N) { return workload.sample_customer_keys_merged(N); }
 };
 
 template <template <typename> class AdapterType,
