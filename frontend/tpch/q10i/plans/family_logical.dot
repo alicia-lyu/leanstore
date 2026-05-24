@@ -76,9 +76,18 @@ digraph {
 
   // Logical joins (Rule 12):
   //   #1 CUSTOMER ⋈ ORDERS   on c_custkey   = o_custkey
-  //   #2 ORDERS   ⋈ LINEITEM on o_orderkey  = l_orderkey
-  //   #3 LINEITEM ⋈ INVOICE  on l_invoicekey = i_invoicekey
-  //      — per-lineitem probe; INVOICE contributes i_status only
+  //   #2 ORDERS   ⋈ LINEITEM on (custkey, o_orderkey)
+  //                            = (custkey, l_orderkey)
+  //      — custkey extended via FD (LINEITEM inherits c_custkey
+  //        through its parent order; matches the COLI MI's
+  //        custkey-prefixed lineitem key structure)
+  //   #3 LINEITEM ⋈ INVOICE  on (custkey, l_invoicekey)
+  //                            = (custkey, i_invoicekey)
+  //      — custkey extended via FD (both LINEITEM and INVOICE
+  //        inherit c_custkey through their parent records;
+  //        matches the COLI MI's custkey-prefixed invoice key
+  //        structure).  Per-lineitem probe; INVOICE contributes
+  //        i_status only.
   //   #4 CUSTOMER ⋈ NATION   on c_nationkey = n_nationkey
   //      — lowered to per-customer INL on NATION PK (Rule 13)
 
@@ -97,7 +106,7 @@ digraph {
   joinA [label="#1 MergeJoin (inner)\nCUSTOMER ⋈ <ord-line>\n  on custkey\nsorted on custkey;\ncustomer-row payload preserved\n  (c_custkey, c_name, c_acctbal,\n   c_address, c_phone, c_comment,\n   c_nationkey)",
          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  joinI [label="#3 IndexNL / HashJoin (inner)\n<col-chain> ⋈ INVOICE\n  on l_invoicekey = i_invoicekey\nINVOICE contributes i_status only;\nper-lineitem probe (one INVOICE\nrow per surviving lineitem)",
+  joinI [label="#3 IndexNL / HashJoin (inner)\n<col-chain> ⋈ INVOICE\n  on (custkey, l_invoicekey)\n   = (custkey, i_invoicekey)\ncustkey extended via FD (matches\nCOLI MI's custkey-prefixed\ninvoice key);\nINVOICE contributes i_status only;\nper-lineitem probe (one INVOICE\nrow per surviving lineitem)",
          shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
 
   // ─────────── Per-order then per-customer aggregation (D10) ───────────

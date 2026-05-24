@@ -233,9 +233,15 @@ doesn't ship one.
 structures:
 
 - **#1** `CUSTOMER ⋈ ORDERS on c_custkey = o_custkey`
-- **#2** `ORDERS ⋈ LINEITEM on o_orderkey = l_orderkey`
-- **#3** `LINEITEM ⋈ INVOICE on l_invoicekey = i_invoicekey`
-  — per-lineitem dimension probe; INVOICE contributes only
+- **#2** `ORDERS ⋈ LINEITEM on (custkey, o_orderkey) = (custkey,
+  l_orderkey)` — custkey extended via FD (LINEITEM inherits
+  `c_custkey` through its parent order; matches the COLI MI's
+  custkey-prefixed lineitem key structure)
+- **#3** `LINEITEM ⋈ INVOICE on (custkey, l_invoicekey) = (custkey,
+  i_invoicekey)` — custkey extended via FD (both LINEITEM and
+  INVOICE inherit `c_custkey` through their parent records; matches
+  the COLI MI's custkey-prefixed invoice key structure).
+  Per-lineitem dimension probe; INVOICE contributes only
   `i_status` downstream
 - **#4** `CUSTOMER ⋈ NATION on c_nationkey = n_nationkey`
   — lowered to per-customer INL on NATION PK (Rule 13); no
@@ -286,15 +292,20 @@ sets.
 
 **S4 (HashJoin chain baseline)** uses base tables only. Build on
 CUSTOMER (PK-only `cust_set<c_custkey>` per Rule 4) → probe
-orderdate-filtered ORDERS → C⋈O. Build hash on C⋈O.o_orderkey
-(PK-only) → probe returnflag-filtered LINEITEM → C⋈O⋈L stream.
-Then a proper HashJoin (inner) C⋈O⋈L ⋈ INVOICE on `l_invoicekey =
-i_invoicekey`: build a **PK-only** `invoice_set<i_invoicekey>` (Rule
-4); probe with the C⋈O⋈L stream; recover `i_status` per surviving
-lineitem via INL on invoice PK (Rule 13 chained-INL pattern, mirrors
-Q5 S4's `c_nationkey` recovery). HashAggregate per c_custkey with 4
-partial sums + FD-attached customer cols. NATION INL at emit.
-TopN(20).
+orderdate-filtered ORDERS → C⋈O. **On the first join with customer
+(at #1), recover the customer wide payload via INL on customer PK
+and attach (`c_name`, `c_acctbal`, `c_address`, `c_phone`,
+`c_comment`, `c_nationkey`) to the joined record** so the wide
+cols flow downstream with the per-custkey state — not deferred to
+emit. Build hash on C⋈O.o_orderkey (PK-only) → probe
+returnflag-filtered LINEITEM → C⋈O⋈L stream. Then a proper HashJoin
+(inner) C⋈O⋈L ⋈ INVOICE on `l_invoicekey = i_invoicekey`: build a
+**PK-only** `invoice_set<i_invoicekey>` (Rule 4); probe with the
+C⋈O⋈L stream; recover `i_status` per surviving lineitem via INL on
+invoice PK (Rule 13 chained-INL pattern, mirrors Q5 S4's
+`c_nationkey` recovery). HashAggregate per c_custkey with 4 partial
+sums + already-attached customer cols. NATION INL at emit (only
+`n_name` needs lookup; cached in `nationkey_to_name`). TopN(20).
 
 ### Filter Pushdown Principle
 
@@ -426,6 +437,10 @@ DOTs. D6–D10 mirror Q10's identically; the rest are Q10I-specific.
 - **D11.** S4 invoice arm: **own HashJoin relation** with PK-only
   `invoice_set<i_invoicekey>` build + INL `i_status` recovery (Rule
   4 + Rule 13). NOT a side-map probe inline in the lineitem scan.
+  Customer wide payload is recovered via INL at the **first join
+  with customer** (#1, C⋈O) — attached to the joined record and
+  carried forward, not deferred to emit — mirrors Q5 S4's chained-
+  INL pattern.
 - **D12.** S1 BMJ chain: 3-way (C⋈O⋈L) over custkey-sorted COLI
   secondaries + per-emit invoice seek (Q5I-isomorphic).
 - **D13.** Composition with Q10: `q10i_agg_row_t` extends
