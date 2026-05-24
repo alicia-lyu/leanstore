@@ -36,6 +36,7 @@
 #include "refresh_sales.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -93,6 +94,17 @@ class RefreshHarness : public Program {
   std::unordered_map<long, OrderDel> cap_orders_;
   std::unordered_map<long, std::vector<LineDel>> cap_lines_;
 
+  // --- INTERLEAVED pair mode (RF_INTERLEAVE=1) ---
+  // To measure the size-stable RF1+RF2 PAIR directly (1 insert then 1 delete,
+  // the same loop LeanStore runs) rather than deriving it from two separate
+  // bulk phases, capture the RF1 tail here (referenced columns only — same
+  // dummy-fill trick as the RF2 slice) and DEFER its application; replay it
+  // interleaved with RF2 in run_interleaved().
+  bool interleave_ = false;
+  std::vector<long> rf1_order_keys_;                      // new RF1 orderkeys, stream order
+  std::unordered_map<long, OrderDel> rf1_orders_cap_;     // reuse OrderDel referenced cols
+  std::unordered_map<long, std::vector<LineDel>> rf1_lines_cap_;
+
   // --- counters / timing ---
   long orders_seen_ = 0, lineitems_seen_ = 0;
   long rf1_orders_ = 0, rf1_lineitems_ = 0;
@@ -121,10 +133,16 @@ class RefreshHarness : public Program {
       long k = std::stol(line);  // first integer = orderkey
       if (delete_keys_.insert(k).second) delete_order_.push_back(k);
     }
+    const char* il = std::getenv("RF_INTERLEAVE");
+    interleave_ = (il && std::string(il) == "1");
     std::cout << "warmup_orders=" << warmup_orders_
               << " warmup_lineitems=" << warmup_lineitems_
-              << " rf2_delete_keys=" << delete_keys_.size() << std::endl;
+              << " rf2_delete_keys=" << delete_keys_.size()
+              << " mode=" << (interleave_ ? "INTERLEAVED-pairs" : "phased-RF1|RF2")
+              << std::endl;
   }
+
+  bool interleaved() const { return interleave_; }
 
   // Inserts arrive here from run() (base + appended RF1 tail). Time the RF1 tail;
   // capture the RF2 delete slice from base events as they pass.
@@ -133,6 +151,11 @@ class RefreshHarness : public Program {
       long ok = as_long(ev, 0);
       if (++orders_seen_ > warmup_orders_) {           // RF1 (measured)
         mark_warmup_rss();
+        if (interleave_) {                              // capture, defer to run_interleaved()
+          rf1_order_keys_.push_back(ok);
+          rf1_orders_cap_[ok] = OrderDel{as_long(ev, 1), as_date(ev, 4), as_long(ev, 7)};
+          return;
+        }
         auto t0 = clk::now();
         Program::process_stream_event(ev);
         rf1_us_ += us_since(t0);
@@ -148,6 +171,11 @@ class RefreshHarness : public Program {
       long ok = as_long(ev, 0);
       if (++lineitems_seen_ > warmup_lineitems_) {       // RF1 (measured)
         mark_warmup_rss();
+        if (interleave_) {                               // capture, defer to run_interleaved()
+          rf1_lines_cap_[ok].push_back(
+              LineDel{as_long(ev, 2), as_long(ev, 3), as_dbl(ev, 5), as_dbl(ev, 6), as_date(ev, 10)});
+          return;
+        }
         auto t0 = clk::now();
         Program::process_stream_event(ev);
         rf1_us_ += us_since(t0);
@@ -223,6 +251,86 @@ class RefreshHarness : public Program {
     csv << elapsed_s << "," << rf1_rate << "," << rf2_rate << "," << pair_rate << ","
         << warmup_rss_kb_ << "\n";
   }
+
+  // INTERLEAVED size-stable pairs: 1 RF1 insert (order + its lineitems) then 1
+  // RF2 delete (order + its lineitems), repeated — the same loop LeanStore runs.
+  // RF1/RF2 timed separately PER PAIR; CSV schema matches the LeanStore harness
+  // (elapsed_s, rf1_orders_per_s, rf2_orders_per_s, pair_orders_per_s) so the
+  // same median summarizer applies. This yields a MEASURED pair rate, not one
+  // derived a posteriori from two bulk phases.
+  void run_interleaved() {
+    const STRING_TYPE E("");
+    const date D0 = 0;
+    long n = std::min(rf1_order_keys_.size(), delete_order_.size());
+    long rf1_o = 0, rf1_l = 0, rf2_o = 0, rf2_l = 0;
+    double rf1_us = 0.0, rf2_us = 0.0, cum_us = 0.0;
+    std::ofstream csv("./results/RefreshTPut.dbtoaster.interleaved.csv");
+    csv << "elapsed_s,rf1_orders_per_s,rf2_orders_per_s,pair_orders_per_s\n";
+    for (long i = 0; i < n; ++i) {
+      // --- RF1: insert one new order + its lineitems ---
+      long ok = rf1_order_keys_[i];
+      auto t1 = clk::now();
+      {
+        const OrderDel& o = rf1_orders_cap_[ok];
+        data.on_insert_ORDERS(ok, o.custkey, E, 0.0, o.orderdate, E, E, o.shippriority, E);
+        ++rf1_o;
+      }
+      auto lit = rf1_lines_cap_.find(ok);
+      if (lit != rf1_lines_cap_.end())
+        for (const LineDel& l : lit->second) {
+          data.on_insert_LINEITEM(ok, 0, l.suppkey, l.linenumber, 0.0, l.extprice,
+                                  l.discount, 0.0, E, E, l.shipdate, D0, D0, E, E, E);
+          ++rf1_l;
+        }
+      double d1 = us_since(t1);
+      // --- RF2: delete one old order + its lineitems (lineitems then order, as run_rf2) ---
+      long dk = delete_order_[i];
+      auto t2 = clk::now();
+      auto dl = cap_lines_.find(dk);
+      if (dl != cap_lines_.end())
+        for (const LineDel& l : dl->second) {
+          data.on_delete_LINEITEM(dk, 0, l.suppkey, l.linenumber, 0.0, l.extprice,
+                                  l.discount, 0.0, E, E, l.shipdate, D0, D0, E, E, E);
+          ++rf2_l;
+        }
+      auto doit = cap_orders_.find(dk);
+      if (doit != cap_orders_.end()) {
+        data.on_delete_ORDERS(dk, doit->second.custkey, E, 0.0, doit->second.orderdate,
+                              E, E, doit->second.shippriority, E);
+        ++rf2_o;
+      }
+      double d2 = us_since(t2);
+      rf1_us += d1; rf2_us += d2; cum_us += (d1 + d2);
+      double rf1r  = d1 > 0 ? 1.0 / (d1 / 1e6) : 0.0;
+      double rf2r  = d2 > 0 ? 1.0 / (d2 / 1e6) : 0.0;
+      double pairr = (d1 + d2) > 0 ? 2.0 / ((d1 + d2) / 1e6) : 0.0;  // 2 orders/pair
+      csv << (cum_us / 1e6) << "," << rf1r << "," << rf2r << "," << pairr << "\n";
+    }
+    report_interleaved(rf1_o, rf1_l, rf2_o, rf2_l, rf1_us, rf2_us, n);
+  }
+
+  void report_interleaved(long rf1_o, long rf1_l, long rf2_o, long rf2_l,
+                          double rf1_us, double rf2_us, long n_pairs) {
+    long final_rss = get_memory_usage_linux();
+    if (!warmup_rss_taken_) warmup_rss_kb_ = final_rss;
+    double total_us = rf1_us + rf2_us;
+    double rf1_rate = rf1_o > 0 ? rf1_o / (rf1_us / 1e6) : 0.0;
+    double rf2_rate = rf2_o > 0 ? rf2_o / (rf2_us / 1e6) : 0.0;
+    double pair_orders_rate = (rf1_o + rf2_o) > 0 ? (rf1_o + rf2_o) / (total_us / 1e6) : 0.0;
+    double pairs_per_s = n_pairs > 0 ? n_pairs / (total_us / 1e6) : 0.0;
+    std::cout << "\n--- DBToaster refresh_sales INTERLEAVED pairs (Q3+Q5 views) ---\n"
+              << "QUERY_1 (Q3 view) rows: " << data.get_QUERY_1_COUNT().count() << "\n"
+              << "QUERY_2 (Q5 view) rows: " << data.get_QUERY_2_COUNT().count() << "\n"
+              << "pairs: " << n_pairs << " in " << total_us / 1e6 << " s\n"
+              << "RF1 (interleaved): " << rf1_o << " orders / " << rf1_l
+              << " lineitems -> " << rf1_rate << " orders/s\n"
+              << "RF2 (interleaved): " << rf2_o << " orders / " << rf2_l
+              << " lineitems -> " << rf2_rate << " orders/s\n"
+              << "pair orders/s (aggregate): " << pair_orders_rate
+              << "  (= " << pairs_per_s << " pairs/s)\n"
+              << "VmRSS after warmup: " << warmup_rss_kb_ << " KB; final: " << final_rss << " KB"
+              << std::endl;
+  }
 };
 
 }  // namespace dbtoaster
@@ -231,9 +339,15 @@ int main(int argc, char* argv[]) {
   dbtoaster::RefreshHarness p(argc, argv);
   std::cout << "Loading static tables (NATION, REGION)..." << std::endl;
   p.init();  // static tables + system-ready
-  std::cout << "Streaming base + RF1 inserts (warmup + measured tail)..." << std::endl;
+  std::cout << "Streaming base + RF1 inserts (warmup + "
+            << (p.interleaved() ? "captured" : "measured") << " tail)..." << std::endl;
   p.run();   // synchronous: pumps CUSTOMER/ORDERS/LINEITEM through process_stream_event
-  std::cout << "Firing RF2 deletes..." << std::endl;
-  p.run_rf2();
+  if (p.interleaved()) {
+    std::cout << "Replaying RF1/RF2 as INTERLEAVED size-stable pairs..." << std::endl;
+    p.run_interleaved();
+  } else {
+    std::cout << "Firing RF2 deletes..." << std::endl;
+    p.run_rf2();
+  }
   return 0;
 }
