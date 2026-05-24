@@ -1,4 +1,4 @@
-# new_order/ — TPC-H RF1/RF2 update experiment (vanilla Q3/Q5)
+# refresh_sales/ — TPC-H RF1/RF2 update experiment (vanilla Q3/Q5)
 
 This file provides guidance to Claude Code (claude.ai/code) when working with
 code in this repository.
@@ -8,8 +8,8 @@ TPC-H's own **refresh functions RF1/RF2** (spec §5.1.2). Sourced from the
 approved plan at `.claude/plans/refactored-juggling-robin.md`. This directory
 holds the dedicated update binary; the per-structure maintenance it drives
 lives in the shared COL pipeline + per-query workloads (see Critical files).
-(Directory is named `new_order/` because RF1's per-iteration unit is the
-insertion of one new order + its lineitems.)
+(Directory is named `refresh_sales/` after the TPC-H refresh functions it
+implements — RF1 "New Sales" inserts, RF2 "Old Sales" deletes.)
 
 > **macOS execution scope** (per top-level `CLAUDE.md`): on macOS, build the
 > targets to confirm they compile and run `test_load_*` / `test_query_*` for
@@ -165,7 +165,7 @@ verbatim and adds only its S2 view path):
 - **S2 view:** insert/delete K `q{3,5}_pipeline_view_t` rows (FD cols from the
   new order + a customer lookup for `c_mktsegment`).
 
-### 3. Dedicated update binary (this directory: `tpch/new_order/`)
+### 3. Dedicated update binary (this directory: `tpch/refresh_sales/`)
 A standalone executable that constructs the vanilla-family workload (same
 adapter set as `q3/executable_rocksdb.cpp`), recovers, then runs **RF1 and RF2
 together** for a fixed duration at the selected `--storage_structure`: each
@@ -173,8 +173,8 @@ refresh inserts an `--update_size` batch of new orders (RF1) and deletes an
 equal-size batch of previously-inserted orders (RF2), keeping the DB size
 stable across the run. Emits **both insert and delete TX/s** per structure to
 CSV. Does **not** touch `TpchExecutableHelper` (the read-query harness). lsm +
-btree variants: `new_order/executable_rocksdb.cpp`,
-`new_order/executable_leanstore.cpp`. Wire into `frontend/CMakeLists.txt` +
+btree variants: `refresh_sales/executable_rocksdb.cpp`,
+`refresh_sales/executable_leanstore.cpp`. Wire into `frontend/CMakeLists.txt` +
 `generate_targets.py`.
 
 ### 4. Correctness gate (CLAUDE.md: build → test_load → test_query → perf)
@@ -222,7 +222,7 @@ extension, never folded into the RF1 numbers.
 - `frontend/tpch/tpch_family/refresh.hpp` — **new** RF1/RF2 generator.
 - `frontend/tpch/q3/{workload.hpp,load.tpp,query.tpp}` — Q3 maintain/erase;
   `q3/views.hpp` `q3_pipeline_view_t` for the S2 insert/delete. Same for q5.
-- `frontend/tpch/new_order/executable_{rocksdb,leanstore}.cpp` — **new** binary.
+- `frontend/tpch/refresh_sales/executable_{rocksdb,leanstore}.cpp` — **new** binary.
 - `frontend/CMakeLists.txt`, `generate_targets.py` — wire the new targets.
 - `tests/q3/test_query_q3_*.cpp`, `tests/q5/test_query_q5_*.cpp` — RF1 parity +
   RF2 restore check.
