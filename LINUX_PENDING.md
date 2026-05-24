@@ -9,6 +9,20 @@ actionable.
 
 ## Active
 
+- **DBToaster baseline (`dbtoaster/`): Phase 0 install + build + sweep
+  (2026-05-24)**: scaffold landed on macOS-side dev (SQL, CMake, Makefile,
+  Dockerfile, entrypoint, READMEs; `main.cpp` pending). **On Linux**: (a) run
+  `LINUX_SETUP.md §Step 6` to install DBToaster 2.3 (`/opt/dbtoaster`) +
+  `openjdk-11` + dbgen; (b) `make refresh_sales.hpp` then **inspect the
+  generated header** for the real trigger/event API (`on_insert_*` /
+  `on_delete_*` signatures, `event_t`/`event_type`, the DBToaster `date`
+  representation, `get_relation_id`) — `main.cpp` must be written/finished
+  against these actual symbols; (c) correctness verify at small SF (maintained
+  map row-counts vs an offline DuckDB join + RF1/RF2 size-stable delta);
+  (d) pin SF for a ~5 GB working set, run the RF1/RF2 timed sweep + `ulimit`
+  ladder (unlimited, 1.0 GiB/5L, 0.4 GiB/5H), append `refresh_sales/RUNS.md`.
+  Compares against LeanStore S2 (btree 22.6k / lsm 4.2k RF1 inserts/s @ SF=1).
+
 - **refresh_sales (RF1/RF2): SF≥15 sweep + methodology follow-up
   (2026-05-23)**: first Linux bring-up DONE at SF=1 — (1) `refresh_sales_btree`
   builds + runs on Linux (fixed a SEGV: `recover_last_ids()` was called
