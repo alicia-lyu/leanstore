@@ -92,7 +92,7 @@ omit the footer (typesetter doesn't want it).
 
 | Script | Reads | What it shows |
 |---|---|---|
-| `plot_refresh_sales.py --tag <tag>` | `<tag>/summary/refresh_sales_rf_throughput.csv` | 1×2 grouped bar (x=backend, series=structure) of **µs / RF1 insert** (log, lower-is-better). Left = hot window (20–25 s), right = whole-run avg. Picks up an optional `dbtoaster_rf_throughput.csv` sibling and adds a 5th series when present. Writes `figures/paper/refresh_sales_rf1_latency.{pdf,png}`. |
+| `plot_refresh_sales.py --tag <tag>` | `<tag>/summary/refresh_sales_5L_throughput.csv` *or* `refresh_sales_rf_throughput.csv` (auto-detected) | Single grouped-bar panel (x=backend, series=structure) of **ms / RF pair (tail 30 s)** for the 5L schema, or **µs / RF1 insert (hot)** for the SF=1 schema. Log y, lower-is-better. Picks up an optional `dbtoaster_rf_throughput.csv` sibling and adds a 5th series when present. Output basename carries an `_ssd`/`_hdd` suffix when the source CSV has a `disk` column. Writes `figures/paper/{refresh_5L_pair_latency,refresh_sales_rf1_latency}_<disk>.{pdf,png}`. |
 
 ## When a sweep is incomplete
 

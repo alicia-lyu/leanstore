@@ -47,6 +47,26 @@ PANELS: List[Tuple[str, str]] = [
 
 BACKENDS = ["btree", "lsm"]
 
+# Per-CSV-schema view: which throughput column is the headline, what
+# unit to label it with, and the figure basename. 5L files report a
+# size-stable RF1+RF2 *pair* throughput (RF2 doesn't exhaust at SF≥15),
+# which is the TPC-H-faithful unit; the SF=1 rf_throughput file falls
+# back to RF1-only because its RF2 reservoir drains early.
+CSV_SCHEMAS = {
+    "refresh_sales_5L_throughput.csv": {
+        "tps_col": "pair_tps_tail30",
+        "unit": "ms / RF pair (tail 30 s)",
+        "scale": 1e3,  # tps → ms/op
+        "basename": "refresh_5L_pair_latency",
+    },
+    "refresh_sales_rf_throughput.csv": {
+        "tps_col": "rf1_tps_hot",
+        "unit": "µs / RF1 insert (hot)",
+        "scale": 1e6,
+        "basename": "refresh_sales_rf1_latency",
+    },
+}
+
 
 def _load_dbtoaster(path: Optional[Path]) -> pd.DataFrame:
     if path is None or not path.exists():
@@ -82,9 +102,13 @@ def _series_style(struct: int) -> Tuple[str, str]:
     return color, label
 
 
-def _panel(ax, df: pd.DataFrame, tps_col: str, series_order: List[int],
-           show_ylabel: bool, title: str) -> None:
-    """One grouped-bar panel: x = backend, one bar per series."""
+def _panel(ax, df: pd.DataFrame, tps_col: str, scale: float, unit: str,
+           series_order: List[int], show_ylabel: bool, title: str) -> None:
+    """One grouped-bar panel: x = backend, one bar per series.
+
+    ``scale`` converts ops/sec to the chosen time unit (1e6 for µs, 1e3
+    for ms). ``unit`` becomes the y-axis label when ``show_ylabel``.
+    """
     n = len(series_order)
     bar_w = 0.8 / max(n, 1)
     x_idx = {b: i for i, b in enumerate(BACKENDS)}
@@ -99,9 +123,8 @@ def _panel(ax, df: pd.DataFrame, tps_col: str, series_order: List[int],
             tps = float(row[tps_col].iloc[0])
             if not np.isfinite(tps) or tps <= 0:
                 continue
-            us = 1e6 / tps
             xs.append(x_idx[backend] + (k - (n - 1) / 2) * bar_w)
-            ys.append(us)
+            ys.append(scale / tps)
         if xs:
             ax.bar(xs, ys, width=bar_w, color=color, linewidth=0)
     ax.set_title(title, fontsize=10)
@@ -119,7 +142,7 @@ def _panel(ax, df: pd.DataFrame, tps_col: str, series_order: List[int],
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
     if show_ylabel:
-        ax.set_ylabel("µs / RF1 insert", fontsize=8)
+        ax.set_ylabel(unit, fontsize=8)
 
 
 def _footer(manifest: Dict[str, str], tag: str) -> str:
@@ -146,13 +169,28 @@ def main() -> int:
 
     root: Path = args.root or (Path.cwd() / "paper-data" / args.tag)
     summary = root / "summary"
-    csv_path = summary / "refresh_sales_rf_throughput.csv"
-    if not csv_path.exists():
-        print(f"[plot_refresh_sales] error: {csv_path} not found",
-              file=sys.stderr)
+    schema = None
+    csv_path = None
+    for name, spec in CSV_SCHEMAS.items():
+        candidate = summary / name
+        if candidate.exists():
+            csv_path = candidate
+            schema = spec
+            break
+    if csv_path is None:
+        print(f"[plot_refresh_sales] error: no refresh CSV under {summary} "
+              f"(expected one of {list(CSV_SCHEMAS)})", file=sys.stderr)
         return 1
 
     df = pd.read_csv(csv_path)
+    # Disk-media tag (set by scripts/mark_disk_media.py). Used to suffix
+    # the output basename so SSD/HDD reruns don't overwrite each other.
+    disk_vals = (sorted({str(v) for v in df["disk"].dropna().unique()})
+                 if "disk" in df.columns else [])
+    disk = disk_vals[0] if disk_vals else None
+    if len(disk_vals) > 1:
+        print(f"[plot_refresh_sales] WARN: mixed disk media: {disk_vals}",
+              file=sys.stderr)
     dbtoaster_path = (args.dbtoaster
                       or (summary / "dbtoaster_rf_throughput.csv"))
     db_df = _load_dbtoaster(dbtoaster_path)
@@ -172,12 +210,9 @@ def main() -> int:
     if not db_df.empty:
         series_order.append(99)
 
-    fig, axes = plt.subplots(1, len(PANELS), figsize=(3.2, 2.6),
-                             sharey=True, squeeze=False)
-    axes = axes[0]
-    for j, (col, title) in enumerate(PANELS):
-        _panel(axes[j], df, col, series_order,
-               show_ylabel=(j == 0), title=title)
+    fig, ax = plt.subplots(1, 1, figsize=(3.2, 2.6))
+    _panel(ax, df, schema["tps_col"], schema["scale"], schema["unit"],
+           series_order, show_ylabel=True, title="")
 
     handles = []
     for s in series_order:
@@ -195,7 +230,8 @@ def main() -> int:
 
     out_dir = root / "figures" / "paper"
     out_dir.mkdir(parents=True, exist_ok=True)
-    base = out_dir / "refresh_sales_rf1_latency"
+    basename = schema["basename"] + (f"_{disk}" if disk else "")
+    base = out_dir / basename
     fig.text(0.5, 0.01, _footer(manifest, args.tag),
              ha="center", va="bottom",
              fontsize=STYLE["footer_fontsize"], color="#666")
