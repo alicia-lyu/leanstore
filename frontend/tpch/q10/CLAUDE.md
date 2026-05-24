@@ -172,9 +172,9 @@ sibling-aggregate framings.
 | # | Strategy | Secondary structure | Join strategy | Params baked in |
 |---|----------|--------------------|--------------|-----------------|
 | 1 | Traditional indexes + binary merge join | Custkey-sorted secondaries on ORDERS (`(custkey, orderkey)`) and LINEITEM (`(custkey, orderkey, linenumber)`) — **reused verbatim from Q3 / Q5** | 2-BMJ chain: customer ⋈ orders\_sec ⋈ lineitem\_sec on the custkey-extended prefix; NATION attaches as per-customer INL at emit | none |
-| 2 | Intermediate pipeline view | `q10_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_returnflag`, `o_orderdate` + FD-attached 7-column customer payload) | View scan + returnflag filter + per-order SUM + orderdate filter + per-customer SUM + NATION INL at emit (Decision D4) | none |
+| 2 | Intermediate pipeline view | `q10_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_returnflag`, `o_orderdate` + FD-attached 7-column customer payload) | View scan + returnflag filter + **SUM-per-orderkey + Filter[orderdate ∈ window]** (S2-only D4 anomaly) + SUM-per-c_custkey + NATION INL at record-assembly | none |
 | 3 | MI[COL] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys — **reused verbatim from Q3 / Q5** | `col_group_walk` over the COL MI with a bespoke `Q10GroupWalkVisitor` (Decision D1); per-customer accumulator with incremental top-20 emit (Decision D2); NATION INL at on_group_end (Decision D6) | none |
-| 4 | Traditional indexes + hash join | None | Build on CUSTOMER, probe with orderdate-filtered ORDERS → C⋈O; build on C⋈O (by o_orderkey), probe with returnflag-filtered LINEITEM; HashAggregate per c_custkey; NATION INL at emit (Decision D5 + D6) | none |
+| 4 | Traditional indexes + hash join | None | PK-only `cust_set<custkey>`; HashJoin against orderdate-filtered ORDERS → PK-only `orders_set<orderkey>`; LINEITEM sorted-seek-on-miss with per-orderkey INL recovery of `c_custkey`; `HashAggregate` per c_custkey (group key only); FD output cols + n_name recovered at record-assembly via `customer.lookup1` + NATION INL (Decisions D5 + D6) | none |
 
 **S5 deliberately omitted** (Decision D8). Same rationale as Q5:
 revenue cannot be pre-aggregated because the orderdate window is
@@ -212,24 +212,36 @@ ambush the implementation:
   `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`,
   `c_comment`). No aggregation baked (orderdate window is
   parameterised — soundness rule).
-- **D4. S2 aggregation chain has an intermediate per-order step.**
-  Because `o_orderdate` is hoisted out of the view (parameterised)
-  and applies at *order* granularity, the post-view-scan operators
-  must roll lineitems up to per-order revenue first, then prune
-  orders by the orderdate filter, then aggregate qualifying orders
-  per customer. Sequence: view scan → returnflag filter →
-  per-order SUM → orderdate filter → per-customer SUM → NATION
-  INL → top-20. Per-customer SUM cannot precede the orderdate
-  filter without contaminating customers with out-of-window
-  orders. (In S3 the per-order step is degenerate — the walker
-  only admits lineitems for orders that already passed
-  `on_order` — so the physical plan collapses the two SUMs into
-  one accumulator.)
-- **D5. S4 build/probe direction.** Build on CUSTOMER (smallest at
-  ~150K, fattest payload — built once); probe with
-  orderdate-filtered ORDERS to produce C⋈O. Then build a fresh
-  hash on C⋈O (now narrowed) keyed by `o_orderkey` and probe with
-  returnflag-filtered LINEITEM. Aggregate per customer at the top.
+- **D4. S2 carries an anomaly per-orderkey aggregate before the
+  per-customer SUM.** The shared family logical plan aggregates
+  directly per `c_custkey` in a single HashAggregate (FD output
+  columns recovered at record-assembly time, PK-only build
+  convention). S2 alone deviates: because `o_orderdate` is hoisted
+  out of the view (parameterised) and applies at *order*
+  granularity, the post-view-scan operators must roll lineitems
+  up to per-order revenue first, then prune orders by the
+  orderdate filter, then aggregate qualifying orders per customer.
+  Sequence: view scan → returnflag filter → SUM-per-orderkey →
+  Filter[orderdate ∈ window] → SUM-per-c_custkey → NATION INL →
+  top-20. Per-customer SUM cannot precede the orderdate filter
+  without contaminating customers with out-of-window orders. S1 /
+  S3 / S4 apply the orderdate filter inside the join chain itself,
+  so no intermediate per-orderkey aggregate is needed; the anomaly
+  is purely an S2 physical-plan artefact.
+- **D5. S4 HashJoin chain — PK-only builds, INL recovery at
+  record-assembly (CONVENTIONS Rules 4 / 13; mirrors Q5 S4).**
+  `HashBuild(c_custkey)` carries no FD payload — produces
+  `cust_set<custkey>`. ORDERS probe (orderdate filter pushed
+  below) emits `orders_set<orderkey>`, again PK-only. LINEITEM
+  is a sorted-seek lowering: on a miss at orderkey `K` seek to
+  `{K+1, 0}`; per-orderkey transition recovers `c_custkey` via
+  `orders.lookup1` (Rule 13) and caches it for the ~4 lineitems
+  in that order. `HashAggregate` per `c_custkey` holds only
+  `(c_custkey, revenue)`; the 6 FD output columns and `n_name`
+  are recovered per surviving customer at record-assembly time
+  via `customer.lookup1` + NATION INL (D6). The output row is
+  **conceptual** — no dedicated intermediate schema; columns
+  flow directly into the TopN sink.
 - **D6. NATION is uniformly handled as an index nested-loop join,
   not as an in-memory sidetable.** Q10 has no filter on NATION,
   so a `nation_set` hashset is degenerate. Across all four shapes,
@@ -268,23 +280,31 @@ Three DOT files in [`plans/`](plans/) document the operator
 graphs:
 
 - `plans/family_logical.dot` — shared logical plan for S1, S2, S3.
-  All three agree on filter placement, the per-order-then-per-
-  customer aggregation chain (D4), and the per-customer NATION INL
+  All three agree on filter placement, the single per-c_custkey
+  HashAggregate (with FD output cols recovered at record-assembly
+  time, PK-only build convention), and the per-customer NATION INL
   attachment (D6); only the inside-pipeline physical operator
-  differs.
+  differs. The S2-only per-orderkey anomaly aggregate (D4) is
+  documented as a comment block at the bottom of the DOT, not as
+  part of the shared chain.
 - `plans/family_s3_physical.dot` — S3 physical specialisation. A
   single `col_group_walk` over the 3-table COL MergedAdapter
   subsumes the per-table filters and the 2-way chain join. A
   bespoke `Q10GroupWalkVisitor` (Decision D1) accumulates revenue
   per custkey group; on `on_group_end` it resolves `n_name` via
   NATION INL (D6) and offers the row to a bounded top-20 sink
-  (D2). The per-order intermediate aggregate from the logical
-  plan is degenerate here.
+  (D2). Aggregation matches the family logical's per-c_custkey
+  shape; the S2-only per-orderkey anomaly aggregate is unnecessary
+  because the orderdate filter fires inline at `on_order`.
 - `plans/baseline_s4.dot` — S4 baseline. HashJoin chain over base
-  tables only (no `col.split_*`): build on CUSTOMER, probe with
-  orderdate-filtered ORDERS → C⋈O; build on C⋈O (by o_orderkey),
-  probe with returnflag-filtered LINEITEM; HashAggregate per
-  `c_custkey`; per-customer NATION INL at emit; TopN(20).
+  tables only (no `col.split_*`): PK-only build (`cust_set<custkey>`)
+  on CUSTOMER, probe with orderdate-filtered ORDERS → orders_set
+  (PK-only on `o_orderkey`); LINEITEM probe with seek-on-miss to
+  `{K+1, 0}` and per-orderkey-transition INL recovery of `c_custkey`
+  via `orders.lookup1`; per-`c_custkey` HashAggregate (group key
+  only — FD output cols recovered at record-assembly time via
+  `customer.lookup1` + `nation.lookup1`); TopN(20). The conceptual
+  output row has no dedicated intermediate schema.
 
 ### Filter pushdown principle (applied across all four plans)
 
@@ -314,13 +334,15 @@ this means:
   NATION's primary index at emit time. No filter exists on NATION,
   so the only place it can fire is the moment `n_name` is needed
   for output — at the boundary between aggregate and TopN.
-- **D4 callout**: in S2, the orderdate filter is hoisted to query
-  time and applies at order granularity, so the post-view-scan
-  aggregator chain must do per-order SUM → orderdate filter →
-  per-customer SUM in that order. In S3 the per-order step is
-  degenerate because the walker only admits lineitems for orders
-  that passed `on_order`. In S1/S4 the per-order step is
-  materialised inside the chain or implicit in the join order.
+- **D4 callout (S2 anomaly)**: the shared family logical plan
+  aggregates directly per `c_custkey` in a single HashAggregate.
+  S2 alone must insert an extra per-orderkey SUM (SUM-per-orderkey
+  → Filter[orderdate ∈ window] → SUM-per-c_custkey) because its
+  view is loaded unfiltered and the orderdate filter applies at
+  order granularity. S1 / S3 / S4 apply the orderdate filter
+  inside the join chain itself, so the per-orderkey step never
+  materialises — qualifying lineitems contribute directly to the
+  per-`c_custkey` cell.
 
 ### How the four approaches differ
 
@@ -360,18 +382,30 @@ plus the 7 FD-attached customer columns. **No filters are baked
 into the view** — both the orderdate window (parameterised) and
 the returnflag predicate (kept live for view reusability) apply
 at query time per predicate hoisting (PLAYBOOK soundness rule).
-Query time follows Decision D4: view scan → returnflag filter →
-per-order SUM → orderdate filter → per-customer SUM → NATION INL
-→ top-20. The view is reusable across all DATE param sets.
+Query time follows Decision D4 (S2 anomaly): view scan →
+returnflag filter → SUM-per-orderkey → Filter[orderdate ∈ window]
+→ SUM-per-c_custkey → NATION INL → top-20. The intermediate
+per-orderkey aggregate is the S2-only deviation from the shared
+family logical's single per-c_custkey HashAggregate. The view is
+reusable across all DATE param sets.
 
 **S4 (HashJoin chain baseline)** uses base tables only (no
-`col.split_*` secondaries — fairness vs S3). Decision D5: build
-on CUSTOMER, probe with orderdate-filtered ORDERS; build on the
-narrowed C⋈O (keyed by `o_orderkey`), probe with returnflag-
-filtered LINEITEM. Per-customer `HashAggregate` rolls revenue up,
-per-customer NATION INL resolves `n_name` (D6), TopN(20) outside
-the pipeline. S4 measures the no-merged-index baseline that the
-family is compared against.
+`col.split_*` secondaries — fairness vs S3). PK-only build
+convention (CONVENTIONS Rule 4): `HashBuild(c_custkey)` produces
+`cust_set<custkey>` carrying no FD payload; ORDERS probe (with
+orderdate filter pushed below) emits `orders_set<orderkey>` also
+PK-only. LINEITEM probe is a sorted-seek lowering: on a miss at
+orderkey `K` seek to `{K+1, 0}`; per-orderkey transition recovers
+`c_custkey` via `orders.lookup1` (Rule 13) and caches it for the
+~4 lineitems sharing that order. `HashAggregate` per `c_custkey`
+holds only `(c_custkey, revenue)`; the 6 FD output columns
+(`c_name`, `c_acctbal`, `c_address`, `c_phone`, `c_comment`,
+`c_nationkey`) and `n_name` are recovered per surviving customer
+at record-assembly time via `customer.lookup1` + NATION INL on PK
+(D6). The output row is **conceptual** — no dedicated intermediate
+schema; columns are assembled directly into the TopN sink. S4
+measures the no-merged-index baseline that the family is compared
+against.
 
 ### Comparison axis summary
 
@@ -382,9 +416,9 @@ they differ only in physical operators and filter substrate.
 | Approach | Inside-pipeline physical | Aggregate | NATION attachment |
 |----------|--------------------------|-----------|-------------------|
 | S1 (merge family) | 2-BMJ chain over custkey-sorted split indexes | per-customer HashAggregate above the chain | per-customer INL on NATION PK at emit (D6) |
-| S2 (merge family) | sequential per-lineitem view scan + returnflag filter + per-order SUM + orderdate filter | per-customer HashAggregate above the per-order intermediate (D4) | per-customer INL on NATION PK at emit (D6) |
+| S2 (merge family) | sequential per-lineitem view scan + returnflag filter + SUM-per-orderkey + orderdate filter (the S2-only D4 anomaly) | SUM-per-c_custkey above the per-orderkey intermediate (D4); FD output cols already in view payload | per-customer INL on NATION PK at record-assembly (D6) |
 | S3 (merge family) | `col_group_walk` over MI[COL] with bespoke visitor (D1); per-customer accumulator finalised at group boundary | bounded top-20 sink fed incrementally at `on_group_end` (D2) | per-customer INL on NATION PK inside `on_group_end` (D6) |
-| S4 (baseline) | HashJoin chain over base tables (D5); CUSTOMER build → ORDERS probe → C⋈O build → LINEITEM probe | per-customer HashAggregate above the chain | per-customer INL on NATION PK at emit (D6) |
+| S4 (baseline) | HashJoin chain over base tables only; PK-only builds (`cust_set<custkey>`, `orders_set<orderkey>`); LINEITEM sorted-seek with per-orderkey-transition INL recovery of `c_custkey` (Rules 4/13) | `HashAggregate` per c_custkey (group key only — FD output cols recovered at record-assembly via `customer.lookup1`) | per-customer INL on NATION PK at record-assembly (D6) |
 
 All four agree on what's outside the pipeline: drain the per-
 customer aggregate, attach `n_name`, take the top 20 by revenue
@@ -431,12 +465,18 @@ New for Q10 (S2 view + final aggregate):
   resolved per-customer at emit via NATION INL (D6). **No
   pre-aggregated revenue field** (parameterised by orderdate;
   soundness rule).
-- `q10_agg_row_t` — Key `c_custkey`, payload `revenue` + 7 output
-  columns (`c_name`, `c_acctbal`, `n_name`, `c_address`,
-  `c_phone`, `c_comment` + `c_nationkey` retained for downstream
-  joins or sanity checks). At most 20 rows, sorted `revenue DESC`
-  outside the pipeline (or fed incrementally to a bounded heap
-  per D2).
+- `q10_agg_row_t` — the **conceptual** post-assembly output row;
+  no dedicated intermediate schema during the pipeline. The row
+  is **materialised only at TopN-sink boundary** (at most 20
+  rows), carrying `c_custkey`, `revenue`, plus the 6 FD output
+  columns (`c_name`, `c_acctbal`, `c_address`, `c_phone`,
+  `c_comment`, `c_nationkey`) and `n_name`. In S1/S3 the FD cols
+  come for free from the in-walker / in-BMJ customer record; in
+  S2 they're carried in the view payload (D3); in S4 they're
+  recovered via `customer.lookup1` + NATION INL at record-assembly
+  (D5 + D6). C++ aliases: in-memory only (no
+  `ADD_RECORD_TRAITS`); `c_custkey` is the unique tiebreaker the
+  TopNSink comparator needs (CONVENTIONS §Post-pipeline OutClass).
 
 **Composition with Q10I.** Q10I's `q10i_agg_row_t` should derive
 from `q10_agg_row_t` (adds `open_balance`, `late_balance`); the

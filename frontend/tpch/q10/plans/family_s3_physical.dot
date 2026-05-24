@@ -51,10 +51,11 @@
 //     IS a single physical operator that internally streams the
 //     3-way custkey-byte-lex chain (joins #1 + #2 from the logical
 //     plan) into the per-customer accumulator.
-//   • The per-order intermediate aggregate from family_logical.dot
-//     is degenerate here — the walker only admits lineitems whose
-//     parent order survived `on_order`, so per-order revenue rolls
-//     directly into the per-customer cell with no intermediate.
+//   • Aggregation matches family_logical's shape: a single per-c_custkey
+//     SUM. S3 fuses the orderdate filter inline at `on_order` so the
+//     S2-anomaly per-orderkey intermediate aggregate is unnecessary
+//     here — qualifying lineitems contribute directly to the
+//     per-c_custkey cell.
 //
 // FILTER PUSHDOWN STATUS: every filter from family_logical.dot is
 // fused into the walker. The NATION INL fires at on_group_end —
@@ -90,7 +91,7 @@ digraph {
   mi [label="MergedScanner(MI_COL)\n= [customer_coli_t, orders_coli_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
       shape=box3d, style=filled, fillcolor="#E8F0FE"];
 
-  walk [label="COLGroupWalk(Q10GroupWalkVisitor)\nbespoke visitor on col_group_walk (D1):\n  • on_customer: snapshot FD columns\n      (c_custkey, c_name, c_acctbal,\n       c_address, c_phone, c_comment,\n       c_nationkey); NO gate\n  • on_order:    o_orderdate ∈ [:d, :d+3mo)\n      → SkipGroup on miss\n  • on_lineitem: l_returnflag = 'R'\n      → accumulate revenue into\n        per-customer cell\n  • on_group_end (D2 + D6):\n      finalise per-customer SUM;\n      INL NATION on c_nationkey → n_name;\n      offer to bounded top-20 sink\n  • chain joins #1 + #2: lowered to a 3-way\n      custkey-byte-lex merge inside the walker\n      (no separate operator)\n  • per-order SUM step from family_logical:\n      DEGENERATE here (walker only admits\n      lineitems for orders that survived\n      on_order)",
+  walk [label="COLGroupWalk(Q10GroupWalkVisitor)\nbespoke visitor on col_group_walk (D1):\n  • on_customer: snapshot FD columns\n      (c_custkey, c_name, c_acctbal,\n       c_address, c_phone, c_comment,\n       c_nationkey); NO gate\n  • on_order:    o_orderdate ∈ [:d, :d+3mo)\n      → SkipGroup on miss\n  • on_lineitem: l_returnflag = 'R'\n      → accumulate revenue into\n        per-customer cell\n  • on_group_end (D2 + D6):\n      finalise per-customer SUM;\n      INL NATION on c_nationkey → n_name;\n      offer to bounded top-20 sink\n  • chain joins #1 + #2: lowered to a 3-way\n      custkey-byte-lex merge inside the walker\n      (no separate operator)\n  • aggregation matches family_logical:\n      single per-c_custkey SUM; the\n      S2-anomaly per-orderkey step is\n      unnecessary because on_order\n      already filters by orderdate",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
   // ─────────── NATION attachment: INL inside on_group_end (D6) ───────────

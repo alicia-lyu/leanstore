@@ -1,88 +1,106 @@
-// Q10 S4 baseline — HashJoin chain over base tables only (no
-// `col.split_*` secondaries; fairness vs S3).
+// Q10 S4 baseline plan — HashJoin chain over base tables, no merged
+// index. The "no co-location" reference point against which S1/S2/S3
+// are compared.
 //
-// Build/probe direction (Decision D5):
+// S4 uses base tables only; no col.split_* secondaries. Fairness vs S3.
 //
-//   1. Build hash on CUSTOMER, keyed by c_custkey. CUSTOMER is the
-//      smallest input (~150K rows at SF=1) and carries the widest
-//      payload (8 output cols + c_nationkey). Built once.
-//   2. Probe with orderdate-filtered ORDERS to produce C⋈O. The
-//      orderdate window (~1/24 of orders for a 3-month range)
-//      drops most rows before they touch the hash table.
-//   3. Build a fresh hash on C⋈O, keyed by o_orderkey. C⋈O is the
-//      narrowed intermediate (~150K customers × ~10 orders × 1/24
-//      window ≈ 60K rows at SF=1).
-//   4. Probe with returnflag-filtered LINEITEM (`l_returnflag='R'`
-//      drops ~75% of lineitems before the probe).
-//   5. HashAggregate per c_custkey: SUM revenue across qualifying
-//      lineitems; the 6 FD-attached customer columns ride along.
-//   6. Per-customer NATION INL on n_nationkey (Decision D6) to
-//      resolve `n_name`.
-//   7. TopN(20, revenue DESC) outside the pipeline.
+// Operator-framing rules used throughout (mirrors q5/baseline_s4.dot):
 //
-// Decision D6 uniformly applies: NATION is NOT built as an
-// in-memory map. The per-customer point lookup on NATION's primary
-// index at emit time is the single shape across all four storage
-// structures.
+//   • "Probe X" and "Build X" are NEVER operator nodes — they are
+//     edge roles into a HashJoin operator. The operator node is the
+//     join; build/probe are labels on its input edges.
+//   • Sorted-then-seek loops are HashJoin lowerings (the build side
+//     is sorted and the probe side is naturally sorted on the join
+//     key, so per-build-row seek into the probe scanner is a physical
+//     implementation of the hash join). Draw them as HashJoin nodes;
+//     mention sorted-seek in a comment.
 //
-// PK-only convention (Rule 4): the CUSTOMER and C⋈O hash builds
-// carry only the payload columns the downstream join consumer
-// actually needs. Specifically the CUSTOMER build carries the
-// 7 output FD columns (c_name, c_acctbal, c_address, c_phone,
-// c_comment, c_nationkey, c_custkey) because the per-customer
-// HashAggregate needs them downstream. (Q10 has no PK-only
-// shortcut here — the output is wide; the build payload is the
-// output minus the SUM.)
+// Filter pushdown (specific fusions for S4):
 //
-// FILTER PUSHDOWN: `o_orderdate ∈ window` is pushed below the
-// ORDERS-side probe; `l_returnflag = 'R'` is pushed below the
-// LINEITEM-side probe. No filter survives to the post-aggregate
-// layer.
+//   • o_orderdate ∈ [:d, :d+3mo)  → fused with TableScan(ORDERS) before
+//                                    ORDERS feeds its probe edge.
+//   • l_returnflag = 'R'          → fused with TableScan(LINEITEM) before
+//                                    LINEITEM feeds its probe edge.
+//
+// PRIMARY-KEY PAYLOAD CONVENTION (CONVENTIONS Rule 4): every hash
+// build carries only the build relation's primary key — no record
+// content. Downstream consumers fetch additional columns via the
+// primary index at record-assembly time (Rule 13). The output row
+// type carrying (c_custkey, revenue, c_name, c_acctbal, c_address,
+// c_phone, c_comment, n_name) is a **conceptual** join output — no
+// dedicated intermediate schema; the columns are assembled per
+// surviving custkey at TopN emit time from CUSTOMER PK + NATION PK
+// lookups.
+//
+// Per-orderkey c_custkey caching during the LINEITEM hash-join's
+// sorted-seek lowering: orders_set carries only o_orderkey (Rule 4),
+// so c_custkey is recovered per orderkey transition via INL on
+// ORDERS PK (Rule 13) and cached for the ~4 lineitems sharing that
+// orderkey.
+//
+// NATION attachment (Decision D6): a per-customer INL on NATION's
+// primary index at record-assembly time, uniformly across S1 / S2 /
+// S3 / S4. No in-memory map.
+//
+// Logical join numbering (Rule 12):
+//   #1 CUSTOMER ⋈ ORDERS   on c_custkey  = o_custkey
+//   #2 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+//   #3 CUSTOMER ⋈ NATION   on c_nationkey = n_nationkey
+//      — lowered to per-customer INL on NATION PK (Rule 13)
 
 digraph {
   rankdir=BT;
 
-  // ─────────── Stage 1: CUSTOMER build, ORDERS probe ───────────
+  // ─────────── #1 ORDERS ⋈ CUSTOMER on c_custkey = o_custkey ───────────
   s_cust [label="TableScan(CUSTOMER)",
           shape=box, style=filled, fillcolor="#E8F0FE"];
-  hb_c   [label="HashBuild on c_custkey\npayload = 7 FD customer cols\n  (c_name, c_acctbal,\n   c_address, c_phone, c_comment,\n   c_nationkey, c_custkey)",
+  hb_c   [label="(implicit)\nHashBuild on c_custkey\npayload = c_custkey ONLY\n(PK-only — Rule 4)\nbuilds cust_set<custkey>\n— customer FD output columns\nrecovered later via CUSTOMER\nPK lookup at record assembly",
           shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
   s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ [:d, :d+3mo))",
           shape=box, style=filled, fillcolor="#E8F0FE"];
-  hj_co  [label="#1 HashJoin (inner)\nCUSTOMER ⋈ ORDERS\n  on c_custkey = o_custkey\nsurvivors carry o_orderkey +\n  7 FD customer cols",
+  hj_co  [label="#1 HashJoin (inner)\nORDERS ⋈ cust_set\n  on o_custkey = c_custkey\nbuild = cust_set (PK-only)\nsurvivors: orders_set<orderkey>\n  (PK-only — Rule 4)\nc_custkey carried forward only\nas the join key — not as payload",
           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
   s_cust -> hb_c;
-  hb_c   -> hj_co [label="build"];
-  s_ord  -> hj_co [label="probe (filtered)"];
+  hb_c   -> hj_co [label="build (cust_set,\nPK-only)"];
+  s_ord  -> hj_co [label="probe (orderdate-filtered)"];
 
-  // ─────────── Stage 2: C⋈O build, LINEITEM probe ───────────
-  hb_co [label="HashBuild on o_orderkey\npayload = c_custkey +\n  6 FD customer cols\n  (n_nationkey, c_name,\n   c_acctbal, c_address,\n   c_phone, c_comment)",
-         shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
-  s_lin [label="TableScan(LINEITEM)\n+ Filter(l_returnflag = 'R')",
-         shape=box, style=filled, fillcolor="#E8F0FE"];
-  hj_col [label="#2 HashJoin (inner)\n<C⋈O> ⋈ LINEITEM\n  on o_orderkey = l_orderkey\nsurvivors carry c_custkey,\n  6 FD cols, l_extendedprice,\n  l_discount",
+  // ─────────── #2 LINEITEM ⋈ ORDERS on l_orderkey = o_orderkey ───────────
+  // Probe-side seek-on-miss lowering (CONVENTIONS Rule 3): LINEITEM
+  // is naturally sorted by l_orderkey, so on a miss at orderkey K
+  // we seek to {K+1, 0}. Per-orderkey transition recovers c_custkey
+  // via INL on ORDERS PK (Rule 13), then cached for the ~4 lineitems
+  // sharing that orderkey.
+  s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_returnflag = 'R')\n[naturally sorted by l_orderkey\n on base table]",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  hj_lin [label="#2 HashJoin (inner)\nLINEITEM ⋈ orders_set\n  on l_orderkey = o_orderkey\nbuild = orders_set (PK-only)\nLowering: seek-on-miss to\n  {K+1, 0}; per-orderkey-transition\n  INL recovery (Rule 13):\n    orders.lookup1(K) → c_custkey\n  cached for ~4 lineitems\n  of this order\nflows downstream: c_custkey,\n  l_extendedprice, l_discount",
           shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
 
-  hj_co -> hb_co;
-  hb_co -> hj_col [label="build"];
-  s_lin -> hj_col [label="probe (filtered)"];
+  hj_co -> hj_lin [label="build (orders_set,\nPK-only)"];
+  s_lin -> hj_lin [label="probe (seek-on-miss,\nreturnflag-filtered)"];
 
-  // ─────────── Aggregate + NATION INL + TopN ───────────
-  agg [label="HashAggregate per c_custkey\n  revenue = SUM(l_extendedprice\n            * (1 - l_discount))\n  6 FD cols ride along",
+  // ─────────── Per-customer aggregate (group key only — FD cols
+  //              recovered at record assembly) ───────────
+  agg [label="HashAggregate per c_custkey\n  revenue = SUM(l_extendedprice\n            * (1 - l_discount))\ngroup key = c_custkey only;\nno FD output cols carried in the\nbucket — recovered per surviving\ncustomer at record-assembly time\n(CUSTOMER PK lookup, Rule 13)",
        shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
 
-  nat [label="NATION primary index\n(B-tree on n_nationkey)",
-       shape=box3d, style=filled, fillcolor="#E0F2F1"];
-  inl_n [label="#3 INL-Join NATION\n  probe.c_nationkey =\n    NATION.PK(n_nationkey)\n→ attaches n_name (D6)\n(no nation_set; no in-memory map)",
+  // ─────────── NATION attachment + record assembly (D6) ───────────
+  // Output row is conceptual: c_custkey + revenue from the aggregate,
+  // 6 FD cols from CUSTOMER PK lookup, n_name from NATION PK lookup.
+  // No dedicated intermediate schema.
+  nat   [label="NATION primary index\n(B-tree on n_nationkey)",
+         shape=box3d, style=filled, fillcolor="#E0F2F1"];
+  cust2 [label="CUSTOMER primary index\n(B-tree on c_custkey)",
+         shape=box3d, style=filled, fillcolor="#E0F2F1"];
+  asm_n [label="Record assembly\n(per surviving c_custkey)\n  customer.lookup1(c_custkey) →\n    c_name, c_acctbal, c_address,\n    c_phone, c_comment,\n    c_nationkey\n  #3 INL-Join NATION:\n    nation.lookup1(c_nationkey) →\n    n_name\n→ conceptual output row\n  (no stored schema; consumed\n  directly by TopN below)",
          shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
 
-  topn [label="TopN(20, revenue DESC)\n[partial std::sort or bounded heap;\n at most 20 rows]",
+  topn [label="TopN(20, revenue DESC)\n[bounded min-heap by revenue ASC,\n capacity 20; at most 20 rows]",
         shape=box, style=filled, fillcolor="#E6F4EA"];
 
-  hj_col -> agg;
-  agg    -> inl_n;
-  nat    -> inl_n [style=dashed, label="INL probe\n(per aggregated customer)"];
-  inl_n  -> topn;
-
+  hj_lin -> agg;
+  agg    -> asm_n;
+  cust2  -> asm_n [style=dashed, label="INL probe\n(per agg row)"];
+  nat    -> asm_n [style=dashed, label="INL probe\n(per agg row, D6)"];
+  asm_n  -> topn;
 }

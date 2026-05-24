@@ -71,14 +71,20 @@ struct q10_pipeline_view_t {
    void print(std::ostream& os) const;
 };
 
-// Final aggregate output row: one per surviving customer; top-20 selected
-// outside the pipeline. In-memory only — never stored in a B-tree or
-// RocksDB adapter; TopNSink consumes it directly (Phase 4 §7.1).
+// Conceptual post-assembly output row — materialised only at the TopN-sink
+// boundary, never as a pipeline-internal intermediate. In-memory only;
+// no ADD_RECORD_TRAITS, no stored schema. TopNSink consumes it directly
+// (Phase 4 §7.1).
+//
+// FD output columns arrive differently per storage variant: in S1/S3 they
+// come for free from the in-walker / in-BMJ customer record; in S2 they're
+// carried in the view payload (D3); in S4 they're recovered via
+// customer.lookup1 + NATION INL at record-assembly time (D5 + D6). The
+// q10_agg_row_t shape is the *output* contract, not a join-build payload.
 //
 // Conceptual GROUP BY key is c_custkey (Decision E2) — a unique field per
 // row, giving the TopNSink comparator (revenue DESC, c_custkey ASC) a
-// built-in tiebreaker. The 6 other GROUP BY columns are functional
-// dependencies of c_custkey and ride in the payload.
+// built-in tiebreaker (CONVENTIONS §Post-pipeline OutClass).
 struct q10_agg_row_t {
    // Group key (conceptual; not a nested Key struct because the row is
    // in-memory only).
