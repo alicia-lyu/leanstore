@@ -1,0 +1,159 @@
+// Template method bodies for Q10IWorkload<Backend> query methods,
+// Params::defaults(), q10i_pipeline_view_t::print(), q10i_agg_row_t::print(),
+// and predicate implementations.
+// Operator-translation reference: see ../OPERATORS.md §3.
+//
+// Phase 1: all query_by_* return empty results (XOR digest = 0x0).
+// Real bodies land in Phase 4 §7.1 (S3), §7.2 (S1), §7.3 (S2), §7.5 (S4).
+
+#pragma once
+
+#include <gflags/gflags.h>
+#include <ostream>
+#include <vector>
+
+#include "../tpch_tables.hpp"
+
+DECLARE_int32(storage_structure);
+
+namespace tpch::q10i
+{
+
+// ---------------------------------------------------------------------------
+// Q10I SUBSTITUTION-PARAMETER rotation table — 24 entries, byte-identical
+// to Q10's PARAM_TABLE (both queries share the TPC-H §2.4.10 domain).
+//
+// Domain: first day of a month between 1993-02-01 and 1995-01-01 inclusive
+// (24 valid month starts). Validation default = 1993-10-01 (first entry).
+//
+// Days since 1970-01-01. DATE_1994_01_01 = 8766 and DATE_1995_01_01 = 9131
+// are defined in tpch_tables.hpp. 1993-01-01 = DATE_1994_01_01 − 365.
+// All three years (1993, 1994, 1995) are non-leap; month offsets follow
+// Jan(31)/Feb(28)/Mar(31)/Apr(30)/May(31)/Jun(30)/Jul(31)/Aug(31)/
+// Sep(30)/Oct(31)/Nov(30)/Dec(31).
+//
+// Validation default first so iter=0 is always spec-valid. Rationale
+// (PLAYBOOK §3.6): a fixed-param loop hid Q3I's pre_revenue bug for weeks;
+// domain-full rotation surfaces param-bake regressions within one helper.run().
+
+static constexpr Timestamp Q10I_DATE_1993_01_01 = DATE_1994_01_01 - 365;  // 8401
+
+static constexpr Timestamp PARAM_TABLE[] = {
+    Q10I_DATE_1993_01_01 + 273,  // 1993-10-01 = 8674  [validation default]
+    Q10I_DATE_1993_01_01 +  31,  // 1993-02-01
+    Q10I_DATE_1993_01_01 +  59,  // 1993-03-01
+    Q10I_DATE_1993_01_01 +  90,  // 1993-04-01
+    Q10I_DATE_1993_01_01 + 120,  // 1993-05-01
+    Q10I_DATE_1993_01_01 + 151,  // 1993-06-01
+    Q10I_DATE_1993_01_01 + 181,  // 1993-07-01
+    Q10I_DATE_1993_01_01 + 212,  // 1993-08-01
+    Q10I_DATE_1993_01_01 + 243,  // 1993-09-01
+    Q10I_DATE_1993_01_01 + 304,  // 1993-11-01
+    Q10I_DATE_1993_01_01 + 334,  // 1993-12-01
+    DATE_1994_01_01,             // 1994-01-01 = 8766
+    DATE_1994_01_01 +  31,       // 1994-02-01
+    DATE_1994_01_01 +  59,       // 1994-03-01
+    DATE_1994_01_01 +  90,       // 1994-04-01
+    DATE_1994_01_01 + 120,       // 1994-05-01
+    DATE_1994_01_01 + 151,       // 1994-06-01
+    DATE_1994_01_01 + 181,       // 1994-07-01
+    DATE_1994_01_01 + 212,       // 1994-08-01
+    DATE_1994_01_01 + 243,       // 1994-09-01
+    DATE_1994_01_01 + 273,       // 1994-10-01
+    DATE_1994_01_01 + 304,       // 1994-11-01
+    DATE_1994_01_01 + 334,       // 1994-12-01
+    DATE_1995_01_01,             // 1995-01-01 = 9131
+};
+
+static constexpr long PARAM_TABLE_SIZE =
+    static_cast<long>(sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]));
+static_assert(PARAM_TABLE_SIZE == 24,
+              "Q10I PARAM_TABLE must cover all 24 valid month starts in [1993-02-01, 1995-01-01]");
+
+// ---------------------------------------------------------------------------
+
+inline Params Params::defaults()
+{
+   return Params{PARAM_TABLE[0]};
+}
+
+// Rotate through the substitution-parameter table so each TX iteration
+// exercises a distinct date. Surfaces param-bake regressions that a
+// fixed-default loop would miss (PLAYBOOK §3.6 rationale).
+template <typename Backend>
+void Q10IWorkload<Backend>::set_params_for_iter(long iter)
+{
+   params.date_lo = PARAM_TABLE[iter % PARAM_TABLE_SIZE];
+}
+
+// ---------------------------------------------------------------------------
+// Predicate implementations.
+
+inline bool q10i_predicate_orders(const orders_t& o, const Params& p)
+{
+   // o_orderdate ∈ [date_lo, date_lo + 3 months).
+   // 3 months ≈ 90 days on the spec's monthly grid (consistent with Q10).
+   return o.o_orderdate >= p.date_lo
+       && o.o_orderdate <  p.date_lo + 90;
+}
+
+inline bool q10i_predicate_lineitem(const lineitem_coli_t& l, const Params& /*p*/)
+{
+   // l_returnflag = 'R' (spec-hardcoded; kept live for view reusability —
+   // not baked into any secondary so the view serves any returnflag variant).
+   return l.l_returnflag.data[0] == 'R';
+}
+
+// ---------------------------------------------------------------------------
+// Output formatting.
+
+inline void q10i_pipeline_view_t::print(std::ostream& os) const
+{
+   os << l_extendedprice << '\t' << l_discount   << '\t'
+      << l_returnflag    << '\t' << o_orderdate   << '\t'
+      << i_status        << '\t'
+      << c_name          << '\t' << c_nationkey   << '\n';
+}
+
+inline void q10i_agg_row_t::print(std::ostream& os) const
+{
+   os << c_custkey    << '\t' << c_name      << '\t'
+      << paid_returns << '\t' << open_returns << '\t' << late_returns << '\t'
+      << revenue      << '\t'
+      << c_acctbal    << '\t' << n_name      << '\t'
+      << c_address    << '\t' << c_phone     << '\t' << c_comment << '\n';
+}
+
+// ---------------------------------------------------------------------------
+// Stub query bodies — Phase 1 commit 1.
+// Real bodies land in Phase 4 §7.1/§7.2/§7.3/§7.5.
+
+template <typename Backend>
+long Q10IWorkload<Backend>::query_by_base(std::vector<q10i_agg_row_t>& out)
+{
+   out.clear();
+   return 0;
+}
+
+template <typename Backend>
+long Q10IWorkload<Backend>::query_by_view(std::vector<q10i_agg_row_t>& out)
+{
+   out.clear();
+   return 0;
+}
+
+template <typename Backend>
+long Q10IWorkload<Backend>::query_by_merged(std::vector<q10i_agg_row_t>& out)
+{
+   out.clear();
+   return 0;
+}
+
+template <typename Backend>
+long Q10IWorkload<Backend>::query_by_hash(std::vector<q10i_agg_row_t>& out)
+{
+   out.clear();
+   return 0;
+}
+
+}  // namespace tpch::q10i
