@@ -60,13 +60,14 @@ CSV_SCHEMAS = {
         "basename": "refresh_5L_pair_latency",
     },
     "refresh_prewarm9_throughput.csv": {
-        # In-memory prewarm run; pair_med_ops = median pair throughput
-        # across iterations. Same µs/pair unit family as the 5L file
-        # so the two can share a vertical axis (different ylim per
-        # panel — in-memory bars are 10-100× smaller than SSD bars).
-        "tps_col": "pair_med_ops",
+        # In-memory prewarm run. CAUTION: ``pair_med_ops`` is the
+        # combined RF1+RF2 ops/sec (≈ 2× the size-stable pair rate),
+        # which double-counts vs DBToaster's separate-phase rates.
+        # Compute pair_us = 1e6/rf1 + 1e6/rf2 so both engines use the
+        # same definition: time for one RF1 op + one RF2 op.
+        "rf1_col": "rf1_med_ops",
+        "rf2_col": "rf2_med_ops",
         "unit": "µs / RF pair",
-        "scale": 1e6,
         "basename": "refresh_prewarm9_pair_latency",
     },
     "refresh_sales_rf_throughput.csv": {
@@ -255,17 +256,30 @@ def _find_schema(summary: Path) -> Tuple[Optional[Dict], Optional[Path]]:
 
 def _load_ls(csv_path: Path, schema: Dict) -> pd.DataFrame:
     """Read a LeanStore refresh CSV and normalise it to a uniform shape:
-    add ``pair_ms = schema['scale'] / schema['tps_col']`` so the panel
-    code is schema-agnostic."""
+    add a ``pair_ms`` column (actually µs; the column name is a legacy
+    holdover) so the panel code is schema-agnostic.
+
+    Two schema dialects:
+      - ``tps_col`` + ``scale``: pair_us = scale / tps_col. Used when
+        the CSV already reports a pair throughput.
+      - ``rf1_col`` + ``rf2_col``: pair_us = 1e6/rf1 + 1e6/rf2 — one
+        RF1 op + one RF2 op, matching DBToaster's separate-phase
+        definition. Use this when the CSV reports per-phase rates.
+    """
     df = pd.read_csv(csv_path)
-    col = schema["tps_col"]
-    if col not in df.columns:
-        print(f"[plot_refresh_sales] WARN: {csv_path.name} missing {col}",
-              file=sys.stderr)
-        df["pair_ms"] = float("nan")
-        return df
-    tps = pd.to_numeric(df[col], errors="coerce")
-    df["pair_ms"] = schema["scale"] / tps.where(tps > 0)
+    if "tps_col" in schema:
+        col = schema["tps_col"]
+        if col not in df.columns:
+            print(f"[plot_refresh_sales] WARN: {csv_path.name} missing {col}",
+                  file=sys.stderr)
+            df["pair_ms"] = float("nan")
+            return df
+        tps = pd.to_numeric(df[col], errors="coerce")
+        df["pair_ms"] = schema["scale"] / tps.where(tps > 0)
+    else:
+        rf1 = pd.to_numeric(df[schema["rf1_col"]], errors="coerce")
+        rf2 = pd.to_numeric(df[schema["rf2_col"]], errors="coerce")
+        df["pair_ms"] = 1e6 / rf1.where(rf1 > 0) + 1e6 / rf2.where(rf2 > 0)
     return df
 
 
