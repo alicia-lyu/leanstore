@@ -1,7 +1,13 @@
-// Phase 4b complete harness for Q10: loads base tables, populates all
+// Phase 5 harness for Q10: loads base tables once, populates all
 // secondaries (split + merged + Pattern B view), runs all four query_by_*
-// paths, and asserts strict 4-way XOR parity (S1 == S2 == S3 == S4).
-// Prints post-S3 Q10Stats + post-S4 INL diagnostics.
+// paths, and asserts strict 4-way XOR parity (S1 == S2 == S3 == S4) at
+// TWO distinct param sets (iter=0 = 1993-10-01 default, iter=1 = 1993-02-01).
+// The off-default re-run catches the class of param-bake regressions that
+// hid Q3I's pre_revenue shipdate-bake for weeks (PLAYBOOK §10 anti-pattern
+// #25/#26 guard).
+//
+// Per-path Q10Stats: one struct per query path (no shared counter fan-out),
+// so post-S3 / post-S4 report blocks read clean single-path cardinalities.
 //
 // IMPORTANT: this harness wipes --ssd_path before opening the DB. RocksDB
 // does not cleanly overwrite an existing DB; reusing a populated dir across
@@ -301,40 +307,85 @@ int main(int argc, char** argv)
    }
 
    // ------------------------------------------------------------------
-   // Run all four query_by_* paths. S3 is live (Phase 4a §7.1); S1/S2/S4
-   // are still stubs and report [deferred].
-
-   std::cout << "\n=== Running queries (S3 live; S1/S2/S4 stubs) ===\n";
-   std::vector<tpch::q10::q10_agg_row_t> r_base, r_view, r_merged, r_hash;
-
-   tpch::q10::Q10Stats s3_stats{};
-   q10.stats = &s3_stats;
-   q10.query_by_base  (r_base);
-   q10.query_by_view  (r_view);
-   q10.query_by_merged(r_merged);
-   q10.query_by_hash  (r_hash);
-   q10.stats = nullptr;
-
-   uint64_t d_base   = digest_rows(r_base);
-   uint64_t d_view   = digest_rows(r_view);
-   uint64_t d_merged = digest_rows(r_merged);
-   uint64_t d_hash   = digest_rows(r_hash);
+   // Per-iter run helper: invokes all four query_by_* paths under
+   // per-path Q10Stats (no counter fan-out), recomputes digests, asserts
+   // strict 4-way XOR parity, and returns (parity_ok, s3_stats, s4_stats,
+   // r_merged) for diagnostics. Called once for iter=0 (default params)
+   // and once for iter=1 (a distinct month) to guard against param-bake
+   // regressions (PLAYBOOK §10).
 
    auto print_digest = [](const char* name, size_t n, uint64_t d) {
       std::cout << std::left << std::setw(14) << name
                 << " rows=" << std::setw(4) << n
                 << " digest=0x" << std::hex << d << std::dec << "\n";
    };
-   std::cout << "\n=== Results ===\n";
-   print_digest("S1 (base)",   r_base.size(),   d_base);
-   print_digest("S2 (view)",   r_view.size(),   d_view);
-   print_digest("S3 (merged)", r_merged.size(), d_merged);
-   print_digest("S4 (hash)",   r_hash.size(),   d_hash);
+
+   struct IterResult {
+      bool   ok            = false;
+      bool   s3_nonzero    = false;
+      tpch::q10::Q10Stats s3_stats{};
+      tpch::q10::Q10Stats s4_stats{};
+      std::vector<tpch::q10::q10_agg_row_t> r_merged;
+   };
+
+   auto run_iter = [&](long iter, const char* tag) -> IterResult {
+      q10.set_params_for_iter(iter);
+      std::cout << "\n=== Running queries " << tag
+                << " (iter=" << iter << ", date_lo="
+                << q10.params.date_lo << " days since 1970-01-01) ===\n";
+
+      std::vector<tpch::q10::q10_agg_row_t> r_base, r_view, r_merged, r_hash;
+      tpch::q10::Q10Stats s1_stats{}, s2_stats{}, s3_stats{}, s4_stats{};
+
+      q10.stats = &s1_stats; q10.query_by_base  (r_base);
+      q10.stats = &s2_stats; q10.query_by_view  (r_view);
+      q10.stats = &s3_stats; q10.query_by_merged(r_merged);
+      q10.stats = &s4_stats; q10.query_by_hash  (r_hash);
+      q10.stats = nullptr;
+
+      uint64_t d_base   = digest_rows(r_base);
+      uint64_t d_view   = digest_rows(r_view);
+      uint64_t d_merged = digest_rows(r_merged);
+      uint64_t d_hash   = digest_rows(r_hash);
+
+      std::cout << "--- Results " << tag << " ---\n";
+      print_digest("S1 (base)",   r_base.size(),   d_base);
+      print_digest("S2 (view)",   r_view.size(),   d_view);
+      print_digest("S3 (merged)", r_merged.size(), d_merged);
+      print_digest("S4 (hash)",   r_hash.size(),   d_hash);
+
+      bool s3_nonzero = (d_merged != 0);
+      bool s1_ok = (d_base == d_merged) && (r_base.size() == r_merged.size());
+      bool s2_ok = (d_view == d_merged) && (r_view.size() == r_merged.size());
+      bool s4_ok = (d_hash == d_merged) && (r_hash.size() == r_merged.size());
+
+      std::cout << (s3_nonzero ? "[OK]   " : "[FAIL] ") << "S3 sanity "
+                << tag << " digest=0x" << std::hex << d_merged << std::dec
+                << " rows=" << r_merged.size() << "\n";
+      std::cout << (s1_ok ? "[OK]   " : "[FAIL] ") << "S1 vs S3 " << tag << "\n";
+      std::cout << (s2_ok ? "[OK]   " : "[FAIL] ") << "S2 vs S3 " << tag << "\n";
+      std::cout << (s4_ok ? "[OK]   " : "[FAIL] ") << "S4 vs S3 " << tag << "\n";
+
+      IterResult res;
+      res.ok         = s3_nonzero && s1_ok && s2_ok && s4_ok;
+      res.s3_nonzero = s3_nonzero;
+      res.s3_stats   = s3_stats;
+      res.s4_stats   = s4_stats;
+      res.r_merged   = std::move(r_merged);
+      return res;
+   };
+
+   IterResult iter0 = run_iter(0, "[iter=0]");
+   IterResult iter1 = run_iter(1, "[iter=1]");
 
    // ------------------------------------------------------------------
-   // Q10Stats post-S3 report block. Helps spot accumulator-vs-emit
-   // cardinality issues early.
-   std::cout << "\n=== Q10Stats post-S3 ===\n";
+   // Diagnostic blocks read from iter=0 (single canonical snapshot).
+   // Per-path stats now mean what they say — no counter fan-out from
+   // the multi-path run.
+   const auto& s3_stats = iter0.s3_stats;
+   const auto& s4_stats = iter0.s4_stats;
+
+   std::cout << "\n=== Q10Stats post-S3 (iter=0) ===\n";
    std::cout << "[stat] customers_scanned            = " << s3_stats.customers_scanned << "\n";
    std::cout << "[stat] orders_scanned               = " << s3_stats.orders_scanned << "\n";
    std::cout << "[stat] orders_passing_date          = " << s3_stats.orders_passing_date << "\n";
@@ -347,14 +398,9 @@ int main(int argc, char** argv)
    std::cout << "[stat] mi_records_visited           = " << s3_stats.mi_records_visited << "\n";
    std::cout << "[stat] mi_groups_skipped            = " << s3_stats.mi_groups_skipped << "\n";
 
-   // ------------------------------------------------------------------
-   // Top-3 emitted rows from S3 — eyeball check against a known-good Q10
-   // reference (DuckDB or TPC-H spec answer-set). No automated assertion;
-   // a reviewer can spot egregious revenue or n_name corruption at a
-   // glance.
-   std::cout << "\n=== S3 top-3 (eyeball check) ===\n";
-   for (size_t i = 0; i < std::min<size_t>(3, r_merged.size()); ++i) {
-      const auto& r = r_merged[i];
+   std::cout << "\n=== S3 top-3 (eyeball check, iter=0) ===\n";
+   for (size_t i = 0; i < std::min<size_t>(3, iter0.r_merged.size()); ++i) {
+      const auto& r = iter0.r_merged[i];
       std::cout << "[row " << i << "] c_custkey=" << r.c_custkey
                 << " revenue=" << std::fixed << std::setprecision(2)
                 << static_cast<double>(r.revenue)
@@ -363,57 +409,15 @@ int main(int argc, char** argv)
                 << "\n";
    }
 
-   // ------------------------------------------------------------------
-   // Sanity + parity gating. S3 must return a non-zero digest at SF=1
-   // with the validation default (1993-10-01). S1/S2/S4 still empty —
-   // report as [deferred] (NOT failures) until §7.2/§7.3/§7.5 land.
+   std::cout << "\n=== Q10Stats post-S4 (iter=0) ===\n";
+   std::cout << "[stat] orders_inl_lookups           = " << s4_stats.orders_inl_lookups << "\n";
+   std::cout << "[stat] customer_inl_lookups         = " << s4_stats.customer_inl_lookups << "\n";
 
-   std::cout << "\n=== Parity check ===\n";
-   bool s3_sanity = (d_merged != 0);
-   std::cout << (s3_sanity ? "[OK]   " : "[FAIL] ") << "S3 sanity"
-             << " digest=0x" << std::hex << d_merged << std::dec
-             << " (expected non-zero; got "
-             << r_merged.size() << " rows)\n";
-
-   // S1 vs S3 parity (Phase 4b commit 1) — strict equality on XOR digest.
-   bool s1_parity = (d_base == d_merged) && (r_base.size() == r_merged.size());
-   std::cout << (s1_parity ? "[OK]   " : "[FAIL] ") << "S1 vs S3 parity"
-             << " d_base=0x"   << std::hex << d_base
-             << " d_merged=0x" << d_merged << std::dec
-             << " (rows: " << r_base.size() << " vs " << r_merged.size() << ")\n";
-
-   // S2 vs S3 parity (Phase 4b commit 2).
-   bool s2_parity = (d_view == d_merged) && (r_view.size() == r_merged.size());
-   std::cout << (s2_parity ? "[OK]   " : "[FAIL] ") << "S2 vs S3 parity"
-             << " d_view=0x"   << std::hex << d_view
-             << " d_merged=0x" << d_merged << std::dec
-             << " (rows: " << r_view.size() << " vs " << r_merged.size() << ")\n";
-
-   // S4 vs S3 parity (Phase 4b commit 3 — final 4-way gate).
-   bool s4_parity = (d_hash == d_merged) && (r_hash.size() == r_merged.size());
-   std::cout << (s4_parity ? "[OK]   " : "[FAIL] ") << "S4 vs S3 parity"
-             << " d_hash=0x"   << std::hex << d_hash
-             << " d_merged=0x" << d_merged << std::dec
-             << " (rows: " << r_hash.size() << " vs " << r_merged.size() << ")\n";
-
-   // Post-S4 INL diagnostics — bumped during S4's per-orderkey-transition
-   // recovery (Rule 13). Bound: orders_inl_lookups ≤ surviving orders,
-   // customer_inl_lookups ≤ surviving orders (same site).
-   std::cout << "\n=== Q10Stats post-S4 ===\n";
-   std::cout << "[stat] orders_inl_lookups           = " << s3_stats.orders_inl_lookups << "\n";
-   std::cout << "[stat] customer_inl_lookups         = " << s3_stats.customer_inl_lookups << "\n";
-
-   if (stats_ok && s3_sanity && s1_parity && s2_parity && s4_parity) {
-      return 0;
-   }
-   if (!stats_ok)   std::cout << "[FAIL] cardinality / sentinel check failed\n";
-   if (!s3_sanity)  std::cout << "[FAIL] S3 returned digest 0x0 — empty result is "
-                                 "wrong for SF=1 with validation default\n";
-   if (!s1_parity)  std::cout << "[FAIL] S1 digest does not match S3 — base-index "
-                                 "scan disagrees with COL group walk\n";
-   if (!s2_parity)  std::cout << "[FAIL] S2 digest does not match S3 — view-scan "
-                                 "with D4 chain disagrees with COL group walk\n";
-   if (!s4_parity)  std::cout << "[FAIL] S4 digest does not match S3 — hash-join "
-                                 "chain disagrees with COL group walk\n";
+   if (stats_ok && iter0.ok && iter1.ok) return 0;
+   if (!stats_ok)  std::cout << "[FAIL] cardinality / sentinel check failed\n";
+   if (!iter0.ok)  std::cout << "[FAIL] iter=0 parity / S3 sanity failed\n";
+   if (!iter1.ok)  std::cout << "[FAIL] iter=1 parity / S3 sanity failed — "
+                                "suggests a param-bake regression (some path "
+                                "hardcoded the iter=0 date)\n";
    return 1;
 }

@@ -1,10 +1,10 @@
 #ifndef ROCKSDB_ONLY
-// Phase 1 commit 2 harness for Q10 — LeanStore backend.
+// Phase 5 harness for Q10 — LeanStore backend.
 //
 // Mirrors test_query_q10_rocksdb.cpp: loads base tables + COL secondaries
-// once, runs all four query_by_* paths (all stubs at this commit), and
-// asserts cross-structure XOR digest parity. Expected: all four digests
-// are 0x0, exit 0.
+// once, runs all four query_by_* paths under per-path Q10Stats, and asserts
+// strict 4-way XOR parity at TWO distinct param sets (iter=0 default,
+// iter=1 off-default for the param-bake regression guard per PLAYBOOK §10).
 //
 // Differences from the RocksDB harness:
 //   - No filesystem wipe of --ssd_path; LeanStore opens fresh each run.
@@ -119,37 +119,73 @@ int main(int argc, char** argv)
       leanstore::cr::Worker::my().commitTX();
    });
 
-   std::cout << "=== Running queries (S3 live; S1/S2/S4 stubs) ===\n";
-   std::vector<tpch::q10::q10_agg_row_t> r_base, r_view, r_merged, r_hash;
-   tpch::q10::Q10Stats s3_stats{};
-   crm.scheduleJobSync(0, [&]() {
-      leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
-      q10.stats = &s3_stats;
-      q10.query_by_base  (r_base);
-      q10.query_by_view  (r_view);
-      q10.query_by_merged(r_merged);
-      q10.query_by_hash  (r_hash);
-      q10.stats = nullptr;
-      leanstore::cr::Worker::my().commitTX();
-   });
-
-   uint64_t d_base   = digest_rows(r_base);
-   uint64_t d_view   = digest_rows(r_view);
-   uint64_t d_merged = digest_rows(r_merged);
-   uint64_t d_hash   = digest_rows(r_hash);
-
+   // Per-iter run helper: invokes all four query_by_* paths under per-path
+   // Q10Stats, asserts strict 4-way parity, returns diagnostics. Called
+   // once per param iter (default + iter=1 off-default) for param-bake
+   // guard (PLAYBOOK §10).
    auto print_digest = [](const char* name, size_t n, uint64_t d) {
       std::cout << std::left << std::setw(14) << name
                 << " rows=" << std::setw(4) << n
                 << " digest=0x" << std::hex << d << std::dec << "\n";
    };
-   std::cout << "\n=== Results ===\n";
-   print_digest("S1 (base)",   r_base.size(),   d_base);
-   print_digest("S2 (view)",   r_view.size(),   d_view);
-   print_digest("S3 (merged)", r_merged.size(), d_merged);
-   print_digest("S4 (hash)",   r_hash.size(),   d_hash);
 
-   std::cout << "\n=== Q10Stats post-S3 ===\n";
+   struct IterResult {
+      bool   ok            = false;
+      bool   s3_nonzero    = false;
+      tpch::q10::Q10Stats s3_stats{};
+      tpch::q10::Q10Stats s4_stats{};
+   };
+
+   auto run_iter = [&](long iter, const char* tag) -> IterResult {
+      IterResult res;
+      std::vector<tpch::q10::q10_agg_row_t> r_base, r_view, r_merged, r_hash;
+      tpch::q10::Q10Stats s1_stats{}, s2_stats{}, s3_stats{}, s4_stats{};
+
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+         q10.set_params_for_iter(iter);
+         q10.stats = &s1_stats; q10.query_by_base  (r_base);
+         q10.stats = &s2_stats; q10.query_by_view  (r_view);
+         q10.stats = &s3_stats; q10.query_by_merged(r_merged);
+         q10.stats = &s4_stats; q10.query_by_hash  (r_hash);
+         q10.stats = nullptr;
+         leanstore::cr::Worker::my().commitTX();
+      });
+
+      uint64_t d_base   = digest_rows(r_base);
+      uint64_t d_view   = digest_rows(r_view);
+      uint64_t d_merged = digest_rows(r_merged);
+      uint64_t d_hash   = digest_rows(r_hash);
+
+      std::cout << "\n--- Results " << tag << " ---\n";
+      print_digest("S1 (base)",   r_base.size(),   d_base);
+      print_digest("S2 (view)",   r_view.size(),   d_view);
+      print_digest("S3 (merged)", r_merged.size(), d_merged);
+      print_digest("S4 (hash)",   r_hash.size(),   d_hash);
+
+      bool s3_nonzero = (d_merged != 0);
+      bool s1_ok = (d_base == d_merged) && (r_base.size() == r_merged.size());
+      bool s2_ok = (d_view == d_merged) && (r_view.size() == r_merged.size());
+      bool s4_ok = (d_hash == d_merged) && (r_hash.size() == r_merged.size());
+      std::cout << (s3_nonzero ? "[OK]   " : "[FAIL] ") << "S3 sanity " << tag << "\n";
+      std::cout << (s1_ok ? "[OK]   " : "[FAIL] ") << "S1 vs S3 " << tag << "\n";
+      std::cout << (s2_ok ? "[OK]   " : "[FAIL] ") << "S2 vs S3 " << tag << "\n";
+      std::cout << (s4_ok ? "[OK]   " : "[FAIL] ") << "S4 vs S3 " << tag << "\n";
+
+      res.ok         = s3_nonzero && s1_ok && s2_ok && s4_ok;
+      res.s3_nonzero = s3_nonzero;
+      res.s3_stats   = s3_stats;
+      res.s4_stats   = s4_stats;
+      return res;
+   };
+
+   IterResult iter0 = run_iter(0, "[iter=0]");
+   IterResult iter1 = run_iter(1, "[iter=1]");
+
+   const auto& s3_stats = iter0.s3_stats;
+   const auto& s4_stats = iter0.s4_stats;
+
+   std::cout << "\n=== Q10Stats post-S3 (iter=0) ===\n";
    std::cout << "[stat] customers_scanned            = " << s3_stats.customers_scanned << "\n";
    std::cout << "[stat] orders_scanned               = " << s3_stats.orders_scanned << "\n";
    std::cout << "[stat] orders_passing_date          = " << s3_stats.orders_passing_date << "\n";
@@ -160,39 +196,15 @@ int main(int argc, char** argv)
    std::cout << "[stat] topn_evictions               = " << s3_stats.topn_evictions << "\n";
    std::cout << "[stat] nation_inl_lookups           = " << s3_stats.nation_inl_lookups << "\n";
 
-   std::cout << "\n=== Parity check ===\n";
-   bool s3_sanity = (d_merged != 0);
-   std::cout << (s3_sanity ? "[OK]   " : "[FAIL] ") << "S3 sanity"
-             << " digest=0x" << std::hex << d_merged << std::dec
-             << " (expected non-zero; got "
-             << r_merged.size() << " rows)\n";
+   std::cout << "\n=== Q10Stats post-S4 (iter=0) ===\n";
+   std::cout << "[stat] orders_inl_lookups           = " << s4_stats.orders_inl_lookups << "\n";
+   std::cout << "[stat] customer_inl_lookups         = " << s4_stats.customer_inl_lookups << "\n";
 
-   // S1 vs S3 parity (Phase 4b commit 1).
-   bool s1_parity = (d_base == d_merged) && (r_base.size() == r_merged.size());
-   std::cout << (s1_parity ? "[OK]   " : "[FAIL] ") << "S1 vs S3 parity"
-             << " d_base=0x"   << std::hex << d_base
-             << " d_merged=0x" << d_merged << std::dec
-             << " (rows: " << r_base.size() << " vs " << r_merged.size() << ")\n";
-
-   // S2 vs S3 parity (Phase 4b commit 2).
-   bool s2_parity = (d_view == d_merged) && (r_view.size() == r_merged.size());
-   std::cout << (s2_parity ? "[OK]   " : "[FAIL] ") << "S2 vs S3 parity"
-             << " d_view=0x"   << std::hex << d_view
-             << " d_merged=0x" << d_merged << std::dec
-             << " (rows: " << r_view.size() << " vs " << r_merged.size() << ")\n";
-
-   // S4 vs S3 parity (Phase 4b commit 3 — final 4-way gate).
-   bool s4_parity = (d_hash == d_merged) && (r_hash.size() == r_merged.size());
-   std::cout << (s4_parity ? "[OK]   " : "[FAIL] ") << "S4 vs S3 parity"
-             << " d_hash=0x"   << std::hex << d_hash
-             << " d_merged=0x" << d_merged << std::dec
-             << " (rows: " << r_hash.size() << " vs " << r_merged.size() << ")\n";
-
-   std::cout << "\n=== Q10Stats post-S4 ===\n";
-   std::cout << "[stat] orders_inl_lookups           = " << s3_stats.orders_inl_lookups << "\n";
-   std::cout << "[stat] customer_inl_lookups         = " << s3_stats.customer_inl_lookups << "\n";
-
-   return (s3_sanity && s1_parity && s2_parity && s4_parity) ? 0 : 1;
+   if (!iter0.ok) std::cout << "[FAIL] iter=0 parity / S3 sanity failed\n";
+   if (!iter1.ok) std::cout << "[FAIL] iter=1 parity / S3 sanity failed — "
+                                "suggests a param-bake regression (some path "
+                                "hardcoded the iter=0 date)\n";
+   return (iter0.ok && iter1.ok) ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY
