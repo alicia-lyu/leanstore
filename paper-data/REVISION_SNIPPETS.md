@@ -32,20 +32,23 @@ current §5.1. Replace with six paragraphs.
 \label{sec:hypotheses}
 
 % P1 — Scope: query components, not whole suites
-We do not benchmark TPC-H or any other suite end-to-end.
-Merged indexes accelerate a specific structural pattern: order-sharing
-pipelines whose join keys form a hierarchical or tree-shaped prefix
-chain (Sections~\ref{sec:mi-hierarchical}, \ref{sec:mi-tree}).
-Whole-benchmark numbers would dilute that signal with operators that
-are not part of the pattern --- sorts, group-bys on non-prefix keys,
-and single-table aggregates. We instead evaluate \emph{query
-components} chosen to isolate the pattern:
-the geo microbenchmark (Section~\ref{sec:exp-geo}) covers
-join-only, join+\textsc{count}, and join+\textsc{count distinct}
-at progressively deeper hierarchies; the TPC-H/TPCHI subset
-(Section~\ref{sec:exp-tpch}) covers the same patterns inside
-full-shape queries with realistic selectivities and dimension
-tables.
+Since merged indexes accelerate a specific structural pattern: order-sharing
+pipelines, 
+whole-benchmark numbers would dilute that signal with operators that
+are not part of the pattern. We instead evaluate \emph{query
+components} chosen to isolate the pattern using a synthetic microbenchmark and 4 TPCH-like queries.
+
+% the geo microbenchmark (Section~\ref{sec:exp-geo}) covers
+% join-only, join+\textsc{count}, and join+\textsc{count distinct}
+% at progressively deeper hierarchies; the TPC-H/TPCHI subset
+% (Section~\ref{sec:exp-tpch}) covers the same patterns inside
+% full-shape queries with realistic selectivities and dimension
+% tables.
+
+Our synthetic microbenchmark uses five tables forming a hierarchy: Nation--States--County--City--Customer. 
+We compute range joins over the five tables, sometimes with \textsc{count} or \textsc{count distinct}.
+We create a five-table merged index keyed on \texttt{(nationkey, statekey, countykey, citykey)}.
+
 
 % P2 — Why Q3 and Q5
 TPC-H Q3 exercises the hierarchical 3-table chain
