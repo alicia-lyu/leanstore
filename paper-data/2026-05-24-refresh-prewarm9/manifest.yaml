@@ -1,6 +1,6 @@
 tag: 2026-05-24-refresh-prewarm9
 experiment: refresh_sales RF1/RF2 IN-MEMORY (prewarm, DRAM=9 GiB) — DBToaster apples-to-apples comparison
-commit_sha: 23160335
+commit_sha: 6ac0c6ec
 host: c220g2-011011.wisc.cloudlab.us
 disk: ssd (Intel DC S3500 480GB SATA) — but the timed loop is fully in-memory (prewarm + DRAM > image)
 backend: btree only (--prewarm is LeanStore-specific; RocksDB has no equivalent)

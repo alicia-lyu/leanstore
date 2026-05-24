@@ -25,40 +25,50 @@ I/O is removed, so the buffer pool genuinely held the footprint.
 
 ## Metric
 
-Per-iteration **phase** rate: pure RF1-insert orders/s and pure RF2-delete
-orders/s per iteration (one order = 1 order + its 1–7 lineitems, both views
-maintained). Reported as the **median** over all iterations — this is exactly
-the unit DBToaster reports (RF1/RF2 phase orders/s), so the numbers line up
-directly. `rf1_agg_ops` (total/elapsed) is also carried for continuity with the
-5L runs. `summary/refresh_prewarm9_throughput.csv`.
+The headline unit is the **size-stable refresh pair** (one pair = insert 1
+order via RF1 + delete 1 order via RF2, each order = 1 order + its 1–7
+lineitems, both views maintained) — the TPC-H-faithful unit, the same one the
+5L runs report (`pair_tps`). LeanStore measures pairs directly (the loop
+interleaves RF1+RF2 each iteration); DBToaster measured RF1 and RF2 as separate
+phases, so its pair rate is `1/(1/rf1 + 1/rf2)` (its harness already prints this
+as "pair orders/s (aggregate)" = 2× this, counting both orders). `pairs_per_s_med`
+is the per-iteration median (maintenance-only); `pairs_per_s_agg` =
+total/elapsed (includes the harness's per-iteration CSV-write overhead). Phase
+rates (`rf1_ops_per_s`, `rf2_ops_per_s`) are kept for attribution.
+`summary/pair_vs_dbtoaster.csv` (and the per-structure `summary/refresh_prewarm9_throughput.csv`).
 
-## Results (orders/s, in-memory)
+## Results — size-stable pair (pairs/s, in-memory)
 
-| structure | RF1 insert (median) | RF2 delete (median) | pair (median) | RF1 agg |
+| engine / structure | pairs/s (med) | pairs/s (agg) | RF1 ops/s | RF2 ops/s |
 |---|--:|--:|--:|--:|
-| **S1 split**  | 34,944 | 49,650 | 41,011 | 19,116 |
-| **S2 view**   | 17,802 | 24,978 | 20,790 |  9,773 |
-| **S3 merged** | 31,147 | 46,354 | 37,014 | 17,109 |
-| **S4 base**   | 43,842 | 73,910 | 54,561 | 24,771 |
-| **DBToaster** (in-memory IVM) | **86,253** | 16,417 | — | — |
+| **DBToaster** (in-mem IVM) | **13,792** | 13,792 | 86,253 | 16,417 |
+| **S1 split**  | 20,506 | 19,116 | 34,944 | 49,650 |
+| **S2 view**   | 10,395 |  9,773 | 17,802 | 24,978 |
+| **S3 merged** | 18,507 | 17,109 | 31,147 | 46,354 |
+| **S4 base**   | 27,280 | 24,771 | 43,842 | 73,910 |
 
 ## Observations (factual; framing deferred)
 
-1. **Within LeanStore:** the maintenance ordering matches the SSD 5L run —
-   merged **S3 (31.1k) ≈ split S1 (34.9k) ≫ view S2 (17.8k)** on RF1; same on
-   RF2. S3 maintains at split-index levels and the view pays the most.
-2. **vs DBToaster, RF1 inserts:** DBToaster (86,253) is ~2.8× faster than
-   LeanStore S3 and ~4.8× faster than S2 — it is generated delta code with no
-   transaction layer / WAL / MVCC / buffer manager; LeanStore pays
-   general-purpose-engine overhead at `update_size=1` (one TX per order).
-3. **vs DBToaster, RF2 deletes:** LeanStore is faster (S3 46.4k, S2 25.0k vs
-   DBToaster 16.4k) — DBToaster's `on_delete` triggers are costly.
+1. **On the pair, LeanStore S3/S1 beat DBToaster; only S2 trails it.** Merged
+   **S3 (18.5k) and split S1 (20.5k) pairs/s > DBToaster (13.8k)**; view **S2
+   (10.4k) < DBToaster**; base S4 (27.3k) is the ceiling. DBToaster's very fast
+   inserts (86k) are offset by slow deletes (16k), so on the size-stable pair it
+   lands below the merged/split index. (An RF1-insert-only comparison would
+   instead favour DBToaster — hence the pair is the honest unit.)
+2. **Within LeanStore:** merged **S3 ≈ split S1 ≫ view S2** on the pair, matching
+   the SSD 5L ordering (S3 1656 ≳ S1 1382 ≫ S2 802 pair/s). S3 maintains at
+   split-index levels; the view pays the most. (In-memory, split edges merged
+   slightly — no scattered-access penalty when everything is resident; the two
+   are within ~10%.)
+3. **Attribution:** DBToaster wins RF1 inserts (86k vs S3 31k — generated delta
+   code, no TX/WAL/MVCC/buffer-manager); LeanStore wins RF2 deletes (S3 46k vs
+   16k — DBToaster's `on_delete` triggers are costly). They partially cancel on
+   the pair, net favouring the merged/split index.
 4. **Memory:** DBToaster needs peak RSS 8.25 GiB (≈1.7× the ~4.9 GiB working
    set) and OOMs below its footprint (no spill). LeanStore maintains the same
    Q3+Q5 views at **0.4–1.0 GiB** DRAM by spilling to SSD
-   (`../2026-05-24-refresh-5L-ssd`: btree S2 802, S3 1656 pair/s). This run only
-   shows the in-memory ceiling; the memory-efficiency contrast lives in the 5L
-   comparison.
+   (`../2026-05-24-refresh-5L-ssd`). This run shows the in-memory ceiling; the
+   memory-efficiency contrast lives in the 5L comparison.
 
 ## Caveats
 
@@ -76,8 +86,10 @@ directly. `rf1_agg_ops` (total/elapsed) is also carried for continuity with the
 
 - `raw/btree.s{1..4}.csv` — per-iteration `elapsed_s,rf1,rf2,pair` orders/s.
 - `raw/btree_s{1..4}.out` — stdout incl. `prewarm(SN): scanned … rows` + totals.
-- `summary/refresh_prewarm9_throughput.csv` — one row per structure; carries a
-  `disk=ssd` column (image medium; the timed loop is in-memory).
+- `summary/refresh_prewarm9_throughput.csv` — one row per structure (median +
+  aggregate phase rates); carries a `disk=ssd` column (image medium; loop in-mem).
+- `summary/pair_vs_dbtoaster.csv` — the size-stable **pairs/s** comparison
+  (4 LeanStore structures + DBToaster), the headline table above.
 
 ## Reproduce
 
