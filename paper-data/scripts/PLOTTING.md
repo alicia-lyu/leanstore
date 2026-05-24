@@ -93,6 +93,7 @@ omit the footer (typesetter doesn't want it).
 | Script | Reads | What it shows |
 |---|---|---|
 | `plot_refresh_sales.py --tag <tag>` | `<tag>/summary/refresh_sales_5L_throughput.csv` *or* `refresh_sales_rf_throughput.csv` (auto-detected) | Single grouped-bar panel (x=backend, series=structure) of **ms / RF pair (tail 30 s)** for the 5L schema, or **µs / RF1 insert (hot)** for the SF=1 schema. Log y, lower-is-better. Picks up an optional `dbtoaster_rf_throughput.csv` sibling and adds a 5th series when present. Output basename carries an `_ssd`/`_hdd` suffix when the source CSV has a `disk` column. Writes `figures/paper/{refresh_5L_pair_latency,refresh_sales_rf1_latency}_<disk>.{pdf,png}`. |
+| `plot_lsm_s3_vs_s2_diagnostics.py` | `2026-05-24-a-ssd/summary/{headline,diagnostics}.csv` + `2026-05-18-b/summary/{headline,diagnostics}.csv` | 1-column two-panel grouped-bar figure of **S3 / S2 ratio** on RocksDB at c0/bg=2. Top = SSD, bottom = HDD. Three bars per query (q3, q5, q3i, q5i) = `ms/tx`, `sst_read_us`, `cpu_cycles`. Log y, dashed line at 1.0. Cross-tag, so no `_ssd`/`_hdd` suffix on basename. Writes `2026-05-24-a-ssd/figures/paper/lsm_s3_vs_s2_diagnostics.{pdf,png}`. Explains the q3i/q5i regression discussed in `REVISION_SNIPPETS.md`. |
 
 ## When a sweep is incomplete
 
