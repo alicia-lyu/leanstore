@@ -346,7 +346,7 @@ def main() -> int:
         budget_df = ls_by_budget.get(budget, pd.DataFrame())
         _panel(axes[j], budget_df, ls_series, db_df,
                budget_gib=budget, budget_label=label,
-               y_unit=schema["unit"], show_ylabel=True)
+               y_unit=schema["unit"], show_ylabel=(j == 0))
     # OOM bar is drawn after each panel's autoscale settles.
     for ax in axes:
         _annotate_oom(ax)
