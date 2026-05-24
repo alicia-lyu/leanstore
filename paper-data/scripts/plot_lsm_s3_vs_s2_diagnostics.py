@@ -149,8 +149,13 @@ def render_correlations() -> None:
                             textcoords="offset points",
                             fontsize=8, color="#333")
 
-            # y = x diagonal — counter ratio fully explains latency.
+            # Shade "S3 better than S2" half (latency ratio < 1).
             lim_lo, lim_hi = 0.7, 2.1
+            ax.axhspan(lim_lo, 1.0, facecolor="#27ae60", alpha=0.10, zorder=0)
+            ax.text(lim_hi - 0.04, lim_lo + 0.04, "S3 better",
+                    ha="right", va="bottom", fontsize=7, color="#1e7e3c",
+                    style="italic", zorder=1)
+            # y = x diagonal — counter ratio fully explains latency.
             ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi],
                     "--", color="#999", linewidth=0.7, zorder=1)
             ax.axhline(1.0, color="#ccc", linewidth=0.5, zorder=0)
