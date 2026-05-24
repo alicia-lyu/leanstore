@@ -39,6 +39,12 @@
 DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping");
 DEFINE_int32(update_size,     1, "RF1+RF2 batch size (orders per refresh op)");
 DEFINE_int32(refresh_seconds, 15, "Total seconds to run the RF1/RF2 loop");
+DEFINE_bool(prewarm, false,
+            "Scan the whole DB (base tables + active structure's secondary) "
+            "into RocksDB's block cache before the timed RF loop, so with "
+            "--dram_gib >= image size the loop runs in-memory (no SST reads — "
+            "reads use_direct_reads, bypassing the OS page cache). Mirrors the "
+            "LeanStore --prewarm; the prewarm time itself is not measured.");
 
 thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 
@@ -158,6 +164,49 @@ int main(int argc, char** argv)
       return 0;
    }
    tpch.recover_last_ids();
+
+   // Optional prewarm: scan the whole DB into RocksDB's block cache so the timed
+   // RF loop runs warm (in-memory) when --dram_gib >= the image. RocksDB sets
+   // use_direct_reads (RocksDB.cpp:16), so the OS page cache never serves reads;
+   // the block cache (sized by --dram_gib) is the only resident layer, and only
+   // this scan fills it ahead of the short RF run. Mirrors the LeanStore prewarm.
+   // Not measured.
+   if (FLAGS_prewarm) {
+      const auto t0 = std::chrono::steady_clock::now();
+      long n = 0, mrows = 0;
+      auto warm = [&](auto& ad, auto key) {
+         ad.scan(key, [&](const decltype(key)&, const auto&) { ++n; return true; },
+                 []() {});
+      };
+      // Base tables the RF path reads (partsupp/customer are the random-access
+      // RF1 bottleneck; orders/lineitem/nation for RF2 + Q5 maintain).
+      warm(partsupp, partsupp_t::Key{});
+      warm(customer, customerh_t::Key{});
+      warm(orders,   orders_t::Key{});
+      warm(lineitem, lineitem_t::Key{});
+      warm(nation,   nation_t::Key{});
+      // Only the active structure's secondary is touched during its run.
+      switch (FLAGS_storage_structure) {
+         case 1:
+            warm(split_orders,   tpch::orders_coli_t::Key{});
+            warm(split_lineitem, tpch::lineitem_col_t::Key{});
+            break;
+         case 2:
+            warm(q3_view, tpch::q3::q3_pipeline_view_t::Key{});
+            warm(q5_view, tpch::q5::q5_pipeline_view_t::Key{});
+            break;
+         case 3: {
+            auto scanner = merged_col.getScanner();
+            while (auto kv = scanner->next()) { (void)kv; ++mrows; ++n; }
+            break;
+         }
+         case 4: default: break;  // base only
+      }
+      const double s = std::chrono::duration<double>(
+                           std::chrono::steady_clock::now() - t0).count();
+      std::cout << "prewarm(S" << FLAGS_storage_structure << "): scanned " << n
+                << " rows (" << mrows << " merged) in " << s << "s\n";
+   }
 
    tpch::RefreshState<B::Adapter> refresh(tpch);
 
