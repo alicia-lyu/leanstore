@@ -9,6 +9,24 @@ actionable.
 
 ## Active
 
+- **Q10I Phase 5 — Linux perf sweep (5L cell, 2026-05-24)**:
+  Phase 4 landed on macOS worktree branch
+  `worktree-agent-a86745538133069de` — all four `query_by_*`
+  parity-verified at SF=1/5/10 with strict 4-way XOR digest. **On
+  Linux**: (a) check out the worktree branch on a fresh node (do
+  NOT merge to main — `lineitem_coli_t` widening invalidates
+  Q3I/Q5I persisted images on main per E1); (b) build
+  `q10i_lsm` + `q10i_btree`; (c) run `test_query_q10i_btree` at
+  SF=1 for cross-backend parity (must reproduce the digest
+  `0xfe5d346e48bc1e8d`); (d) **5L cell sweep only**: SF=15, S1–S4,
+  unlimited DRAM, the paper-headline configuration. Append
+  `frontend/tpch/q10i/RUNS.md` after the sweep. Expected story
+  (per design doc): **S3 ≥ S2 > S1/S4** mirroring Q3I/Q5I. **S5
+  (aCOLI) deferred** per Q10I D3 — the orderdate window makes
+  per-customer pre-totals incomposable. Pair-fates with Q10 — run
+  Q10's 5L cell in the same session for the paper's joint
+  Q10/Q10I comparison.
+
 - **DBToaster baseline (`dbtoaster/`): Phase 0 install + build + sweep
   (2026-05-24)**: scaffold landed on macOS-side dev (SQL, CMake, Makefile,
   Dockerfile, entrypoint, READMEs; `main.cpp` pending). **On Linux**: (a) run
