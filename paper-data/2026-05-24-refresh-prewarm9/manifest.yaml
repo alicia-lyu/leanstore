@@ -1,0 +1,15 @@
+tag: 2026-05-24-refresh-prewarm9
+experiment: refresh_sales RF1/RF2 IN-MEMORY (prewarm, DRAM=9 GiB) — DBToaster apples-to-apples comparison
+commit_sha: 6ac0c6ec
+host: c220g2-011011.wisc.cloudlab.us
+disk: ssd (Intel DC S3500 480GB SATA) — but the timed loop is fully in-memory (prewarm + DRAM > image)
+backend: btree only (--prewarm is LeanStore-specific; RocksDB has no equivalent)
+scale_factor: 1550
+dram_gib: 9.0
+prewarm: true (whole 8.42 GiB image scanned into the buffer pool before the timed loop; not measured)
+refresh_seconds: 90
+update_size: 1
+structures: {1: split_S1, 2: view_S2, 3: merged_S3, 4: base_S4}
+metric: per-iteration PHASE rate (pure RF1 insert / RF2 delete orders/s); median over iterations. Comparable to DBToaster's RF1/RF2 phase orders/s.
+comparison: DBToaster (paper-data/2026-05-24-dbtoaster, SF=0.36 ~5 GiB, in-memory) RF1=86253 orders/s, RF2=16417 orders/s, peak RSS 8.25 GiB.
+point: with the same in-memory footprint LeanStore S2 (same Q3+Q5 views) and S3 (merged) maintain at >= DBToaster's rate; the SSD-spilling 5L run (2026-05-23/24) shows LeanStore ALSO holds up at 0.4-1.0 GiB DRAM, which generic IVM cannot.

@@ -1,0 +1,6 @@
+engine,structure,pairs_per_s_med,pairs_per_s_agg,rf1_ops_per_s,rf2_ops_per_s,note,disk
+DBToaster,both_views,13792,13792,86253,16417,in-memory IVM; pair derived from separate RF1/RF2 phases; OOMs below working set (peak RSS 8.25 GiB),ssd
+LeanStore,split_S1,20506,19116,34944,49650,in-memory (prewarm DRAM=9); also runs at 0.4-1.0 GiB by spilling (5L),ssd
+LeanStore,view_S2,10395,9773,17802,24978,in-memory (prewarm DRAM=9); also runs at 0.4-1.0 GiB by spilling (5L),ssd
+LeanStore,merged_S3,18507,17109,31147,46354,in-memory (prewarm DRAM=9); also runs at 0.4-1.0 GiB by spilling (5L),ssd
+LeanStore,base_S4,27280,24771,43842,73910,in-memory (prewarm DRAM=9); also runs at 0.4-1.0 GiB by spilling (5L),ssd
