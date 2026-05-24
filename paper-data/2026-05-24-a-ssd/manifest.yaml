@@ -1,0 +1,10 @@
+tag: 2026-05-24-a-ssd
+commit_sha: ae9fb9dc
+host: node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
+started_at: 2026-05-24T07:15:06Z
+finished_at: 2026-05-24T17:59:51Z
+cells: c0
+families: tpch,tpchi
+reps: 3
+runs_ok: 96
+runs_err: 0

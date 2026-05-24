@@ -43,6 +43,8 @@ Usage: $(basename "$0") [--tag <tag>] [--cells c2,c1,c3,c0]
                 bg0 only, 1 rep. ~5-10 min end-to-end validation.
   --dry-run     Print the commands; don't execute.
   --skip-load   Assume the family .json images already exist.
+  --drop-caches Drop the OS page cache (sync; echo 3 > drop_caches, needs
+                sudo) before each per-structure run for a cold start.
   --continue    Re-use the latest existing tag instead of creating a
                 new one; skip per-run snapshots that already exist.
 
@@ -59,6 +61,7 @@ DRY_RUN=0
 SKIP_LOAD=0
 SMOKE_TEST=0
 CONTINUE=0
+DROP_CACHES=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --tag)        TAG="$2"; shift 2 ;;
@@ -68,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         --dry-run)    DRY_RUN=1; shift ;;
         --skip-load)  SKIP_LOAD=1; shift ;;
         --smoke-test) SMOKE_TEST=1; shift ;;
+        --drop-caches) DROP_CACHES=1; shift ;;
         --continue)   CONTINUE=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)            echo "unknown arg: $1" >&2; usage; exit 1 ;;
@@ -401,6 +405,12 @@ for cell in "${CELL_LIST[@]}"; do
                             continue
                         fi
                         prev_tput=$(current_body_count "$csv_db_dir/TPut.csv")
+                        # Cold-start each run: both engines use O_DIRECT so the
+                        # OS page cache does not serve reads, but dropping it
+                        # guarantees no buffered-IO/metadata warmth carries over.
+                        if [[ $DROP_CACHES -eq 1 ]]; then
+                            sync; sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>>"$LOG" || true
+                        fi
                         if ! eval "$cmd" >> "$LOG" 2>&1; then
                             log "        ERROR: $cmd failed; continuing"
                             RUN_ERR=$((RUN_ERR + 1))
