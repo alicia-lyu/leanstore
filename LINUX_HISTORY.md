@@ -181,6 +181,40 @@ here for traceability.
   confirms the S2/S3 cycles inversion at q3i_lsm large-DRAM that
   SWEEP_LOG.md flags. Analyzer-only fix; no re-sweep.
 
+## Closed by 2026-05-23 post-merge triage
+
+Two of the three follow-up gaps appended by the analyzer fix above were
+triaged and closed; the third (`latency.csv`) was deferred to the next
+project and stays in [`LINUX_PENDING.md`](LINUX_PENDING.md).
+
+- **LSM binaries don't emit per-tx detail CSVs / rocksdb counters**
+  (was: q3/q5/q3i/q5i_lsm + geo_lsm write only `TPut.s<N>.csv` +
+  `size.s<N>.csv` + an empty `structure<N>_stderr.txt`; no
+  `query/<method>/{bm,cpu,cr,dt}.csv`, no rocksdb block-cache lines).
+  **Resolution: expected / by design.** `RocksDBLogger::log_details()`
+  is an intentional no-op (`frontend/shared/logger/rocksdb_logger.hpp:81`)
+  — the per-method detail tables are LeanStore worker-counter tables
+  (`LeanStoreLogger::log_details`, `leanstore_logger.hpp:43`) with no
+  RocksDB analogue on the normal emit path. The analyzer's TPut-derived
+  surrogates (`cpu_cycles_per_tx`, `cpu_util_pct`, `sst_*`) are the
+  accepted resolution for LSM rows; LeanStore-only counters (`bm_*`,
+  `cr_*`, `dt_*`, `cpu_llc_miss_per_tx`) are legitimately N/A for LSM.
+  No code change.
+
+- **LeanStore `c_hash` emitted with thousands-separator commas**
+  (was: the leading `c_hash` column in
+  `<run>/<tx>/<method>/{bm,cpu,cr,dt}.csv` printed like
+  `7,978,927,218,222,587,432`, shifting every real column right and
+  breaking strict CSV parsers; the analyzer worked around it with a
+  per-row shift detector). **Fixed at emit time:**
+  `frontend/shared/logger/logger.cpp:155` changed `csv << config_hash`
+  → `csv << std::to_string(config_hash)`. `config_hash` is a `u64`
+  (`ConfigsTable::hash()`); the stream's active grouping locale was
+  inserting separators, while `std::to_string` is locale-agnostic and
+  matches the integer path in `ProfilingTable::Column::to_string`.
+  Output is now a clean unquoted integer — no downstream re-quoting
+  needed, and the analyzer's shift workaround becomes a harmless no-op.
+
 ## Closed by 2026-05-17 bring-up
 
 - **Q5I btree first Linux perf sweep**: harness-bug parity gate

@@ -1,0 +1,13 @@
+tag: 2026-05-23-refresh-sf1
+experiment: refresh_sales (TPC-H RF1/RF2 update throughput)
+commit_sha: bc5b252f
+host: c220g2-011011.wisc.cloudlab.us
+scale_factor: 1
+dram_gib: 8
+refresh_seconds: 30
+update_size: 1
+backends: btree, lsm
+structures: {1: split_S1, 2: view_S2, 3: merged_S3, 4: base_S4}
+metric: RF1 inserts/sec (count-based); rf1_tps_avg = total/secs, rf1_tps_hot = rows in [20,25)s / 5
+hot_window_s: "[20,25)"
+caveats: SF=1 smoke; RF2 reservoir (1500) exhausts early so pair/RF2 steady-state N/A; lsm S4 shows an ~8s tail compaction stall (excluded by the mid-tail hot window). See README.md.
