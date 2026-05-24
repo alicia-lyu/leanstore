@@ -1,0 +1,5 @@
+binary,backend,cell,scale,dram_gib,prewarm,structure,struct_label,total_rf1,total_rf2,elapsed_s,n_iters,rf1_med_ops,rf2_med_ops,pair_med_ops,rf1_agg_ops,prewarm_rows,prewarm_s,commit,host,disk
+refresh_sales_btree,btree,inmem,1550,9.0,true,1,split_S1,1720417,1720417,90.00,1720417,34944,49650,41011,19116,24704375,170.195,23160335,c220g2-011011.wisc.cloudlab.us,ssd
+refresh_sales_btree,btree,inmem,1550,9.0,true,2,view_S2,879536,879536,90.00,879536,17802,24978,20790,9773,31670300,246.792,23160335,c220g2-011011.wisc.cloudlab.us,ssd
+refresh_sales_btree,btree,inmem,1550,9.0,true,3,merged_S3,1539800,1539800,90.00,1539800,31147,46354,37014,17109,24936875,193.557,23160335,c220g2-011011.wisc.cloudlab.us,ssd
+refresh_sales_btree,btree,inmem,1550,9.0,true,4,base_S4,2229392,2229392,90.00,2229392,43842,73910,54561,24771,13088450,164.095,23160335,c220g2-011011.wisc.cloudlab.us,ssd
