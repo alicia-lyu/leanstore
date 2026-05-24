@@ -13,6 +13,22 @@ Convention mirrors `frontend/tpch/q3/RUNS.md` /
 
 ## Entries
 
+- **2026-05-24 — DBToaster IVM baseline (new `dbtoaster/`)** — branch
+  `calcite-integration`, this Linux node. DBToaster 2.3 maintains the **Q3 + Q5
+  pipeline views** (unaggregated C×O×L and C×O×L×NATION joins, one row per
+  lineitem) under RF1/RF2 from dbgen `-U`, **SF=0.36** (working set ≈ 5 GiB —
+  the paper 5-GiB-secondary anchor; SF pinned empirically: ~140 MB@0.01,
+  1.41 GiB@0.1). **Unlimited memory, no `ulimit` sweep** (DBToaster is pure
+  in-memory — no spill — so a cap below the working set OOMs; the metric is the
+  footprint, not a pressure curve). CSV:
+  `dbtoaster/results/RefreshTPut.dbtoaster.csv`. Correctness: both views =
+  2,160,142 rows = base 2,160,128 + RF1 (2,157) − RF2 (2,143) — size-stable
+  delta holds. **Supports §5.x memory-requirement gap**: DBToaster maintains
+  both views at RF1 ≈ 86k / RF2 ≈ 16k orders/s but needs **4.9 GiB resident
+  (working set) / 8.25 GiB peak** — whereas LeanStore S2 serves a 5 GiB
+  secondary from a 0.4–1.0 GiB buffer pool by spilling to SSD. Peak ≈ 1.7× the
+  working set here; the precise RAM multiple under sustained RF is a later
+  characterization. Setup in `LINUX_SETUP.md §Step 6`.
 - **2026-05-23 (later) — 5L cell (c0)** — commit `165dd75c`
   (calcite-integration), host `c220g2-011011.wisc.cloudlab.us`. Both backends,
   S1–S4, SF=1550 (btree) / 3850 (lsm), DRAM=1.0 GiB, `--update_size=1`,

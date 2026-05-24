@@ -1,0 +1,13 @@
+# Build output
+/build/
+
+# DBToaster-generated header (regenerate with `make refresh_sales.hpp`)
+/refresh_sales.hpp
+
+# dbgen data + concatenated stream files (regenerate with `make data`)
+/data_files/*
+!/data_files/README.md
+
+# Results CSVs (keep the README)
+/results/*
+!/results/README.md
