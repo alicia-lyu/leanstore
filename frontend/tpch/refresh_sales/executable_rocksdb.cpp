@@ -196,7 +196,8 @@ int main(int argc, char** argv)
             warm(q5_view, tpch::q5::q5_pipeline_view_t::Key{});
             break;
          case 3: {
-            auto scanner = merged_col.getScanner();
+            auto scanner = merged_col.template getScanner<
+                tpch::customer_coli_t::Key, tpch::customer_coli_t>();
             while (auto kv = scanner->next()) { (void)kv; ++mrows; ++n; }
             break;
          }
