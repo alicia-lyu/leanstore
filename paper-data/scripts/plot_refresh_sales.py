@@ -71,13 +71,39 @@ CSV_SCHEMAS = {
 def _load_dbtoaster(path: Optional[Path]) -> pd.DataFrame:
     if path is None or not path.exists():
         return pd.DataFrame()
-    df = pd.read_csv(path)
-    # Tag rows with a synthetic structure id outside 1..5 so they can be
-    # grouped uniformly with the rest.
-    df = df.copy()
-    df["structure"] = 99
-    df["struct_label"] = DBTOASTER_LABEL
-    return df
+    return pd.read_csv(path)
+
+
+def _dbtoaster_pair_ms(db_df: pd.DataFrame,
+                       budget_gib: float) -> Optional[float]:
+    """Return DBToaster's pair latency (ms) at the largest SF whose
+    ``peak_rss_kb`` fits ``budget_gib``. ``None`` means OOM — no SF row
+    fits, so the caller should render this as an "infinite" bar.
+    """
+    if db_df.empty:
+        return None
+    # Pin to the largest SF DBToaster managed — that's the "comparable
+    # to LeanStore 5L" anchor (manifest: SF=0.36 ≈ 5 GiB working set).
+    # Smaller SFs aren't meaningful baselines for the LeanStore scales.
+    row = db_df.loc[db_df["sf"].idxmax()]
+    budget_kb = budget_gib * 1024 * 1024
+    if float(row["peak_rss_kb"]) > budget_kb:
+        return None  # caller renders OOM
+    rf1 = float(row["rf1_orders_per_s"])
+    rf2 = float(row["rf2_orders_per_s"])
+    if rf1 <= 0 or rf2 <= 0:
+        return None
+    # RF1 + RF2 are separate phases in DBToaster (see manifest caveat).
+    # Sum the per-op latencies as a comparable "size-stable pair" proxy.
+    return 1000.0 / rf1 + 1000.0 / rf2
+
+
+# Two memory budgets shown side-by-side. 1 GiB = current LeanStore data
+# (dram_gib=1.0 in the 5L summaries); DBToaster OOMs at the SFs we care
+# about. 9 GiB = LeanStore data pending; DBToaster's largest SF
+# (~8.6 GiB peak RSS) fits.
+MEMORY_BUDGETS: List[Tuple[float, str]] = [(1.0, "1 GiB DRAM"),
+                                           (9.0, "9 GiB DRAM")]
 
 
 # Labels frame the y-axis question: *what extra storage structure
@@ -105,35 +131,63 @@ def _series_style(struct: int) -> Tuple[str, str]:
     return color, label
 
 
-def _panel(ax, df: pd.DataFrame, tps_col: str, scale: float, unit: str,
-           series_order: List[int], show_ylabel: bool, title: str) -> None:
-    """One grouped-bar panel: x = backend, one bar per series.
+# X-axis positions: two backends plus DBToaster (engine-agnostic).
+X_LABELS = ["btree", "lsm", "DBToaster"]
+DBTOASTER_X = 2
 
-    ``scale`` converts ops/sec to the chosen time unit (1e6 for µs, 1e3
-    for ms). ``unit`` becomes the y-axis label when ``show_ylabel``.
+
+def _panel(ax, df: pd.DataFrame, schema: Dict, ls_series: List[int],
+           db_df: pd.DataFrame, budget_gib: float, budget_label: str,
+           ls_data_budget_gib: float, show_ylabel: bool) -> None:
+    """One panel = one memory budget. Bars at x ∈ {btree, lsm, DBToaster}.
+
+    LeanStore bars are drawn only when ``budget_gib`` matches the
+    summary CSV's ``dram_gib`` (so the 9 GiB panel shows TBD / pending
+    rather than wrong-budget numbers). DBToaster gets one bar at the
+    largest SF that fits the budget; if no SF fits we render an "OOM"
+    hatched bar capped at the top of the log axis.
     """
-    n = len(series_order)
-    bar_w = 0.8 / max(n, 1)
-    x_idx = {b: i for i, b in enumerate(BACKENDS)}
-    for k, struct in enumerate(series_order):
-        color, _label = _series_style(struct)
-        xs, ys = [], []
-        for backend in BACKENDS:
-            row = df[(df["backend"] == backend)
-                     & (df["structure"] == struct)]
-            if row.empty:
-                continue
-            tps = float(row[tps_col].iloc[0])
-            if not np.isfinite(tps) or tps <= 0:
-                continue
-            xs.append(x_idx[backend] + (k - (n - 1) / 2) * bar_w)
-            ys.append(scale / tps)
-        if xs:
-            ax.bar(xs, ys, width=bar_w, color=color, linewidth=0)
-    ax.set_title(title, fontsize=10)
-    ax.set_xticks(np.arange(len(BACKENDS)))
-    ax.set_xticklabels(BACKENDS, fontsize=8)
+    tps_col = schema["tps_col"]
+    scale = schema["scale"]
+    n_ls = len(ls_series)
+    bar_w = 0.8 / max(n_ls, 1)
+    ls_match = abs(budget_gib - ls_data_budget_gib) < 0.05
+
     ax.set_yscale("log")
+    if ls_match:
+        for k, struct in enumerate(ls_series):
+            color, _ = _series_style(struct)
+            for bi, backend in enumerate(BACKENDS):
+                row = df[(df["backend"] == backend)
+                         & (df["structure"] == struct)]
+                if row.empty:
+                    continue
+                tps = float(row[tps_col].iloc[0])
+                if not np.isfinite(tps) or tps <= 0:
+                    continue
+                x = bi + (k - (n_ls - 1) / 2) * bar_w
+                ax.bar([x], [scale / tps], width=bar_w, color=color,
+                       linewidth=0)
+    else:
+        # Pending placeholder text where the LeanStore bars would go.
+        for bi in range(len(BACKENDS)):
+            ax.text(bi, 0.5, "pending", ha="center", va="center",
+                    transform=blended_transform(ax),
+                    fontsize=7, color="#999", style="italic")
+
+    db_ms = _dbtoaster_pair_ms(db_df, budget_gib)
+    db_bar_w = bar_w  # match LeanStore bar width for visual consistency
+    if db_ms is not None:
+        ax.bar([DBTOASTER_X], [db_ms], width=db_bar_w,
+               color=DBTOASTER_COLOR, linewidth=0)
+    elif not db_df.empty:
+        # OOM: defer to _annotate_oom after the shared y-limits are known.
+        ax._oom_bar = (DBTOASTER_X, db_bar_w)
+
+    ax.set_title(budget_label, fontsize=9)
+    ax.set_xticks(np.arange(len(X_LABELS)))
+    ax.set_xticklabels(X_LABELS, fontsize=8)
+    ax.set_xlim(-0.5, len(X_LABELS) - 0.5)
     ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
     ax.yaxis.set_major_formatter(
         mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
@@ -145,7 +199,30 @@ def _panel(ax, df: pd.DataFrame, tps_col: str, scale: float, unit: str,
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
     if show_ylabel:
-        ax.set_ylabel(unit, fontsize=8)
+        ax.set_ylabel(schema["unit"], fontsize=8)
+
+
+def blended_transform(ax):
+    """data-x, axes-y — for placing "pending" text at a given x col."""
+    from matplotlib.transforms import blended_transform_factory
+    return blended_transform_factory(ax.transData, ax.transAxes)
+
+
+def _annotate_oom(ax) -> None:
+    """Render a hatched bar from the y-axis minimum to the top, with an
+    upward arrow + "OOM" annotation. Called after shared y-limits are
+    fixed across panels so the bar reaches the visible top."""
+    spec = getattr(ax, "_oom_bar", None)
+    if spec is None:
+        return
+    x, bar_w = spec
+    ymin, ymax = ax.get_ylim()
+    bar = ax.bar([x], [ymax / ymin], width=bar_w, bottom=ymin,
+                 color="none", edgecolor=DBTOASTER_COLOR,
+                 hatch="///", linewidth=0.8)
+    ax.annotate("OOM ↑", xy=(x, ymax), xytext=(x, ymax),
+                ha="center", va="top", fontsize=7,
+                color=DBTOASTER_COLOR)
 
 
 def _footer(manifest: Dict[str, str], tag: str) -> str:
@@ -194,38 +271,45 @@ def main() -> int:
     if len(disk_vals) > 1:
         print(f"[plot_refresh_sales] WARN: mixed disk media: {disk_vals}",
               file=sys.stderr)
-    dbtoaster_path = (args.dbtoaster
-                      or (summary / "dbtoaster_rf_throughput.csv"))
+    # DBToaster lives in its own tag (no LeanStore rows there). Default
+    # to the canonical DBToaster sweep next to the current tag.
+    if args.dbtoaster is not None:
+        dbtoaster_path = args.dbtoaster
+    else:
+        sibling = root.parent / "2026-05-24-dbtoaster" / "summary" \
+                  / "refresh_sales_dbtoaster_throughput.csv"
+        legacy = summary / "dbtoaster_rf_throughput.csv"
+        dbtoaster_path = sibling if sibling.exists() else legacy
     db_df = _load_dbtoaster(dbtoaster_path)
-    if not db_df.empty:
-        df = pd.concat([df, db_df], ignore_index=True)
 
-    manifest: Dict[str, str] = {}
-    mfile = root / "manifest.yaml"
-    if mfile.exists():
-        try:
-            manifest = yaml.safe_load(mfile.read_text()) or {}
-        except yaml.YAMLError as e:
-            print(f"[plot_refresh_sales] WARN: manifest parse: {e}",
-                  file=sys.stderr)
+    # Buffer-pool budget the LeanStore rows were measured at. The 1 GiB
+    # panel will draw real bars; the 9 GiB panel marks them pending.
+    ls_budget = float(df["dram_gib"].iloc[0]) if "dram_gib" in df.columns else 1.0
 
-    series_order = [s for s in PAPER_LEGEND_ORDER if s not in REFRESH_OMIT]
-    if not db_df.empty:
-        series_order.append(99)
-
-    fig, ax = plt.subplots(1, 1, figsize=(3.2, 2.6))
-    _panel(ax, df, schema["tps_col"], schema["scale"], schema["unit"],
-           series_order, show_ylabel=True, title="")
+    ls_series = [s for s in PAPER_LEGEND_ORDER if s not in REFRESH_OMIT]
+    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.4, 2.6),
+                             sharey=True)
+    for j, (budget, label) in enumerate(MEMORY_BUDGETS):
+        _panel(axes[j], df, schema, ls_series, db_df,
+               budget_gib=budget, budget_label=label,
+               ls_data_budget_gib=ls_budget,
+               show_ylabel=(j == 0))
+    # Pin y-limits across panels before drawing the OOM-capped bars so
+    # the hatched bar visibly reaches the chart top.
+    ymax = max(ax.get_ylim()[1] for ax in axes)
+    ymin = min(ax.get_ylim()[0] for ax in axes if ax.get_ylim()[0] > 0)
+    for ax in axes:
+        ax.set_ylim(ymin, ymax)
+        _annotate_oom(ax)
 
     handles = []
-    for s in series_order:
+    for s in ls_series:
         color, label = _series_style(s)
-        handles.append(plt.Rectangle((0, 0), 1, 1,
-                                     color=color, label=label))
-    # 2-column legend keeps width compatible with the single-panel
-    # figsize; 5 series wraps to 3 rows × 2 cols.
+        handles.append(plt.Rectangle((0, 0), 1, 1, color=color, label=label))
+    handles.append(plt.Rectangle((0, 0), 1, 1, color=DBTOASTER_COLOR,
+                                 label=DBTOASTER_LABEL))
     fig.legend(handles=handles, loc="upper center",
-               ncol=2, fontsize=7,
+               ncol=4, fontsize=7,
                bbox_to_anchor=(0.5, 1.0),
                frameon=False, columnspacing=1.2, handletextpad=0.4,
                title="extra storage beyond primary indexes",
@@ -235,10 +319,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     basename = schema["basename"] + (f"_{disk}" if disk else "")
     base = out_dir / basename
-    fig.text(0.5, 0.01, _footer(manifest, args.tag),
-             ha="center", va="bottom",
-             fontsize=STYLE["footer_fontsize"], color="#666")
-    fig.subplots_adjust(left=0.18, right=0.97, top=0.78, bottom=0.18)
+    fig.subplots_adjust(left=0.11, right=0.98, top=0.78, bottom=0.12,
+                        wspace=0.08)
     primary = base.with_suffix(f".{args.format}")
     fig.savefig(primary, format=args.format, bbox_inches="tight")
     written = [primary]
