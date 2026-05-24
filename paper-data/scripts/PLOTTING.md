@@ -78,6 +78,12 @@ Diagnostics-mode figures keep a footer line with `tag`, `commit`,
 `host`, and the cell list from `manifest.yaml`. Paper-mode figures
 omit the footer (typesetter doesn't want it).
 
+## Standalone scripts (not in the sweep harness)
+
+| Script | Reads | What it shows |
+|---|---|---|
+| `plot_refresh_sales.py --tag <tag>` | `<tag>/summary/refresh_sales_rf_throughput.csv` | 1×2 grouped bar (x=backend, series=structure) of **µs / RF1 insert** (log, lower-is-better). Left = hot window (20–25 s), right = whole-run avg. Picks up an optional `dbtoaster_rf_throughput.csv` sibling and adds a 5th series when present. Writes `figures/paper/refresh_sales_rf1_latency.{pdf,png}`. |
+
 ## When a sweep is incomplete
 
 The plotter doesn't error on missing cells / missing binaries. A
