@@ -63,6 +63,17 @@ STRUCTURE_LABELS = {
     5: "S5 aCOLI MI",
 }
 
+# Labels matching tab:exp-baselines in the paper (monospace).
+# Used for all paper-mode and diagnostics figures so the legend
+# vocabulary stays in sync with the typeset table.
+PAPER_STRUCTURE_LABELS = {
+    1: r"$\mathtt{base\_merge}$",
+    2: r"$\mathtt{mat\_view}$",
+    3: r"$\mathtt{merged\_idx}$",
+    4: r"$\mathtt{base\_hash}$",
+    5: r"$\mathtt{aCOLI}$",
+}
+
 # Cell → (DRAM GiB, secondary GiB). Kept for reference and used by
 # anything that wants to render the cell key in a caption / legend.
 CELL_DRAM_GIB = {"c0": 1.0, "c1": 0.4, "c2": 0.1, "c3": 0.4}
@@ -464,7 +475,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     if include_legend:
         handles = [plt.Rectangle((0, 0), 1, 1,
                                  color=STYLE["structure_colors"][s],
-                                 label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+                                 label=PAPER_STRUCTURE_LABELS[s])
                    for s in PAPER_LEGEND_ORDER]
         fig.legend(handles=handles, loc="upper center", ncol=4,
                    fontsize=8, bbox_to_anchor=(0.5, 1.14),
@@ -546,7 +557,7 @@ def fig_paper_memory_pressure(data: SweepData, backend: str,
                               markersize=(5 if s == 3 else 4),
                               linewidth=1.2,
                               alpha=(0.85 if s == 3 else 0.7),
-                              label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+                              label=PAPER_STRUCTURE_LABELS[s])
                    for s in PAPER_LEGEND_ORDER]
         fig.legend(handles=handles, loc="upper center", ncol=4,
                    fontsize=8, bbox_to_anchor=(0.5, 1.10),
@@ -625,7 +636,7 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
     handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
                           marker=STYLE["structure_markers"][s],
                           markersize=3, linewidth=1.2,
-                          label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+                          label=PAPER_STRUCTURE_LABELS[s])
                for s in PAPER_STRUCTURES]
     fig.legend(handles=handles, loc="upper center", ncol=4,
                fontsize=6, bbox_to_anchor=(0.5, 1.04),
@@ -699,7 +710,7 @@ def _diag_panel(ax, agg: pd.DataFrame, binary: str, col: str,
             continue
         style = _structure_style(struct)
         ax.plot(np.arange(len(cells)), y,
-                label=STRUCTURE_LABELS[struct].split(" ", 1)[1],
+                label=PAPER_STRUCTURE_LABELS[struct],
                 color=style["color"], marker="o", markersize=4,
                 linewidth=1.2, alpha=0.7)
         drew = True
@@ -744,7 +755,7 @@ def _emit_diag_row(data: SweepData, backend: str, name_suffix: str,
         return None
     handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
                           marker="o", markersize=4, linewidth=1.2, alpha=0.7,
-                          label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+                          label=PAPER_STRUCTURE_LABELS[s])
                for s in PAPER_LEGEND_ORDER]
     fig.legend(handles=handles, loc="upper center", ncol=4,
                fontsize=8, bbox_to_anchor=(0.5, 1.14),
