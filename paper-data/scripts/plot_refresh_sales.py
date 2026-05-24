@@ -84,11 +84,14 @@ def _load_dbtoaster(path: Optional[Path]) -> pd.DataFrame:
 # (beyond primary indexes) does Q3 / Q5 maintain?* S4 = none; S1 =
 # extra secondary indexes; S2 = pipeline views; S3 = merged indexes.
 REFRESH_LABELS = {
-    1: "secondary indexes",
-    2: "pipeline views",
-    3: "merged indexes",
-    4: "none",
+    1: r"$\mathtt{base\_merge}$",
+    2: r"$\mathtt{mat\_view}$",
+    3: r"$\mathtt{merged\_idx}$",
+    # S4 (base_hash, "None") is intentionally omitted from the refresh
+    # figure: with no secondary structures to maintain, it's the
+    # trivial ceiling and crowds the comparison.
 }
+REFRESH_OMIT = {4}
 
 
 def _series_style(struct: int) -> Tuple[str, str]:
@@ -206,7 +209,7 @@ def main() -> int:
             print(f"[plot_refresh_sales] WARN: manifest parse: {e}",
                   file=sys.stderr)
 
-    series_order = list(PAPER_LEGEND_ORDER)  # [4, 1, 2, 3]
+    series_order = [s for s in PAPER_LEGEND_ORDER if s not in REFRESH_OMIT]
     if not db_df.empty:
         series_order.append(99)
 
