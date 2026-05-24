@@ -82,6 +82,33 @@ rates (`rf1_ops_per_s`, `rf2_ops_per_s`) are kept for attribution.
   LeanStore's sparse `orderkey_from_index` grid — both honor the disjoint,
   size-stable-pair invariant (see the DBToaster README caveats).
 
+## LSM addendum (2026-05-24) — prewarm BACKFIRES; LSM has no in-memory speedup
+
+The prewarm9 idea does **not** transfer to RocksDB. Tried on the SSD (sweep
+paused), SF=3850, S1–S4 — see `summary/lsm_9gib_refresh.csv`:
+
+| LSM structure | DRAM=9 (no prewarm) | 5L: DRAM=1.0 |
+|---|--:|--:|
+| S1 split  | 780.8 | 1,144 |
+| S2 view   | **472.6** | 922 |
+| S3 merged | 606.1 | 1,173 |
+| S4 base   | 672.1 | 1,309 |
+
+- **`--prewarm` cripples RocksDB**: S1 measured **59.6 pairs/s WITH prewarm vs
+  780 WITHOUT** (~13×). The block cache has `strict_capacity_limit=true` and is
+  charged all memory; prewarm fills it (0.8·dram = 7.2 GiB) to the hard limit and
+  starves the RF write path. Prewarm is a LeanStore buffer-pool concept — it has
+  no useful RocksDB analogue. (Initially mistaken for HDD-bound: HDD and SSD gave
+  *identical* 60 pairs/s, proving it was never disk — it was the cache config.)
+- **More memory hurts**: even without prewarm, DRAM=9 is ~0.5× the 5L DRAM=1.0
+  rate across all structures. LSM refresh is **write/compaction-bound**, so extra
+  block cache doesn't help (reads aren't the bottleneck) and the larger
+  memtable/cache budget degrades throughput. **LSM has no in-memory speedup for
+  refresh** — unlike btree (≈10× faster prewarmed) and unlike DBToaster (33k
+  pairs/s in-memory but requires full residency). The headline LSM number stays
+  the **5L (DRAM 1.0)** run; only **S2-view-is-slowest** survives cleanly at
+  DRAM=9 (the S1/S3/S4 spread is within RocksDB's run-to-run compaction noise).
+
 ## Files
 
 - `raw/btree.s{1..4}.csv` — per-iteration `elapsed_s,rf1,rf2,pair` orders/s.

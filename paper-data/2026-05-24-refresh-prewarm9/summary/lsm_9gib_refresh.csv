@@ -1,0 +1,6 @@
+backend,scale,dram_gib,prewarm,structure,struct_label,pairs_per_s,pairs_per_s_5L_dram1.0,note,commit,host
+lsm,3850,9.0,false,1,split_S1,780.8,1144.4,DRAM9 ~0.5x of 5L DRAM1.0 (LSM refresh is write/compaction-bound; more cache hurts),cc2cf3f3,c220g2-011011.wisc.cloudlab.us
+lsm,3850,9.0,false,2,view_S2,472.6,922.2,DRAM9 ~0.5x of 5L DRAM1.0 (LSM refresh is write/compaction-bound; more cache hurts),cc2cf3f3,c220g2-011011.wisc.cloudlab.us
+lsm,3850,9.0,false,3,merged_S3,606.1,1172.7,DRAM9 ~0.5x of 5L DRAM1.0 (LSM refresh is write/compaction-bound; more cache hurts),cc2cf3f3,c220g2-011011.wisc.cloudlab.us
+lsm,3850,9.0,false,4,base_S4,672.1,1308.8,DRAM9 ~0.5x of 5L DRAM1.0 (LSM refresh is write/compaction-bound; more cache hurts),cc2cf3f3,c220g2-011011.wisc.cloudlab.us
+lsm,3850,9.0,true,1,split_S1,59.6,1144.4,PREWARM BACKFIRES: fills strict-capacity block cache and starves write path (10x slower than no-prewarm),cc2cf3f3,c220g2-011011.wisc.cloudlab.us
