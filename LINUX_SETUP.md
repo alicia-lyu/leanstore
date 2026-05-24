@@ -327,6 +327,43 @@ make q3i_btree scale=1  dram=0.1
 Each builds the binary and runs storage-structure variants 1–4
 (generated from `generate_targets.py:STRUCTURE_OPTIONS`).
 
+## Step 6 — DBToaster baseline (`dbtoaster/`, optional)
+
+Only needed to build/run the generic-IVM baseline in `dbtoaster/` (TPC-H
+Q3/Q5 pipeline views maintained under RF1/RF2, compared against LeanStore
+S2). Independent of the LeanStore/RocksDB build above. Mirrors the
+`geodb-dbtoaster` reference repo's toolchain.
+
+```
+# DBToaster 2.3 (prebuilt tarball — JVM-based compiler, so a JRE is required;
+# generated C++ links against boost).
+sudo apt-get install -y openjdk-11-jre-headless libboost-dev libboost-serialization-dev
+sudo wget -q https://dbtoaster.github.io/dist/dbtoaster_2.3_linux.tgz -O /tmp/dbt.tgz
+sudo tar -xzf /tmp/dbt.tgz -C /opt          # -> /opt/dbtoaster (bin/dbtoaster, lib/dbt_c++)
+echo 'export PATH=/opt/dbtoaster/bin:$PATH' >> ~/.bashrc && export PATH=/opt/dbtoaster/bin:$PATH
+
+# TPC-H dbgen (data + RF1/RF2 refresh sets). The electrum mirror builds cleanly:
+git clone --depth 1 https://github.com/electrum/tpch-dbgen.git ~/tpch-dbgen
+make -C ~/tpch-dbgen CC=gcc DATABASE=DB2 MACHINE=LINUX WORKLOAD=TPCH
+echo 'export PATH=$HOME/tpch-dbgen:$PATH' >> ~/.bashrc && export PATH=$HOME/tpch-dbgen:$PATH
+```
+
+Smoke test, then the baseline build:
+
+```
+dbtoaster --help                 # confirm the compiler runs (needs java on PATH)
+dbgen -h 2>&1 | head             # confirm dbgen built
+cd dbtoaster
+make data SF=1                   # dbgen base + RF1/RF2; concat stream files
+make refresh_sales.hpp           # DBToaster codegen (SQL -> C++)
+make build                       # cmake + compile the harness
+make run                         # single run (unlimited memory)
+make experiment                  # memory-pressure ladder (5L / 5H)
+```
+
+Self-contained alternative: `cd dbtoaster && docker build -t refresh-sales-dbt .`
+(bundles DBToaster + dbgen + data + build; see `dbtoaster/Dockerfile`).
+
 ## Troubleshooting
 
 - **`Error: perf_event_paranoid is N. Must be 0.`** — Step 2 was not
