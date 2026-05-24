@@ -1,0 +1,12 @@
+binary,cell,bg,rep,tx,s2_method,s3_method,s2_tx_per_s,s3_tx_per_s,ratio,s2_cpu_cycles_per_tx,s3_cpu_cycles_per_tx,s2_cpu_llc_miss_per_tx,s3_cpu_llc_miss_per_tx,s2_bm_p2_pct,s3_bm_p2_pct,attribution_hint,disk
+q3_btree,c0,2,1,query,pipeline_view,mi_col_walk,0.03979,0.03744,0.940939934656949,8583735498.190001,9093086363.525,7243866.225,3258884.24,nan,nan,cpu_llc_miss_per_tx,ssd
+q3_lsm,c0,2,1,query,pipeline_view,mi_col_walk,0.1507,0.1387,0.9203715992037159,9002285887.0,10761247842.0,,,,,cpu_cycles_per_tx,ssd
+q3_lsm,c0,2,2,query,pipeline_view,mi_col_walk,0.1475,0.1143,0.7749152542372881,9299881290.0,11167360039.0,,,,,cpu_cycles_per_tx,ssd
+q3i_btree,c0,2,1,query,pipeline_view,mi_coli_walk,0.03758,0.0347,0.9233634912187334,9839867935.985,10576630312.05,7794290.620000001,8836732.4,nan,nan,cpu_llc_miss_per_tx,ssd
+q3i_btree,c0,2,3,query,pipeline_view,mi_coli_walk,0.03777,0.03485,0.9226899655811491,9012684863.575,10515252040.810001,7685146.945,7863808.26,nan,nan,cpu_cycles_per_tx,ssd
+q3i_lsm,c0,2,1,query,pipeline_view,mi_coli_walk,0.1203,0.09355,0.7776392352452202,9986849412.0,13408821450.0,,,,,cpu_cycles_per_tx,ssd
+q3i_lsm,c0,2,2,query,pipeline_view,mi_coli_walk,0.1172,0.08732,0.7450511945392491,9642459999.5,13297589469.0,,,,,cpu_cycles_per_tx,ssd
+q3i_lsm,c0,2,3,query,pipeline_view,mi_coli_walk,0.1147,0.08608,0.7504795117698344,9841854903.0,12638799477.5,,,,,cpu_cycles_per_tx,ssd
+q5i_lsm,c0,2,1,query,pipeline_view,mi_coli_walk,0.1514,0.08136,0.5373844121532364,9932006387.5,16105364481.5,,,,,cpu_cycles_per_tx,ssd
+q5i_lsm,c0,2,2,query,pipeline_view,mi_coli_walk,0.1607,0.08794,0.5472308649657748,9552205544.0,13811138576.5,,,,,cpu_cycles_per_tx,ssd
+q5i_lsm,c0,2,3,query,pipeline_view,mi_coli_walk,0.1599,0.08716,0.5450906816760476,9774552029.0,14127662071.5,,,,,cpu_cycles_per_tx,ssd
