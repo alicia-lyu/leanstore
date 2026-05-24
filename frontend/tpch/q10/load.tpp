@@ -6,6 +6,8 @@
 #include <gflags/gflags.h>
 #include <stdexcept>
 
+#include "../q10_family/view_loaders.hpp"
+
 DECLARE_int32(storage_structure);
 
 namespace tpch::q10
@@ -38,20 +40,19 @@ Q10Workload<Backend>::Q10Workload(
 // all four --storage_structure query-time variants (PLAYBOOK §3.6 PITFALL
 // — `load()` populating only one secondary).
 //
-// S2 view loader is deferred to Phase 4a (Decision E1, Pattern B): the
-// view will reuse the S3 col_group_walk visitor with parameterised filters
-// dropped and a view-insert sink. Hand-rolling a 3-table merge here would
-// duplicate the eventual query_by_merged body.
+// S2 view loader uses Pattern B (Decision E1): populate_q10_view reuses
+// the S3 Q10GroupWalkVisitor in ViewLoad mode with parameterised filters
+// dropped and a forwarding sink into pipeline_view. Same walker code
+// drives both — view-vs-walker drift is structurally impossible.
 template <typename Backend>
 void Q10Workload<Backend>::load()
 {
    tpch.load();
    col.populate_split();    // S1: custkey-sorted split indexes
-   // S2: populate_q10_view — Phase 4a (Pattern B, PLAYBOOK §3.6).
-   //   View loader will reuse Q10GroupWalkVisitor (Phase 4 §7.1) with
-   //   parameterised filters dropped and a view-insert sink. Hand-rolling
-   //   the merge here would duplicate query_by_merged.
    col.populate_merged();   // S3: COL merged index
+   // S2: must run after populate_merged — the loader consumes col MI.
+   populate_q10_view<Backend>(col.merged_adapter(), pipeline_view,
+                               nation, stats);
    // S4: base tables only — nothing to populate.
 }
 

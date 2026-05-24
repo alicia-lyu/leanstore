@@ -240,19 +240,13 @@ int main(int argc, char** argv)
              << " orders=" << n_orders
              << " lineitems=" << n_lineitems_ref << "\n";
 
-   // Pipeline view: deferred to Phase 4a (Pattern B — view loader reuses
-   // S3 walker). Rows must be 0 at Phase 1; this is expected and correct,
-   // not a regression.
+   // Pipeline view: per-lineitem rows, unfiltered (Pattern B —
+   // populate_q10_view reuses the S3 walker in ViewLoad mode). Strict
+   // equality: every base lineitem produces exactly one view row.
    {
-      bool ok = (n_view == 0);
+      bool ok = (n_view == n_lineitems_ref);
       stats_ok &= ok;
-      if (ok) {
-         std::cout << "[OK]   pipeline_view          rows=0"
-                   << " (deferred to Phase 4a — Pattern B view loader)\n";
-      } else {
-         std::cout << "[FAIL] pipeline_view          rows=" << n_view
-                   << " (expected 0 at Phase 1; view loader lands in Phase 4a)\n";
-      }
+      check("pipeline_view", ok, n_view, "= " + std::to_string(n_lineitems_ref));
    }
 
    // Split adapters: strict 1:1 retagging of base tables.
