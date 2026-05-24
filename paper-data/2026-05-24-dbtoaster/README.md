@@ -53,9 +53,21 @@ both views maintained per event.)
 - dbgen `-U` orderkeys ≠ LeanStore's sparse `orderkey_from_index` grid — both
   honor the disjoint-keyspace, size-stable-pair invariant, so per-update cost
   is comparable even though exact keys differ.
-- **RF1 and RF2 run as separate phases**, not interleaved size-stable pairs, so
-  `pair` rate is an aggregate (matches what the LeanStore SF=1 run could
-  measure — the RF2 reservoir exhausts early at small SF).
+- **RF1 and RF2 run as separate phases by default**, so the default `pair` rate
+  is *derived* (`1/(1/rf1+1/rf2)`). A **measured interleaved pair** is now also
+  available via `RF_INTERLEAVE=1` (`make build` then `RF_INTERLEAVE=1
+  ./build/refresh_sales`): it captures the RF1 tail and replays it interleaved
+  with RF2 through the typed `on_insert/on_delete` triggers — the same 1-insert/
+  1-delete loop LeanStore runs. See `summary/refresh_sales_dbtoaster_interleaved.csv`.
+  **The measured pair (≈33,200 pairs/s @ SF=0.36) is 2.4× the derived 13,792**:
+  the derived value leaned on the *phased* RF1, which ran through the generic
+  stream/event-dispatch path (event-arg unpacking + virtual routing = ingestion
+  overhead), understating the trigger-only maintenance cost. The interleaved
+  typed-trigger number is the apples-to-apples figure against LeanStore's direct
+  maintenance calls, and it **beats** the LeanStore in-memory btree pairs
+  (S1 20.5k / S3 18.5k) — so the in-memory *throughput* edge is DBToaster's; the
+  LeanStore contrast is memory (it runs the same views at 0.4–1.0 GiB by spilling,
+  whereas DBToaster needs ≈8 GiB resident and OOMs below its working set).
 
 ## raw/ (gitignored)
 
