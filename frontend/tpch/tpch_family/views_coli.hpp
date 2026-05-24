@@ -392,10 +392,12 @@ struct lineitem_coli_t {
    // are in the Key.
    //   l_extendedprice, l_discount, l_shipdate — Q3I revenue accumulator
    //   l_suppkey                                — Q5I supplier semi-join
-   Numeric   l_extendedprice;
-   Numeric   l_discount;
-   Timestamp l_shipdate;
-   Integer   l_suppkey;
+   //   l_returnflag                             — Q10I return-payment split
+   Numeric    l_extendedprice;
+   Numeric    l_discount;
+   Timestamp  l_shipdate;
+   Integer    l_suppkey;
+   Varchar<1> l_returnflag;
 
    static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
    static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
@@ -404,7 +406,8 @@ struct lineitem_coli_t {
    void print(std::ostream& os) const
    {
       os << "lineitem_coli(extprice=" << l_extendedprice
-         << ",disc=" << l_discount << ")";
+         << ",disc=" << l_discount
+         << ",returnflag=" << l_returnflag << ")";
    }
 
    friend std::ostream& operator<<(std::ostream& os, const lineitem_coli_t& r)
@@ -415,7 +418,8 @@ struct lineitem_coli_t {
 
    static lineitem_coli_t from_base(const lineitem_i_t& l)
    {
-      return {l.l_extendedprice, l.l_discount, l.l_shipdate, l.l_suppkey};
+      return {l.l_extendedprice, l.l_discount, l.l_shipdate, l.l_suppkey,
+              l.l_returnflag};
    }
    static Key key_from_base(Integer custkey, const lineitem_i_t::Key& k, const lineitem_i_t& v)
    {
