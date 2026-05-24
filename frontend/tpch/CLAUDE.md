@@ -400,6 +400,8 @@ point. Run from the repo root.
 | `test_query_q5_lsm` | `q5/` | RocksDB (mac+Linux) | `tests/q5/test_query_q5_rocksdb.cpp` |
 | `test_query_q5_btree` | `q5/` | LeanStore (Linux only) | `tests/q5/test_query_q5_leanstore.cpp` |
 | `test_side_tables` | `q5/` | RocksDB (mac+Linux) | `tests/q5/test_side_tables.cpp` |
+| `test_query_q10_lsm` | `q10/` | RocksDB (mac+Linux) | `tests/q10/test_query_q10_rocksdb.cpp` |
+| `test_query_q10_btree` | `q10/` | LeanStore (Linux only) | `tests/q10/test_query_q10_leanstore.cpp` |
 | Q9 tests | `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
@@ -479,6 +481,9 @@ been moved to `TRASH/`.
 - Q5 — see [`q5/CLAUDE.md §Tests`](q5/CLAUDE.md#tests) for
   `test_query_q5_{lsm,btree}` (strict S1–S4 XOR parity at SF=1) and
   `test_side_tables` (REGION/NATION/SUPPLIER hashmaps).
+- Q10 — `test_query_q10_lsm` (Phase 1 commit 2: stubs return empty,
+  digests all 0x0, `[OK]` parity at SF=1; strict-equality cardinality
+  + sentinel-ordering land in commit 3)
 - Q9 — none yet (load/query bodies TODO)
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
