@@ -152,7 +152,7 @@ void Logger::log_detail_table(leanstore::profiling::ProfilingTable& t)
    }
    // assert(t.size() == 1);
    for (u64 r_i = 0; r_i < t.size(); r_i++) {
-      csv << config_hash;
+      csv << std::to_string(config_hash);  // locale-agnostic: avoids thousands-separator commas under a grouping locale
       for (auto& c : t.getColumns()) {
          csv << "," << c.second.values[r_i];
       }

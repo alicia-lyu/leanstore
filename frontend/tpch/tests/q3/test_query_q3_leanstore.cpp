@@ -19,6 +19,7 @@
 #include "../../backend.hpp"
 #include "../../tpch_workload.hpp"
 #include "../../q3/workload.hpp"
+#include "../../tpch_family/refresh.hpp"
 
 #define TPCH_DEFINE_FLAGS
 #include "../../tpch_flags.hpp"
@@ -172,8 +173,163 @@ int main(int argc, char** argv)
       std::cout << "\n[FAIL] S3 returned 0 rows — query_by_merged body broken.\n";
       return 1;
    }
-   bool all_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref);
-   return all_ok ? 0 : 1;
+   bool pre_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref);
+   if (!pre_ok) {
+      std::cout << "\n[FAIL] pre-update parity broken — stopping before RF1/RF2.\n";
+      return 1;
+   }
+   const uint64_t pre_update_ref = ref;
+
+   // ------------------------------------------------------------------
+   // RF1 + RF2 round-trip parity (refresh_sales experiment). Mirror of
+   // test_query_q3_rocksdb.cpp; every adapter op runs inside a Worker TX
+   // (scheduleJobSync) because LeanStore reads/writes need Worker TLS.
+   //
+   // Insert N orders into base + ALL secondaries; verify all four query
+   // paths still agree. Delete the same orderkeys; verify all four paths
+   // agree AND the digest matches the pre-update value (true round-trip).
+   constexpr int N = 10;
+   std::cout << "\n=== RF1+RF2 round-trip (N=" << N << ") ===\n";
+
+   tpch::RefreshState<B::Adapter> refresh(tpch);
+   struct Inserted {
+      orders_t::Key key;
+      Integer       custkey;
+      std::vector<Integer> linenumbers;
+   };
+   std::vector<Inserted> inserted;
+   inserted.reserve(N);
+
+   // Insert into base + every secondary (the test owns all four structures
+   // simultaneously, unlike the production refresh_sales binary).
+   auto apply_rf1_all = [&](const orders_t::Key& ok, const orders_t& ov,
+                             const std::vector<lineitem_t>& lines) {
+      const Integer custkey = ov.o_custkey;
+      orders.insert(ok, ov);
+      for (size_t j = 0; j < lines.size(); ++j) {
+         lineitem_t::Key lk{ok.o_orderkey, static_cast<Integer>(j + 1)};
+         lineitem.insert(lk, lines[j]);
+      }
+      // S1 split
+      q3.col_pipeline().insert_order_to_split(custkey, ok, ov);
+      for (size_t j = 0; j < lines.size(); ++j) {
+         lineitem_t::Key lk{ok.o_orderkey, static_cast<Integer>(j + 1)};
+         q3.col_pipeline().insert_lineitem_to_split(custkey, lk, lines[j]);
+      }
+      // S3 merged
+      q3.col_pipeline().insert_order_to_merged(custkey, ok, ov);
+      for (size_t j = 0; j < lines.size(); ++j) {
+         lineitem_t::Key lk{ok.o_orderkey, static_cast<Integer>(j + 1)};
+         q3.col_pipeline().insert_lineitem_to_merged(custkey, lk, lines[j]);
+      }
+      // S2 view (reuse build_q3_view_row from q3/load.tpp)
+      Varchar<10> mktseg{};
+      customer.lookup1(customerh_t::Key{custkey},
+                       [&](const customerh_t& c) { mktseg = c.c_mktsegment; });
+      for (size_t j = 0; j < lines.size(); ++j) {
+         auto [vk, vv] = tpch::q3::build_q3_view_row(
+             custkey, ok.o_orderkey, static_cast<Integer>(j + 1),
+             ov, lines[j], mktseg);
+         pipeline_view.insert(vk, vv);
+      }
+   };
+
+   auto apply_rf2_all = [&](const orders_t::Key& ok, Integer custkey,
+                             const std::vector<Integer>& linenumbers) {
+      // Per-structure secondary first; then base last.
+      for (Integer ln : linenumbers)
+         q3.col_pipeline().erase_lineitem_from_split(custkey,
+             lineitem_t::Key{ok.o_orderkey, ln});
+      q3.col_pipeline().erase_order_from_split(custkey, ok);
+      for (Integer ln : linenumbers)
+         q3.col_pipeline().erase_lineitem_from_merged(custkey,
+             lineitem_t::Key{ok.o_orderkey, ln});
+      q3.col_pipeline().erase_order_from_merged(custkey, ok);
+      for (Integer ln : linenumbers)
+         pipeline_view.erase(tpch::q3::q3_pipeline_view_t::Key{
+             custkey, ok.o_orderkey, ln});
+      for (Integer ln : linenumbers)
+         lineitem.erase(lineitem_t::Key{ok.o_orderkey, ln});
+      orders.erase(ok);
+   };
+
+   // RF1: generate + apply inside one Worker TX.
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX();
+      for (int i = 0; i < N; ++i) {
+         auto r = refresh.next_rf1();
+         Inserted rec;
+         rec.key     = r.key;
+         rec.custkey = r.order.o_custkey;
+         rec.linenumbers.reserve(r.lines.size());
+         for (size_t j = 0; j < r.lines.size(); ++j)
+            rec.linenumbers.push_back(static_cast<Integer>(j + 1));
+         apply_rf1_all(r.key, r.order, r.lines);
+         inserted.push_back(std::move(rec));
+      }
+      leanstore::cr::Worker::my().commitTX();
+   });
+   std::cout << "[ok] applied " << N << " RF1 inserts\n";
+
+   // Re-run all four queries; verify 4-way agreement.
+   {
+      std::vector<tpch::q3::q3_agg_row_t> a, b, c, d;
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX();
+         q3.query_by_base(a); q3.query_by_view(b);
+         q3.query_by_merged(c); q3.query_by_hash(d);
+         leanstore::cr::Worker::my().commitTX();
+      });
+      uint64_t da = digest_rows(a), db = digest_rows(b),
+               dc = digest_rows(c), dd = digest_rows(d);
+      std::cout << "[post-RF1] S1=0x" << std::hex << da
+                << " S2=0x" << db << " S3=0x" << dc
+                << " S4=0x" << dd << std::dec << "\n";
+      if (!(da == dc && db == dc && dd == dc)) {
+         std::cout << "[FAIL] post-RF1 parity broken across structures.\n";
+         return 1;
+      }
+      std::cout << "[ok]   post-RF1 4-way digest agrees\n";
+   }
+
+   // RF2: delete the same orderkeys (test-only round-trip property).
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX();
+      for (const auto& rec : inserted)
+         apply_rf2_all(rec.key, rec.custkey, rec.linenumbers);
+      leanstore::cr::Worker::my().commitTX();
+   });
+   std::cout << "[ok] applied " << N << " RF2 deletes (round-trip)\n";
+
+   {
+      std::vector<tpch::q3::q3_agg_row_t> a, b, c, d;
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX();
+         q3.query_by_base(a); q3.query_by_view(b);
+         q3.query_by_merged(c); q3.query_by_hash(d);
+         leanstore::cr::Worker::my().commitTX();
+      });
+      uint64_t da = digest_rows(a), db = digest_rows(b),
+               dc = digest_rows(c), dd = digest_rows(d);
+      std::cout << "[post-RF2] S1=0x" << std::hex << da
+                << " S2=0x" << db << " S3=0x" << dc
+                << " S4=0x" << dd << std::dec << "\n";
+      bool agree    = (da == dc && db == dc && dd == dc);
+      bool restored = (da == pre_update_ref);
+      if (!agree) {
+         std::cout << "[FAIL] post-RF2 parity broken across structures.\n";
+         return 1;
+      }
+      if (!restored) {
+         std::cout << "[FAIL] post-RF2 digest 0x" << std::hex << da
+                   << " != pre-update 0x" << pre_update_ref << std::dec
+                   << " — round-trip property broken.\n";
+         return 1;
+      }
+      std::cout << "[ok]   post-RF2 digest matches pre-update — RF1+RF2 round-trip OK\n";
+   }
+
+   return 0;
 }
 
 #endif  // ROCKSDB_ONLY

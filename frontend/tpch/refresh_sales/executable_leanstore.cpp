@@ -164,7 +164,15 @@ int main(int argc, char** argv)
       });
       return 0;
    }
-   tpch.recover_last_ids();
+   // recover_last_ids() scans base tables (scanDesc) to recover last_*_id.
+   // LeanStore adapter scans need a Worker TLS context, so run it inside a
+   // scheduleJobSync TX — the main thread has no Worker (RocksDB tolerates
+   // this via thread-local txn; LeanStore SEGVs without it).
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX();
+      tpch.recover_last_ids();
+      leanstore::cr::Worker::my().commitTX();
+   });
 
    tpch::RefreshState<B::Adapter> refresh(tpch);
 
