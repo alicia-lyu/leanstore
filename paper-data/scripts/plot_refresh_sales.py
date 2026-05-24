@@ -55,7 +55,7 @@ BACKENDS = ["btree", "lsm"]
 CSV_SCHEMAS = {
     "refresh_sales_5L_throughput.csv": {
         "tps_col": "pair_tps_tail30",
-        "unit": "µs / RF pair (tail 30 s)",
+        "unit": "µs / RF pair",
         "scale": 1e6,  # tps → µs/op
         "basename": "refresh_5L_pair_latency",
     },
