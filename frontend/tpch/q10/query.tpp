@@ -10,9 +10,13 @@
 
 #include <gflags/gflags.h>
 #include <ostream>
+#include <unordered_map>
 #include <vector>
 
 #include "../tpch_tables.hpp"
+#include "../tpch_family/col_pipeline.hpp"
+#include "../q10_family/visitor.hpp"
+#include "../q10_family/out_class.hpp"
 
 DECLARE_int32(storage_structure);
 
@@ -142,8 +146,25 @@ long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
 template <typename Backend>
 long Q10Workload<Backend>::query_by_merged(std::vector<q10_agg_row_t>& out)
 {
-   (void)out;
-   return 0;
+   // S3: col_group_walk over the 3-table COL MI using the bespoke
+   // Q10GroupWalkVisitor (Decision D1; user-memory
+   // `[[feedback_col_walk_is_shared_util]]` — NOT a Q3FamilyVisitor
+   // subclass). Per-customer accumulator finalises at on_group_end
+   // (D2); NATION INL on PK resolves n_name inline (D6); the
+   // assembled row is offered to a bounded TopN(20) sink
+   // (CONVENTIONS §Post-pipeline OutClass).
+   out.clear();
+
+   using NationAdapterT = typename Backend::template Adapter<nation_t>;
+   Q10QuerySink sink(stats);
+   std::unordered_map<Integer, Varchar<25>> nation_cache;  // ≤25 entries
+
+   Q10GroupWalkVisitor<NationAdapterT, Q10QuerySink, Q10FilterMode::Query>
+       visitor{params, nation, sink, nation_cache, stats};
+   ::tpch::col_group_walk<Backend>(col.merged_adapter(), visitor);
+
+   sink.finalize(out);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
