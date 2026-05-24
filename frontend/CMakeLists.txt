@@ -402,6 +402,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- q10_lsm executable (RocksDB) ---
+    add_executable(q10_lsm tpch/q10/executable_rocksdb.cpp)
+    target_compile_definitions(q10_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(q10_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(q10_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
     # --- refresh_sales_lsm: TPC-H RF1/RF2 update experiment (vanilla Q3/Q5; RocksDB) ---
     add_executable(refresh_sales_lsm tpch/refresh_sales/executable_rocksdb.cpp)
     target_compile_definitions(refresh_sales_lsm PRIVATE ROCKSDB_ONLY)
@@ -548,6 +563,12 @@ else()
 
     add_executable(q5_btree tpch/q5/executable_leanstore.cpp)
     target_link_libraries(q5_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(q10_lsm tpch/q10/executable_rocksdb.cpp)
+    target_link_libraries(q10_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(q10_btree tpch/q10/executable_leanstore.cpp)
+    target_link_libraries(q10_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 
     # --- refresh_sales: TPC-H RF1/RF2 update experiment (vanilla Q3/Q5) ---
     add_executable(refresh_sales_lsm tpch/refresh_sales/executable_rocksdb.cpp)
