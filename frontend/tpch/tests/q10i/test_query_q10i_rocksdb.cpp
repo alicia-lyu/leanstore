@@ -139,7 +139,7 @@ int main(int argc, char** argv)
    std::cout << "=== Populating secondaries ===\n";
    q10i.coli_pipeline().populate_split();    // S1 splits
    q10i.coli_pipeline().populate_merged();   // S3 COLI MI
-   // S2 view loader — Phase 4a (Pattern B): deferred.
+   q10i.populate_q10i_view();                // S2 view (Pattern B)
    // S4 needs no secondary.
 
    // ------------------------------------------------------------------
@@ -269,12 +269,12 @@ int main(int argc, char** argv)
              << " lineitems=" << n_lineitems_ref
              << " invoices=" << n_invoices_ref << "\n";
 
-   // Pipeline view: deferred to Phase 4a (Pattern B) — expect 0 at Phase 1.
+   // Pipeline view: Pattern B loader emits one row per lineitem.
    {
-      bool ok = (n_view == 0);
+      bool ok = (n_view == n_lineitems_ref);
       stats_ok &= ok;
       check("pipeline_view", ok, n_view,
-            "0 [deferred to Phase 4a (Pattern B)]");
+            "= " + std::to_string(n_lineitems_ref));
    }
 
    // Split adapters: strict 1:1 retagging of base tables.

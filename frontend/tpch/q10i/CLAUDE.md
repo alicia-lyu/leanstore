@@ -8,15 +8,14 @@ decision or adding a new storage structure.
 
 ## Status
 
-Phase 1 complete (2026-05-23, worktree branch
-`worktree-agent-a86745538133069de`): 8-file skeleton + test harness +
-strict cardinality / sentinel-ordering assertions + digest-0x0 parity
-all `[OK]` at SF=1. `lineitem_coli_t` widened with `l_returnflag`
-(D14) in commit 0; Q3I/Q5I regressions clean. Query bodies pending
-(Phase 4 §7.1–§7.5). Paper scope: **5L cell only** (headline cell).
-Pair-fates with Q10 — the paper story needs both, neither alone is
-coherent. See §Contingency for the design-only fallback if Phase 4
-stalls.
+**Phase 4 complete (2026-05-24)**: all four `query_by_*` bodies
+implemented and parity-verified at SF=1, SF=5, SF=10 with strict
+4-way XOR digest (`S1 ≡ S2 ≡ S3 ≡ S4`). Q3I/Q5I regressions clean.
+Paper scope: **5L cell only** (headline cell). Pair-fates with Q10.
+
+Phase 1 (2026-05-23): 8-file skeleton + test harness + strict
+cardinality / sentinel-ordering assertions all `[OK]` at SF=1.
+`lineitem_coli_t` widened with `l_returnflag` (D14).
 
 **Worktree-only**: per E1 in the Phase 1 plan, this branch does NOT
 merge into main until the paper revision is submitted — the
@@ -496,19 +495,17 @@ DOTs. D6–D10 mirror Q10's identically; the rest are Q10I-specific.
   `generate_targets.py`). `lineitem_coli_t` widening (D14) lands
   here. Compiles cleanly; query stubs return 0; `test_query_q10i_lsm`
   reports digest-0x0 parity vacuous `[OK]`.
-- **Phase 4 §7.1** — S3 `query_by_merged` via `coli_group_walk` +
+- **Phase 4 §7.1** ✅ — S3 `query_by_merged` via `coli_group_walk` +
   bespoke Q10I visitor (D4–D7) + bounded top-20 sink (D5).
-- **Phase 4 §7.3** — S2 `query_by_view` with Pattern-B loader (D7)
-  + intermediate per-order aggregator (D10).
-- **Phase 4 §7.5** — S4 `query_by_hash` (D11) — proper HashJoin on
-  C⋈O⋈L ⋈ INVOICE with PK-only invoice build.
-- **Phase 4 §7.2** — S1 `query_by_base` — 2-BMJ chain + per-emit
-  invoice seek (D12).
-- **Phase 5–8** — `per_structure_workload.hpp` alias-only,
+- **Phase 4 §7.3** ✅ — S2 `query_by_view` over Pattern-B-loaded
+  view (D7); per-customer aggregator → top-20 sink.
+- **Phase 4 §7.5** ✅ — S4 `query_by_hash` — PK-only `ord_set` +
+  INL recovery (Rule 13) for customer payload + i_status.
+- **Phase 4 §7.2** ✅ — S1 `query_by_base` — chain-scan over
+  custkey-sorted COLI splits + per-emit invoice point-seek.
+- **Phase 5–8** ✅ — `per_structure_workload.hpp` alias-only,
   executables, `test_query_q10i_{lsm,btree}` strict parity, CMake
-  + `generate_targets.py` wiring.
-- **Phase 9** — doc refresh + cross-link from
-  `frontend/tpch/CLAUDE.md` once skeleton acquires real code.
+  + `generate_targets.py` wiring (all landed in Phase 1).
 - **S5** — omitted by design (D3).
 - **Linux perf sweep** — 5L cell only; tracked in
   `LINUX_PENDING.md` once Phase 4 lands.

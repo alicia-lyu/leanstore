@@ -203,14 +203,13 @@ Per-query subdirectories:
   Pattern B reference (view loader reuses S3 group-walk).
 - `q10i/` — Q10 + return-payment-status partition (paid/open/late
   buckets on returned revenue, joined via `l_invoicekey =
-  i_invoicekey`). Phase 1 complete on worktree branch
-  `worktree-agent-a86745538133069de`: 8-file skeleton + harness +
-  cardinality/sentinel checks all `[OK]` at SF=1; query bodies
-  pending Phase 4. **Worktree-only — does NOT merge to main
-  until paper revision is submitted**, because `lineitem_coli_t`
-  was widened with `l_returnflag` (D14) and that invalidates
-  Q3I/Q5I persisted images on main. See
-  [`q10i/CLAUDE.md §Status`](q10i/CLAUDE.md).
+  i_invoicekey`). **Phase 4 complete** on worktree branch
+  `worktree-agent-a86745538133069de`: all four `query_by_*` bodies
+  parity-verified at SF=1, SF=5, SF=10 (strict 4-way XOR digest).
+  **Worktree-only — does NOT merge to main until paper revision is
+  submitted**, because `lineitem_coli_t` was widened with
+  `l_returnflag` (D14) and that invalidates Q3I/Q5I persisted images
+  on main. See [`q10i/CLAUDE.md §Status`](q10i/CLAUDE.md).
 
 Each per-query directory contains the same 8-file shape described in
 §Per-query file convention below.

@@ -87,6 +87,10 @@ class Q10IWorkload
    // and populate_merged() directly without routing through load().
    CustomerOrdersLineitemInvoicePipeline<Backend>& coli_pipeline() { return coli; }
 
+   // Pattern B view loader — exposed so test harnesses can drive it after
+   // populate_merged() without going through load().
+   void populate_q10i_view();
+
    Q10IWorkload(
        TPCHIWorkload<Backend::template Adapter>& tpch,
        typename Backend::template Adapter<customerh_t>&  customer,
