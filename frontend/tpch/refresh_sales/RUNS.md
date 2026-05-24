@@ -58,3 +58,8 @@ Convention mirrors `frontend/tpch/q3/RUNS.md` /
   access); lsm S4 hit a tail compaction stall. Required a one-line fix first:
   `recover_last_ids()` was crashing on btree (called off-Worker) — now wrapped
   in `scheduleJobSync`.
+
+## 2026-05-24 — 5L (c0) RF1/RF2 on the **real SSD** (tag `2026-05-24-refresh-5L-ssd`)
+
+- commit `c9b5f594` (calcite-integration), host `c220g2-011011`; `build/scratch/run_refresh_5L_ssd.sh` (recover-from-image-copy, OS page cache dropped per run), SF=1550 btree / 3850 lsm, DRAM 1.0, `--refresh_seconds=90`, `--update_size=1`, S1–S4 both backends. Summary: `paper-data/2026-05-24-refresh-5L-ssd/` (`disk=ssd`).
+- **Supports §5.4 cleanly**: pair throughput **S3 ≥ S1 > S2** on both backends (btree S3 1656 ≳ S1 1382 ≫ S2 802; lsm S3 1173 ≳ S1 1144 ≫ S2 922 pairs/s), S4 base the no-maintenance ceiling. Supersedes the noisy HDD run `2026-05-23-refresh-5L` (btree ~24 pairs/90s, seek-bound; SSD ~10³× faster, no lsm outlier). **Corrects** that run's "lsm served from OS page cache" caveat — RocksDB sets `use_direct_reads=true` (RocksDB.cpp:16), so reads bypass the page cache and the HDD numbers were genuine, just seek-bound.

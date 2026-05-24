@@ -91,6 +91,35 @@ The default `--ssd_path` / Makefile `data_disk` is `/mnt/ssd`
 (`Makefile:18-23`). Most fresh nodes don't have anything mounted there.
 Three options, in descending order of preference:
 
+> **REQUIRED before formatting anything as `/mnt/ssd`: verify the device is
+> actually an SSD (non-rotational).** CloudLab `c220g2` nodes ship with
+> *both* a 480 GB SATA SSD and two 1.2 TB 10K-RPM SAS HDDs, and device names
+> (`sda`/`sdb`/`sdc`) are not ordered by media type. Pick the device whose
+> rotational flag is **0**:
+>
+> ```
+> lsblk -d -o NAME,ROTA,SIZE,MODEL          # ROTA=0 is the SSD; ROTA=1 is a spinning disk
+> cat /sys/block/<dev>/queue/rotational     # must print 0
+> ```
+>
+> Label the SSD `leanstore-ssd` and mount it at `/mnt/ssd`; if you also want
+> the HDD mounted, label it `leanstore-hdd` and mount it at `/mnt/hdd`
+> (fstab: `LABEL=leanstore-hdd /mnt/hdd ext4 defaults,noatime 0 2`). The fstab
+> `LABEL=leanstore-ssd` entry must resolve to the **`ROTA=0`** device.
+>
+> **2026-05-24 incident (why this is REQUIRED):** for the entire first paper
+> sweep, `/mnt/ssd` was actually the **HDD** `/dev/sdb` (`HUC101212CSS600`,
+> 10K SAS, `ROTA=1`) — it had been formatted+labeled `leanstore-ssd` by
+> mistake — while the real SSD `/dev/sdc` (`INTEL SSDSC2BB480G4`, `ROTA=0`)
+> sat unmounted. Because both LeanStore and RocksDB use `O_DIRECT` (the OS
+> page cache never hides the disk), every B-tree result was ~30× slower than
+> on the real SSD and the refresh (random-write) numbers were ~10³× slower —
+> i.e. *all* HDD-measured paper-data was invalid. The fix: relabel the HDD
+> `leanstore-hdd` → `/mnt/hdd`, format `/dev/sdc` `leanstore-ssd` → `/mnt/ssd`,
+> copy the loaded images across (preserving mtimes so no reload), and rerun.
+> The lesson: a wrong device here is silent — the mount works, the build
+> works, only the numbers are wrong — so the `ROTA=0` check is non-optional.
+
 ### 3a. Partition unallocated NVMe space (preferred when available)
 
 CloudLab and many cloud nodes ship with the root partition occupying

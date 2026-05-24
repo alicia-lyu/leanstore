@@ -46,3 +46,9 @@ need consolidating.
   baseline is ~30× slower than LSM at the same SF — LeanStore's
   hash-join scan path under DRAM=0.1 GiB is the suspected bottleneck;
   see q3i/PERFORMANCE.md for the analogous Q3I S4 finding.
+
+## 2026-05-24 — 5L (c0) on the **real SSD** (tag `2026-05-24-a-ssd`)
+
+- commit `c9b5f594` (calcite-integration), host `c220g2-011011`. `run_paper_sweep.sh --cells c0 --families tpch,tpchi --reps 3 --skip-load --drop-caches`; recovered from copied c0 images (no reload). Summary: `paper-data/2026-05-24-a-ssd/summary/` (`disk=ssd`, median over 3 reps).
+- **Supersedes the HDD c0 numbers**: the prior `/mnt/ssd` was a spinning SAS HDD; both engines use `O_DIRECT`, so the disk was the bottleneck. SSD vs HDD at c0: btree ~27–46× faster, lsm ~1.3–2× (S1–S3) / 3–15× (S4).
+- **Claim (ms/query, c0):** **S3 wins on BOTH backends** — btree S3 24.5k < S2 26.5k < S1 33.5k ≪ S4 113k; lsm S3 8.0k < S2 9.7k < S1 12.4k ≪ S4 73k. **Cleanly supports S3 ≥ S2 > S1/S4** (the §3.1.3 pure-hierarchical sibling where MI locality reasserts even on LSM).

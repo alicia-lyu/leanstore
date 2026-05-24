@@ -4,7 +4,36 @@ Compressed status doc. Updated on each periodic check. Newer entries on top.
 
 ---
 
-## Active: tag `2026-05-18-b` — bg=2 cohort, cells c1,c3,c0
+## ⚠️ ALL pre-2026-05-24 sweeps were measured on an HDD, not the SSD
+
+On 2026-05-24 we discovered `/mnt/ssd` had been the spinning SAS HDD
+`/dev/sdb` (`ROTA=1`) the whole time; the real Intel DC S3500 SATA SSD
+(`/dev/sdc`, `ROTA=0`) was unmounted. Both engines use `O_DIRECT`, so the
+HDD was the true bottleneck — every prior `paper-data/` summary is
+HDD-measured and is now stamped `disk=hdd` (see `scripts/mark_disk_media.py`).
+Disk fixed (HDD → `/mnt/hdd` label `leanstore-hdd`; SSD → `/mnt/ssd` label
+`leanstore-ssd`); see `../LINUX_SETUP.md §3`.
+
+## Done: tag `2026-05-24-a-ssd` — q3/q5/q3i/q5i at 5L (c0) on the **real SSD**
+
+**Finished 2026-05-24 ~18:00 UTC**, commit `c9b5f594`, host
+`c220g2-011011`. `run_paper_sweep.sh --cells c0 --families tpch,tpchi --reps 3
+--skip-load --drop-caches`. 96/96 runs (`disk=ssd`). Images recovered from the
+copied c0 snapshots — no reload. One transient `q3i_btree` c0 r2/S1 abort
+("turnPage" cascade) was backfilled by an independent re-run.
+
+**SSD vs HDD at c0 (ms/query):** B-tree **~27–46× faster** (every `O_DIRECT`
+miss was an HDD seek; queries fell from 12–65 min to ~25–130 s); LSM ~1.3–2×
+for S1–S3 (block-cache absorbs most reads), 3–15× for the scan-heavy base/hash
+S4. Relative S1–S4 ordering preserved. Companion update sweep:
+`2026-05-24-refresh-5L-ssd` (RF1/RF2; S3≥S1>S2 on both backends, clean).
+
+## Frozen: tag `2026-05-18-b` — bg=2 cohort, cells c1,c3,c0 — **HDD (invalid)**
+
+**Stopped 2026-05-24** mid-geo (was loading `geo_btree` SF=194) to free the
+disk for the swap. TPC-H phase was complete but **HDD-measured** — superseded
+at c0 by `2026-05-24-a-ssd`. c1/c3 and all geo remain HDD-only / unfinished;
+rerun on SSD if those cells are needed. Original log below for history.
 
 **Started**: 2026-05-18 19:21 UTC. PID 205813. Launcher: `experiments/launch_full_sweep.sh 2026-05-18-b c1,c3,c0`.
 

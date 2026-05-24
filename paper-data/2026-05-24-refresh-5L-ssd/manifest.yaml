@@ -1,0 +1,15 @@
+tag: 2026-05-24-refresh-5L-ssd
+experiment: refresh_sales (TPC-H RF1/RF2 update throughput) — 5L cell (c0) — REAL SSD rerun
+commit_sha: c9b5f594
+host: c220g2-011011.wisc.cloudlab.us
+disk: ssd (Intel DC S3500 480GB SATA; supersedes the HDD-based 2026-05-23-refresh-5L)
+cell: c0 (5L = ~5 GiB secondaries, DRAM 1.0 GiB)
+scale_factor: {btree: 1550, lsm: 3850}
+dram_gib: 1.0
+refresh_seconds: 90
+update_size: 1
+backends: btree, lsm
+structures: {1: split_S1, 2: view_S2, 3: merged_S3, 4: base_S4}
+metric: count-based throughput over actual elapsed; pair_tps = #iterations/elapsed (size-stable RF1+RF2 pair); RF2 does NOT exhaust at this scale.
+source_image: recovered from existing tpch family image (shared adapter names) on a per-structure copy; canonical read images untouched. OS page cache dropped between copy and run.
+note: BOTH engines use direct I/O (RocksDB use_direct_reads=true, RocksDB.cpp:16; LeanStore O_DIRECT), so reads hit the SSD regardless of host RAM — the prior 'lsm served from OS page cache' caveat does NOT apply. See README.md.

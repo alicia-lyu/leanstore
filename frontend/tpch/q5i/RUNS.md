@@ -102,3 +102,9 @@ file unless their numbers are scattered across other docs.
 - **Parity gate**: `test_query_q5i_btree` at SF=5 strict 4-way
   parity at digest `0x978b90044797a768` rows=4 (commit
   `82927bf8`); SF=10 also clean.
+
+## 2026-05-24 — 5L (c0) on the **real SSD** (tag `2026-05-24-a-ssd`)
+
+- commit `c9b5f594` (calcite-integration), host `c220g2-011011`. `run_paper_sweep.sh --cells c0 --families tpch,tpchi --reps 3 --skip-load --drop-caches`; recovered from copied c0 images (no reload). Summary: `paper-data/2026-05-24-a-ssd/summary/` (`disk=ssd`, median over 3 reps).
+- **Supersedes the HDD c0 numbers**: the prior `/mnt/ssd` was a spinning SAS HDD; both engines use `O_DIRECT`, so the disk was the bottleneck. SSD vs HDD at c0: btree ~27–46× faster, lsm ~1.3–2× (S1–S3) / 3–15× (S4).
+- **Claim (ms/query, c0):** btree S3≈S2 (26.6k≈26.7k) ≫ S1 33.5k, S4 134k; lsm S2 6.3k < S3 11.5k < S1 14.1k ≪ S4 112k. **Supports S3≥S2 ≫ S1/S4 on btree** (S3 marginally best); on lsm S2 leads, S3 in league.
