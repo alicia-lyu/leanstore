@@ -1,0 +1,4 @@
+tool,sf,base_orders,base_lineitems,q3_view_rows,q5_view_rows,rf1_orders,rf1_lineitems,rf1_orders_per_s,rf2_orders,rf2_lineitems,rf2_orders_per_s,working_set_kb,peak_rss_kb,commit,host
+dbtoaster,0.01,15000,60175,60174,60174,10,37,105000,10,38,41112,143268,214020,c46bcabe,node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
+dbtoaster,0.1,150000,600572,600578,600578,150,592,91316.2,150,586,17348.9,1411356,2358848,c46bcabe,node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
+dbtoaster,0.36,540000,2160128,2160142,2160142,540,2157,86252.8,540,2143,16416.7,5093780,8650300,c46bcabe,node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
