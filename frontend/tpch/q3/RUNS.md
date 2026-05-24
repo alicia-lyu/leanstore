@@ -264,3 +264,9 @@ entries live here.
   locality reasserts. **Cross-backend conclusion**: the S2 vs S3
   winner is **backend-structural**, not memory-regime-structural,
   on this workload.
+
+## 2026-05-24 — 5L (c0) on the **real SSD** (tag `2026-05-24-a-ssd`)
+
+- commit `c9b5f594` (calcite-integration), host `c220g2-011011`. `run_paper_sweep.sh --cells c0 --families tpch,tpchi --reps 3 --skip-load --drop-caches`; recovered from copied c0 images (no reload). Summary: `paper-data/2026-05-24-a-ssd/summary/` (`disk=ssd`, median over 3 reps).
+- **Supersedes the HDD c0 numbers**: the prior `/mnt/ssd` was a spinning SAS HDD; both engines use `O_DIRECT`, so the disk was the bottleneck. SSD vs HDD at c0: btree ~27–46× faster, lsm ~1.3–2× (S1–S3) / 3–15× (S4).
+- **Claim (ms/query, c0):** btree S2≈S3 (25.2k≈25.2k) ≫ S1 35.9k, S4 65.3k; lsm S2 6.8k < S3 8.7k < S1 11.5k ≪ S4 58.6k. **Supports S3≳S2 ≫ S1/S4 on btree (tied); on lsm S2 leads with S3 in the same league** — consistent with the earlier "S2-wins-on-LSM" finding above.

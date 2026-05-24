@@ -306,3 +306,9 @@ there, raw entries live here.
   the S1–S4 axis at the same envelope as SF=300 LSM. Cross-backend
   conclusion confirmed: **prefer S2 on LSM, S3 (or S5!) on BTree,
   when DRAM is tight; cache-resident is S2 on both.**
+
+## 2026-05-24 — 5L (c0) on the **real SSD** (tag `2026-05-24-a-ssd`)
+
+- commit `c9b5f594` (calcite-integration), host `c220g2-011011`. `run_paper_sweep.sh --cells c0 --families tpch,tpchi --reps 3 --skip-load --drop-caches`; recovered from copied c0 images (no reload). Summary: `paper-data/2026-05-24-a-ssd/summary/` (`disk=ssd`, median over 3 reps).
+- **Supersedes the HDD c0 numbers**: the prior `/mnt/ssd` was a spinning SAS HDD; both engines use `O_DIRECT`, so the disk was the bottleneck. SSD vs HDD at c0: btree ~27–46× faster, lsm ~1.3–2× (S1–S3) / 3–15× (S4).
+- **Claim (ms/query, c0):** btree S2≈S3 (26.6k vs 28.8k) ≫ S1 47.5k, S4 131k; lsm S2 8.5k < S3 11.5k < S1 16.7k ≪ S4 108k. **Supports the COLI showcase S3≈S2 ≫ S1/S4 on btree** (S3/S2≈1.08); on lsm S2 leads, S3 in league. S4 hash is catastrophic (no shared secondary).
