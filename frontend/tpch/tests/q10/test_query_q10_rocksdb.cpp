@@ -354,6 +354,22 @@ int main(int argc, char** argv)
    std::cout << "[stat] mi_groups_skipped            = " << s3_stats.mi_groups_skipped << "\n";
 
    // ------------------------------------------------------------------
+   // Top-3 emitted rows from S3 — eyeball check against a known-good Q10
+   // reference (DuckDB or TPC-H spec answer-set). No automated assertion;
+   // a reviewer can spot egregious revenue or n_name corruption at a
+   // glance.
+   std::cout << "\n=== S3 top-3 (eyeball check) ===\n";
+   for (size_t i = 0; i < std::min<size_t>(3, r_merged.size()); ++i) {
+      const auto& r = r_merged[i];
+      std::cout << "[row " << i << "] c_custkey=" << r.c_custkey
+                << " revenue=" << std::fixed << std::setprecision(2)
+                << static_cast<double>(r.revenue)
+                << " n_name=" << std::string(r.n_name.data, strnlen(r.n_name.data, sizeof(r.n_name.data)))
+                << " c_name=" << std::string(r.c_name.data, strnlen(r.c_name.data, sizeof(r.c_name.data)))
+                << "\n";
+   }
+
+   // ------------------------------------------------------------------
    // Sanity + parity gating. S3 must return a non-zero digest at SF=1
    // with the validation default (1993-10-01). S1/S2/S4 still empty —
    // report as [deferred] (NOT failures) until §7.2/§7.3/§7.5 land.

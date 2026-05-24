@@ -4,14 +4,22 @@
 
 ## Status
 
-**Phase 1 complete; query bodies pending.** The 8-file skeleton +
-schema-finalised pipeline view + Q10Stats + 24-entry PARAM_TABLE +
-strict-equality cardinality / sentinel-ordering test harness are
-all in. SF=1 macOS: `test_query_q10_lsm` reports `[OK]` on splits
-(orders / lineitem 1:1), `[OK]` on merged_col per-type breakdown +
-total via `col_group_walk`, `[OK]` on sentinel ordering, `[OK]` on
-`pipeline_view rows == 0` (deferred to Phase 4a per Pattern B), and
-`[OK]` digest-0x0 parity across the four `query_by_*` stubs.
+**Phase 4a complete (S3 + Pattern B view loader); S1 / S2 / S4
+query bodies pending §7.2 / §7.3 / §7.5.** The bespoke
+`Q10GroupWalkVisitor` (Decision D1) lives in
+`frontend/tpch/q10_family/` together with `Q10QuerySink` (wraps
+canonical `TopNSink<q10_agg_row_t, &q10_agg_row_t::cmp>`),
+`Q10ViewLoadSink`, and `populate_q10_view`. The walker drives both
+S3 (Query mode) and the view loader (ViewLoad mode) via compile-time
+`Q10FilterMode` dispatch — view-vs-walker drift is structurally
+impossible (PLAYBOOK §3.6 Pattern B). SF=1 macOS:
+`test_query_q10_lsm` reports `[OK]` on splits, `[OK]` on merged_col
+per-type breakdown, `[OK]` on sentinel ordering, `[OK]` on
+`pipeline_view rows == |lineitem|` (Pattern B view live), `[OK]` on
+`S3 sanity` (non-zero digest, 20 rows after TopN), and
+`[DEFER]` lines on S1/S2/S4 (stubs pending §7.2/§7.3/§7.5 — NOT
+failures). The S2 view is loaded but `query_by_view` does not yet
+consume it (S2 query body is part of §7.3).
 Experimental scope is the **5L cell only** (largest data, low memory
 pressure — the headline cell per `paper-data/scripts/PLOTTING.md`).
 Not committing to the full SF×DRAM sweep. The invoice-extended
@@ -589,12 +597,20 @@ not a Phase 0 design decision.
     sentinel-ordering check, per-customer-group distribution
     stats, `pipeline_view rows == 0 [deferred to Phase 4a (Pattern
     B)]` line.
-- **Phase 4 §7.1** — S3 `query_by_merged` via `col_group_walk` +
-  bespoke `Q10GroupWalkVisitor` + bounded top-20 sink (D1, D2).
-  NATION INL resolved inside `on_group_end` (D6).
-- **Phase 4 §7.1** — S3 `query_by_merged` via `col_group_walk` +
-  bespoke `Q10GroupWalkVisitor` + bounded top-20 sink (D1, D2).
-  NATION INL resolved inside `on_group_end` (D6).
+- **Phase 4a (bundled §7.1 + Phase 4a view loader; complete —
+  three commits).** Mints `frontend/tpch/q10_family/` (preemptive
+  per user — Q10I drop-in target) holding `visitor.hpp` (dual-mode
+  `Q10GroupWalkVisitor` on `col_group_walk`; NOT a Q3FamilyVisitor
+  subclass per D1 / user-memory rule), `out_class.hpp` (`Q10QuerySink`
+  wrapping canonical `TopNSink<q10_agg_row_t, &q10_agg_row_t::cmp>`),
+  `view_loaders.hpp` (`Q10ViewLoadSink` + `populate_q10_view`).
+  - Commit 1 — Query mode + S3 `query_by_merged`; NATION INL on PK at
+    `on_group_end` (D6); harness flipped to `[DEFER]` lines for
+    S1/S2/S4 plus a `Q10Stats post-S3` report block.
+  - Commit 2 — ViewLoad mode + `populate_q10_view`; `load.tpp`
+    wires it after `col.populate_merged()`; harness asserts
+    `pipeline_view rows == |lineitem|` strict.
+  - Commit 3 — harness top-3 eyeball print + this doc + RUNS.md.
 - **Phase 4 §7.2** — S1 `query_by_base` via 2-BMJ chain over COL
   split indexes (D7); per-emit feeds the per-customer aggregator;
   NATION INL at emit.
