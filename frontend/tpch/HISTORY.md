@@ -8,6 +8,32 @@ Rotate entries older than 3 months to `HISTORY-YYYYHN.md` (e.g.
 
 ## Completed (post-skeleton)
 
+- **Q10 Phase 4 + 5 — all four query bodies + harness polish + docs**
+  (2026-05-24): Q10 (Returned Item Reporting, per-customer top-20 over
+  returned lineitems in a 3-month order window) implementation is
+  complete. Phase 4a landed the bespoke `Q10GroupWalkVisitor` on
+  `col_group_walk` (Decision D1 — NOT a Q3FamilyVisitor subclass per
+  user-memory `[[feedback_col_walk_is_shared_util]]`) plus the Pattern B
+  view loader (`populate_q10_view` reuses the visitor in ViewLoad mode —
+  view-vs-walker drift structurally impossible). Phase 4b landed the
+  remaining S1 / S2 / S4 paths over the shared `Q10PerCustomerAggregator`
+  (`q10_family/admit.hpp`): S1 is a nested forward scan over the
+  custkey-sorted COL split secondaries; S2 follows the D4 anomaly chain
+  (returnflag → per-orderkey rollup → orderdate filter → per-customer
+  SUM); S4 is the D5 PK-only HashJoin chain with sorted-seek lineitem
+  probe + per-orderkey-transition INL recovery of `c_custkey` + the
+  customer record (Rules 4 / 13). NATION INL on PK fires per surviving
+  customer at finalize (D6, ≤25-entry cache). All four paths feed
+  `Q10QuerySink` wrapping the canonical `TopNSink<q10_agg_row_t,
+  &q10_agg_row_t::cmp>` (revenue DESC, c_custkey ASC tiebreaker). Phase 5
+  polished the harness — per-path `Q10Stats` (no counter fan-out) +
+  off-default `set_params_for_iter(1)` re-run gate for the param-bake
+  regression class (PLAYBOOK §10). SF=1 macOS: strict 4-way XOR parity
+  holds across both iter=0 (1993-10-01) and iter=1 (1993-02-01), 20 rows
+  each. S5 deferred by design (D8 — no parameter-independent aggregate
+  to bake; orderdate window is parameterised). Production `q10_lsm` /
+  `q10_btree` targets wired since Phase 1. Linux 5L perf sweep pending.
+
 - **Q5I Phase 4b — S1 BMJ chain + S4 hash chain; strict 4-way parity**
   (2026-05-16): S1 `query_by_base` runs two BMJ stages over the
   custkey-sorted COLI splits (`customerh_t ⋈ orders_coli_t` on

@@ -4,8 +4,10 @@
 
 ## Status
 
-**Phase 4 complete — all four `query_by_*` paths live; SF=1 macOS
-strict 4-way XOR parity verified.** S3 lands the bespoke
+**Phase 4 + 5 complete — all four `query_by_*` paths live; SF=1
+macOS strict 4-way XOR parity verified across two distinct param
+sets (iter=0 default + iter=1 off-default param-bake guard). Linux
+5L perf sweep pending — see [`LINUX_PENDING.md`](../../../LINUX_PENDING.md).** S3 lands the bespoke
 `Q10GroupWalkVisitor` (D1) on `col_group_walk` plus the canonical
 `Q10QuerySink` wrapping `TopNSink<q10_agg_row_t, &q10_agg_row_t::cmp>`.
 The walker also drives the Pattern B view loader via compile-time
@@ -631,9 +633,15 @@ not a Phase 0 design decision.
     `cust_set` / `orders_set` PK-only (Rule 4); LINEITEM sorted-seek
     with per-orderkey-transition INL recovery of `c_custkey` and the
     customer record (Rule 13). Strict 4-way XOR parity gate flipped on.
-- **Phase 5–8** — strict 4-way XOR parity test (`test_query_q10_{lsm,btree}`);
-  CMake + `generate_targets.py` entries; doc refresh + cross-link
-  from `frontend/tpch/CLAUDE.md`.
+- **Phase 5 (complete — two commits, 2026-05-24).** Harness polish +
+  docs refresh. Commit 1 splits `Q10Stats` per query path (no counter
+  fan-out) and adds the off-default `set_params_for_iter(1)` re-run
+  gate per PLAYBOOK §10 (param-bake regression guard). Commit 2
+  propagates Q10 completion across `frontend/tpch/STATUS.md`,
+  `frontend/tpch/CLAUDE.md`, `frontend/tpch/HISTORY.md`, and
+  `LINUX_PENDING.md`. Production binaries (`q10_lsm`, `q10_btree`),
+  CMake targets, and `generate_targets.py` entries already landed
+  in Phase 1.
 - **S5** — omitted by design (Decision D8; no parameter-independent
   aggregate to bake).
 - **Linux perf sweep — 5L cell only** (Decision: paper scope). Logged

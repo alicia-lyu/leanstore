@@ -185,11 +185,11 @@ Per-query subdirectories:
 - `q10/` — Returned Item Reporting (4 tables: CUSTOMER × ORDERS ×
   LINEITEM in the COL chain + NATION as a per-customer INL on PK).
   §3.1.3 pure-hierarchical sibling to Q3 / Q5; per-customer top-20
-  shape (the only Track-1 query with that grouping). **Phase 4
-  complete — all four `query_by_*` paths live; SF=1 macOS strict
-  4-way XOR parity verified**; Linux 5L perf sweep pending. No S5 —
-  same soundness-rule argument as Q5. See
-  [`q10/CLAUDE.md §Implementation Phases`](q10/CLAUDE.md).
+  shape (the only Track-1 query with that grouping). **Phase 4 + 5
+  complete — all four `query_by_*` paths live; strict 4-way XOR
+  parity verified at SF=1 macOS across two distinct param sets**;
+  Linux 5L perf sweep pending. No S5 — same soundness-rule argument
+  as Q5. See [`q10/CLAUDE.md §Implementation Phases`](q10/CLAUDE.md).
 - `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; S1–S4
   are the paper-reported axis and parity-verified. S5 aCOLI MI is
   implemented and parity-verified but **deferred from the paper
@@ -481,9 +481,10 @@ been moved to `TRASH/`.
 - Q5 — see [`q5/CLAUDE.md §Tests`](q5/CLAUDE.md#tests) for
   `test_query_q5_{lsm,btree}` (strict S1–S4 XOR parity at SF=1) and
   `test_side_tables` (REGION/NATION/SUPPLIER hashmaps).
-- Q10 — `test_query_q10_lsm` (Phase 1 commit 2: stubs return empty,
-  digests all 0x0, `[OK]` parity at SF=1; strict-equality cardinality
-  + sentinel-ordering land in commit 3)
+- Q10 — `test_query_q10_lsm` (Phase 5: all four query bodies live;
+  strict 4-way XOR parity at SF=1 across two distinct param sets
+  — iter=0 default + iter=1 off-default for the param-bake guard
+  per PLAYBOOK §10; per-path Q10Stats blocks)
 - Q9 — none yet (load/query bodies TODO)
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 

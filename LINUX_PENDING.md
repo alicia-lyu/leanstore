@@ -41,6 +41,20 @@ actionable.
   `generate_targets.py` with image-copy logic so it joins the standard
   `make X scale=...` flow (currently driven by `build/scratch/run_refresh_hot.sh`).
 
+- **Q10 5L perf sweep (2026-05-24)**: macOS Phase 4 + 5 complete —
+  all four `query_by_*` paths live; `test_query_q10_lsm` verifies
+  strict 4-way XOR parity at SF=1 across two distinct param sets
+  (iter=0 default 1993-10-01 + iter=1 off-default 1993-02-01 for the
+  param-bake regression guard). Production `q10_lsm` / `q10_btree`
+  targets wired since Phase 1. Linux bring-up + 5L perf sweep
+  pending: (a) run `test_query_q10_btree` on Linux for cross-backend
+  parity; (b) `make q10_lsm` / `make q10_btree` 5L cell (the
+  paper-axis headline cell per `paper-data/scripts/PLOTTING.md`);
+  (c) append `frontend/tpch/q10/RUNS.md` with the first-Linux
+  numbers. Sibling perf shapes for comparison: most recent Q3 / Q5 /
+  Q3I 5L runs in their respective `RUNS.md`. Plan per-storage-
+  structure rationale: [`q10/CLAUDE.md §Implementation Phases`](frontend/tpch/q10/CLAUDE.md).
+
 - **No `latency.csv` from any binary (2026-05-23)** — **DEFERRED to
   next project (2026-05-23)**: btree binaries emit `cpu/bm/cr/dt.csv`
   but no `latency.csv`; LSM emits none of them. Analyzer no longer

@@ -17,6 +17,19 @@ need consolidating.
 
 ## Runs
 
+### 2026-05-24 — Phase 5 complete (correctness-only, macOS SF=1)
+- **Commit**: Phase 5 commit 1 (`calcite-integration`)
+- **TPut.csv**: not produced — macOS correctness check only
+- **Config**: SF=1, DRAM=default, structures=1+2+3+4 (all live), host=macOS (RocksDB-only)
+- **Claim check**: correctness only — `test_query_q10_lsm` now
+  rotates the harness through TWO distinct param sets and asserts
+  strict 4-way XOR parity at each. iter=0 (1993-10-01,
+  `digest=0xfb1196e6072d5aef`) and iter=1 (1993-02-01,
+  `digest=0xe6057c38ca32a1e9`) both report 20 rows / all four paths
+  agree. Per-path `Q10Stats` blocks now read clean single-path
+  cardinalities (e.g. `customers_scanned == 150` not `600` as
+  before). Linux 5L perf sweep tracked in `LINUX_PENDING.md`.
+
 ### 2026-05-24 — Phase 4b complete (correctness-only, macOS SF=1)
 - **Commit**: Phase 4b commit 3 (`calcite-integration`)
 - **TPut.csv**: not produced — macOS correctness check only; no perf run

@@ -14,6 +14,7 @@ Update in place; do not append.
 | Q5  | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1 (LSM 0x85b9b6291f258258, BTree 0x2fa49bb120). First Linux sweep SF=15 DRAM=0.1: LSM **S2 (205) > S3 (156) > S1 (43) ≈ S4 (32)**; BTree **S2 (331) > S3 (250) > S1 (67) > S4 (9.5)** TX/s. View materialization beats MI scan (same shape as Q3I S2/S3 inversion — infrastructure, not Q5-specific). |
 | Q9  | ❌ | ❌ | ❌ | ❌ | — | `load.tpp` ctor/`load()`/`get_size()` bodies still reference removed pipeline methods. `query_by_*` bodies, predicates, `Params::defaults()`, CMake targets all pending. |
 | Q5I | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1 (S1 ≡ S2 ≡ S3 ≡ S4 strict at non-zero digest). S5 deferred (PLAYBOOK §S5). Production targets wired. Linux perf sweep pending — see [`LINUX_PENDING.md`](../../LINUX_PENDING.md). |
+| Q10 | ✅ | ✅ | ✅ | ✅ | — | Parity verified SF=1 (strict 4-way XOR across two distinct param sets — iter=0 + iter=1 off-default for the param-bake guard). S5 deferred by design (no parameter-independent aggregate to bake — D8). Production targets wired. Linux 5L perf sweep pending — see [`LINUX_PENDING.md`](../../LINUX_PENDING.md). |
 | Q10I| — | — | — | — | — | Design doc only; no skeleton yet. |
 
 ## Q3I S3 Performance Headline
