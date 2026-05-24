@@ -13,6 +13,21 @@ Convention mirrors `frontend/tpch/q3/RUNS.md` /
 
 ## Entries
 
+- **2026-05-23 (later) — 5L cell (c0)** — commit `165dd75c`
+  (calcite-integration), host `c220g2-011011.wisc.cloudlab.us`. Both backends,
+  S1–S4, SF=1550 (btree) / 3850 (lsm), DRAM=1.0 GiB, `--update_size=1`,
+  `--refresh_seconds=90`, **recovered from the existing tpch family image on
+  per-structure copies** (shared adapter names; read images untouched; no
+  reload). CSVs + summary: `paper-data/2026-05-23-refresh-5L/`. RF2 does not
+  exhaust here, so size-stable **pair throughput** is the metric.
+  **Supports §5.4 (btree)**: under memory pressure merged ≈ split, both > view,
+  base = ceiling (pair/s tail: base 1.0, merged 0.5, split 0.4, view 0.2) — the
+  merged index pays no IO penalty over split for scattered access even when data
+  ≫ DRAM. **lsm row unreliable**: `--dram_gib` caps only RocksDB's block cache
+  while `cp -r` warms all SSTs into the OS page cache (LeanStore uses O_DIRECT,
+  so only btree is truly pressured); lsm S1=9.2 pair/s is a cache/run-order
+  outlier vs S2/S3/S4 ~1.3–1.4. Clean LSM pressure needs drop_caches (root) or a
+  cgroup memory cap.
 - **2026-05-23 23:18 CDT** — commit `bc5b252f` (calcite-integration), host
   `c220g2-011011.wisc.cloudlab.us`. First Linux run, both backends, S1–S4,
   SF=1, DRAM=8 GiB, `--update_size=1`, `--refresh_seconds=30`, on fresh copies
