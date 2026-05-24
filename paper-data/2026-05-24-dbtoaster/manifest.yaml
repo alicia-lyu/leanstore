@@ -1,0 +1,31 @@
+tag: 2026-05-24-dbtoaster
+experiment: refresh_sales DBToaster IVM baseline (Q3 + Q5 pipeline views)
+tool: DBToaster 2.3 (dbt_c++ backend); data via TPC-H dbgen 2.14.0
+commit_sha: c46bcabe
+host: node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
+source: dbtoaster/ (refresh_sales.sql, main.cpp)
+views: >
+  Q3 pipeline (CUSTOMER x ORDERS x LINEITEM) + Q5 pipeline (C x O x L x NATION),
+  unaggregated, one row per lineitem — the LeanStore S2 pipeline-view intermediates,
+  maintained together by one DBToaster program.
+relations: {streams: [customer, orders, lineitem], tables: [nation, region]}
+update_stream: >
+  RF1 inserts (dbgen -U: orders.tbl.u1 + lineitem.tbl.u1) measured in the
+  process_stream_event override; RF2 deletes (delete.1) fired via on_delete_*
+  triggers. Separate phases, NOT interleaved size-stable pairs.
+memory: unlimited (no ulimit sweep — DBToaster is pure in-memory, no SSD spill)
+scale_factors: [0.01, 0.1, 0.36]   # 0.36 ~= 5 GiB working set = paper 5-GiB-secondary anchor
+metric: >
+  RF1/RF2 orders/sec (one "order" = insert/delete 1 order + its lineitems);
+  working_set_kb + peak_rss_kb in summary CSV.
+working_set_kb: VmRSS after warmup (post base-load, ~ maintained-view footprint)
+peak_rss_kb: "SF=0.36 = /usr/bin/time -v Max RSS; SF=0.01/0.1 = harness final VmRSS"
+comparison: >
+  LeanStore S2 (2026-05-23-refresh-sf1 / -5L): btree 22.6k / lsm 4.2k RF1 inserts/s @ SF=1,
+  serving a 5 GiB secondary from a 0.4-1.0 GiB buffer pool by spilling to SSD.
+correctness: both views = base + RF1 - RF2 (size-stable delta) at all 3 SFs
+caveats: >
+  DECIMAL->double (no fixed-point); dbgen -U keys != LeanStore sparse grid (cost
+  comparable, keys differ); RF1/RF2 separate phases so pair rate is an aggregate;
+  RAM need is a MULTIPLE of the working set (peak ~= 1.7x here) — precise factor
+  under sustained RF deferred. See README.md.
