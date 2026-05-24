@@ -440,3 +440,115 @@ Output paths to drop into the paper:
 - `paper-data/2026-05-18-b/figures/paper/paper_geo_condensed.pdf`
 - `paper-data/2026-05-18-b/figures/diagnostics/diag_btree_llc_miss.pdf`
 - `paper-data/2026-05-18-b/figures/diagnostics/diag_lsm_sst_read.pdf`
+
+---
+
+## Investigation: why merged_idx (S3) trails mat_view (S2) on RocksDB
+
+Triggered by the 2026-05-24-a-ssd sweep — user observation was "merged
+worse than views on rocksdb/ssd, similar on rocksdb/hdd, better on
+leanstore on both media." Refined picture from per-rep ratios at c0,
+bg=2:
+
+| query | backend | disk | S3/S2 ratios per rep | median |
+| ----- | ------- | ---- | -------------------- | -----: |
+| q3    | lsm     | ssd  | 1.09 / 1.29 / 0.99   | 1.09 |
+| q3    | lsm     | hdd  | 0.86 / 1.02 / 0.88   | 0.86 |
+| q5    | lsm     | ssd  | 0.96 / 0.84 / 0.81   | 0.96 |
+| q5    | lsm     | hdd  | 0.79 / 0.85 / 0.80   | 0.79 |
+| q3i   | lsm     | ssd  | 1.29 / 1.34 / 1.33   | **1.32** |
+| q3i   | lsm     | hdd  | 1.62 / 1.26 / 1.37   | **1.37** |
+| q5i   | lsm     | ssd  | 1.86 / 1.83 / 1.83   | **1.83** |
+| q5i   | lsm     | hdd  | 1.03 / 1.06 / 1.31   | 1.06 |
+
+The S3 regression is **specific to the COLI 4-table MI (q3i/q5i)**, not
+generic to merged indexes — vanilla q3/q5 either match or beat the view
+on LSM. All LeanStore-side ratios stay competitive.
+
+LSM diagnostic counter ratios S3/S2 (lsm c0 bg=2):
+
+| query | disk | sst_read_us | cpu_cycles |
+| ----- | ---- | ----------: | ---------: |
+| q3    | hdd  | 0.85 | 1.11 |
+| q3    | ssd  | 1.36 | 1.20 |
+| q5    | hdd  | 0.81 | 1.01 |
+| q5    | ssd  | 0.89 | 1.14 |
+| q3i   | hdd  | **1.85** | **1.36** |
+| q3i   | ssd  | 1.28 | 1.35 |
+| q5i   | hdd  | 1.09 | **1.47** |
+| q5i   | ssd  | **1.91** | 1.45 |
+
+`sst_compaction_us` is essentially flat across S2/S3, so compaction load
+is not the differentiator. Block-count counters are NaN on this build.
+
+### Root cause
+
+Two compounding factors, both structural to the COLI MI on LSM:
+
+1. **Wider record-type interleaving forces more block touches.** Q3I's
+   view `q3i_pipeline_view_t` is one record type at lineitem grain
+   (~30 rows per custkey). The COLI MI walker scans **all 4 record
+   types per custkey group**: 1 customer + ~2 invoice + ~10 orders +
+   ~30 lineitems ≈ 43 records, with different `idx_id` tag bytes
+   interleaved within each custkey's key range. RocksDB groups by key
+   prefix but spreads the tag-distinct records across more SST blocks.
+   This is the dominant contributor — explains both the sst_read_us
+   inflation and the cpu_cycles inflation (more decoded records → more
+   `std::variant` dispatch).
+2. **Physical skip-seeks are disabled on RocksDB.** `coli_pipeline.tpp`
+   sets `Backend::USE_PHYSICAL_SEEK_SKIP = false` for RocksDB because
+   `rocksdb::Iterator::Seek` invalidates the prefetch buffer (comment
+   cites a 5× sst_read regression if enabled). Consequence: when a
+   filter rejects a customer (q3i's high-selectivity mktsegment, q5i's
+   region predicate), the walker still forward-iterates through every
+   record in that custkey group on RocksDB. LeanStore enables the
+   physical seek and skips the whole group via the latched leaf
+   structure — that's where its S3 advantage comes from.
+
+H3 (prefix bloom poisoned by tag byte) is **not** load-bearing:
+`RocksDB.cpp:42` sets `NewBloomFilterPolicy(10, false)` with no
+prefix_extractor, so the bloom is full-key, not prefix-based; the tag
+byte doesn't fragment it across queries the way it would with a custkey
+prefix extractor.
+
+### Paper framing
+
+This is a **defensible result, not a bug to fix**. The merged-index
+substitution rule's value is workload-dependent, and the COLI 4-table
+case exposes a real LSM disadvantage: every additional record type in
+the MI adds block-touch fanout that an LSM cannot amortise the way a
+B-tree leaf-page latch can. The right framing:
+
+- S3 ≥ S2 on LeanStore for the COLI families — paper's main claim
+  holds where the integrated storage engine can exploit clustered
+  layout.
+- S3 < S2 on RocksDB for the COLI families — bounded loss
+  (1.3–1.9×, much smaller than the maintenance-cost gap from
+  `2026-05-24-refresh-prewarm9` where S2 maintenance throughput is
+  ~50% of S3's, see `pair_vs_dbtoaster.csv`).
+- The MI's amortised cost across query+maintenance is favourable on
+  both engines; the engine-specific query-side trade is worth calling
+  out explicitly rather than burying.
+
+### Not pursued (and why)
+
+- Re-enabling `USE_PHYSICAL_SEEK_SKIP` on RocksDB: already studied; tanks
+  sst_read by 5× on the dominant non-skip path (see comment block
+  `coli_pipeline.tpp:437–454`). A predicate-selectivity-aware switch is
+  possible but is engineering work, not a paper-cycle change.
+- Custom RocksDB prefix_extractor that strips the trailing `idx_id`
+  byte: would help bloom only on point lookups; the COLI walker is
+  range-scan dominated, so unlikely to move the headline.
+- Storing customer/invoice in a sidetable instead of inlining into the
+  COLI MI: this is essentially the S2 design and removes the MI's
+  raison d'être.
+
+### Source pointers
+
+- `frontend/shared/adapter-scanner/RocksDBMergedScanner.hpp:74–162`
+  — per-record variant dispatch, `next_raw` tag-byte path.
+- `frontend/tpch/tpchi_family/coli_pipeline.tpp:310–494`
+  — COLI walker; `Backend::USE_PHYSICAL_SEEK_SKIP=false` at lines
+  437–454.
+- `frontend/shared/RocksDB.cpp:14–65` — bloom + no prefix_extractor.
+- `frontend/tpch/q3i/views.hpp:45–70` — single-record-type view scan.
