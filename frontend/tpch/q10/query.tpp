@@ -194,8 +194,78 @@ long Q10Workload<Backend>::query_by_base(std::vector<q10_agg_row_t>& out)
 template <typename Backend>
 long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
 {
-   (void)out;
-   return 0;
+   // S2: pipeline-view scan with the D4 anomaly chain.
+   //
+   //   view scan → returnflag filter → SUM-per-orderkey
+   //   → Filter[orderdate ∈ window] → SUM-per-c_custkey
+   //   → NATION INL → TopN
+   //
+   // Phase 0 D4 locked the per-orderkey rollup as a documented S2-only
+   // deviation: the orderdate window is parameterised, hoisted out of
+   // the view payload, and applies at *order* granularity. The
+   // per-orderkey map snapshots the FD customer payload from the first
+   // lineitem of each new order; the rolled-up revenue is offered to
+   // the per-customer aggregator only for orders that pass the date
+   // filter. Anti-pattern #30 bound: |per-orderkey map| ≤ |ORDERS|.
+   out.clear();
+
+   Q10QuerySink sink(stats);
+   Q10PerCustomerAggregator agg{};
+   agg.stats = stats;
+   std::unordered_map<Integer, Varchar<25>> nation_cache;
+
+   struct PerOrderState {
+      Numeric                  sum_revenue   = 0;
+      Timestamp                o_orderdate   = 0;
+      Integer                  custkey       = 0;
+      Q10PartialCustomerAgg    cust_snapshot{};
+      bool                     order_seen    = false;
+   };
+   std::unordered_map<Integer, PerOrderState> per_orderkey;
+
+   auto sc = pipeline_view.getScanner();
+   while (auto kv = sc->next()) {
+      const auto& k = kv->first;
+      const auto& v = kv->second;
+      if (stats) stats->view_rows_scanned++;
+      if (stats) stats->lineitems_scanned++;
+
+      // Per-lineitem returnflag filter (Q10's spec-hardcoded predicate;
+      // kept live for view reusability per PLAYBOOK §3.5 step 7).
+      if (v.l_returnflag.data[0] != 'R') continue;
+      if (stats) stats->lineitems_passing_returnflag++;
+
+      auto& st = per_orderkey[k.orderkey];
+      if (!st.order_seen) {
+         st.o_orderdate = v.o_orderdate;
+         st.custkey     = k.custkey;
+         st.cust_snapshot.c_name        = v.c_name;
+         st.cust_snapshot.c_acctbal     = v.c_acctbal;
+         st.cust_snapshot.c_nationkey   = v.c_nationkey;
+         st.cust_snapshot.c_address     = v.c_address;
+         st.cust_snapshot.c_phone       = v.c_phone;
+         st.cust_snapshot.c_comment     = v.c_comment;
+         st.cust_snapshot.customer_seen = true;
+         st.order_seen = true;
+      }
+      st.sum_revenue += v.l_extendedprice * (Numeric{1} - v.l_discount);
+   }
+
+   // Drain the per-orderkey map, applying the orderdate filter at order
+   // granularity (D4) and folding survivors into the per-customer
+   // aggregator.
+   for (auto& [orderkey, st] : per_orderkey) {
+      if (stats) stats->orders_scanned++;
+      if (st.o_orderdate < params.date_lo
+          || st.o_orderdate >= params.date_lo + 90) continue;
+      if (stats) stats->orders_passing_date++;
+      q10_admit_revenue_from_join(st.custkey, st.cust_snapshot,
+                                   st.sum_revenue, agg, stats);
+   }
+
+   q10_finalize_aggregator(agg, nation, nation_cache, sink, stats);
+   sink.finalize(out);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>

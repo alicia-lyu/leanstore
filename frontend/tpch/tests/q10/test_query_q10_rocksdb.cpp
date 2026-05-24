@@ -385,6 +385,13 @@ int main(int argc, char** argv)
              << " d_merged=0x" << d_merged << std::dec
              << " (rows: " << r_base.size() << " vs " << r_merged.size() << ")\n";
 
+   // S2 vs S3 parity (Phase 4b commit 2).
+   bool s2_parity = (d_view == d_merged) && (r_view.size() == r_merged.size());
+   std::cout << (s2_parity ? "[OK]   " : "[FAIL] ") << "S2 vs S3 parity"
+             << " d_view=0x"   << std::hex << d_view
+             << " d_merged=0x" << d_merged << std::dec
+             << " (rows: " << r_view.size() << " vs " << r_merged.size() << ")\n";
+
    auto deferred_line = [](const char* tag, uint64_t d, size_t n,
                            const char* phase) {
       std::cout << "[DEFER] " << tag
@@ -392,10 +399,9 @@ int main(int argc, char** argv)
                 << " rows=" << n
                 << "  (stub; query body lands in Phase 4 " << phase << ")\n";
    };
-   deferred_line("S2 view  ", d_view, r_view.size(), "§7.3");
    deferred_line("S4 hash  ", d_hash, r_hash.size(), "§7.5");
 
-   if (stats_ok && s3_sanity && s1_parity) {
+   if (stats_ok && s3_sanity && s1_parity && s2_parity) {
       return 0;
    }
    if (!stats_ok)   std::cout << "[FAIL] cardinality / sentinel check failed\n";
@@ -403,5 +409,7 @@ int main(int argc, char** argv)
                                  "wrong for SF=1 with validation default\n";
    if (!s1_parity)  std::cout << "[FAIL] S1 digest does not match S3 — base-index "
                                  "scan disagrees with COL group walk\n";
+   if (!s2_parity)  std::cout << "[FAIL] S2 digest does not match S3 — view-scan "
+                                 "with D4 chain disagrees with COL group walk\n";
    return 1;
 }
