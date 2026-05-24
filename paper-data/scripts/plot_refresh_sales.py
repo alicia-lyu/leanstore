@@ -60,13 +60,16 @@ CSV_SCHEMAS = {
         "basename": "refresh_5L_pair_latency",
     },
     "refresh_prewarm9_throughput.csv": {
-        # In-memory prewarm run. CAUTION: ``pair_med_ops`` is the
-        # combined RF1+RF2 ops/sec (≈ 2× the size-stable pair rate),
-        # which double-counts vs DBToaster's separate-phase rates.
-        # Compute pair_us = 1e6/rf1 + 1e6/rf2 so both engines use the
-        # same definition: time for one RF1 op + one RF2 op.
-        "rf1_col": "rf1_med_ops",
-        "rf2_col": "rf2_med_ops",
+        # In-memory prewarm. LeanStore's harness measures the
+        # interleaved RF1+RF2 pair directly per iteration but writes
+        # ``pair_orders_per_s = (rf1_orders + rf2_orders) / pair_time``
+        # — i.e. 2× the pair rate, counting both an insert and a
+        # delete as separate "orders". Convert back to µs/pair via
+        # ``2e6 / pair_med_ops`` so we report the directly-measured
+        # pair latency (no posteriori reconstruction from per-phase
+        # rates, unlike DBToaster which can't measure pairs).
+        "tps_col": "pair_med_ops",
+        "scale": 2e6,  # 2 (orders/pair) × 1e6 (µs/s)
         "unit": "µs / RF pair",
         "basename": "refresh_prewarm9_pair_latency",
     },
