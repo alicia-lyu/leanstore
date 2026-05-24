@@ -32,6 +32,11 @@
 DEFINE_int32(tentative_skip_bytes, 4096, "Tentative skip bytes for smart skipping");
 DEFINE_int32(update_size,     1, "RF1+RF2 batch size (orders per refresh op)");
 DEFINE_int32(refresh_seconds, 15, "Total seconds to run the RF1/RF2 loop");
+DEFINE_bool(prewarm, false,
+            "Scan the entire DB into the buffer pool before the timed RF loop, "
+            "so the measured run is warm (in-memory). Use with a buffer pool "
+            "large enough to hold the footprint (e.g. dram_gib >= image size); "
+            "the prewarm time itself is not measured.");
 
 namespace {
 
@@ -173,6 +178,51 @@ int main(int argc, char** argv)
       tpch.recover_last_ids();
       leanstore::cr::Worker::my().commitTX();
    });
+
+   // Optional prewarm: scan the entire DB so the timed RF loop runs warm
+   // (in-memory), matching an in-memory view engine's resident footprint.
+   // Random RF access alone never warms the footprint within a short run, so
+   // a bigger buffer pool is wasted without this. Not measured.
+   if (FLAGS_prewarm) {
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX();
+         const auto t0 = std::chrono::steady_clock::now();
+         long n = 0, mrows = 0;
+         auto warm = [&](auto& ad, auto key) {
+            ad.scan(key, [&](const decltype(key)&, const auto&) { ++n; return true; },
+                    []() {});
+         };
+         // Base tables the RF path reads (partsupp/customer are the random-access
+         // RF1 bottleneck; orders/lineitem/nation for RF2 + Q5 maintain).
+         warm(partsupp,       partsupp_t::Key{});
+         warm(customer,       customerh_t::Key{});
+         warm(orders,         orders_t::Key{});
+         warm(lineitem,       lineitem_t::Key{});
+         warm(nation,         nation_t::Key{});
+         // Only the active structure's secondary is touched during its run.
+         switch (FLAGS_storage_structure) {
+            case 1:
+               warm(split_orders,   tpch::orders_coli_t::Key{});
+               warm(split_lineitem, tpch::lineitem_col_t::Key{});
+               break;
+            case 2:
+               warm(q3_view, tpch::q3::q3_pipeline_view_t::Key{});
+               warm(q5_view, tpch::q5::q5_pipeline_view_t::Key{});
+               break;
+            case 3: {
+               auto [mbytes, mr] = merged_col.content_bytes_walk();
+               (void)mbytes; mrows = mr; n += mr;
+               break;
+            }
+            case 4: default: break;  // base only
+         }
+         leanstore::cr::Worker::my().commitTX();
+         const double s = std::chrono::duration<double>(
+                              std::chrono::steady_clock::now() - t0).count();
+         std::cout << "prewarm(S" << FLAGS_storage_structure << "): scanned " << n
+                   << " rows (" << mrows << " merged) in " << s << "s\n";
+      });
+   }
 
    tpch::RefreshState<B::Adapter> refresh(tpch);
 
