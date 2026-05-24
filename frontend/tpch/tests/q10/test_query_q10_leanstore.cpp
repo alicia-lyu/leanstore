@@ -167,6 +167,13 @@ int main(int argc, char** argv)
              << " (expected non-zero; got "
              << r_merged.size() << " rows)\n";
 
+   // S1 vs S3 parity (Phase 4b commit 1).
+   bool s1_parity = (d_base == d_merged) && (r_base.size() == r_merged.size());
+   std::cout << (s1_parity ? "[OK]   " : "[FAIL] ") << "S1 vs S3 parity"
+             << " d_base=0x"   << std::hex << d_base
+             << " d_merged=0x" << d_merged << std::dec
+             << " (rows: " << r_base.size() << " vs " << r_merged.size() << ")\n";
+
    auto deferred_line = [](const char* tag, uint64_t d, size_t n,
                            const char* phase) {
       std::cout << "[DEFER] " << tag
@@ -174,11 +181,10 @@ int main(int argc, char** argv)
                 << " rows=" << n
                 << "  (stub; query body lands in Phase 4 " << phase << ")\n";
    };
-   deferred_line("S1 base  ", d_base, r_base.size(), "§7.2");
    deferred_line("S2 view  ", d_view, r_view.size(), "§7.3");
    deferred_line("S4 hash  ", d_hash, r_hash.size(), "§7.5");
 
-   return s3_sanity ? 0 : 1;
+   return (s3_sanity && s1_parity) ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY

@@ -1,13 +1,10 @@
-// Phase 4a commit 1 harness for Q10: loads base tables once, populates all
-// secondaries (split + merged via COL; view still deferred — populate_q10_view
-// lands in Phase 4a commit 2), asserts strict-equality cardinality on splits
-// + merged_col, checks sentinel ordering inside merged_col, reports
-// pipeline_view rows == 0 (deferred to Phase 4a commit 2), runs all four
-// query_by_*. S3 is live (Q10GroupWalkVisitor + TopN(20)); S1/S2/S4 are
-// still Phase-4 stubs. Asserts d_merged != 0 (sanity); reports S1/S2/S4 as
-// [deferred] (NOT failures) while their bodies are pending. Cross-structure
-// parity flips back on once §7.2/§7.3/§7.5 land. Also prints a Q10Stats
-// post-S3 block for accumulator-vs-emit diagnostics.
+// Phase 4b commit 1 harness for Q10: loads base tables once, populates all
+// secondaries (split + merged + Pattern B view), runs all four query_by_*.
+// S3 (Phase 4a) and S1 (Phase 4b commit 1) are live; S2/S4 are still
+// Phase-4 stubs. Asserts d_merged != 0 (sanity), `digest_base == digest_merged`
+// (S1 vs S3 parity), reports S2/S4 as [DEFER]. Cross-structure parity
+// completes once §7.3/§7.5 land. Also prints a Q10Stats post-S3 block for
+// accumulator-vs-emit diagnostics.
 //
 // IMPORTANT: this harness wipes --ssd_path before opening the DB. RocksDB
 // does not cleanly overwrite an existing DB; reusing a populated dir across
@@ -381,6 +378,13 @@ int main(int argc, char** argv)
              << " (expected non-zero; got "
              << r_merged.size() << " rows)\n";
 
+   // S1 vs S3 parity (Phase 4b commit 1) — strict equality on XOR digest.
+   bool s1_parity = (d_base == d_merged) && (r_base.size() == r_merged.size());
+   std::cout << (s1_parity ? "[OK]   " : "[FAIL] ") << "S1 vs S3 parity"
+             << " d_base=0x"   << std::hex << d_base
+             << " d_merged=0x" << d_merged << std::dec
+             << " (rows: " << r_base.size() << " vs " << r_merged.size() << ")\n";
+
    auto deferred_line = [](const char* tag, uint64_t d, size_t n,
                            const char* phase) {
       std::cout << "[DEFER] " << tag
@@ -388,15 +392,16 @@ int main(int argc, char** argv)
                 << " rows=" << n
                 << "  (stub; query body lands in Phase 4 " << phase << ")\n";
    };
-   deferred_line("S1 base  ", d_base, r_base.size(), "§7.2");
    deferred_line("S2 view  ", d_view, r_view.size(), "§7.3");
    deferred_line("S4 hash  ", d_hash, r_hash.size(), "§7.5");
 
-   if (stats_ok && s3_sanity) {
+   if (stats_ok && s3_sanity && s1_parity) {
       return 0;
    }
    if (!stats_ok)   std::cout << "[FAIL] cardinality / sentinel check failed\n";
    if (!s3_sanity)  std::cout << "[FAIL] S3 returned digest 0x0 — empty result is "
                                  "wrong for SF=1 with validation default\n";
+   if (!s1_parity)  std::cout << "[FAIL] S1 digest does not match S3 — base-index "
+                                 "scan disagrees with COL group walk\n";
    return 1;
 }

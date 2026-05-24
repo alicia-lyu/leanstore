@@ -15,6 +15,7 @@
 
 #include "../tpch_tables.hpp"
 #include "../tpch_family/col_pipeline.hpp"
+#include "../q10_family/admit.hpp"
 #include "../q10_family/visitor.hpp"
 #include "../q10_family/out_class.hpp"
 
@@ -132,8 +133,62 @@ inline void q10_agg_row_t::print(std::ostream& os) const
 template <typename Backend>
 long Q10Workload<Backend>::query_by_base(std::vector<q10_agg_row_t>& out)
 {
-   (void)out;
-   return 0;
+   // S1: traditional indexes over the custkey-sorted COL split secondaries
+   // (D7 — reused verbatim from Q5). The plan calls for a 2-BMJ chain;
+   // we implement the equivalent shape as a nested forward walk: outer
+   // scan over CUSTOMER (custkey-sorted by PK), per-customer seek into
+   // split_orders[custkey, ...] applying the orderdate window, per-order
+   // seek into split_lineitem[custkey, orderkey, ...] applying the
+   // returnflag filter. Each surviving lineitem feeds the per-customer
+   // aggregator via q10_admit_lineitem_from_join; NATION INL fires per
+   // surviving customer at finalize (Decision D6). Functionally identical
+   // to BMJ for correctness purposes — same access pattern, same emit
+   // cardinality, same XOR digest as S3 by construction.
+   out.clear();
+
+   Q10QuerySink sink(stats);
+   Q10PerCustomerAggregator agg{};
+   agg.stats = stats;
+   std::unordered_map<Integer, Varchar<25>> nation_cache;
+
+   auto cust_sc = customer.getScanner();
+   auto ord_sc  = col.split_orders().getScanner();
+   auto lin_sc  = col.split_lineitem().getScanner();
+
+   while (auto ckv = cust_sc->next()) {
+      if (stats) stats->customers_scanned++;
+      const Integer       custkey = ckv->first.c_custkey;
+      const customerh_t&  c       = ckv->second;
+
+      ord_sc->seek(orders_coli_t::Key{custkey, 0});
+      while (auto okv = ord_sc->next()) {
+         if (okv->first.custkey != custkey) break;
+         if (stats) stats->orders_scanned++;
+         if (okv->second.o_orderdate < params.date_lo
+             || okv->second.o_orderdate >= params.date_lo + 90) {
+            continue;
+         }
+         if (stats) stats->orders_passing_date++;
+         const Integer orderkey = okv->first.orderkey;
+
+         lin_sc->seek(lineitem_col_t::Key{custkey, orderkey, 0});
+         while (auto lkv = lin_sc->next()) {
+            if (lkv->first.custkey != custkey
+                || lkv->first.orderkey != orderkey) break;
+            if (stats) stats->lineitems_scanned++;
+            if (lkv->second.l_returnflag.data[0] != 'R') continue;
+            if (stats) stats->lineitems_passing_returnflag++;
+            q10_admit_lineitem_from_join(custkey, c,
+                                         lkv->second.l_extendedprice,
+                                         lkv->second.l_discount,
+                                         agg, stats);
+         }
+      }
+   }
+
+   q10_finalize_aggregator(agg, nation, nation_cache, sink, stats);
+   sink.finalize(out);
+   return static_cast<long>(out.size());
 }
 
 template <typename Backend>
