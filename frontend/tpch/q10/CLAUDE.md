@@ -4,22 +4,27 @@
 
 ## Status
 
-**Phase 4a complete (S3 + Pattern B view loader); S1 / S2 / S4
-query bodies pending §7.2 / §7.3 / §7.5.** The bespoke
-`Q10GroupWalkVisitor` (Decision D1) lives in
-`frontend/tpch/q10_family/` together with `Q10QuerySink` (wraps
-canonical `TopNSink<q10_agg_row_t, &q10_agg_row_t::cmp>`),
-`Q10ViewLoadSink`, and `populate_q10_view`. The walker drives both
-S3 (Query mode) and the view loader (ViewLoad mode) via compile-time
-`Q10FilterMode` dispatch — view-vs-walker drift is structurally
-impossible (PLAYBOOK §3.6 Pattern B). SF=1 macOS:
-`test_query_q10_lsm` reports `[OK]` on splits, `[OK]` on merged_col
-per-type breakdown, `[OK]` on sentinel ordering, `[OK]` on
-`pipeline_view rows == |lineitem|` (Pattern B view live), `[OK]` on
-`S3 sanity` (non-zero digest, 20 rows after TopN), and
-`[DEFER]` lines on S1/S2/S4 (stubs pending §7.2/§7.3/§7.5 — NOT
-failures). The S2 view is loaded but `query_by_view` does not yet
-consume it (S2 query body is part of §7.3).
+**Phase 4 complete — all four `query_by_*` paths live; SF=1 macOS
+strict 4-way XOR parity verified.** S3 lands the bespoke
+`Q10GroupWalkVisitor` (D1) on `col_group_walk` plus the canonical
+`Q10QuerySink` wrapping `TopNSink<q10_agg_row_t, &q10_agg_row_t::cmp>`.
+The walker also drives the Pattern B view loader via compile-time
+`Q10FilterMode` dispatch (view-vs-walker drift structurally impossible).
+S1 reads the custkey-sorted COL split secondaries via a nested forward
+scan (functionally equivalent to a 2-BMJ chain — same access pattern,
+same emit cardinality). S2 consumes the pipeline view via the D4
+anomaly chain (returnflag filter → SUM-per-orderkey → orderdate filter
+→ SUM-per-c_custkey). S4 builds PK-only `cust_set` + `orders_set` and
+probes LINEITEM with sorted-seek + per-orderkey-transition INL recovery
+of `c_custkey` and the customer record (Rules 4 / 13). All four paths
+fold lineitems through `q10_admit_lineitem_from_join` /
+`q10_admit_revenue_from_join` into the shared per-customer
+`Q10PerCustomerAggregator`; `q10_finalize_aggregator` resolves
+`n_name` via per-customer NATION INL on PK (D6, ≤25-entry cache) and
+offers each `q10_agg_row_t` to the bounded TopN(20) sink.
+`test_query_q10_lsm` reports `[OK]` across the splits + Pattern B view
++ per-type merged_col breakdown + sentinel ordering + 4-way parity
+(S1 == S2 == S3 == S4 at matching non-zero digest, 20 rows each).
 Experimental scope is the **5L cell only** (largest data, low memory
 pressure — the headline cell per `paper-data/scripts/PLOTTING.md`).
 Not committing to the full SF×DRAM sweep. The invoice-extended
@@ -611,14 +616,21 @@ not a Phase 0 design decision.
     wires it after `col.populate_merged()`; harness asserts
     `pipeline_view rows == |lineitem|` strict.
   - Commit 3 — harness top-3 eyeball print + this doc + RUNS.md.
-- **Phase 4 §7.2** — S1 `query_by_base` via 2-BMJ chain over COL
-  split indexes (D7); per-emit feeds the per-customer aggregator;
-  NATION INL at emit.
-- **Phase 4 §7.3** — S2 `query_by_view` via per-lineitem view scan
-  with the D4 aggregation chain (per-order then per-customer);
-  NATION INL at emit.
-- **Phase 4 §7.5** — S4 `query_by_hash` via D5 build/probe chain;
-  NATION INL at emit.
+- **Phase 4b (complete — three commits, 2026-05-24).** Mints
+  `frontend/tpch/q10_family/admit.hpp` (per-customer aggregator +
+  `q10_admit_lineitem_from_join` / `q10_admit_revenue_from_join` /
+  `q10_finalize_aggregator`) shared across S1 / S2 / S4. All three
+  query bodies funnel surviving lineitems through this helper; NATION
+  INL fires per surviving customer at finalize (D6, cached).
+  - **Commit 1 (§7.2)** — S1 `query_by_base` via nested forward scan
+    over custkey-sorted COL split secondaries (functionally equivalent
+    to a 2-BMJ chain). SF=1 parity verified.
+  - **Commit 2 (§7.3)** — S2 `query_by_view` via the D4 anomaly chain
+    (per-orderkey rollup → orderdate filter → per-customer SUM).
+  - **Commit 3 (§7.5)** — S4 `query_by_hash` via D5 build/probe chain;
+    `cust_set` / `orders_set` PK-only (Rule 4); LINEITEM sorted-seek
+    with per-orderkey-transition INL recovery of `c_custkey` and the
+    customer record (Rule 13). Strict 4-way XOR parity gate flipped on.
 - **Phase 5–8** — strict 4-way XOR parity test (`test_query_q10_{lsm,btree}`);
   CMake + `generate_targets.py` entries; doc refresh + cross-link
   from `frontend/tpch/CLAUDE.md`.

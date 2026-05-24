@@ -181,16 +181,18 @@ int main(int argc, char** argv)
              << " d_merged=0x" << d_merged << std::dec
              << " (rows: " << r_view.size() << " vs " << r_merged.size() << ")\n";
 
-   auto deferred_line = [](const char* tag, uint64_t d, size_t n,
-                           const char* phase) {
-      std::cout << "[DEFER] " << tag
-                << " digest=0x" << std::hex << d << std::dec
-                << " rows=" << n
-                << "  (stub; query body lands in Phase 4 " << phase << ")\n";
-   };
-   deferred_line("S4 hash  ", d_hash, r_hash.size(), "§7.5");
+   // S4 vs S3 parity (Phase 4b commit 3 — final 4-way gate).
+   bool s4_parity = (d_hash == d_merged) && (r_hash.size() == r_merged.size());
+   std::cout << (s4_parity ? "[OK]   " : "[FAIL] ") << "S4 vs S3 parity"
+             << " d_hash=0x"   << std::hex << d_hash
+             << " d_merged=0x" << d_merged << std::dec
+             << " (rows: " << r_hash.size() << " vs " << r_merged.size() << ")\n";
 
-   return (s3_sanity && s1_parity && s2_parity) ? 0 : 1;
+   std::cout << "\n=== Q10Stats post-S4 ===\n";
+   std::cout << "[stat] orders_inl_lookups           = " << s3_stats.orders_inl_lookups << "\n";
+   std::cout << "[stat] customer_inl_lookups         = " << s3_stats.customer_inl_lookups << "\n";
+
+   return (s3_sanity && s1_parity && s2_parity && s4_parity) ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY

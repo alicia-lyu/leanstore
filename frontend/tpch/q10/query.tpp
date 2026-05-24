@@ -11,6 +11,7 @@
 #include <gflags/gflags.h>
 #include <ostream>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "../tpch_tables.hpp"
@@ -295,8 +296,99 @@ long Q10Workload<Backend>::query_by_merged(std::vector<q10_agg_row_t>& out)
 template <typename Backend>
 long Q10Workload<Backend>::query_by_hash(std::vector<q10_agg_row_t>& out)
 {
-   (void)out;
-   return 0;
+   // S4: HashJoin chain over base tables only — PK-only builds + sorted-seek
+   // lineitem probe + INL recovery at orderkey transitions (Decisions D5
+   // + D6, CONVENTIONS Rules 4 / 13). Mirrors Q5 S4 with the per-customer
+   // predicate dropped (Q10 has none — cust_set is just the full PK set).
+   //
+   //   (1) cust_set   = {c_custkey from CUSTOMER scan}     (Rule 4)
+   //   (2) orders_set = {o_orderkey from ORDERS scan filtered by
+   //                     orderdate window + o_custkey ∈ cust_set}
+   //   (3) Sequential LINEITEM probe with seek-on-miss to {K+1, 0};
+   //       per orderkey transition recover c_custkey via orders.lookup1
+   //       (Rule 13) + customer record via customer.lookup1; cache
+   //       across the ~4 lineitems sharing the order. Apply returnflag
+   //       filter; feed q10_admit_lineitem_from_join. NATION INL on PK
+   //       fires per surviving customer at finalize (D6).
+   out.clear();
+
+   Q10QuerySink sink(stats);
+   Q10PerCustomerAggregator agg{};
+   agg.stats = stats;
+   std::unordered_map<Integer, Varchar<25>> nation_cache;
+
+   // (1) cust_set — Q10 has no per-customer predicate, so this is just the
+   // full c_custkey PK set (Rule 4: PK-only, no FD payload).
+   std::unordered_set<Integer> cust_set;
+   {
+      auto sc = customer.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->customers_scanned++;
+         cust_set.insert(kv->first.c_custkey);
+      }
+   }
+
+   // (2) orders_set — orderdate window + cust_set membership; PK-only.
+   std::unordered_set<Integer> orders_set;
+   {
+      auto sc = orders.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->orders_scanned++;
+         const Timestamp od = kv->second.o_orderdate;
+         if (od < params.date_lo || od >= params.date_lo + 90) continue;
+         if (cust_set.find(kv->second.o_custkey) == cust_set.end()) continue;
+         if (stats) stats->orders_passing_date++;
+         orders_set.insert(kv->first.o_orderkey);
+      }
+   }
+
+   // (3) Lineitem sorted-seek probe with per-orderkey INL recovery.
+   {
+      auto sc = lineitem.getScanner();
+      Integer    cached_ok      = -1;
+      Integer    cached_custkey = 0;
+      customerh_t cached_cust{};
+
+      sc->seek(typename lineitem_t::Key{1, 0});
+
+      while (auto kv = sc->next()) {
+         if (stats) stats->lineitems_scanned++;
+         const Integer ok = kv->first.l_orderkey;
+
+         if (orders_set.count(ok) == 0) {
+            sc->seek(typename lineitem_t::Key{ok + 1, 0});
+            continue;
+         }
+
+         if (ok != cached_ok) {
+            // Per-orderkey-transition INL recovery (Rule 13). Both
+            // lookups must succeed — orders_set membership guarantees
+            // the ORDERS row exists, and cust_set membership above
+            // guarantees the CUSTOMER row exists.
+            Integer custkey = 0;
+            orders.lookup1(typename orders_t::Key{ok},
+                           [&](const orders_t& o) { custkey = o.o_custkey; });
+            if (stats) ++stats->orders_inl_lookups;
+            customer.lookup1(typename customerh_t::Key{custkey},
+                             [&](const customerh_t& c) { cached_cust = c; });
+            if (stats) ++stats->customer_inl_lookups;
+            cached_ok      = ok;
+            cached_custkey = custkey;
+         }
+
+         if (kv->second.l_returnflag.data[0] != 'R') continue;
+         if (stats) stats->lineitems_passing_returnflag++;
+
+         q10_admit_lineitem_from_join(cached_custkey, cached_cust,
+                                      kv->second.l_extendedprice,
+                                      kv->second.l_discount,
+                                      agg, stats);
+      }
+   }
+
+   q10_finalize_aggregator(agg, nation, nation_cache, sink, stats);
+   sink.finalize(out);
+   return static_cast<long>(out.size());
 }
 
 }  // namespace tpch::q10

@@ -1,10 +1,7 @@
-// Phase 4b commit 1 harness for Q10: loads base tables once, populates all
-// secondaries (split + merged + Pattern B view), runs all four query_by_*.
-// S3 (Phase 4a) and S1 (Phase 4b commit 1) are live; S2/S4 are still
-// Phase-4 stubs. Asserts d_merged != 0 (sanity), `digest_base == digest_merged`
-// (S1 vs S3 parity), reports S2/S4 as [DEFER]. Cross-structure parity
-// completes once §7.3/§7.5 land. Also prints a Q10Stats post-S3 block for
-// accumulator-vs-emit diagnostics.
+// Phase 4b complete harness for Q10: loads base tables, populates all
+// secondaries (split + merged + Pattern B view), runs all four query_by_*
+// paths, and asserts strict 4-way XOR parity (S1 == S2 == S3 == S4).
+// Prints post-S3 Q10Stats + post-S4 INL diagnostics.
 //
 // IMPORTANT: this harness wipes --ssd_path before opening the DB. RocksDB
 // does not cleanly overwrite an existing DB; reusing a populated dir across
@@ -392,16 +389,21 @@ int main(int argc, char** argv)
              << " d_merged=0x" << d_merged << std::dec
              << " (rows: " << r_view.size() << " vs " << r_merged.size() << ")\n";
 
-   auto deferred_line = [](const char* tag, uint64_t d, size_t n,
-                           const char* phase) {
-      std::cout << "[DEFER] " << tag
-                << " digest=0x" << std::hex << d << std::dec
-                << " rows=" << n
-                << "  (stub; query body lands in Phase 4 " << phase << ")\n";
-   };
-   deferred_line("S4 hash  ", d_hash, r_hash.size(), "§7.5");
+   // S4 vs S3 parity (Phase 4b commit 3 — final 4-way gate).
+   bool s4_parity = (d_hash == d_merged) && (r_hash.size() == r_merged.size());
+   std::cout << (s4_parity ? "[OK]   " : "[FAIL] ") << "S4 vs S3 parity"
+             << " d_hash=0x"   << std::hex << d_hash
+             << " d_merged=0x" << d_merged << std::dec
+             << " (rows: " << r_hash.size() << " vs " << r_merged.size() << ")\n";
 
-   if (stats_ok && s3_sanity && s1_parity && s2_parity) {
+   // Post-S4 INL diagnostics — bumped during S4's per-orderkey-transition
+   // recovery (Rule 13). Bound: orders_inl_lookups ≤ surviving orders,
+   // customer_inl_lookups ≤ surviving orders (same site).
+   std::cout << "\n=== Q10Stats post-S4 ===\n";
+   std::cout << "[stat] orders_inl_lookups           = " << s3_stats.orders_inl_lookups << "\n";
+   std::cout << "[stat] customer_inl_lookups         = " << s3_stats.customer_inl_lookups << "\n";
+
+   if (stats_ok && s3_sanity && s1_parity && s2_parity && s4_parity) {
       return 0;
    }
    if (!stats_ok)   std::cout << "[FAIL] cardinality / sentinel check failed\n";
@@ -411,5 +413,7 @@ int main(int argc, char** argv)
                                  "scan disagrees with COL group walk\n";
    if (!s2_parity)  std::cout << "[FAIL] S2 digest does not match S3 — view-scan "
                                  "with D4 chain disagrees with COL group walk\n";
+   if (!s4_parity)  std::cout << "[FAIL] S4 digest does not match S3 — hash-join "
+                                 "chain disagrees with COL group walk\n";
    return 1;
 }

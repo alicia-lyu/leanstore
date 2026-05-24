@@ -71,6 +71,7 @@ struct Q10Stats {
    long view_rows_scanned             = 0;
    long nation_inl_lookups            = 0;  // per-customer NATION PK probes (D6)
    long customer_inl_lookups          = 0;  // S4 record-assembly recoveries
+   long orders_inl_lookups            = 0;  // S4 per-orderkey-transition recoveries
 };
 
 // ---------------------------------------------------------------------------
