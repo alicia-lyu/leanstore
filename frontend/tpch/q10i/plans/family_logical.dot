@@ -1,0 +1,131 @@
+// Q10I family logical plan — shared by S1, S2, S3.
+//
+// Q10I extends Q10 with a per-lineitem INVOICE dimension probe via the
+// schema's existing `l_invoicekey → i_invoicekey` link.  INVOICE
+// contributes only `i_status` downstream; that status routes each
+// surviving return lineitem's revenue into one of three partial
+// aggregates per customer (paid / open / late) alongside the total
+// `return_revenue`.
+//
+// Departs from Calcite's vanilla Q10 plan in three ways, mirroring the
+// Q10 / Q5 COL-family treatment plus the Q5I per-lineitem invoice
+// pattern:
+//
+//   1. Pipeline sort key is CUSTKEY, not ORDERKEY.  ORDERS and LINEITEM
+//      secondaries are extended with the custkey FD (orders key
+//      `(custkey, orderkey)`, lineitem key
+//      `(custkey, orderkey, linenumber)`) so the COLI MI's natural sort
+//      key is custkey.  Per OPERATORS.md §1, the family logical plan
+//      must match the MI's natural sort key.
+//
+//   2. NATION attaches as an **index nested-loop join** (Rule 13), not
+//      as an in-memory dimension subtree.  Q10I has no filter on
+//      NATION (no region clause), so a nation_set hashset would be
+//      degenerate (all 25 rows).  Across all four storage structures,
+//      `n_name` is resolved by a per-customer point lookup on the
+//      NATION primary index at emit time.  No nation_set, no
+//      nation_name_map, no pre-materialised name array.  (See memory
+//      `feedback-nation-lookup-pattern`.)
+//
+//   3. INVOICE is a **per-lineitem dimension probe**, not a sibling
+//      sub-aggregate.  Each surviving return lineitem looks up its
+//      linked invoice exactly once via
+//      `l_invoicekey = i_invoicekey` and reads `i_status`.  The
+//      partition into paid/open/late is at the aggregator, NOT a
+//      filter.  (Q10I is therefore NOT §3.1.2 in the strict sense —
+//      no scalar per-customer reduction of invoice.  It IS framing #1
+//      with an inlined per-lineitem dimension probe.  Anti-pattern
+//      #27 disclaimer: do not import "no sibling shortcut" wording.)
+//
+// Filter pushdown (parameterised filters never baked into secondaries):
+//
+//   • o_orderdate ∈ [:d, :d + 3mo)  → fused with TableScan(ORDERS)
+//   • l_returnflag = 'R'            → fused with TableScan(LINEITEM)
+//                                      (spec-hardcoded but kept live for
+//                                      view reusability)
+//   • i_status ∈ {'P','O','L'}      → partition key at aggregator,
+//                                      NOT a filter
+//   • l_extendedprice * (1-l_discount) → per-lineitem accumulator input
+//
+// AGGREGATION SHAPE (Decision D10, S2-relevant): the GROUP BY key is
+// c_custkey plus 7 functionally-dependent customer/nation columns.
+// Because o_orderdate is hoisted out of any secondary and applies at
+// **order** granularity, the post-pipeline operator chain MUST roll
+// lineitems up to per-order revenue first, then prune orders by the
+// orderdate filter, then aggregate qualifying orders per customer.
+// In S3 the per-order step is degenerate (the walker only admits
+// lineitems for orders that already passed `on_order`).  In S1/S2/S4
+// the per-order step is materialised.
+//
+// TopN(20) sits OUTSIDE the pipeline.  Decision D5 (S3 only) feeds the
+// bounded sink incrementally during the walk so the per-customer
+// intermediate vector never materialises in full (~150K customers at
+// SF=1); logically the shape here is unchanged.
+//
+// The four partial aggregates produced per customer:
+//
+//   paid_returns  = SUM(revenue) where i_status = 'P'
+//   open_returns  = SUM(revenue) where i_status = 'O'
+//   late_returns  = SUM(revenue) where i_status = 'L'
+//   return_revenue = SUM(revenue)                   (parity invariant:
+//                                                    paid + open + late
+//                                                    == return_revenue)
+
+digraph {
+  rankdir=BT;
+
+  // Logical joins (Rule 12):
+  //   #1 CUSTOMER ⋈ ORDERS   on c_custkey   = o_custkey
+  //   #2 ORDERS   ⋈ LINEITEM on o_orderkey  = l_orderkey
+  //   #3 LINEITEM ⋈ INVOICE  on l_invoicekey = i_invoicekey
+  //      — per-lineitem probe; INVOICE contributes i_status only
+  //   #4 CUSTOMER ⋈ NATION   on c_nationkey = n_nationkey
+  //      — lowered to per-customer INL on NATION PK (Rule 13)
+
+  // ─────────── Inside pipeline (custkey-sorted chain) ───────────
+  s_cust [label="TableScan(CUSTOMER)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ [:d, :d+3mo))",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_returnflag = 'R')",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_inv  [label="TableScan(INVOICE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  joinB [label="#2 MergeJoin (inner)\nORDERS ⋈ LINEITEM\n  on (custkey, orderkey)\nstill custkey-sorted (FD via parent);\norders_sec: (custkey, orderkey)\nlineitem_sec: (custkey, orderkey, linenumber)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  joinA [label="#1 MergeJoin (inner)\nCUSTOMER ⋈ <ord-line>\n  on custkey\nsorted on custkey;\ncustomer-row payload preserved\n  (c_custkey, c_name, c_acctbal,\n   c_address, c_phone, c_comment,\n   c_nationkey)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  joinI [label="#3 IndexNL / HashJoin (inner)\n<col-chain> ⋈ INVOICE\n  on l_invoicekey = i_invoicekey\nINVOICE contributes i_status only;\nper-lineitem probe (one INVOICE\nrow per surviving lineitem)",
+         shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+
+  // ─────────── Per-order then per-customer aggregation (D10) ───────────
+  agg_o [label="SortedAggregate per orderkey\n  rev_order_paid = SUM(rev) where i_status='P'\n  rev_order_open = SUM(rev) where i_status='O'\n  rev_order_late = SUM(rev) where i_status='L'\n  rev_order      = SUM(rev)\n  carries custkey + customer payload\n  forward (FD via parent)",
+         shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+  agg_c [label="HashAggregate per c_custkey\n  paid_returns   = SUM(rev_order_paid)\n  open_returns   = SUM(rev_order_open)\n  late_returns   = SUM(rev_order_late)\n  return_revenue = SUM(rev_order)\n  carries the 6 FD customer columns\n  (c_name, c_acctbal, c_address,\n   c_phone, c_comment, c_nationkey)",
+         shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── NATION attachment: INL on PK (D9) ───────────
+  inl_n [label="#4 INL-Join NATION\n  probe.c_nationkey =\n    NATION.PK(n_nationkey)\n→ attaches n_name to each\n  per-customer aggregate row\n(no nation_set; no in-memory map)",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  topn [label="TopN(20, return_revenue DESC)\n[partial std::sort or bounded heap;\n result is at most 20 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges (chain) ───────────
+  s_ord  -> joinB [label="0"];
+  s_lin  -> joinB [label="1"];
+
+  s_cust -> joinA [label="0"];
+  joinB  -> joinA [label="1"];
+
+  joinA  -> joinI [label="0 (probe)"];
+  s_inv  -> joinI [label="1 (build, i_status only)"];
+
+  joinI -> agg_o;
+  agg_o -> agg_c;
+  agg_c -> inl_n;
+  inl_n -> topn;
+
+}

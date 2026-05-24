@@ -1,12 +1,50 @@
-# Q10I: Returned Item Reporting × Customer Payment Behaviour
+# Q10I: Returned Item Reporting × Return-Payment Status
+
+**Reading guide**: For SQL and plan descriptions, read §TPC-H Definition
+and §Plan Descriptions. For implementation status, read §Implementation
+Phases. For OutClass / wildcard / latent-assumption details, see
+`../CONVENTIONS.md`. Skip the rest unless reconstructing a design
+decision or adding a new storage structure.
 
 ## Status
 
-Design-doc only; skeleton and bodies pending Q3I Phase 3 completion.
+Phase 0 complete (this commit): design doc + 3 DOT plans landed. No
+`.hpp` / `.cpp` / `.tpp` for Q10I; skeleton + bodies pending. Paper
+scope: **5L cell only** (headline cell). Pair-fates with Q10 — the
+paper story needs both, neither alone is coherent. See §Contingency
+for the design-only fallback if Phase 1+ stalls.
+
+## Sibling Docs
+
+Every non-`CLAUDE.md` Markdown in `q10i/` and `q10i/plans/` (the latter
+has no `CLAUDE.md`; indexed here as the nearest ancestor). Read each on
+the trigger described:
+
+- [`plans/family_logical.dot`](plans/family_logical.dot) — **shared
+  logical plan for S1, S2, S3**: COL chain × INVOICE per-lineitem
+  probe; partitioned aggregate by linked invoice's `i_status`.
+- [`plans/family_s3_physical.dot`](plans/family_s3_physical.dot) —
+  **S3 physical specialisation** over the COLI MI (CONVENTIONS Rule 10
+  Pattern B for the invoice prefix).
+- [`plans/family_s4_baseline.dot`](plans/baseline_s4.dot) — **S4
+  baseline** (HashJoin chain with INVOICE as its own HashJoin
+  relation; PK-only builds per Rule 4, chained INL recovery per
+  Rule 13).
+- [`RUNS.md`](RUNS.md) — perf-run ledger; appended after every Linux
+  sweep.
+
+Read [`../q10/CLAUDE.md`](../q10/CLAUDE.md) for the vanilla Track-1
+sibling that Q10I extends. Read [`../q5i/CLAUDE.md`](../q5i/CLAUDE.md)
+for the closest Track-2 cousin — Q5I established the per-lineitem
+invoice-status partition pattern (Pattern B view loader, COLI walker
+with `invoice_buf`); Q10I reuses that walker shape with Q10's
+per-customer top-20 post-pipeline.
 
 ---
 
-## Original TPC-H Q10 (§2.4.10 — "Returned Item Reporting")
+## TPC-H Definition
+
+### Original Q10 (§2.4.10 — "Returned Item Reporting")
 
 ```sql
 SELECT  c_custkey, c_name,
@@ -18,138 +56,455 @@ WHERE   c_custkey   = o_custkey
   AND   o_orderdate >= ':d'
   AND   o_orderdate <  ':d' + INTERVAL '3' MONTH
   AND   l_returnflag = 'R'
-  AND   c_nationkey = n_nationkey
-GROUP BY c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment
-ORDER BY revenue DESC;
+  AND   c_nationkey  = n_nationkey
+GROUP BY c_custkey, c_name, c_acctbal, c_phone, n_name,
+         c_address, c_comment
+ORDER BY revenue DESC
+LIMIT 20;
 ```
 
-(The official query is run with `LIMIT 20` for top-20 customers.)
-
-### Substitution Parameters
-
-| Parameter | Domain | Description |
-|-----------|--------|-------------|
-| `:d` | First day of a month between 1993-02-01 and 1995-01-01 | Start of the 3-month order window |
-
-**Validation values**: DATE = 1993-10-01.
-
-### Real-world meaning of the original
-
-Q10 finds the customers who have returned the most goods (by
-returned-lineitem revenue) over a 3-month window, along with their
-contact info. The intent is operational customer service: if a
-customer is returning a lot of merchandise, the account manager
-should be flagged so they can reach out and understand what's going
-wrong (product quality, mis-shipments, fraud, dissatisfaction with
-fit, etc.). The output drives a "follow up with these customers"
-action list, not a strategic decision.
-
-## Q10I — Invoice-Extended Variant
+### Q10I — Invoice-Extended Variant
 
 ```sql
 SELECT  c_custkey, c_name,
+        SUM(CASE WHEN i_status = 'P' THEN l_extendedprice * (1 - l_discount)
+                 ELSE 0 END) AS paid_returns,
+        SUM(CASE WHEN i_status = 'O' THEN l_extendedprice * (1 - l_discount)
+                 ELSE 0 END) AS open_returns,
+        SUM(CASE WHEN i_status = 'L' THEN l_extendedprice * (1 - l_discount)
+                 ELSE 0 END) AS late_returns,
         SUM(l_extendedprice * (1 - l_discount)) AS return_revenue,
-        SUM(CASE WHEN i_status = 'O' THEN i_totaldue ELSE 0 END) AS open_balance,
-        SUM(CASE WHEN i_status = 'L' THEN i_totaldue ELSE 0 END) AS late_balance,
         c_acctbal, n_name, c_address, c_phone, c_comment
 FROM    customer, orders, lineitem, invoice, nation
 WHERE   c_custkey    = o_custkey
   AND   l_orderkey   = o_orderkey
-  AND   i_custkey    = c_custkey
+  AND   l_invoicekey = i_invoicekey    -- the new join (D1)
   AND   o_orderdate >= ':d'
   AND   o_orderdate <  ':d' + INTERVAL '3' MONTH
   AND   l_returnflag = 'R'
   AND   c_nationkey  = n_nationkey
-GROUP BY c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment
-ORDER BY return_revenue DESC;
+GROUP BY c_custkey, c_name, c_acctbal, c_phone, n_name,
+         c_address, c_comment
+ORDER BY return_revenue DESC
+LIMIT 20;
 ```
 
-(`LIMIT 20` retained.)
+The total `return_revenue` is preserved as a sanity column: the three
+partial sums must add to it (parity invariant — see Phase-3 check).
+
+### Substitution Parameters
+
+| Parameter | Domain | Description | Validation |
+|-----------|--------|-------------|------------|
+| `:d` | First day of a month in [1993-02-01, 1995-01-01] | Start of the 3-month order window | `1993-10-01` |
+
+Same as Q10. 24 valid months total (Feb 1993 → Jan 1995 inclusive).
+
+**Selectivity notes**: returnflag='R' selects ~25% of lineitems
+(generator-determined). A 3-month order window covers ~1/24 of orders
+in the [1992, 1998] generated range. `i_status` distribution is
+generator-set (~25% paid, ~70% open, ~5% late at SF=1 per the data
+generator). At SF=15 the top-20 result set is comfortably stable.
+
+---
+
+## Motivation
 
 ### What the extension adds
 
-The new join is `i_custkey = c_custkey` — Invoice attaches as a
-sibling of Orders under Customer, **not** as a child of Lineitem.
-This is intentional: Q10's per-customer aggregate is the natural
-shape, and we want to roll up that customer's *entire* invoice
-exposure (not just invoices tied to the returned lineitems in the
-window) alongside their return revenue.
+Q10 surfaces customers returning the most goods over a 3-month window.
+Q10I overlays the **payment status of the linked invoice for each
+returned lineitem** — partitioning the per-customer return revenue
+into three buckets:
 
-Two new aggregates per customer:
+- `paid_returns` (`i_status = 'P'`) — return revenue on items already
+  paid for; the company **owes a refund**.
+- `open_returns` (`i_status = 'O'`) — return revenue on items with
+  outstanding invoices; **suppress the upcoming bill**.
+- `late_returns` (`i_status = 'L'`) — return revenue on items the
+  customer was past-due on; **escalation-worthy** (disputing AND
+  not paying).
 
-- `open_balance` — total `i_totaldue` across the customer's
-  outstanding invoices (`i_status = 'O'`).
-- `late_balance` — total across past-due invoices (`i_status = 'L'`).
+`return_revenue` (the total) is preserved as the sort key for the
+top-20 plus a parity-check column.
 
-The original `return_revenue` is preserved unchanged.
+### Real-world meaning
 
-### Real-world meaning of the extension
+Q10 says *who needs a phone call*. Q10I says *who needs which kind of
+phone call and what the financial action item is*. Three operationally
+distinct cases the manager would otherwise cross-reference manually:
 
-Q10 surfaces customers who return a lot. Q10I surfaces customers
-who return a lot **and** are slow to pay — a strict superset of
-warning signs for the account manager.
+- **High `paid_returns`**: refund flow. Process refunds, follow up on
+  product-quality issues.
+- **High `open_returns`**: billing flow. Hold or reverse the pending
+  invoice before it issues.
+- **High `late_returns`**: collections flow. Customer is both
+  withholding payment AND returning goods — possible fraud, chronic
+  dispute, or churn risk; escalate before further extending credit.
 
-Three patterns in the result are interesting:
+### Why Q10I is a natural COLI showcase
 
-- **High returns, low open/late balance**: probably a legitimately
-  unhappy customer; the operational response is product quality
-  follow-up, not credit action.
-- **High returns, high late balance**: classic "buy, complain,
-  withhold payment" pattern — possible fraud or chronic disputed-
-  invoice behaviour. The account manager should escalate to
-  collections, not customer success.
-- **High returns, high open (not late) balance**: customer is
-  buying actively and returning actively; payments are still
-  flowing. Lower priority than the previous pattern.
-
-The extension turns Q10 from a "who needs a phone call" report
-into a triaged "who needs which kind of phone call" report, by
-combining returns telemetry with payment-status telemetry — two
-independent signals that the operational team would otherwise have
-to cross-reference manually.
-
-## Why Q10I is a natural COLI showcase
-
-- **C+O+L footprint**: Q10 already joins Customer, Orders, Lineitem
-  (Nation joins as a small hash side, like Q5).
-- **§3.1.2 sibling pattern, in its purest form**: Q10I is the
-  cleanest demonstration of the sibling property in the TPC-H
-  suite. The per-customer roll-up is the dominant cost, and both
-  Customer and Invoice are keyed under custkey — so the COLI MI
-  reads each customer's row, all their invoices, all their orders,
-  and all their lineitems in a single contiguous scan with no
-  cross-table seeking.
-- **Different aggregation shape than Q3I/Q5I**: Q3I aggregates per
-  order (top-N orderkeys), Q5I aggregates per nation. Q10I
-  aggregates per customer, which means the result cardinality
-  (~150K customers at SF=1 before the LIMIT 20) is the largest of
-  the three — the post-aggregate sort+top-20 cost is non-trivial
+- **C+O+L+I footprint**: Q10 already joins Customer × Orders ×
+  Lineitem; adding INVOICE via the existing `l_invoicekey` link fills
+  out the COLI MI's full 4-table set without changing the operator
+  shape.
+- **§3.1.2-ish per-lineitem dimension probe**: invoice contributes
+  exactly one row per surviving lineitem via `l_invoicekey =
+  i_invoicekey`. Inside the COLI MI's custkey group, all invoices for
+  the customer scan **before** the first lineitem (sentinel ordering
+  `customer=1 < invoice=2 < orders=3 < lineitem=4`), so the walker
+  builds `invoice_buf[invoicekey → i_status]` during `on_invoice` and
+  looks up `i_status` per surviving lineitem at `on_lineitem` —
+  CONVENTIONS Rule 10 Pattern B, the same shape Q5I uses.
+- **Per-customer top-20 cardinality**: ~150K customers at SF=1 before
+  the LIMIT 20, so the post-aggregate sort+top-N step is non-trivial
   and the comparison across S1–S4 must include sort time honestly.
-- **Two independent payment columns**: `open_balance` and
-  `late_balance` are aggregated separately from `return_revenue`,
-  exercising the COLI scan's ability to feed multiple accumulators
-  per record-type variant in one pass.
+  Distinguishes Q10I from Q3I (per-order top-N) and Q5I (per-nation
+  aggregate).
+- **Four independent partial aggregates**: routed by `i_status` on the
+  linked invoice — exercises the walker's ability to feed multiple
+  accumulators per record-type variant in one pass without inflating
+  the per-row work.
 
-## Open questions before bodies land
+---
 
-1. **Customer set vs. invoice set**: the SQL above invoices ALL of
-   a customer's invoices (no date filter on `i_invoicedate`).
-   Should there be one? Capping at the same 3-month window would
-   make the metric "open balance accrued during the return window"
-   instead of "total open exposure to this customer". The latter
-   is more operationally useful (the manager wants the full
-   picture before calling); confirm with the user.
-2. **LIMIT 20 cutoff and tie-breaking**: same TPC-H spec rule as
-   Q10 (deterministic by sort columns).
-3. **`open + late` zero customers**: customers with no outstanding
-   or late invoices will have both new columns at 0. The data
-   generator emits 25%+5% O/L per invoice, so almost every
-   customer will have *some* exposure at SF=1; verify, since a
-   degenerate all-zeros result would defeat the parity test
-   (similar to the Q12 degenerate-shape concern documented in
-   `q12/CLAUDE.md`).
-4. **Group-by column count**: Q10's GROUP BY is fat (8 columns).
-   Adding the two new aggregates doesn't change the GROUP BY,
-   which is fortunate — but it means the per-row aggregator state
-   is also fat, and S2 (materialised view) would be paying for it
-   redundantly per qualifying lineitem.
+## Cardinality Structure
+
+Q10I uses framing #1 (pure-hierarchical along the COL chain) per
+PLAYBOOK §3.5 step 4, with INVOICE attached as a **per-lineitem
+dimension probe** (one INVOICE row per surviving lineitem via
+`l_invoicekey`). It is *not* §3.1.2 in the strict sense (no sibling
+sub-aggregate reduces to a per-customer scalar) and *not* §3.1.3 in
+the genuine-tree sense (INVOICE does not co-locate as a sub-hierarchy
+contributing M:N rows). The MI benefit is hierarchical-prefix scan
+locality on the COL chain *plus* invoice co-location at the custkey
+level so the per-lineitem invoice lookup is a buffered map probe (no
+B-tree seek per lineitem in S3).
+
+Anti-pattern #27 disclaimer: do not import "no sibling shortcut"
+wording — there is no sibling sub-aggregate here. The invoice arm
+emits one row per surviving lineitem, not one row per customer.
+
+C→O→L cardinality (SF=1 reference):
+
+- C → O: 1:N, ~10 orders per customer.
+- O → L: 1:N, ~4 lineitems per order.
+- Total chain before filters: ~6M lineitems.
+- After orderdate filter (1/24 ≈ 4%): ~250K.
+- After returnflag='R' (~25%): ~60K surviving return lineitems.
+
+Invoice arm (per lineitem):
+
+- Each lineitem carries `l_invoicekey` → exactly one INVOICE row.
+- Each customer has ~20 invoices total (2 invoices/order × 10
+  orders/customer).
+- Per surviving lineitem: one `invoice_buf` map lookup → `i_status`
+  → route revenue.
+
+NATION: 25 rows, attaches as a per-customer INL on PK at emit time —
+no in-memory map, no `nation_set` (Q10I has no region filter). See D9.
+
+---
+
+## Storage Structure Options
+
+| S | Strategy | Secondary structure | Join strategy | Params baked in |
+|---|----------|---------------------|---------------|-----------------|
+| S1 | Split indexes + BinaryMergeJoin | Custkey-sorted secondaries: `orders_coli_t`, `lineitem_coli_t` (widened per D14); per-lineitem seek on `invoice_coli_t[(custkey, l_invoicekey)]` | 2-BMJ chain C⋈O⋈L on custkey-extended prefix; per-emit invoice seek; NATION INL at emit | none |
+| S2 | Pipeline view + sequential scan | `q10i_pipeline_view_t` keyed by `(custkey, orderkey, linenumber)`; `i_status` FD-attached at view-load time; wide customer cols FD-attached | Sequential view scan → per-order SUM (D10) → orderdate filter → per-customer SUM (4-way partition by i_status) → NATION INL → TopN(20) | none (predicate-hoisted) |
+| S3 | COLI MI (4-table merged index) | `COLIPipeline` — `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | Sequential group-walk: invoice prefix → `invoice_buf` (Rule 10 Pattern B); per-order date filter; per-lineitem `i_status` lookup → 4 partial aggregates; incremental top-20 emit at on_group_end | none |
+| S4 | Hash join baseline | Base tables only | C HashBuild → date-filtered O probe → C⋈O; HashBuild on C⋈O.o_orderkey → returnflag-filtered L probe; HashJoin C⋈O⋈L ⋈ INVOICE on `l_invoicekey = i_invoicekey`; per-customer HashAggregate of 4 partial sums; NATION INL at emit; TopN(20) | none |
+
+**S5 deliberately omitted** (D3). Q10I has no parameter-independent
+aggregate to bake: every per-row contribution flows through
+`l_extendedprice * (1 - l_discount)` gated by the parameterised
+`o_orderdate` window. Per-customer per-status pre-totals over the
+customer's full history don't compose with a query-time window filter
+(can't subtract out-of-window contributions from a baked aggregate).
+Paper axis = S1–S4 only. **Differs from Q3I**: Q3I has an
+implemented-but-deferred S5 (aCOLI baking `pre_open_due`); Q10I just
+doesn't ship one.
+
+---
+
+## Plan Descriptions
+
+**Logical joins (Rule 12)** — shared across all four storage
+structures:
+
+- **#1** `CUSTOMER ⋈ ORDERS on c_custkey = o_custkey`
+- **#2** `ORDERS ⋈ LINEITEM on o_orderkey = l_orderkey`
+- **#3** `LINEITEM ⋈ INVOICE on l_invoicekey = i_invoicekey`
+  — per-lineitem dimension probe; INVOICE contributes only
+  `i_status` downstream
+- **#4** `CUSTOMER ⋈ NATION on c_nationkey = n_nationkey`
+  — lowered to per-customer INL on NATION PK (Rule 13); no
+  in-memory map
+
+S3 fuses #1, #2, #3 into the single `coli_group_walk` visitor; #4
+runs at emit time. S1 lowers #1+#2 as a 2-BMJ chain over custkey-
+sorted secondaries plus a per-emit invoice seek for #3; #4 at emit.
+S2 reads C×O×L pre-materialised from the view (with #3 already
+resolved at view-load); #4 at emit. S4 realises #1+#2 as PK-only set
+builds (Rule 4) + INL recovery (Rule 13), #3 as its own HashJoin
+relation with PK-only invoice build + INL `i_status` recovery, #4 at
+emit.
+
+### How the four approaches differ
+
+**S3 (COLI MI + COLIGroupWalk)** is the tightest expression. Within
+each custkey group, the walker sees `customer → invoice* → (order →
+lineitem*)+` in byte-lex order. `on_invoice` builds
+`invoice_buf[invoicekey → i_status]` (Pattern B Rule 10) so by the
+time `on_lineitem` fires, every surviving lineitem's `i_status` is a
+local hashmap lookup. `on_order` applies the orderdate filter;
+`on_lineitem` applies returnflag, looks up `i_status`, routes revenue
+into the correct partition, and always adds to `return_revenue`. At
+`on_group_end`, finalise the four sums for the customer, resolve
+`n_name` via NATION INL on PK, and offer to a bounded top-20 sink.
+
+**S1 (split secondaries + 2-BMJ chain + per-emit invoice seek)** runs
+the same logical plan as S3 over three custkey-sorted streams plus a
+per-emit invoice seek. BMJ #1 joins `customerh_t ⋈ orders_coli_t` on
+custkey; BMJ #2 joins the BMJ-#1 output ⋈ `lineitem_coli_t` on
+`(custkey, orderkey, linenumber)`. Each emitted lineitem seeks
+`invoice_coli_t[(custkey, l_invoicekey)]` via its custkey-prefixed
+key (custkey already in hand from BMJ #1) and reads `i_status`. The
+post-pipeline aggregator chain is identical to S3.
+
+**S2 (materialised pipeline view + Pattern-B loader)** caches one
+`q10i_pipeline_view_t` row per lineitem with the wide customer
+payload + `i_status` FD-attached at load time. The Pattern-B loader
+**reuses** the S3 group-walk path with parameterised filters dropped
+(orderdate and returnflag), emitting one view row per surviving
+lineitem. At query time, sequential view scan → returnflag filter →
+per-order SUM (the intermediate per-order step is required because
+orderdate is hoisted out of the view and applies at order
+granularity — D10) → orderdate filter → per-customer 4-way SUM →
+NATION INL → TopN(20). The view is reusable across all DATE param
+sets.
+
+**S4 (HashJoin chain baseline)** uses base tables only. Build on
+CUSTOMER (PK-only `cust_set<c_custkey>` per Rule 4) → probe
+orderdate-filtered ORDERS → C⋈O. Build hash on C⋈O.o_orderkey
+(PK-only) → probe returnflag-filtered LINEITEM → C⋈O⋈L stream.
+Then a proper HashJoin (inner) C⋈O⋈L ⋈ INVOICE on `l_invoicekey =
+i_invoicekey`: build a **PK-only** `invoice_set<i_invoicekey>` (Rule
+4); probe with the C⋈O⋈L stream; recover `i_status` per surviving
+lineitem via INL on invoice PK (Rule 13 chained-INL pattern, mirrors
+Q5 S4's `c_nationkey` recovery). HashAggregate per c_custkey with 4
+partial sums + FD-attached customer cols. NATION INL at emit.
+TopN(20).
+
+### Filter Pushdown Principle
+
+See the canonical rule in [Filter Pushdown](../OPERATORS.md#filter-pushdown).
+Q10I-specific:
+
+Every parameterised filter is pushed as far down the operator graph as
+possible, **stopping only at secondary structures** so they remain
+reusable across param sets (predicate hoisting per PLAYBOOK §3.5 step 7).
+
+- The COLI MI, COLI custkey-sorted secondaries, and
+  `q10i_pipeline_view_t` are all loaded **without** applying the
+  orderdate window. A new DATE triggers a new query, not a new load.
+  **No parameterised filter may be baked into any secondary.**
+- `l_returnflag = 'R'` is spec-hardcoded but **not** baked at view-
+  load time either — keeping it live preserves the secondary's
+  reusability for any future Q10-shaped query that might want a
+  different returnflag. (S2 view stores `l_returnflag`; the query
+  applies the filter at scan time.)
+- `i_status ∈ {'P','O','L'}` is the **partition key**, not a filter.
+  Every surviving lineitem routes to *some* bucket; no `i_status`
+  predicate is pushed.
+- `o_orderdate ∈ [d, d+3mo)` fuses with `TableScan(ORDERS)` /
+  walker `on_order`; pushed below ORDERS HashBuild in S4.
+- `l_returnflag = 'R'` fuses with `TableScan(LINEITEM)` / walker
+  `on_lineitem`; pushed below LINEITEM probe in S4.
+- D9: NATION join is always an **INL on PK** — no in-memory map,
+  no `nation_set` (Q10I has no region filter, so the set would be
+  degenerate over all 25 rows).
+- D10 callout: S2's hoisted orderdate forces the intermediate
+  per-order aggregator step before the per-customer roll-up — the
+  filter applies at order granularity, so lineitems must regroup
+  to their order before the orderdate prune.
+- D1: the invoice arm is unfiltered by the orderdate window via
+  any direct predicate. Lineitem orderkey filter (via ORDERS scan
+  in the chain) is what implicitly determines which invoices are
+  consulted (only invoices linked to surviving return lineitems
+  are read), so the per-customer invoice rollup naturally aligns
+  with the chain's surviving customers without a separate filter.
+
+---
+
+## Required Record Types
+
+Composition with sibling queries: **share record types with Q10 and
+Q5I wherever the shape is identical.** Per PLAYBOOK §3.5 step 8, the
+relationship is composition (DRY), not inheritance.
+
+Reused verbatim from `views_coli.hpp`:
+
+- `customer_coli_t` (id=30) — carries the full Q10I customer output
+  payload (`c_name`, `c_address`, `c_nationkey`, `c_phone`,
+  `c_acctbal`, `c_comment`). No change required.
+- `orders_coli_t` (id=1) — carries `o_orderdate`. No change required.
+- `invoice_coli_t` (id=33) — carries `i_totaldue`, `i_status`.
+  Adequate as-is; only `i_status` is consumed by Q10I (and an
+  in-memory hashmap key on `invoicekey`).
+
+Modified in place (Phase 1, flagged below as D14):
+
+- `lineitem_coli_t` (id=32) — currently
+  `{l_extendedprice, l_discount, l_shipdate}`. Q10I needs
+  `l_returnflag` (filter) and `l_invoicekey` (invoice-probe key)
+  added in place per project-pushdown trigger #1. Re-run
+  `test_load_coli_lsm` + Q3I/Q5I regression after the widening.
+
+For S1 (split secondaries) — same custkey-sorted types Q5I uses
+(`customer_coli_t` primary + secondaries on `orders_coli_t` /
+`lineitem_coli_t` / `invoice_coli_t`).
+
+New for Q10I (S2 view + final aggregate):
+
+- `q10i_pipeline_view_t` — Key `(custkey, orderkey, linenumber)`,
+  one row per lineitem. Payload: `l_extendedprice`, `l_discount`,
+  `l_returnflag`, `o_orderdate`, `i_status` (resolved at view-load
+  via the invoice-buf walk; FD-attached per lineitem), plus the wide
+  customer columns (`c_name`, `c_address`, `c_nationkey`, `c_phone`,
+  `c_acctbal`, `c_comment`). `n_name` **NOT** stored — resolved via
+  NATION INL at emit (D9). All `Varchar<N>` (POD), never
+  `std::string` (libstdc++ `std::string` is non-standard-layout;
+  would corrupt across insert/getScanner via memcpy-based
+  record_traits).
+- `q10i_agg_row_t` — derives from `q10_agg_row_t` (Q10 sibling) by
+  adding `paid_returns`, `open_returns`, `late_returns` (D13).
+  In-memory only; no SKBuilder / ADD_RECORD_TRAITS.
+
+### Side-table runtime structures
+
+- `invoice_buf` — `std::unordered_map<Integer, Varchar<1>>` from
+  `invoicekey` to `i_status`, populated per custkey group in S3's
+  `on_invoice` and cleared at `on_group_end`. Pattern B (Rule 10).
+  Per-customer size ≈ 20 entries at SF=1; the buffer is freed
+  before the next customer's group begins.
+- NO `nation_set`, NO `nation_name_map`. NATION is exclusively an
+  INL probe at emit time (D9).
+
+---
+
+## Locked-in Design Decisions (Phase 0)
+
+Numbered for cross-referencing from §Plan Descriptions and the
+DOTs. D6–D10 mirror Q10's identically; the rest are Q10I-specific.
+
+- **D1.** New join key: `l_invoicekey = i_invoicekey` (per-lineitem
+  dimension probe). Invoice contributes only `i_status` downstream.
+- **D2.** Three partial aggregates per customer (`paid_returns`,
+  `open_returns`, `late_returns`) routed by `i_status`.
+  `return_revenue` (the total) is the sort key + parity check.
+- **D3.** S5 omitted (orderdate window is parameterised; per-customer
+  pre-totals don't compose).
+- **D4.** S3 substrate: COLIPipeline (4-table COLI MI). Pattern B
+  Rule 10 — `invoice_buf` populated during `on_invoice`, consumed
+  during `on_lineitem`.
+- **D5.** S3 grouping: per-customer accumulator with incremental
+  top-20 emit at `on_group_end`. Bounded sink avoids ~150K-customer
+  intermediate vector.
+- **D6.** S3 visitor is **bespoke**, built on `coli_group_walk`. Do
+  NOT subclass `q3_family::Q3FamilyVisitor` (memory:
+  `feedback-col-walk-is-shared-util`).
+- **D7.** S2 view loader: Pattern B. Reuses S3 group-walk with
+  parameterised filters dropped (memory:
+  `feedback-view-loader-reuses-query`).
+- **D8.** S2 view payload: per-lineitem with `i_status` FD-attached
+  + wide customer columns FD-attached; no `n_name`.
+- **D9.** NATION uniformly INL on PK at emit time. No `nation_set`,
+  no `nation_name_map` (memory: `feedback-nation-lookup-pattern`).
+- **D10.** S2 post-view aggregation has an **intermediate per-order
+  step** (orderdate hoisted, applies at order granularity).
+- **D11.** S4 invoice arm: **own HashJoin relation** with PK-only
+  `invoice_set<i_invoicekey>` build + INL `i_status` recovery (Rule
+  4 + Rule 13). NOT a side-map probe inline in the lineitem scan.
+- **D12.** S1 BMJ chain: 3-way (C⋈O⋈L) over custkey-sorted COLI
+  secondaries + per-emit invoice seek (Q5I-isomorphic).
+- **D13.** Composition with Q10: `q10i_agg_row_t` extends
+  `q10_agg_row_t` (PLAYBOOK §3.5 step 8 — composition, not
+  inheritance).
+- **D14.** `lineitem_coli_t` widening (Phase 1): add `l_returnflag`
+  and `l_invoicekey` to the secondary payload per project-pushdown
+  trigger #1. Re-run `test_load_coli_lsm` + Q3I/Q5I regression.
+
+---
+
+## Open Questions
+
+- **Per-status invoice-distribution at SF=1 / SF=15**: confirm
+  enough non-zero `paid/open/late` mix exists for the parity test to
+  be meaningful (i.e., that `paid_returns + open_returns +
+  late_returns == return_revenue` is a real constraint, not all-
+  zeros-pass). Verify at Phase 3 with a content-walk dump.
+- **Composition of Q10 / Q10I visitor**: where the `on_invoice`
+  hook bolts onto a Q10 base — defer to Phase 1. Q10's visitor
+  doesn't have an `on_invoice` hook; either lift it via CRTP or
+  fork. Same shape question as Q10's own Phase-1 visitor-reuse
+  open question.
+- **`lineitem_coli_t` widening regression scope** (D14): when the
+  field add lands, re-run `test_load_coli_lsm` (cardinality / FK
+  / sentinel-ordering) and the full Q3I / Q5I parity tests. The
+  payload widening shifts byte offsets; any test that hard-codes
+  expected row-size bytes needs review.
+- **`q10i_pipeline_view_t` payload bloat** (carried forward from
+  the original sketch): per-lineitem FD-duplication of the wide
+  customer payload (~250 bytes of customer cols × ~30 lineitems
+  per customer) inflates S2 storage. Acceptable at 5L scale per
+  D8; revisit if S2 becomes the binding cost in the cell.
+
+---
+
+## Implementation Phases
+
+- **Phase 0** (this commit) — design doc + 3 DOT plans. Per the
+  Q10I Phase 0 plan. Zero `.hpp` / `.cpp` / `.tpp` changes.
+- **Phase 1** — skeleton: 8 per-query files (`views.hpp`,
+  `workload.hpp`, `load.tpp`, `query.tpp`, `per_structure_workload.hpp`,
+  `executable_{rocksdb,leanstore}.cpp`, CMake +
+  `generate_targets.py`). `lineitem_coli_t` widening (D14) lands
+  here. Compiles cleanly; query stubs return 0; `test_query_q10i_lsm`
+  reports digest-0x0 parity vacuous `[OK]`.
+- **Phase 4 §7.1** — S3 `query_by_merged` via `coli_group_walk` +
+  bespoke Q10I visitor (D4–D7) + bounded top-20 sink (D5).
+- **Phase 4 §7.3** — S2 `query_by_view` with Pattern-B loader (D7)
+  + intermediate per-order aggregator (D10).
+- **Phase 4 §7.5** — S4 `query_by_hash` (D11) — proper HashJoin on
+  C⋈O⋈L ⋈ INVOICE with PK-only invoice build.
+- **Phase 4 §7.2** — S1 `query_by_base` — 2-BMJ chain + per-emit
+  invoice seek (D12).
+- **Phase 5–8** — `per_structure_workload.hpp` alias-only,
+  executables, `test_query_q10i_{lsm,btree}` strict parity, CMake
+  + `generate_targets.py` wiring.
+- **Phase 9** — doc refresh + cross-link from
+  `frontend/tpch/CLAUDE.md` once skeleton acquires real code.
+- **S5** — omitted by design (D3).
+- **Linux perf sweep** — 5L cell only; tracked in
+  `LINUX_PENDING.md` once Phase 4 lands.
+
+---
+
+## Contingency
+
+Pair-fates with Q10 (paper story needs both). If Phase 1+ stalls or
+the 5L cell doesn't return clean numbers before the paper deadline:
+
+- §Status framed from the start as "Phase 0 complete; scope = 5L
+  cell only; results pending".
+- No predictive perf claim in §Motivation. Preserve the neutral
+  tone of this doc.
+- Cross-reference Q10 (paired fate; the pair stand or fall
+  together).
+- D3 (S5 omitted) and D9 (NATION = INL only) read as deliberate
+  scope choices, not omissions.
+
+If results do land, this doc becomes the frozen target for code
+review. If they don't, it reads as a self-contained future-work
+appendix.

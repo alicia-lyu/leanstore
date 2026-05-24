@@ -1,0 +1,150 @@
+// Q10I S4 baseline plan — HashJoin chain over base tables only.
+//
+// All four logical joins (#1 C⋈O, #2 O⋈L, #3 L⋈I, #4 C⋈NATION)
+// lower into hash-join operators (#1, #2, #3) plus a per-emit NATION
+// INL (#4).  Invoice is its OWN HashJoin relation (D11) — NOT a side-
+// map probe inlined inside the lineitem scan.  All hash builds are
+// PK-only per Rule 4; recovery of carried payload columns uses INL on
+// the primary index per Rule 13 (the chained-INL pattern Q5 S4 uses
+// for c_nationkey).
+//
+// Filter pushdown:
+//   • o_orderdate ∈ window  → fused with TableScan(ORDERS), pushed
+//                              below the ORDERS HashProbe.
+//   • l_returnflag = 'R'    → fused with TableScan(LINEITEM), pushed
+//                              below the LINEITEM HashProbe.
+//   • i_status partition    → at the aggregator, NOT a filter.
+//
+// Build/probe direction (D11):
+//
+//   Scan(CUSTOMER) → HashBuild[c_custkey]  (PK-only set, Rule 4)
+//   Scan(ORDERS) → Filter[orderdate] → HashProbe(customer)
+//                → C⋈O stream
+//     [customer-side columns (c_name, c_acctbal, c_address, c_phone,
+//      c_comment, c_nationkey) recovered via INL on customer PK at
+//      probe-output time (Rule 13)]
+//   HashBuild[C⋈O on o_orderkey]  (PK-only set, Rule 4)
+//   Scan(LINEITEM) → Filter[returnflag] → HashProbe(C⋈O)
+//                  → C⋈O⋈L stream
+//   Scan(INVOICE) → HashBuild[i_invoicekey]  (PK-only set, Rule 4)
+//   HashJoin (inner) C⋈O⋈L ⋈ INVOICE on l_invoicekey = i_invoicekey
+//     [INVOICE-side i_status recovered via INL on invoice PK at
+//      probe-output time (Rule 13)]
+//   HashAggregate per c_custkey:
+//     paid_returns   = SUM(rev) where i_status='P'
+//     open_returns   = SUM(rev) where i_status='O'
+//     late_returns   = SUM(rev) where i_status='L'
+//     return_revenue = SUM(rev)
+//   INL-Join(NATION on c_nationkey) at emit time
+//   TopN(20, return_revenue DESC)
+//
+// Mirrors Q5 S4 / Q5I S4 in shape: PK-only builds + chained INL
+// recovery is the established convention across the family (Rule 4 +
+// Rule 13).  Invoice as a proper HashJoin relation (rather than a
+// side-map probe inlined inside the lineitem scan) matches D11.
+//
+// C++ implementation map (q10i/query.tpp::query_by_hash):
+//
+//   cust_set = unordered_set<c_custkey>           // PK-only
+//   orders_set = unordered_set<o_orderkey>        // PK-only
+//   invoice_set = unordered_set<i_invoicekey>     // PK-only
+//   per-customer accumulator map keyed on c_custkey carrying 4 sums
+//   topn_sink (bounded heap, K=20)
+//
+//   build_phase:
+//     for c in customer: if true: cust_set.insert(c.c_custkey)
+//                                  (Q10I has no per-customer filter)
+//     for o in orders:   if orderdate ∈ window
+//                           && cust_set.contains(o.o_custkey):
+//                              orders_set.insert(o.o_orderkey)
+//     for i in invoice:  invoice_set.insert(i.i_invoicekey)
+//
+//   probe_phase (sequential lineitem scan with seek-on-miss):
+//     for l in lineitem:
+//       if l.l_returnflag != 'R':  continue
+//       if !orders_set.contains(l.l_orderkey):
+//           seek lineitem scanner to {l.l_orderkey + 1, 0}; continue
+//       if !invoice_set.contains(l.l_invoicekey):
+//           continue   (FK guarantees hit, but be defensive)
+//       custkey   = orders.lookup1(l.l_orderkey).o_custkey       // INL
+//       i_status  = invoice.lookup1(l.l_invoicekey).i_status     // INL
+//       rev       = l.l_extendedprice * (1 - l.l_discount)
+//       acc[custkey].return_revenue += rev
+//       switch i_status:
+//         'P': acc[custkey].paid_returns += rev
+//         'O': acc[custkey].open_returns += rev
+//         'L': acc[custkey].late_returns += rev
+//
+//   emit_phase:
+//     for (custkey, sums) in acc:
+//       (c_name, c_acctbal, c_address, c_phone, c_comment,
+//        c_nationkey) = customer.lookup1(custkey)                // INL
+//       n_name = nation.lookup1(c_nationkey).n_name              // INL
+//       topn_sink.offer(q10i_agg_row_t{...})
+//     topn_sink.drain_sorted() → out
+//
+// Note: customer payload recovery (6 wide cols + c_nationkey) happens
+// at emit time, NOT at every lineitem — the per-customer accumulator
+// keys on c_custkey and only the ~20 surviving customers (those in
+// the top-20) plus the ones that fell out incur the INL.  Same trade
+// as Q5 S4's Phase-11 retrofit.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Base table scans ───────────
+  s_cust [label="TableScan(CUSTOMER)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ [:d, :d+3mo))",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_returnflag = 'R')",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_inv  [label="TableScan(INVOICE)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  // ─────────── PK-only HashBuilds (Rule 4) ───────────
+  hb_cust [label="HashBuild\n  cust_set<c_custkey>\n(PK-only, Rule 4)",
+           shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+  hb_ord  [label="HashBuild\n  orders_set<o_orderkey>\n(PK-only, Rule 4)\nbuilt over date-filtered\n  + custkey-gated ORDERS",
+           shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+  hb_inv  [label="HashBuild\n  invoice_set<i_invoicekey>\n(PK-only, Rule 4)",
+           shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  // ─────────── HashJoin operators ───────────
+  hj_co [label="#1 HashJoin (inner)\nCUSTOMER ⋈ ORDERS\n  on c_custkey = o_custkey\n[customer payload (6 wide cols)\nrecovered at emit time via\ncustomer.lookup1(custkey) — Rule 13]",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  hj_ol [label="#2 HashJoin (inner)\n<C⋈O> ⋈ LINEITEM\n  on o_orderkey = l_orderkey\nseek-on-miss to {K+1, 0}\n(no sorted_orderkeys vector)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  hj_li [label="#3 HashJoin (inner)\n<C⋈O⋈L> ⋈ INVOICE\n  on l_invoicekey = i_invoicekey\ni_status recovered per surviving\nlineitem via invoice.lookup1(...)\n(Rule 13)",
+         shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+
+  // ─────────── Per-customer aggregation + emit ───────────
+  agg [label="HashAggregate per c_custkey\n  paid_returns   = SUM(rev) where i_status='P'\n  open_returns   = SUM(rev) where i_status='O'\n  late_returns   = SUM(rev) where i_status='L'\n  return_revenue = SUM(rev)\n[customer payload deferred to emit;\nno wide cols carried per lineitem]",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  inl_c [label="INL recovery (per emit)\n  customer.lookup1(c_custkey)\n→ c_name, c_acctbal, c_address,\n  c_phone, c_comment, c_nationkey",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+  inl_n [label="#4 INL-Join NATION (per emit)\n  c_nationkey → NATION.PK\n→ n_name attached",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  topn [label="TopN(20, return_revenue DESC)\n[std::partial_sort or bounded heap]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  s_cust -> hb_cust [label="build"];
+  s_ord  -> hj_co  [label="probe (date-filtered)"];
+  hb_cust -> hj_co [label="build (cust_set)"];
+
+  hj_co  -> hb_ord [label="build input\n(post-join)"];
+  s_lin  -> hj_ol  [label="probe (returnflag-filtered)"];
+  hb_ord -> hj_ol  [label="build (orders_set)"];
+
+  s_inv  -> hb_inv [label="build"];
+  hj_ol  -> hj_li  [label="probe (C⋈O⋈L)"];
+  hb_inv -> hj_li  [label="build (invoice_set)"];
+
+  hj_li -> agg;
+  agg   -> inl_c;
+  inl_c -> inl_n;
+  inl_n -> topn;
+}

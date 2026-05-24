@@ -1,0 +1,108 @@
+// Q10I S3 physical plan — single COLIGroupWalk over the 4-table COLI
+// MergedAdapter.  All four logical joins (#1 C⋈O, #2 O⋈L, #3 L⋈I,
+// #4 C⋈NATION) lower into the walker + a per-emit NATION INL.
+//
+// Why one operator replaces four: the COLI MI co-locates CUSTOMER,
+// INVOICE, ORDERS, and LINEITEM by custkey using tagged keys. Within a
+// custkey group, byte-lex order is:
+//
+//     customer(t=1) → invoice*(t=2) → (orders(t=3) → lineitem*(t=4))+
+//
+// Invoices therefore appear BEFORE any orders/lineitems, so the
+// invoice_buf is guaranteed complete when on_lineitem fires
+// (CONVENTIONS.md Rule 10 Pattern B — buffer the i_status map, extract
+// at assembly time).  This matches Q5I's per-lineitem invoice-status
+// pattern exactly; what differs is the post-pipeline shape (per-
+// customer top-20 instead of Q5I's per-nation aggregate).
+//
+// Visitor hooks (CONVENTIONS.md Rule 10):
+//
+//   on_customer  → init per-customer accumulators
+//                  (paid=open=late=return_revenue=0);
+//                  clear invoice_buf (no nation_set gate — Q10I has no
+//                  region/segment filter, every customer is a candidate)
+//
+//   on_invoice   → equi-join (Rule 10 Pattern B): insert
+//                  invoice_buf[i_invoicekey] = i_status (tiny map; only
+//                  i_status is needed downstream — NOT the full invoice
+//                  record). Cleared at on_group_end.
+//
+//   on_orders    → semi-join: o_orderdate ∉ [date, date+3mo)?
+//                  → SkipOrder suppresses lineitems for this order
+//                    (Rule 10 — semi-join tables skip only; no buffering)
+//
+//   on_lineitem  → semi-join: l_returnflag != 'R'? → Continue (skip
+//                  this lineitem, do NOT skip the order — other
+//                  lineitems may still qualify).
+//                  → look up invoice_buf[l.l_invoicekey] → i_status
+//                  → accumulate revenue into the matching partition
+//                    (paid/open/late) AND always into return_revenue
+//
+//   on_group_end → resolve n_name via NATION PK lookup
+//                  → finalise q10i_agg_row_t{c_custkey,
+//                      paid_returns, open_returns, late_returns,
+//                      return_revenue,
+//                      c_name, c_acctbal, c_address, c_phone,
+//                      c_comment, n_name}
+//                  → offer to bounded TopN(20) sink (D5 — incremental
+//                    emit; never materialise the full ~150K-customer
+//                    vector)
+//                  → clear invoice_buf
+//
+// Parity invariant (Phase 3): paid_returns + open_returns +
+// late_returns == return_revenue for every emitted row.  Cross-
+// structure parity additionally requires byte-identical top-20 sets
+// across S1/S2/S3/S4 (digest match per OPERATORS.md §6).
+//
+// FILTER PUSHDOWN STATUS: every filter from family_logical.dot is
+// fused into the walker.  No filter applies post-walk.  No
+// parameterised filter is baked into the COLI MI.
+//
+// C++ implementation map (q10i/query.tpp::query_by_merged):
+//
+//   coli_group_walk<Backend>(merged_coli, Q10IGroupWalkVisitor{
+//       params,
+//       nation,                  // adapter for NATION INL at emit
+//       nationkey_to_name,       // per-query lookup cache
+//       topn_sink})              // bounded heap, K=20
+//
+//     Visitor::on_customer  → init 4 accumulators + invoice_buf.clear()
+//     Visitor::on_invoice   → invoice_buf[k.invoicekey] = i.i_status
+//     Visitor::on_orders    → date filter; SkipOrder on miss
+//     Visitor::on_lineitem  → returnflag filter (per-lineitem, not skip);
+//                              invoice_buf[l.l_invoicekey] → i_status;
+//                              route revenue into matching partition;
+//                              always accumulate into return_revenue
+//     Visitor::on_group_end → resolve n_name (NATION PK lookup);
+//                              build q10i_agg_row_t;
+//                              topn_sink.offer(row);
+//                              invoice_buf.clear()
+//
+// PremergedJoin / BinaryMergeJoin are NOT instantiated here — the COLI
+// merged adapter's tagged-key encoding makes the Visitor pattern
+// strictly more expressive (4-way custkey grouping with the inline
+// invoice_buf, a 4-way revenue partition, and a per-group top-20
+// emit).
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── COLI MI ───────────
+  mi [label="MergedScanner(MI_COLI)\n= [customer_coli_t, invoice_coli_t,\n   orders_coli_t, lineitem_coli_t]\nbyte-lex per custkey group:\n  customer(t=1) → invoice*(t=2)\n  → (orders(t=3) → lineitem*(t=4))+\n[loaded UNFILTERED — params apply at walk time]",
+      shape=box3d, style=filled, fillcolor="#E8F0FE"];
+
+  walk [label="COLIGroupWalk(Q10IGroupWalkVisitor)\nsubsumes logical joins #1, #2, #3:\n  • on_customer:  init 4 accumulators\n      (paid/open/late/return_revenue);\n      clear invoice_buf\n      (no per-customer filter — Q10I has none)\n  • on_invoice:   invoice_buf[i_invoicekey]\n      = i_status (Pattern B Rule 10,\n      i_status only — not full record)\n  • on_orders:    o_orderdate window filter;\n      SkipOrder on miss\n  • on_lineitem:  l_returnflag = 'R' (skip lineitem,\n      NOT skip order — other lineitems may qualify);\n      invoice_buf[l_invoicekey] → i_status;\n      route revenue:\n        paid_returns += revenue if 'P'\n        open_returns += revenue if 'O'\n        late_returns += revenue if 'L'\n      always: return_revenue += revenue\n  • on_group_end: NATION PK lookup → n_name;\n      build q10i_agg_row_t;\n      topn_sink.offer(row); invoice_buf.clear()",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── Post-pipeline: NATION INL + bounded top-20 sink ───────────
+  inl_n [label="#4 INL-Join NATION (per-customer emit)\n  c_nationkey → NATION.PK\n→ n_name attached at on_group_end\n  via lazy NATION PK lookup\n  cached in nationkey_to_name\n  (~25 lookups bounded total)",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  topn [label="TopN(20, return_revenue DESC)\n[bounded heap sink, incremental:\n  one offer per finished customer\n  (D5 — never materialises a\n   full ~150K-customer vector)]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  mi   -> walk;
+  walk -> inl_n [label="per-customer\n(at on_group_end)"];
+  inl_n -> topn;
+}
