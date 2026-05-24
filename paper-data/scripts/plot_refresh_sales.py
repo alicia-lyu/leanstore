@@ -55,17 +55,18 @@ BACKENDS = ["btree", "lsm"]
 CSV_SCHEMAS = {
     "refresh_sales_5L_throughput.csv": {
         "tps_col": "pair_tps_tail30",
-        "unit": "ms / RF pair (tail 30 s)",
-        "scale": 1e3,  # tps → ms/op
+        "unit": "µs / RF pair (tail 30 s)",
+        "scale": 1e6,  # tps → µs/op
         "basename": "refresh_5L_pair_latency",
     },
     "refresh_prewarm9_throughput.csv": {
         # In-memory prewarm run; pair_med_ops = median pair throughput
-        # across iterations. Same ms/pair unit family as the 5L file
-        # so the two can share a y-axis.
+        # across iterations. Same µs/pair unit family as the 5L file
+        # so the two can share a vertical axis (different ylim per
+        # panel — in-memory bars are 10-100× smaller than SSD bars).
         "tps_col": "pair_med_ops",
-        "unit": "ms / RF pair",
-        "scale": 1e3,
+        "unit": "µs / RF pair",
+        "scale": 1e6,
         "basename": "refresh_prewarm9_pair_latency",
     },
     "refresh_sales_rf_throughput.csv": {
@@ -229,12 +230,17 @@ def _annotate_oom(ax) -> None:
         return
     x, bar_w = spec
     ymin, ymax = ax.get_ylim()
-    bar = ax.bar([x], [ymax / ymin], width=bar_w, bottom=ymin,
-                 color="none", edgecolor=DBTOASTER_COLOR,
-                 hatch="///", linewidth=0.8)
-    ax.annotate("OOM ↑", xy=(x, ymax), xytext=(x, ymax),
-                ha="center", va="top", fontsize=7,
-                color=DBTOASTER_COLOR)
+    ax.bar([x], [ymax - ymin], width=bar_w, bottom=ymin,
+           color="none", edgecolor=DBTOASTER_COLOR,
+           hatch="///", linewidth=0.8, clip_on=False)
+    # Re-pin y-limits — the bar would otherwise expand the autoscale.
+    ax.set_ylim(ymin, ymax)
+    # Label sits in axes coords just above the top spine so it can't
+    # collide with the bar or be clipped by the data area.
+    ax.annotate("OOM ↑", xy=(x, 1.0), xycoords=("data", "axes fraction"),
+                xytext=(0, 2), textcoords="offset points",
+                ha="center", va="bottom", fontsize=7,
+                color=DBTOASTER_COLOR, annotation_clip=False)
 
 
 def _find_schema(summary: Path) -> Tuple[Optional[Dict], Optional[Path]]:
@@ -330,19 +336,19 @@ def main() -> int:
         ls_by_budget[PREWARM9_BUDGET_GIB] = df_9g
 
     ls_series = [s for s in PAPER_LEGEND_ORDER if s not in REFRESH_OMIT]
+    # Each panel autoscales its own y-range: in-memory (9 GiB) is
+    # 10-100× faster than SSD-spilling (1 GiB), so a shared axis would
+    # squash one or the other. The unit is the same (µs/pair), the
+    # ticks just live at different decades.
     fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.4, 2.6),
-                             sharey=True)
+                             sharey=False)
     for j, (budget, label) in enumerate(MEMORY_BUDGETS):
         budget_df = ls_by_budget.get(budget, pd.DataFrame())
         _panel(axes[j], budget_df, ls_series, db_df,
                budget_gib=budget, budget_label=label,
-               y_unit=schema["unit"], show_ylabel=(j == 0))
-    # Pin y-limits across panels before drawing the OOM-capped bars so
-    # the hatched bar visibly reaches the chart top.
-    ymax = max(ax.get_ylim()[1] for ax in axes)
-    ymin = min(ax.get_ylim()[0] for ax in axes if ax.get_ylim()[0] > 0)
+               y_unit=schema["unit"], show_ylabel=True)
+    # OOM bar is drawn after each panel's autoscale settles.
     for ax in axes:
-        ax.set_ylim(ymin, ymax)
         _annotate_oom(ax)
 
     handles = []
@@ -362,8 +368,8 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     basename = schema["basename"] + (f"_{disk}" if disk else "")
     base = out_dir / basename
-    fig.subplots_adjust(left=0.11, right=0.98, top=0.78, bottom=0.12,
-                        wspace=0.08)
+    fig.subplots_adjust(left=0.10, right=0.98, top=0.78, bottom=0.12,
+                        wspace=0.30)
     primary = base.with_suffix(f".{args.format}")
     fig.savefig(primary, format=args.format, bbox_inches="tight")
     written = [primary]
