@@ -560,4 +560,47 @@ long Q3Workload<Backend>::query_by_hash(std::vector<q3_agg_row_t>& out)
    return static_cast<long>(out.size());
 }
 
+// ---------------------------------------------------------------------------
+// RF1/RF2 maintenance — Q3's per-query S2 view path only.
+//
+// Q3 and Q5 share the same base adapters and the same `col` pipeline (both
+// workloads hold references to one MergedAdapter + split adapters), so base
+// and col-pipeline writes must NOT live in per-query methods — calling both
+// q3.maintain_rf1 and q5.maintain_rf1 would double-insert and trigger
+// DUPLICATE errors on the B-tree backend. The family helper (in
+// `frontend/tpch/refresh_sales/executable_*.cpp`) handles base + col
+// writes once per RF1/RF2 op and then calls each per-query view path so
+// q3_view and q5_view are both maintained under S2.
+//
+// These methods are no-ops unless --storage_structure=2.
+
+template <typename Backend>
+void Q3Workload<Backend>::maintain_rf1(
+    const orders_t::Key& ok, const orders_t& ov,
+    const std::vector<lineitem_t>& lines)
+{
+   if (FLAGS_storage_structure != 2) return;
+   const Integer custkey = ov.o_custkey;
+   Varchar<10> mktseg{};
+   customer.lookup1(customerh_t::Key{custkey},
+                    [&](const customerh_t& c) { mktseg = c.c_mktsegment; });
+   for (size_t j = 0; j < lines.size(); ++j) {
+      auto [vk, vv] = build_q3_view_row(custkey, ok.o_orderkey,
+                                         static_cast<Integer>(j + 1),
+                                         ov, lines[j], mktseg);
+      pipeline_view.insert(vk, vv);
+   }
+}
+
+template <typename Backend>
+void Q3Workload<Backend>::erase_rf2(
+    const orders_t::Key& ok, Integer custkey,
+    const std::vector<Integer>& linenumbers)
+{
+   if (FLAGS_storage_structure != 2) return;
+   for (Integer ln : linenumbers) {
+      pipeline_view.erase(q3_pipeline_view_t::Key{custkey, ok.o_orderkey, ln});
+   }
+}
+
 }  // namespace tpch::q3

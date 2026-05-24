@@ -34,6 +34,27 @@ namespace tpch::q3
 //      orderkey); emit one q3_pipeline_view_t row per (custkey, orderkey,
 //      linenumber) carrying unaggregated lineitem fields for query-time revenue.
 
+// Build one pipeline-view row for a single (custkey, orderkey, linenumber)
+// triple. Pure function — caller owns mktseg lookup (FD source) and the
+// view-adapter insert. Shared between load-time `populate_q3_view` and
+// runtime `Q3Workload::maintain_rf1` so the per-row view shape is
+// guaranteed identical across bulk-load and incremental paths.
+inline std::pair<q3_pipeline_view_t::Key, q3_pipeline_view_t>
+build_q3_view_row(Integer custkey, Integer orderkey, Integer linenumber,
+                  const orders_t& o, const lineitem_t& l,
+                  const Varchar<10>& mktseg)
+{
+   q3_pipeline_view_t::Key vk{custkey, orderkey, linenumber};
+   q3_pipeline_view_t      vv;
+   vv.l_extendedprice = l.l_extendedprice;
+   vv.l_discount      = l.l_discount;
+   vv.l_shipdate      = l.l_shipdate;
+   vv.c_mktsegment    = mktseg;
+   vv.o_orderdate     = o.o_orderdate;
+   vv.o_shippriority  = o.o_shippriority;
+   return {vk, vv};
+}
+
 template <typename Backend>
 static void populate_q3_view(
     typename Backend::template Adapter<customerh_t>&       customer,
@@ -58,15 +79,8 @@ static void populate_q3_view(
            const orders_t& o, const lineitem_t& l) {
           Varchar<10> mktseg = mktseg_map.count(custkey)
                                    ? mktseg_map.at(custkey) : Varchar<10>{};
-
-          q3_pipeline_view_t::Key vk{custkey, orderkey, linenumber};
-          q3_pipeline_view_t      vv;
-          vv.l_extendedprice = l.l_extendedprice;
-          vv.l_discount      = l.l_discount;
-          vv.l_shipdate      = l.l_shipdate;
-          vv.c_mktsegment    = mktseg;
-          vv.o_orderdate     = o.o_orderdate;
-          vv.o_shippriority  = o.o_shippriority;
+          auto [vk, vv] = build_q3_view_row(custkey, orderkey, linenumber,
+                                             o, l, mktseg);
           pipeline_view.insert(vk, vv);
        });
 }

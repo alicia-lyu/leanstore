@@ -201,6 +201,19 @@ class Q5Workload
    long query_by_hash  (std::vector<q5_agg_row_t>& out);  // structure 4
 
    // ------------------------------------------------------------------
+   // RF1/RF2 maintenance (refresh_sales experiment). Mirrors Q3Workload
+   // (see q3/workload.hpp); the only Q5-specific bit is the S2 view's
+   // FD-attached c_nationkey + n_name (resolved per RF1 order via a
+   // customer.lookup1 + nation.lookup1, matching populate_q5_view).
+   // ------------------------------------------------------------------
+
+   void maintain_rf1(const orders_t::Key& ok, const orders_t& ov,
+                     const std::vector<lineitem_t>& lines);
+
+   void erase_rf2(const orders_t::Key& ok, Integer custkey,
+                  const std::vector<Integer>& linenumbers);
+
+   // ------------------------------------------------------------------
    // Loading / sizing
    // ------------------------------------------------------------------
 

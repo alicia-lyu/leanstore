@@ -136,23 +136,44 @@ scope.
 
 ### 1. RF1/RF2 generator (`tpch_family/refresh.hpp`, new)
 
-RF1 inserts one new order + its lineitems; RF2 deletes them. Lineitem
-(partkey, suppkey) must be a valid PARTSUPP pair (so Q5's supplier join
+RF1 inserts one new order + its lineitems above the loaded keyspace; RF2 deletes
+**pre-existing** orders + their lineitems from the bottom of the loaded keyspace.
+The two operations touch **disjoint keyspaces** — RF2 does not delete what RF1
+inserts (per TPC-H §5.1.2; geo's "reservoir of own insertions" pattern does NOT
+transfer). Paired insert-N / delete-N keeps DB size stable steady-state.
+Lineitem (partkey, suppkey) must be a valid PARTSUPP pair (so Q5's supplier join
 resolves), chosen **item-driven**: pick the part, then one of its suppliers —
 not the loader's random-pair-snap (`load_lineitems_1order`, `tpch_workload.hpp:382`),
 which draws part and supplier independently and isn't item-driven.
 
+**RF1** (one new order):
+
 - Pick an existing custkey (urand `[1, last_customer_id]`).
-- Mint a fresh orderkey beyond the loaded max (`recover_last_ids()` + counter);
-  set `o_orderdate` ≈ run date; register it in `order_dates`.
+- Mint a fresh orderkey via `orderkey_from_index(rf1_next_index++)` starting at
+  `rf1_next_index = ORDERS_SCALE * tpch_scale_factor + 1` post-recover. This
+  preserves the TPC-H §4.2.3 sparse-orderkey grid (8 of every 32 integers
+  populated) — same allocator as `loadOrders`. Set `o_orderdate` ≈ run date;
+  register it in `order_dates` BEFORE generating lineitems
+  (`load_lineitems_1order` requires this at `tpch_workload.hpp:388`).
 - For each of K∈[1..7] lines: choose `partkey` (urand over `[1, last_part_id]`;
   NURand for hot-part skew is optional and not required by RF1). Then pick one
   of that part's suppliers by scanning PARTSUPP over the `ps_partkey = p`
   prefix (≤4 rows). Generate the line via `lineitem_t::generateRandomRecord(p,
   s, o_orderdate, computeRetailPrice(p))`; fold into `accumulate_for_order` to
   derive `o_totalprice`/`o_orderstatus`.
-- Return `{orders_t, std::vector<lineitem_t>}`. RF2 deletes the orderkeys
-  inserted by RF1 (track them, mirroring geo's reservoir of keys to erase).
+- Return `{orders_t, std::vector<lineitem_t>}`.
+
+**RF2** (one pre-existing order to delete):
+
+- Walk an `rf2_next_index` cursor starting at 1; the next orderkey is
+  `orderkey_from_index(rf2_next_index++)` — same sparse-grid traversal as the
+  loader. Cursor lives outside the database (two `Integer`s in `RefreshState`),
+  faithful to the TPC-H spec's "exhaustible external stream" model.
+- Look up `orders[K]` to get `o_custkey` (needed to construct tagged secondary
+  keys for S1/S3 erase); scan `lineitem[{K, 1..}]` and break when orderkey
+  changes to enumerate the linenumbers to delete.
+- Return `{orderkey, custkey, linenumbers, exhausted}`. Cursor exhaustion when
+  `rf2_next_index > loaded_index_max` signals the harness to wrap or stop.
 
 ### 2. Per-structure maintain (RF1) + erase (RF2) methods
 Single-record insert/erase helpers next to `populate_merged`/`populate_split`

@@ -402,6 +402,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- refresh_sales_lsm: TPC-H RF1/RF2 update experiment (vanilla Q3/Q5; RocksDB) ---
+    add_executable(refresh_sales_lsm tpch/refresh_sales/executable_rocksdb.cpp)
+    target_compile_definitions(refresh_sales_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(refresh_sales_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(refresh_sales_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
     # --- test_q5_side_tables: unit test for build_q5_side_tables (RocksDB) ---
     add_executable(test_q5_side_tables tpch/tests/q5/test_side_tables.cpp)
     target_compile_definitions(test_q5_side_tables PRIVATE ROCKSDB_ONLY)
@@ -533,6 +548,13 @@ else()
 
     add_executable(q5_btree tpch/q5/executable_leanstore.cpp)
     target_link_libraries(q5_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    # --- refresh_sales: TPC-H RF1/RF2 update experiment (vanilla Q3/Q5) ---
+    add_executable(refresh_sales_lsm tpch/refresh_sales/executable_rocksdb.cpp)
+    target_link_libraries(refresh_sales_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(refresh_sales_btree tpch/refresh_sales/executable_leanstore.cpp)
+    target_link_libraries(refresh_sales_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 
     add_executable(test_q5_side_tables tpch/tests/q5/test_side_tables.cpp)
     target_link_libraries(test_q5_side_tables PUBLIC RocksDBLogger Threads::Threads)

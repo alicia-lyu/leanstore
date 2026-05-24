@@ -123,6 +123,31 @@ class CustomerOrdersLineitemPipeline
    // Returns the sum of the two split adapter sizes in MiB.
    double get_split_size() const;
 
+   // ------------------------------------------------------------------
+   // Single-record maintenance helpers — used by the refresh_sales/RF1/RF2
+   // experiment to insert / delete one order or lineitem in lockstep with
+   // the base table writes. The tagged-key construction mirrors
+   // populate_merged / populate_split exactly; the only difference is unit
+   // of work (1 record vs. full-table scan).
+   //
+   // S1 covers split_orders + split_lineitem; S3 covers merged_col.
+   // S2 (per-query view) and S4 (base only) are NOT touched here — they
+   // live in the per-query maintain_rf1 / erase_rf2 bodies.
+   //
+   // custkey must be resolved by the caller (RF1 picks it; RF2 looks up
+   // orders[K] before calling).
+   // ------------------------------------------------------------------
+
+   void insert_order_to_split   (Integer custkey, const orders_t::Key&,   const orders_t&);
+   void insert_lineitem_to_split(Integer custkey, const lineitem_t::Key&, const lineitem_t&);
+   void insert_order_to_merged   (Integer custkey, const orders_t::Key&,   const orders_t&);
+   void insert_lineitem_to_merged(Integer custkey, const lineitem_t::Key&, const lineitem_t&);
+
+   bool erase_order_from_split   (Integer custkey, const orders_t::Key&);
+   bool erase_lineitem_from_split(Integer custkey, const lineitem_t::Key&);
+   bool erase_order_from_merged   (Integer custkey, const orders_t::Key&);
+   bool erase_lineitem_from_merged(Integer custkey, const lineitem_t::Key&);
+
    // Expose the merged adapter so per-query drivers can call col_group_walk.
    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                             lineitem_col_t>&

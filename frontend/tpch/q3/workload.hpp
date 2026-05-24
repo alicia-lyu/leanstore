@@ -122,6 +122,28 @@ class Q3Workload
    // Loading / sizing
    // ------------------------------------------------------------------
 
+   // ------------------------------------------------------------------
+   // RF1/RF2 maintenance (refresh_sales experiment). Dispatches on
+   // FLAGS_storage_structure to apply the insert/erase to the active
+   // secondary alongside the base table writes. See
+   // `frontend/tpch/refresh_sales/CLAUDE.md`.
+   // ------------------------------------------------------------------
+
+   // RF1: insert one new order + K lineitems. Base + active-structure secondary.
+   // `lines` carry the already-finalized records (built by RefreshState).
+   void maintain_rf1(const orders_t::Key& ok, const orders_t& ov,
+                     const std::vector<lineitem_t>& lines);
+
+   // RF2: delete one pre-existing order + its enumerated lineitems.
+   // `custkey` is resolved by the caller (via orders[ok].o_custkey); needed for
+   // tagged secondary keys under S1/S3.
+   void erase_rf2(const orders_t::Key& ok, Integer custkey,
+                  const std::vector<Integer>& linenumbers);
+
+   // ------------------------------------------------------------------
+   // Loading / sizing
+   // ------------------------------------------------------------------
+
    // Loads only the per-query secondaries (col split, view, col merged).
    // The shared TPCHWorkload base tables must be loaded separately via
    // tpch.load() before this call. Used by family loaders that share one

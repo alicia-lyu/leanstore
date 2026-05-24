@@ -144,6 +144,78 @@ void CustomerOrdersLineitemPipeline<Backend>::populate_split()
 }
 
 // ---------------------------------------------------------------------------
+// Single-record maintenance helpers (RF1/RF2 — refresh_sales experiment).
+//
+// Construction of tagged keys + records mirrors populate_merged / populate_split
+// exactly. See col_pipeline.hpp for the contract.
+
+template <typename Backend>
+void CustomerOrdersLineitemPipeline<Backend>::insert_order_to_split(
+    Integer custkey, const orders_t::Key& ok, const orders_t& ov)
+{
+   split_orders_ref.insert(
+       orders_coli_t::key_from_base(custkey, ok),
+       orders_coli_t::from_base(ov));
+}
+
+template <typename Backend>
+void CustomerOrdersLineitemPipeline<Backend>::insert_lineitem_to_split(
+    Integer custkey, const lineitem_t::Key& lk, const lineitem_t& lv)
+{
+   split_lineitem_ref.insert(
+       lineitem_col_t::key_from_base(custkey, lk),
+       lineitem_col_t::from_base(lv));
+}
+
+template <typename Backend>
+void CustomerOrdersLineitemPipeline<Backend>::insert_order_to_merged(
+    Integer custkey, const orders_t::Key& ok, const orders_t& ov)
+{
+   merged_col.template insert<orders_coli_t>(
+       orders_coli_t::key_from_base(custkey, ok),
+       orders_coli_t::from_base(ov));
+}
+
+template <typename Backend>
+void CustomerOrdersLineitemPipeline<Backend>::insert_lineitem_to_merged(
+    Integer custkey, const lineitem_t::Key& lk, const lineitem_t& lv)
+{
+   merged_col.template insert<lineitem_col_t>(
+       lineitem_col_t::key_from_base(custkey, lk),
+       lineitem_col_t::from_base(lv));
+}
+
+template <typename Backend>
+bool CustomerOrdersLineitemPipeline<Backend>::erase_order_from_split(
+    Integer custkey, const orders_t::Key& ok)
+{
+   return split_orders_ref.erase(orders_coli_t::key_from_base(custkey, ok));
+}
+
+template <typename Backend>
+bool CustomerOrdersLineitemPipeline<Backend>::erase_lineitem_from_split(
+    Integer custkey, const lineitem_t::Key& lk)
+{
+   return split_lineitem_ref.erase(lineitem_col_t::key_from_base(custkey, lk));
+}
+
+template <typename Backend>
+bool CustomerOrdersLineitemPipeline<Backend>::erase_order_from_merged(
+    Integer custkey, const orders_t::Key& ok)
+{
+   return merged_col.template erase<orders_coli_t>(
+       orders_coli_t::key_from_base(custkey, ok));
+}
+
+template <typename Backend>
+bool CustomerOrdersLineitemPipeline<Backend>::erase_lineitem_from_merged(
+    Integer custkey, const lineitem_t::Key& lk)
+{
+   return merged_col.template erase<lineitem_col_t>(
+       lineitem_col_t::key_from_base(custkey, lk));
+}
+
+// ---------------------------------------------------------------------------
 // get_merged_size: delegates to the adapter's CF-level size estimate.
 
 template <typename Backend>

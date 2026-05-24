@@ -20,6 +20,26 @@ DECLARE_int32(storage_structure);
 namespace tpch::q5
 {
 
+// Build one Q5 pipeline-view row. Caller owns FD-source lookups
+// (c_nationkey from customer, n_name from nation). Shared between load-time
+// `populate_q5_view` and runtime `Q5Workload::maintain_rf1` so the per-row
+// view shape is identical across bulk-load and incremental paths.
+inline std::pair<q5_pipeline_view_t::Key, q5_pipeline_view_t>
+build_q5_view_row(Integer custkey, Integer orderkey, Integer linenumber,
+                  const orders_t& o, const lineitem_t& l,
+                  Integer c_nationkey, const Varchar<25>& n_name)
+{
+   q5_pipeline_view_t::Key vk{custkey, orderkey, linenumber};
+   q5_pipeline_view_t      vv;
+   vv.l_extendedprice = l.l_extendedprice;
+   vv.l_discount      = l.l_discount;
+   vv.l_suppkey       = l.l_suppkey;
+   vv.c_nationkey     = c_nationkey;
+   vv.n_name          = n_name;
+   vv.o_orderdate     = o.o_orderdate;
+   return {vk, vv};
+}
+
 // ---------------------------------------------------------------------------
 // View loading: materialise per-(custkey, orderkey, linenumber) rows into
 // the Q5 pipeline view.
@@ -83,18 +103,11 @@ static void populate_q5_view(
           auto nit = nation_name_map.find(c_nationkey);
           if (nit != nation_name_map.end()) n_name = nit->second;
 
-          q5_pipeline_view_t::Key vk{custkey, orderkey, linenumber};
-          q5_pipeline_view_t      vv;
-          vv.l_extendedprice = l.l_extendedprice;
-          vv.l_discount      = l.l_discount;
-          vv.l_suppkey       = l.l_suppkey;
-          vv.c_nationkey     = c_nationkey;
-          // Convert std::string → Varchar<25> for safe POD serialization.
-          // n_name is at most 25 chars per TPC-H NATION schema; if a NATION
-          // row's n_name is missing (default-constructed std::string), the
-          // Varchar is left zero-initialized which is fine for digest parity.
-          vv.n_name          = Varchar<25>(n_name.c_str());
-          vv.o_orderdate     = o.o_orderdate;
+          // Convert std::string → Varchar<25> (TPC-H spec: n_name ≤ 25 chars;
+          // missing → zero-init Varchar is fine for digest parity).
+          auto [vk, vv] = build_q5_view_row(custkey, orderkey, linenumber,
+                                             o, l, c_nationkey,
+                                             Varchar<25>(n_name.c_str()));
           pipeline_view.insert(vk, vv);
        });
 }

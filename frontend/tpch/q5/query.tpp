@@ -744,4 +744,43 @@ long Q5Workload<Backend>::query_by_hash(std::vector<q5_agg_row_t>& out)
    return static_cast<long>(out.size());
 }
 
+// ---------------------------------------------------------------------------
+// RF1/RF2 maintenance — Q5's per-query S2 view path only. See the explanation
+// in q3/query.tpp (same reasoning): base + col-pipeline writes belong in the
+// family helper because both workloads share those adapters. Q5's S2 view is
+// independent and FD-attaches (c_nationkey, n_name) — one customer.lookup1 +
+// one nation.lookup1 per RF1 order, mirroring populate_q5_view (load.tpp).
+
+template <typename Backend>
+void Q5Workload<Backend>::maintain_rf1(
+    const orders_t::Key& ok, const orders_t& ov,
+    const std::vector<lineitem_t>& lines)
+{
+   if (FLAGS_storage_structure != 2) return;
+   const Integer custkey = ov.o_custkey;
+   Integer c_nationkey = 0;
+   customer.lookup1(customerh_t::Key{custkey},
+                    [&](const customerh_t& c) { c_nationkey = c.c_nationkey; });
+   Varchar<25> n_name{};
+   nation.lookup1(nation_t::Key{c_nationkey},
+                  [&](const nation_t& n) { n_name = n.n_name; });
+   for (size_t j = 0; j < lines.size(); ++j) {
+      auto [vk, vv] = build_q5_view_row(custkey, ok.o_orderkey,
+                                         static_cast<Integer>(j + 1),
+                                         ov, lines[j], c_nationkey, n_name);
+      pipeline_view.insert(vk, vv);
+   }
+}
+
+template <typename Backend>
+void Q5Workload<Backend>::erase_rf2(
+    const orders_t::Key& ok, Integer custkey,
+    const std::vector<Integer>& linenumbers)
+{
+   if (FLAGS_storage_structure != 2) return;
+   for (Integer ln : linenumbers) {
+      pipeline_view.erase(q5_pipeline_view_t::Key{custkey, ok.o_orderkey, ln});
+   }
+}
+
 }  // namespace tpch::q5
