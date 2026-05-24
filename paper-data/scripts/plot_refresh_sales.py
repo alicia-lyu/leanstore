@@ -90,9 +90,9 @@ def _load_dbtoaster(path: Optional[Path]) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def _dbtoaster_pair_ms(db_df: pd.DataFrame,
+def _dbtoaster_pair_us(db_df: pd.DataFrame,
                        budget_gib: float) -> Optional[float]:
-    """Return DBToaster's pair latency (ms) at the largest SF whose
+    """Return DBToaster's pair latency (µs) at the largest SF whose
     ``peak_rss_kb`` fits ``budget_gib``. ``None`` means OOM — no SF row
     fits, so the caller should render this as an "infinite" bar.
     """
@@ -111,7 +111,7 @@ def _dbtoaster_pair_ms(db_df: pd.DataFrame,
         return None
     # RF1 + RF2 are separate phases in DBToaster (see manifest caveat).
     # Sum the per-op latencies as a comparable "size-stable pair" proxy.
-    return 1000.0 / rf1 + 1000.0 / rf2
+    return 1e6 / rf1 + 1e6 / rf2
 
 
 # Two memory budgets shown side-by-side. 1 GiB = current LeanStore data
@@ -188,10 +188,10 @@ def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
             x = bi + (k - (n_ls - 1) / 2) * bar_w
             ax.bar([x], [pair_ms], width=bar_w, color=color, linewidth=0)
 
-    db_ms = _dbtoaster_pair_ms(db_df, budget_gib)
+    db_us = _dbtoaster_pair_us(db_df, budget_gib)
     db_bar_w = bar_w  # match LeanStore bar width for visual consistency
-    if db_ms is not None:
-        ax.bar([DBTOASTER_X], [db_ms], width=db_bar_w,
+    if db_us is not None:
+        ax.bar([DBTOASTER_X], [db_us], width=db_bar_w,
                color=DBTOASTER_COLOR, linewidth=0)
     elif not db_df.empty:
         # OOM: defer to _annotate_oom after the shared y-limits are known.
@@ -201,14 +201,15 @@ def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
     ax.set_xticks(np.arange(len(X_LABELS)))
     ax.set_xticklabels(X_LABELS, fontsize=8)
     ax.set_xlim(-0.5, len(X_LABELS) - 0.5)
-    ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
-    ax.yaxis.set_major_formatter(
-        mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
-    ax.yaxis.set_minor_locator(
-        mticker.LogLocator(base=10.0, subs=tuple(range(2, 10))))
-    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    # Ticks at 1×, 2×, 5× of each decade with plain decimal labels.
+    # The 9 GiB panel autoscales into a narrow range (e.g. 23-76 µs)
+    # that doesn't cross any 10ⁿ boundary, so the old base-10-only
+    # labeller left it tickless and the bars looked unscaled.
+    ax.yaxis.set_major_locator(
+        mticker.LogLocator(base=10.0, subs=(1.0, 2.0, 5.0), numticks=10))
+    ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+    ax.yaxis.set_minor_locator(mticker.NullLocator())
     ax.tick_params(axis="y", which="major", labelsize=7)
-    ax.tick_params(axis="y", which="minor", length=2)
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
     if show_ylabel:
