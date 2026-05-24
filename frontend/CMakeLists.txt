@@ -447,6 +447,21 @@ if (APPLE)
         Threads::Threads
     )
 
+    # --- test_query_q10i_lsm: Q10I cross-structure XOR parity test (RocksDB) ---
+    add_executable(test_query_q10i_lsm tpch/tests/q10i/test_query_q10i_rocksdb.cpp)
+    target_compile_definitions(test_query_q10i_lsm PRIVATE ROCKSDB_ONLY)
+    target_include_directories(test_query_q10i_lsm PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${BACKEND_INCLUDE_DIR}
+        ${SHARED_INCLUDE_DIRECTORY}
+    )
+    target_link_libraries(test_query_q10i_lsm PUBLIC
+        RocksDBLogger
+        jumpmu_standalone
+        random_standalone
+        Threads::Threads
+    )
+
     # --- refresh_sales_lsm: TPC-H RF1/RF2 update experiment (vanilla Q3/Q5; RocksDB) ---
     add_executable(refresh_sales_lsm tpch/refresh_sales/executable_rocksdb.cpp)
     target_compile_definitions(refresh_sales_lsm PRIVATE ROCKSDB_ONLY)
@@ -611,6 +626,12 @@ else()
 
     add_executable(q10i_btree tpch/q10i/executable_leanstore.cpp)
     target_link_libraries(q10i_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
+
+    add_executable(test_query_q10i_lsm tpch/tests/q10i/test_query_q10i_rocksdb.cpp)
+    target_link_libraries(test_query_q10i_lsm PUBLIC RocksDBLogger Threads::Threads)
+
+    add_executable(test_query_q10i_btree tpch/tests/q10i/test_query_q10i_leanstore.cpp)
+    target_link_libraries(test_query_q10i_btree PUBLIC LeanStoreLogger RocksDB Threads::Threads)
 
     # --- refresh_sales: TPC-H RF1/RF2 update experiment (vanilla Q3/Q5) ---
     add_executable(refresh_sales_lsm tpch/refresh_sales/executable_rocksdb.cpp)

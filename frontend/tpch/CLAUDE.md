@@ -201,7 +201,16 @@ Per-query subdirectories:
   Linux perf sweep pending (`LINUX_PENDING.md`). See
   [`q5i/CLAUDE.md §Implementation Status`](q5i/CLAUDE.md). Canonical
   Pattern B reference (view loader reuses S3 group-walk).
-- `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
+- `q10i/` — Q10 + return-payment-status partition (paid/open/late
+  buckets on returned revenue, joined via `l_invoicekey =
+  i_invoicekey`). Phase 1 complete on worktree branch
+  `worktree-agent-a86745538133069de`: 8-file skeleton + harness +
+  cardinality/sentinel checks all `[OK]` at SF=1; query bodies
+  pending Phase 4. **Worktree-only — does NOT merge to main
+  until paper revision is submitted**, because `lineitem_coli_t`
+  was widened with `l_returnflag` (D14) and that invalidates
+  Q3I/Q5I persisted images on main. See
+  [`q10i/CLAUDE.md §Status`](q10i/CLAUDE.md).
 
 Each per-query directory contains the same 8-file shape described in
 §Per-query file convention below.
@@ -402,6 +411,8 @@ point. Run from the repo root.
 | `test_side_tables` | `q5/` | RocksDB (mac+Linux) | `tests/q5/test_side_tables.cpp` |
 | `test_query_q10_lsm` | `q10/` | RocksDB (mac+Linux) | `tests/q10/test_query_q10_rocksdb.cpp` |
 | `test_query_q10_btree` | `q10/` | LeanStore (Linux only) | `tests/q10/test_query_q10_leanstore.cpp` |
+| `test_query_q10i_lsm` | `q10i/` | RocksDB (mac+Linux) | `tests/q10i/test_query_q10i_rocksdb.cpp` |
+| `test_query_q10i_btree` | `q10i/` | LeanStore (Linux only) | `tests/q10i/test_query_q10i_leanstore.cpp` |
 | Q9 tests | `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
@@ -484,6 +495,10 @@ been moved to `TRASH/`.
 - Q10 — `test_query_q10_lsm` (Phase 1 commit 2: stubs return empty,
   digests all 0x0, `[OK]` parity at SF=1; strict-equality cardinality
   + sentinel-ordering land in commit 3)
+- Q10I — `test_query_q10i_lsm` (Phase 1: stubs return empty, digests
+  all 0x0, `[OK]` parity at SF=1; full strict-equality cardinality
+  + sentinel-ordering checks already in place; **worktree-only** —
+  not on main, see q10i/CLAUDE.md §Status)
 - Q9 — none yet (load/query bodies TODO)
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 

@@ -8,11 +8,20 @@ decision or adding a new storage structure.
 
 ## Status
 
-Phase 0 complete (this commit): design doc + 3 DOT plans landed. No
-`.hpp` / `.cpp` / `.tpp` for Q10I; skeleton + bodies pending. Paper
-scope: **5L cell only** (headline cell). Pair-fates with Q10 — the
-paper story needs both, neither alone is coherent. See §Contingency
-for the design-only fallback if Phase 1+ stalls.
+Phase 1 complete (2026-05-23, worktree branch
+`worktree-agent-a86745538133069de`): 8-file skeleton + test harness +
+strict cardinality / sentinel-ordering assertions + digest-0x0 parity
+all `[OK]` at SF=1. `lineitem_coli_t` widened with `l_returnflag`
+(D14) in commit 0; Q3I/Q5I regressions clean. Query bodies pending
+(Phase 4 §7.1–§7.5). Paper scope: **5L cell only** (headline cell).
+Pair-fates with Q10 — the paper story needs both, neither alone is
+coherent. See §Contingency for the design-only fallback if Phase 4
+stalls.
+
+**Worktree-only**: per E1 in the Phase 1 plan, this branch does NOT
+merge into main until the paper revision is submitted — the
+`lineitem_coli_t` widening would invalidate Q3I/Q5I persisted images
+on main. See memory `feedback-widening-invalidates-images`.
 
 ## Sibling Docs
 
