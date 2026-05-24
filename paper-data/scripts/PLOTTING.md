@@ -47,15 +47,25 @@ sudo apt-get install python3-matplotlib python3-pandas python3-yaml python3-nump
 Versions tested on the CloudLab node: matplotlib 3.5.1, pandas 1.3.5,
 numpy 1.21.5.
 
+## Disk media
+
+Every paper-figure basename gets a `_ssd` or `_hdd` suffix when the
+source tag's summary CSVs carry a `disk` column (added by
+`scripts/mark_disk_media.py`). Tags without the column keep their
+bare names. **All pre-2026-05-24 tags are HDD-measured** — the
+`/mnt/ssd` mount on the experiment node was actually a SAS spindle
+until then; `mark_disk_media.py` retroactively stamps that fact on the
+CSVs so HDD baselines and SSD reruns can't be confused.
+
 ## Figure catalog
 
 | Filename | Reads | What it shows |
 |---|---|---|
 | `paper/paper_tpch_btree_headline.pdf` | headline.csv | 1×4 row (q3, q5, q3i, q5i btree). bg=2 only, structures S1–S4. **5L cell only** (largest data, low memory pressure) — each panel is a single group of 4 coloured bars (S4/S1/S2/S3 in legend order). Y = seconds/query (log). Shared legend above. Designed to stack vertically with the lsm sibling. |
 | `paper/paper_tpch_lsm_headline.pdf` | headline.csv | Same shape and geometry as the btree sibling, for the lsm backend. Legend omitted — parent doc uses the btree figure's legend. |
-| `paper/paper_tpch_btree_memory_pressure.pdf` | headline.csv | 1×2 grouped-bar figure (q5, q5i btree). bg=2, S1–S4. X = 3 cells (`2`, `5L`, `5H`) showing both scale-up (2 → 5L) and pressure (5L → 5H). Y = seconds/query (log). Companion to the headline figure when both axes need to be shown. |
-| `paper/paper_tpch_lsm_memory_pressure.pdf` | headline.csv | Same as the btree sibling, for the lsm backend. Legend omitted. |
-| `paper/paper_geo_condensed.pdf` | headline.csv | 2×3 grid: rows = geo backend (btree, lsm), cols = tx pattern (join-nsc, mixed-nsc, distinct-nsc) at depth nsc. Same data-size axis and colour map as the TPC-H figures. |
+| `paper/paper_tpch_btree_memory_pressure.pdf` | headline.csv | 1×2 grouped-bar figure (q5, q5i btree). bg=2, S1–S4. X = 3 cells (`2`, `5L`, `5H`) showing both scale-up (2 → 5L) and pressure (5L → 5H). Y = seconds/query (log). Companion to the headline figure when both axes need to be shown. **Politely skipped** on c0-only tags (e.g. the SSD rerun `2026-05-24-a-ssd`). |
+| `paper/paper_tpch_lsm_memory_pressure.pdf` | headline.csv | Same as the btree sibling, for the lsm backend. Legend omitted. Same c0-only skip rule. |
+| `paper/paper_geo_condensed.pdf` | headline.csv | 2×3 grid: rows = geo backend (btree, lsm), cols = tx pattern (join-nsc, mixed-nsc, distinct-nsc) at depth nsc. Same data-size axis and colour map as the TPC-H figures. **Politely skipped** on tags without `geo_btree`/`geo_lsm` binaries. |
 | `diagnostics/diag_btree_llc_miss.pdf` | diagnostics.csv | 1×4 row (q3, q5, q3i, q5i btree). Y = `cpu_llc_miss_per_tx` (log). Strongest btree attribution: cleanly ranks `merged_idx` ≈ `mat_view` < `mj` < `hj`, supporting the headline `merged ≈ view` claim by underlying cache behaviour. **Main-text candidate**. |
 | `diagnostics/diag_btree_bm_rounds.pdf` | diagnostics.csv | Same shape, Y = `bm_rounds`. Noisy at n=3 — lines cross. Useful for spot-check, not main-text. |
 | `diagnostics/diag_btree_dt_split.pdf` | diagnostics.csv | Same shape, Y = `dt_struct_split`. Mostly zero on read-only queries (write path not exercised) — kept for future write-workload runs. |

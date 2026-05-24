@@ -83,6 +83,7 @@ class SweepData:
     inversions: pd.DataFrame
     diagnostics: pd.DataFrame
     manifest: Dict[str, str]
+    disk: Optional[str] = None  # 'hdd' / 'ssd' / None (legacy unmarked)
 
     @property
     def footer(self) -> str:
@@ -92,7 +93,14 @@ class SweepData:
             v = m.get(k)
             if v:
                 parts.append(f"{k.split('_')[0]} {v}")
+        if self.disk:
+            parts.append(f"disk {self.disk}")
         return "  |  ".join(parts)
+
+    def paper_name(self, base: str) -> str:
+        """Suffix a paper-figure basename with disk media when known, so
+        SSD reruns don't silently overwrite the HDD baselines."""
+        return f"{base}_{self.disk}" if self.disk else base
 
 
 def _quantile(vals: pd.Series, p: float) -> float:
@@ -152,9 +160,22 @@ def load_sweep(tag: str, root: Path) -> SweepData:
         except yaml.YAMLError as e:
             print(f"[plotter] WARN: couldn't parse manifest: {e}", file=sys.stderr)
 
+    # Disk-media tag (see scripts/mark_disk_media.py). Mode of the
+    # `disk` column across all summary CSVs; warn on mixed values.
+    disk: Optional[str] = None
+    seen = set()
+    for df in (headline, stats, inversions, diagnostics):
+        if not df.empty and "disk" in df.columns:
+            seen.update(str(v) for v in df["disk"].dropna().unique())
+    if seen:
+        if len(seen) > 1:
+            print(f"[plotter] WARN: mixed disk media in {tag}: {sorted(seen)}",
+                  file=sys.stderr)
+        disk = sorted(seen)[0]
+
     return SweepData(tag=tag, summary_root=summary, figures_root=figures,
                      headline=headline, stats=stats, inversions=inversions,
-                     diagnostics=diagnostics, manifest=manifest)
+                     diagnostics=diagnostics, manifest=manifest, disk=disk)
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +469,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
         fig.legend(handles=handles, loc="upper center", ncol=4,
                    fontsize=8, bbox_to_anchor=(0.5, 1.14),
                    frameon=False, columnspacing=1.5, handletextpad=0.4)
-    name = f"paper_tpch_{backend}_headline"
+    name = data.paper_name(f"paper_tpch_{backend}_headline")
     dest = data.figures_root / "paper" / name
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
@@ -499,6 +520,13 @@ def fig_paper_memory_pressure(data: SweepData, backend: str,
                          & (data.headline["tx"] == "query")]
     if head.empty:
         return None
+    have_cells = set(head["cell"].dropna().unique())
+    missing = [c for c in PAPER_CELLS if c not in have_cells]
+    if missing:
+        print(f"[plotter] paper_tpch_{backend}_memory: skipped — "
+              f"memory_pressure needs {PAPER_CELLS}, tag has "
+              f"{sorted(have_cells)}", file=sys.stderr)
+        return None
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
     binaries = [f"{q}_{backend}" for q in MEMORY_PRESSURE_QUERIES]
@@ -523,7 +551,7 @@ def fig_paper_memory_pressure(data: SweepData, backend: str,
         fig.legend(handles=handles, loc="upper center", ncol=4,
                    fontsize=8, bbox_to_anchor=(0.5, 1.10),
                    frameon=False, columnspacing=1.5, handletextpad=0.4)
-    name = f"paper_tpch_{backend}_memory_pressure"
+    name = data.paper_name(f"paper_tpch_{backend}_memory_pressure")
     dest = data.figures_root / "paper" / name
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
@@ -548,6 +576,8 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
                          & (data.headline["bg"] == PAPER_HEADLINE_BG)
                          & (data.headline["structure"].isin(PAPER_STRUCTURES))]
     if head.empty:
+        print("[plotter] paper_geo_condensed: skipped — needs geo binaries, "
+              "tag has none", file=sys.stderr)
         return None
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg", "tx"])
@@ -600,7 +630,7 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
     fig.legend(handles=handles, loc="upper center", ncol=4,
                fontsize=6, bbox_to_anchor=(0.5, 1.04),
                frameon=False, columnspacing=1.2, handletextpad=0.4)
-    dest = data.figures_root / "paper" / "paper_geo_condensed"
+    dest = data.figures_root / "paper" / data.paper_name("paper_geo_condensed")
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
