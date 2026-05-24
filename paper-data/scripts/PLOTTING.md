@@ -51,8 +51,10 @@ numpy 1.21.5.
 
 | Filename | Reads | What it shows |
 |---|---|---|
-| `paper/paper_tpch_btree_headline.pdf` | headline.csv | 1×4 row (q3, q5, q3i, q5i btree). bg=2 only, structures S1–S4. X = data size (GiB) with H/L pressure suffix (`2`, `5L`, `5H`). Y = seconds/query (log). Per-panel auto-scaled. Shared legend above. Designed to stack vertically with the lsm sibling. |
+| `paper/paper_tpch_btree_headline.pdf` | headline.csv | 1×4 row (q3, q5, q3i, q5i btree). bg=2 only, structures S1–S4. **5L cell only** (largest data, low memory pressure) — each panel is a single group of 4 coloured bars (S4/S1/S2/S3 in legend order). Y = seconds/query (log). Shared legend above. Designed to stack vertically with the lsm sibling. |
 | `paper/paper_tpch_lsm_headline.pdf` | headline.csv | Same shape and geometry as the btree sibling, for the lsm backend. Legend omitted — parent doc uses the btree figure's legend. |
+| `paper/paper_tpch_btree_memory_pressure.pdf` | headline.csv | 1×2 grouped-bar figure (q5, q5i btree). bg=2, S1–S4. X = 3 cells (`2`, `5L`, `5H`) showing both scale-up (2 → 5L) and pressure (5L → 5H). Y = seconds/query (log). Companion to the headline figure when both axes need to be shown. |
+| `paper/paper_tpch_lsm_memory_pressure.pdf` | headline.csv | Same as the btree sibling, for the lsm backend. Legend omitted. |
 | `paper/paper_geo_condensed.pdf` | headline.csv | 2×3 grid: rows = geo backend (btree, lsm), cols = tx pattern (join-nsc, mixed-nsc, distinct-nsc) at depth nsc. Same data-size axis and colour map as the TPC-H figures. |
 | `diagnostics/diag_btree_llc_miss.pdf` | diagnostics.csv | 1×4 row (q3, q5, q3i, q5i btree). Y = `cpu_llc_miss_per_tx` (log). Strongest btree attribution: cleanly ranks `merged_idx` ≈ `mat_view` < `mj` < `hj`, supporting the headline `merged ≈ view` claim by underlying cache behaviour. **Main-text candidate**. |
 | `diagnostics/diag_btree_bm_rounds.pdf` | diagnostics.csv | Same shape, Y = `bm_rounds`. Noisy at n=3 — lines cross. Useful for spot-check, not main-text. |

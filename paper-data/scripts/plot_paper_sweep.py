@@ -198,6 +198,39 @@ def line_with_iqr(ax, df: pd.DataFrame, x_col: str, y_col: str,
     ax.set_xticklabels(x_order)
 
 
+def grouped_bar(ax, df: pd.DataFrame, x_col: str, y_col: str,
+                hue_col: str, x_order: Sequence,
+                hue_order: Sequence[int],
+                hue_labels: Dict[int, str],
+                bar_width: float = 0.18) -> None:
+    """One bar per (x, hue). df is long-form, one row per (x, hue).
+
+    Bars are placed at ``i*1 + (k - (n-1)/2) * bar_width`` so groups
+    stay centred on integer x. Missing (x, hue) combinations are
+    silently skipped (no zero-height bar fabricated).
+    """
+    n = len(hue_order)
+    x_idx = {x: i for i, x in enumerate(x_order)}
+    for k, hue in enumerate(hue_order):
+        color = STYLE["structure_colors"].get(int(hue), "#777777")
+        label = hue_labels.get(int(hue), str(hue))
+        sub = df[df[hue_col] == hue]
+        xs, ys = [], []
+        for _, row in sub.iterrows():
+            if row[x_col] not in x_idx:
+                continue
+            v = row[y_col]
+            if pd.isna(v):
+                continue
+            xs.append(x_idx[row[x_col]] + (k - (n - 1) / 2) * bar_width)
+            ys.append(float(v))
+        if xs:
+            ax.bar(xs, ys, width=bar_width, color=color, label=label,
+                   linewidth=0)
+    ax.set_xticks(np.arange(len(x_order)))
+    ax.set_xticklabels(x_order)
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -270,6 +303,13 @@ PAPER_LEGEND_ORDER = [4, 1, 2, 3]
 # then crank pressure up at fixed data size. Lets the reader read
 # the "scale-up" effect first and the "pressure" effect second.
 PAPER_CELLS = ["c1", "c0", "c3"]
+# Headline figure focuses on a single cell (5L = biggest data, low memory
+# pressure) so each panel is one group of 4 coloured bars, not a crowded
+# scale-up + pressure overlay. Memory pressure gets its own figure.
+PAPER_HEADLINE_CELL = "c0"
+# Queries shown in the memory-pressure / scale figure (drop q3/q3i to keep
+# the figure focused — q5 is the canonical headline; q5i covers tpchi).
+MEMORY_PRESSURE_QUERIES = ["q5", "q5i"]
 # Tick labels show secondary index size in GiB, with H/L suffix on
 # the two 5 GiB cells to distinguish low vs high memory pressure.
 # Full label "data size (GiB), H/L = memory pressure" is left to the
@@ -293,10 +333,15 @@ def _apply_paper_overlap_style(ax) -> None:
     Otherwise narrow-range panels (e.g. q3 btree 300-2000 s) emit
     five intermediate labels and eat the horizontal space of the
     next panel."""
+    # Merged-index (S3, green) gets a distinct diamond marker so the
+    # headline series stays visually traceable when lines overlap;
+    # everyone else uses the same circle.
+    s3_color = STYLE["structure_colors"][3]
     for line in ax.get_lines():
-        line.set_marker("o")
-        line.set_markersize(4)
-        line.set_alpha(0.7)
+        is_s3 = line.get_color() == s3_color
+        line.set_marker("D" if is_s3 else "o")
+        line.set_markersize(5 if is_s3 else 4)
+        line.set_alpha(0.85 if is_s3 else 0.7)
     # Suppress the IQR fill_between bands — at 3 reps the IQR is
     # noisy and the "shadow" around lines (most visible behind
     # pipeline view) reads as a visual artefact rather than an
@@ -313,12 +358,13 @@ def _apply_paper_overlap_style(ax) -> None:
     ax.tick_params(axis="y", which="minor", length=2)
 
 
-def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
-                 cells: Sequence[str], show_ylabel: bool) -> bool:
-    """One compact panel of the paper TPC-H row. bg=2 only, S1-S4 only.
-    Y values are converted ms → seconds; TPC-H queries here run from
-    ~5 s up to ~hours, so 'seconds / query' is the natural unit."""
-    sub = ms_df[(ms_df["binary"] == binary) & (ms_df["cell"].isin(cells))
+def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
+                     cell: str, show_ylabel: bool) -> bool:
+    """One compact bar panel of the paper TPC-H headline row. bg=2,
+    S1-S4, single cell (default 5L = ``c0``). Four coloured bars per
+    panel, one per structure in PAPER_LEGEND_ORDER. ms → seconds; log y.
+    """
+    sub = ms_df[(ms_df["binary"] == binary) & (ms_df["cell"] == cell)
                 & (ms_df["bg"] == PAPER_HEADLINE_BG)
                 & (ms_df["structure"].isin(PAPER_STRUCTURES))]
     if sub.empty:
@@ -328,26 +374,36 @@ def _paper_panel(ax, ms_df: pd.DataFrame, binary: str,
         return False
     sub = sub.copy()
     sub["s_median"] = sub["ms_median"] / 1000.0
-    sub["s_iqr"] = sub["ms_iqr"] / 1000.0
-    line_with_iqr(
-        ax, sub, x_col="cell", y_col="s_median", iqr_col="s_iqr",
-        hue_col="structure", x_order=cells,
-        hue_labels=STRUCTURE_LABELS, linestyle="-",
-    )
+    # One bar per structure, centred on x=0.
+    bar_w = 0.18
+    n = len(PAPER_LEGEND_ORDER)
+    drew = False
+    for k, struct in enumerate(PAPER_LEGEND_ORDER):
+        row = sub[sub["structure"] == struct]
+        if row.empty or pd.isna(row["s_median"].iloc[0]):
+            continue
+        x = (k - (n - 1) / 2) * bar_w
+        ax.bar([x], [float(row["s_median"].iloc[0])], width=bar_w,
+               color=STYLE["structure_colors"][struct],
+               linewidth=0)
+        drew = True
     ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
                  fontsize=10)
     if show_ylabel:
         ax.set_ylabel("seconds / query", fontsize=8)
-    ax.set_xticks(np.arange(len(cells)))
-    ax.set_xticklabels([PAPER_CELL_TICK.get(c, c) for c in cells],
-                       fontsize=8)
+    ax.set_xticks([])
     ax.set_yscale("log")
-    ax.tick_params(axis="y", labelsize=6)
-    ax.grid(False)  # no log-scale gridlines per user request
-    if ax.get_legend():
-        ax.get_legend().remove()
-    _apply_paper_overlap_style(ax)
-    return True
+    ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
+    ax.yaxis.set_major_formatter(
+        mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
+    ax.yaxis.set_minor_locator(
+        mticker.LogLocator(base=10.0, subs=tuple(range(2, 10))))
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.tick_params(axis="y", which="major", labelsize=7)
+    ax.tick_params(axis="y", which="minor", length=2)
+    ax.yaxis.grid(True, linestyle=":", alpha=0.4)
+    ax.set_axisbelow(True)
+    return drew
 
 
 def fig_paper_tpch_row(data: SweepData, backend: str,
@@ -378,22 +434,96 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
                              constrained_layout=True)
     has_any = False
     for j, binary in enumerate(binaries):
-        drew = _paper_panel(axes[j], ms_df, binary, PAPER_CELLS,
-                            show_ylabel=(j == 0))
+        drew = _paper_bar_panel(axes[j], ms_df, binary, PAPER_HEADLINE_CELL,
+                                show_ylabel=(j == 0))
+        has_any = has_any or drew
+    if not has_any:
+        plt.close(fig)
+        return None
+    if include_legend:
+        handles = [plt.Rectangle((0, 0), 1, 1,
+                                 color=STYLE["structure_colors"][s],
+                                 label=STRUCTURE_LABELS[s].split(" ", 1)[1])
+                   for s in PAPER_LEGEND_ORDER]
+        fig.legend(handles=handles, loc="upper center", ncol=4,
+                   fontsize=8, bbox_to_anchor=(0.5, 1.14),
+                   frameon=False, columnspacing=1.5, handletextpad=0.4)
+    name = f"paper_tpch_{backend}_headline"
+    dest = data.figures_root / "paper" / name
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
+def _memory_pressure_panel(ax, ms_df: pd.DataFrame, binary: str,
+                           cells: Sequence[str], show_ylabel: bool) -> bool:
+    """One panel of the memory-pressure / scale figure. Line plot across
+    three cells (2, 5L, 5H) so the scale-up and pressure trends read
+    left-to-right. Visual conventions match the prior headline panel."""
+    sub = ms_df[(ms_df["binary"] == binary) & (ms_df["cell"].isin(cells))
+                & (ms_df["bg"] == PAPER_HEADLINE_BG)
+                & (ms_df["structure"].isin(PAPER_STRUCTURES))]
+    if sub.empty:
+        _all_or_empty(plt.gcf(), ax, "—")
+        ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+                     fontsize=10)
+        return False
+    sub = sub.copy()
+    sub["s_median"] = sub["ms_median"] / 1000.0
+    sub["s_iqr"] = sub["ms_iqr"] / 1000.0
+    line_with_iqr(
+        ax, sub, x_col="cell", y_col="s_median", iqr_col="s_iqr",
+        hue_col="structure", x_order=cells,
+        hue_labels=STRUCTURE_LABELS, linestyle="-",
+    )
+    ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+                 fontsize=10)
+    if show_ylabel:
+        ax.set_ylabel("seconds / query", fontsize=8)
+    ax.set_xticks(np.arange(len(cells)))
+    ax.set_xticklabels([PAPER_CELL_TICK.get(c, c) for c in cells],
+                       fontsize=8)
+    ax.set_yscale("log")
+    ax.tick_params(axis="y", labelsize=6)
+    ax.grid(False)
+    if ax.get_legend():
+        ax.get_legend().remove()
+    _apply_paper_overlap_style(ax)
+    return True
+
+
+def fig_paper_memory_pressure(data: SweepData, backend: str,
+                              include_legend: bool) -> Optional[Path]:
+    """1×2 grouped-bar figure: q5 and q5i, three cells (2/5L/5H)."""
+    assert backend in ("btree", "lsm")
+    head = data.headline[data.headline["family"].isin(["vanilla", "tpchi"])
+                         & (data.headline["backend"] == backend)
+                         & (data.headline["tx"] == "query")]
+    if head.empty:
+        return None
+    ms_df = aggregate_ms_per_query(
+        head, group_cols=["binary", "cell", "structure", "bg"])
+    binaries = [f"{q}_{backend}" for q in MEMORY_PRESSURE_QUERIES]
+    fig, axes = plt.subplots(1, 2, figsize=(4.5, 2.2), sharey=False,
+                             constrained_layout=True)
+    has_any = False
+    for j, binary in enumerate(binaries):
+        drew = _memory_pressure_panel(axes[j], ms_df, binary, PAPER_CELLS,
+                                      show_ylabel=(j == 0))
         has_any = has_any or drew
     if not has_any:
         plt.close(fig)
         return None
     if include_legend:
         handles = [plt.Line2D([], [], color=STYLE["structure_colors"][s],
-                              marker="o", markersize=4, linewidth=1.2,
-                              alpha=0.7,
+                              marker=("D" if s == 3 else "o"),
+                              markersize=(5 if s == 3 else 4),
+                              linewidth=1.2,
+                              alpha=(0.85 if s == 3 else 0.7),
                               label=STRUCTURE_LABELS[s].split(" ", 1)[1])
                    for s in PAPER_LEGEND_ORDER]
         fig.legend(handles=handles, loc="upper center", ncol=4,
-                   fontsize=8, bbox_to_anchor=(0.5, 1.14),
+                   fontsize=8, bbox_to_anchor=(0.5, 1.10),
                    frameon=False, columnspacing=1.5, handletextpad=0.4)
-    name = f"paper_tpch_{backend}_headline"
+    name = f"paper_tpch_{backend}_memory_pressure"
     dest = data.figures_root / "paper" / name
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
@@ -627,6 +757,8 @@ FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     # Paper-mode builders (typeset-ready, bg=2 only, S1-S4 only).
     "paper_tpch_btree":      lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
     "paper_tpch_lsm":        lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
+    "paper_tpch_btree_memory": lambda d: fig_paper_memory_pressure(d, "btree", include_legend=True),
+    "paper_tpch_lsm_memory":   lambda d: fig_paper_memory_pressure(d, "lsm",   include_legend=False),
     "paper_geo_condensed":   fig_paper_geo_condensed,
     # Diagnostics exploration — per-query 1×4 rows. btree gets the
     # full LeanStore counter family; lsm gets RocksDB SST timing
@@ -648,6 +780,8 @@ DIAG_EXPLORE_FIGS = [
 ]
 MODE_FIGURES: Dict[str, List[str]] = {
     "paper-figures":       ["paper_tpch_btree", "paper_tpch_lsm",
+                            "paper_tpch_btree_memory",
+                            "paper_tpch_lsm_memory",
                             "paper_geo_condensed"],
     "diagnostics-explore": DIAG_EXPLORE_FIGS,
     "all":                 list(FIGURE_BUILDERS.keys()),
