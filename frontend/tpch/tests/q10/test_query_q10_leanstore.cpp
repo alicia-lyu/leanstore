@@ -11,9 +11,13 @@
 //   - All work runs inside crm.scheduleJobSync(0, ...) closures.
 
 #include <gflags/gflags.h>
+#include <cstdint>
+#include <cstring>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #include "../../../shared/adapter-scanner/LeanStoreAdapter.hpp"
@@ -33,13 +37,24 @@
 DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping");
 
 // XOR digest — byte-identical to the RocksDB harness so digests compare
-// across backends.
+// across backends. Covers c_custkey, revenue, and the 6 FD output cols +
+// n_name so Phase 4 cross-structure parity catches both revenue and
+// FD-col mismatches.
 static uint64_t row_digest(const tpch::q10::q10_agg_row_t& r)
 {
    auto rotl64 = [](uint64_t v, int s) { return (v << s) | (v >> (64 - s)); };
+   auto var_hash = [](const char* p, size_t n) {
+      return std::hash<std::string>{}(std::string(p, strnlen(p, n)));
+   };
    uint64_t d = 0;
    d = rotl64(d, 13) ^ static_cast<uint64_t>(static_cast<int>(r.c_custkey));
    d = rotl64(d, 13) ^ static_cast<uint64_t>(static_cast<double>(r.revenue) * 1e6);
+   d = rotl64(d, 13) ^ var_hash(r.c_name.data,    sizeof(r.c_name.data));
+   d = rotl64(d, 13) ^ static_cast<uint64_t>(static_cast<double>(r.c_acctbal) * 1e6);
+   d = rotl64(d, 13) ^ var_hash(r.n_name.data,    sizeof(r.n_name.data));
+   d = rotl64(d, 13) ^ var_hash(r.c_address.data, sizeof(r.c_address.data));
+   d = rotl64(d, 13) ^ var_hash(r.c_phone.data,   sizeof(r.c_phone.data));
+   d = rotl64(d, 13) ^ var_hash(r.c_comment.data, sizeof(r.c_comment.data));
    return d;
 }
 

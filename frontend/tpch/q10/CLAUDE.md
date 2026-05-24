@@ -4,13 +4,21 @@
 
 ## Status
 
-**Phase 0 complete; skeleton + bodies pending.** Experimental scope
-is the **5L cell only** (largest data, low memory pressure — the
-headline cell per `paper-data/scripts/PLOTTING.md`). Not committing
-to the full SF×DRAM sweep. The invoice-extended sibling lives in
-[`../q10i/`](../q10i/CLAUDE.md); Q10 is the no-extension baseline
-of the COL family. See §Contingency for the design-only-future-work
-fallback if Phase 1+ results do not land in time.
+**Phase 1 complete; query bodies pending.** The 8-file skeleton +
+schema-finalised pipeline view + Q10Stats + 24-entry PARAM_TABLE +
+strict-equality cardinality / sentinel-ordering test harness are
+all in. SF=1 macOS: `test_query_q10_lsm` reports `[OK]` on splits
+(orders / lineitem 1:1), `[OK]` on merged_col per-type breakdown +
+total via `col_group_walk`, `[OK]` on sentinel ordering, `[OK]` on
+`pipeline_view rows == 0` (deferred to Phase 4a per Pattern B), and
+`[OK]` digest-0x0 parity across the four `query_by_*` stubs.
+Experimental scope is the **5L cell only** (largest data, low memory
+pressure — the headline cell per `paper-data/scripts/PLOTTING.md`).
+Not committing to the full SF×DRAM sweep. The invoice-extended
+sibling lives in [`../q10i/`](../q10i/CLAUDE.md); Q10 is the
+no-extension baseline of the COL family. See §Contingency for the
+design-only-future-work fallback if Phase 4 bodies / 5L results do
+not land in time.
 
 ## Sibling Docs
 
@@ -554,15 +562,36 @@ not a Phase 0 design decision.
 
 ## Implementation Phases
 
-- **Phase 0** (this commit) — design doc + DOT plans.
-- **Phase 1** — skeleton + schema + pipeline-owned load: `views.hpp`
-  (`q10_pipeline_view_t`, `q10_agg_row_t`),
-  `workload.hpp` (`Q10Workload<Backend>`, Params + DATE rotation
-  table, predicate declarations), `load.tpp` (delegates to
-  `CustomerOrdersLineitemPipeline<Backend>` + view loader),
-  `per_structure_workload.hpp` (alias-only),
-  `query.tpp` stubs returning empty vectors. CMake + test harness
-  wired so `test_query_q10_lsm` reports `[OK]` parity at digest 0x0.
+- **Phase 0** (commit `d820148c`) — design doc + DOT plans.
+- **Phase 0 fixups** (commit `dd6304ac`) — PK-only S4 builds (Rule 4
+  / Rule 13 record-assembly recovery), S2-anomaly aggregation
+  framing; q10_agg_row_t reframed as the conceptual post-assembly
+  output row.
+- **Phase 1 — complete (three sub-commits).**
+  - **Commit 1** (`c7e79b69`) — 8-file compilable skeleton; all
+    four `query_by_*` are stubs returning empty; `q10_lsm` links
+    clean on macOS.
+  - **Commit 2** (`d6514a00`) — `test_query_q10_{lsm,btree}` harness
+    asserts cross-structure digest parity at 0x0; CMake targets +
+    `generate_targets.py` entries (DIFF_DIRS, STRUCTURE_OPTIONS,
+    exec_names); `frontend/tpch/CLAUDE.md` Tests table updated. Q10
+    stays standalone (not in vanilla family loader).
+  - **Commit 3** (this) — schema widening: `q10_pipeline_view_t`
+    payload widened to the 7 FD customer cols (Decision D3);
+    `q10_agg_row_t` widened to carry the 6 FD output cols + n_name
+    (the post-assembly contract). `Q10Stats` declared at namespace
+    scope with `Q10Stats* stats` member on the workload class.
+    24-entry PARAM_TABLE populated (Decision E4 — every valid
+    month start in [1993-02-01, 1995-01-01]); real
+    `set_params_for_iter` rotates through it. Test harness
+    extended with strict-equality cardinality on splits +
+    merged_col, per-type breakdown via `col_group_walk`,
+    sentinel-ordering check, per-customer-group distribution
+    stats, `pipeline_view rows == 0 [deferred to Phase 4a (Pattern
+    B)]` line.
+- **Phase 4 §7.1** — S3 `query_by_merged` via `col_group_walk` +
+  bespoke `Q10GroupWalkVisitor` + bounded top-20 sink (D1, D2).
+  NATION INL resolved inside `on_group_end` (D6).
 - **Phase 4 §7.1** — S3 `query_by_merged` via `col_group_walk` +
   bespoke `Q10GroupWalkVisitor` + bounded top-20 sink (D1, D2).
   NATION INL resolved inside `on_group_end` (D6).

@@ -16,12 +16,6 @@
 // ID allocation:
 //   q10_pipeline_view_t : id = 70
 //   q10_agg_row_t       : id = 71 (reserved; type is in-memory only)
-//
-// Phase 1 (this file): pipeline-view shape lands with the leading-key
-// shape (custkey, orderkey, linenumber); payload is finalised in
-// commit 3. q10_agg_row_t lands flat (no nested Key struct) — c_custkey
-// is the conceptual GROUP BY key per Decision E2, but the row is never
-// stored in a B-tree adapter (TopNSink consumes it directly).
 
 #include "../tpch_family/views_col.hpp"
 #include "../tpch_tables.hpp"
@@ -35,12 +29,21 @@ namespace tpch::q10
 //
 // Predicate-hoisted: o_orderdate window is parameterised and applies live
 // at query time (Decision D4 — view-scan plan rolls per-order before the
-// orderdate filter). `l_returnflag` is spec-hardcoded but kept live for
-// view-reusability across a hypothetical no-returnflag variant.
+// orderdate filter). `l_returnflag` is spec-hardcoded but kept live (not
+// baked) for view-reusability across a hypothetical no-returnflag variant.
+//
+// FD-attached customer columns ride on every lineitem row (Decision D3 —
+// single scanner, duplicated per-lineitem). This carries the 7 output
+// columns the per-customer SUM-then-TopN chain consumes downstream so S2
+// has no separate customer scan.
 //
 // No n_name in the payload — NATION attaches uniformly as a per-customer
-// INL on PK at emit time (Decision D6). Deliberately NOT FD-attached at
-// view-load time.
+// INL on PK at record-assembly time (Decision D6). Deliberately NOT
+// FD-attached at view-load time.
+//
+// All payload columns are Varchar<N> POD or numeric scalars; never
+// std::string — record_traits use memcpy and libstdc++ std::string is
+// non-standard-layout (cf. Q5 commit a1fbdc15).
 
 struct q10_pipeline_view_t {
    static constexpr int id = 70;
@@ -58,13 +61,20 @@ struct q10_pipeline_view_t {
    Numeric    l_extendedprice;
    Numeric    l_discount;
    Varchar<1> l_returnflag;
+
+   // FD-attached order column (parameterised filter applied above the
+   // view scan; the S2-anomaly per-orderkey SUM groups by orderkey using
+   // this).
    Timestamp  o_orderdate;
 
-   // FD-attached customer columns. Phase 1 commit 1 ships a placeholder
-   // payload to keep load.tpp's view branch compilable; commit 3 widens
-   // this to the full 7 output columns (c_custkey, c_name, c_address,
-   // c_nationkey, c_phone, c_acctbal, c_comment). Varchar<N> (POD), never
-   // std::string — record_traits use memcpy.
+   // FD-attached customer payload (7 output columns + c_nationkey for
+   // the NATION INL probe at record-assembly time).
+   Varchar<25>  c_name;
+   Varchar<40>  c_address;
+   Integer      c_nationkey;
+   Varchar<15>  c_phone;
+   Numeric      c_acctbal;
+   Varchar<117> c_comment;
 
    ADD_RECORD_TRAITS(q10_pipeline_view_t)
 
@@ -93,10 +103,14 @@ struct q10_agg_row_t {
    // Aggregate.
    Numeric    revenue;
 
-   // FD-attached output columns (commit 3 widens to the full set; Phase 1
-   // commit 1 ships placeholders so query.tpp's stub signature compiles).
-   // Commit-3 additions: c_name, c_acctbal, c_address, c_phone, c_comment,
-   // and n_name resolved per-customer via NATION INL at emit (Decision D6).
+   // FD output columns (resolved via INL at record-assembly time in S4;
+   // pre-materialised in the view/walker payload in S1/S2/S3).
+   Varchar<25>  c_name;
+   Numeric      c_acctbal;
+   Varchar<25>  n_name;          // from NATION INL (D6)
+   Varchar<40>  c_address;
+   Varchar<15>  c_phone;
+   Varchar<117> c_comment;
 
    void print(std::ostream& os) const;
 

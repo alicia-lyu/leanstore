@@ -3,7 +3,7 @@
 // and predicate implementations.
 // Operator-translation reference: see ../OPERATORS.md §3.
 //
-// Phase 1 commit 1: all query_by_* return empty results (XOR digest = 0x0).
+// Phase 1: all query_by_* return empty results (XOR digest = 0x0).
 // Real bodies land in Phase 4 §7.1 (S3), §7.2 (S1), §7.3 (S2), §7.5 (S4).
 
 #pragma once
@@ -20,35 +20,70 @@ namespace tpch::q10
 {
 
 // ---------------------------------------------------------------------------
-// Date constants for the 3-month orderdate window.
+// Q10 SUBSTITUTION-PARAMETER rotation table (Decision E4 — 24 entries).
 //
-// TPC-H Q10 substitution-parameter domain: :d ∈ first day of a month between
-// 1993-02-01 and 1995-01-01 (24 valid month starts inclusive). DATE constants
-// are days since 1970-01-01. DATE_1994_01_01 = 8766 and DATE_1995_01_01 = 9131
-// ship in tpch_tables.hpp. Validation default = 1993-10-01.
+// TPC-H §2.4.10 domain for `:d`:
+//   first day of a month between 1993-02-01 and 1995-01-01 inclusive
+//   (24 valid month starts).  Validation default = 1993-10-01.
 //
-// Phase 1 commit 1 ships only the validation default; commit 3 populates the
-// 24-entry PARAM_TABLE (Decision E4).
+// Days since 1970-01-01.  DATE_1994_01_01 = 8766 and DATE_1995_01_01 = 9131
+// ship in tpch_tables.hpp.  1993-01-01 = DATE_1994_01_01 − 365.  Year 1993,
+// 1994, 1995 are all non-leap, so month offsets follow the standard
+// Jan(31)/Feb(28)/Mar(31)/Apr(30)/May(31)/Jun(30)/Jul(31)/Aug(31)/
+// Sep(30)/Oct(31)/Nov(30)/Dec(31) cumulative pattern.
+//
+// Validation default first so iter=0 is always spec-valid.  The PLAYBOOK
+// rationale (§3.6): a fixed-param loop hid Q3I's pre_revenue bug for weeks;
+// domain-full rotation surfaces param-bake regressions within one helper.run().
 
-// Days since 1970-01-01.  1993-01-01 = DATE_1994_01_01 − 365.
-static constexpr Timestamp Q10_DATE_1993_01_01 = DATE_1994_01_01 - 365;
-//   1993-10-01 = 1993-01-01 + (31+28+31+30+31+30+31+31+30) = 1993-01-01 + 273
-static constexpr Timestamp Q10_DATE_1993_10_01 = Q10_DATE_1993_01_01 + 273;
+static constexpr Timestamp Q10_DATE_1993_01_01 = DATE_1994_01_01 - 365;  // 8401
+
+static constexpr Timestamp PARAM_TABLE[] = {
+    Q10_DATE_1993_01_01 + 273,  // 1993-10-01 = 8674  [validation default]
+    Q10_DATE_1993_01_01 +  31,  // 1993-02-01
+    Q10_DATE_1993_01_01 +  59,  // 1993-03-01
+    Q10_DATE_1993_01_01 +  90,  // 1993-04-01
+    Q10_DATE_1993_01_01 + 120,  // 1993-05-01
+    Q10_DATE_1993_01_01 + 151,  // 1993-06-01
+    Q10_DATE_1993_01_01 + 181,  // 1993-07-01
+    Q10_DATE_1993_01_01 + 212,  // 1993-08-01
+    Q10_DATE_1993_01_01 + 243,  // 1993-09-01
+    Q10_DATE_1993_01_01 + 304,  // 1993-11-01
+    Q10_DATE_1993_01_01 + 334,  // 1993-12-01
+    DATE_1994_01_01,            // 1994-01-01 = 8766
+    DATE_1994_01_01 +  31,      // 1994-02-01
+    DATE_1994_01_01 +  59,      // 1994-03-01
+    DATE_1994_01_01 +  90,      // 1994-04-01
+    DATE_1994_01_01 + 120,      // 1994-05-01
+    DATE_1994_01_01 + 151,      // 1994-06-01
+    DATE_1994_01_01 + 181,      // 1994-07-01
+    DATE_1994_01_01 + 212,      // 1994-08-01
+    DATE_1994_01_01 + 243,      // 1994-09-01
+    DATE_1994_01_01 + 273,      // 1994-10-01
+    DATE_1994_01_01 + 304,      // 1994-11-01
+    DATE_1994_01_01 + 334,      // 1994-12-01
+    DATE_1995_01_01,            // 1995-01-01 = 9131
+};
+
+static constexpr long PARAM_TABLE_SIZE =
+    static_cast<long>(sizeof(PARAM_TABLE) / sizeof(PARAM_TABLE[0]));
+static_assert(PARAM_TABLE_SIZE == 24,
+              "Q10 PARAM_TABLE must cover all 24 valid month starts in [1993-02-01, 1995-01-01]");
 
 // ---------------------------------------------------------------------------
 
 inline Params Params::defaults()
 {
-   return Params{Q10_DATE_1993_10_01};
+   return Params{PARAM_TABLE[0]};
 }
 
-// Phase 1 commit 1: pin to defaults (no rotation yet).
-// Commit 3 will populate PARAM_TABLE[24] and rotate
-// `params.date_lo = PARAM_TABLE[iter % 24]`.
+// Rotate through the substitution-parameter table so each TX iteration
+// exercises a distinct date.  Surfaces param-bake regressions that a
+// fixed-default loop would miss (PLAYBOOK §3.6 rationale).
 template <typename Backend>
-void Q10Workload<Backend>::set_params_for_iter(long /*iter*/)
+void Q10Workload<Backend>::set_params_for_iter(long iter)
 {
-   params = Params::defaults();
+   params.date_lo = PARAM_TABLE[iter % PARAM_TABLE_SIZE];
 }
 
 // ---------------------------------------------------------------------------
@@ -75,12 +110,15 @@ inline bool q10_predicate_lineitem(const lineitem_t& l, const Params& /*p*/)
 inline void q10_pipeline_view_t::print(std::ostream& os) const
 {
    os << l_extendedprice << '\t' << l_discount << '\t'
-      << l_returnflag << '\t' << o_orderdate << '\n';
+      << l_returnflag    << '\t' << o_orderdate << '\t'
+      << c_name          << '\t' << c_nationkey << '\n';
 }
 
 inline void q10_agg_row_t::print(std::ostream& os) const
 {
-   os << c_custkey << '\t' << revenue << '\n';
+   os << c_custkey << '\t' << c_name      << '\t' << revenue   << '\t'
+      << c_acctbal << '\t' << n_name      << '\t' << c_address << '\t'
+      << c_phone   << '\t' << c_comment   << '\n';
 }
 
 // ---------------------------------------------------------------------------

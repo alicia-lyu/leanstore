@@ -53,6 +53,27 @@ bool q10_predicate_orders(const orders_t& o, const Params& p);
 bool q10_predicate_lineitem(const lineitem_t& l, const Params& p);
 
 // ---------------------------------------------------------------------------
+// Cardinality and path counters. Populated by Phase 4 query bodies; Phase 1
+// leaves them at zero. Declared at namespace scope so test harnesses and
+// executables can attach a Stats instance before calling query_by_*.
+
+struct Q10Stats {
+   long customers_scanned             = 0;
+   long orders_scanned                = 0;
+   long orders_passing_date           = 0;
+   long lineitems_scanned             = 0;
+   long lineitems_passing_returnflag  = 0;
+   long aggregator_rows_out           = 0;  // surviving customer aggregates
+   long topn_offers                   = 0;  // TopNSink::offer calls (Phase 4 §7.1)
+   long topn_evictions                = 0;  // bounded-heap evictions
+   long mi_records_visited            = 0;
+   long mi_groups_skipped             = 0;
+   long view_rows_scanned             = 0;
+   long nation_inl_lookups            = 0;  // per-customer NATION PK probes (D6)
+   long customer_inl_lookups          = 0;  // S4 record-assembly recoveries
+};
+
+// ---------------------------------------------------------------------------
 
 template <typename Backend>
 class Q10Workload
@@ -75,7 +96,8 @@ class Q10Workload
    typename Backend::template Adapter<q10_pipeline_view_t>& pipeline_view;
 
   public:
-   Params params;
+   Params    params;
+   Q10Stats* stats = nullptr;
 
    // Expose the COL pipeline so test harnesses can call populate_split()
    // and populate_merged() directly without routing through load()'s switch.
