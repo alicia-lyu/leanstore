@@ -1,0 +1,112 @@
+// Q10 S3 physical plan — substitutes the family logical plan with a
+// single COLGroupWalk over the 3-table COL MergedAdapter, plus a
+// per-customer NATION INL at emit time (Decision D6).
+//
+// Why one operator replaces five: the COL MI co-locates CUSTOMER,
+// ORDERS, and LINEITEM by custkey using Calcite-style tagged keys.
+// Within a custkey group, byte-lex order is:
+//
+//     customer → (orders → lineitem*)+
+//
+// (sentinel ordering customer=1 < invoice=2 (reserved/unused) <
+// orders=3 < lineitem=4 — COL reuses COLI tag values verbatim.)
+// A single forward streaming pass can:
+//
+//   1. Snapshot the per-customer payload at on_customer
+//      (c_custkey, c_name, c_acctbal, c_address, c_phone, c_comment,
+//       c_nationkey). No gate on CUSTOMER — Q10 has no per-customer
+//      predicate.
+//   2. Apply o_orderdate ∈ [:d, :d+3mo) at on_order; SkipGroup on
+//      miss so no lineitems for that orderkey are admitted.
+//   3. Per qualifying lineitem: apply l_returnflag = 'R'; on match,
+//      accumulate l_extendedprice * (1 - l_discount) into the
+//      per-customer revenue cell of the bespoke Q10 visitor.
+//   4. At on_group_end: finalise the per-customer aggregate.
+//      Decision D6: resolve `n_name` via NATION primary-index point
+//      lookup (one lookup per customer; ~150K total at SF=1, almost
+//      all hitting buffer cache after the first 25 distinct
+//      nationkeys are warm). Decision D2: offer the finished row to
+//      a bounded top-20 sink (min-heap by revenue ASC, so the
+//      smallest currently-tracked revenue is at the root); discard
+//      if it cannot displace the heap minimum. Avoids materialising
+//      the full ~150K-customer intermediate vector.
+//
+// Bespoke visitor — Decision D1: the visitor is built directly on
+// `col_group_walk` and does **NOT** subclass `q3_family::Q3FamilyVisitor`.
+// Q3FamilyVisitor's `on_customer` hard-codes the c_mktsegment gate
+// Q10 does not have, and its per-order emit shape mismatches Q10's
+// per-customer grouping. The genuine shared util is the walk itself,
+// not the visitor superclass — see memory
+// `feedback-col-walk-is-shared-util`.
+//
+// NATION attachment (Decision D6): a per-customer INL on NATION's
+// primary index at emit time. No in-memory nation_set, no
+// nation_name_map. With ~150K customers and 25 distinct nation rows,
+// the NATION B-tree pages stay buffer-resident after warm-up; the
+// per-customer lookup cost is dominated by cache hits.
+//
+// Operator-framing rules:
+//
+//   • "Probe X" and "Build X" are NEVER operator nodes. The walker
+//     IS a single physical operator that internally streams the
+//     3-way custkey-byte-lex chain (joins #1 + #2 from the logical
+//     plan) into the per-customer accumulator.
+//   • The per-order intermediate aggregate from family_logical.dot
+//     is degenerate here — the walker only admits lineitems whose
+//     parent order survived `on_order`, so per-order revenue rolls
+//     directly into the per-customer cell with no intermediate.
+//
+// FILTER PUSHDOWN STATUS: every filter from family_logical.dot is
+// fused into the walker. The NATION INL fires at on_group_end —
+// the earliest position at which n_name is needed (not used in any
+// filter; only in output).
+//
+// C++ implementation map (q10/query.tpp::query_by_merged):
+//
+//   col_group_walk<Backend>(merged_col, Q10GroupWalkVisitor{
+//       nation_adapter,       // for INL on NATION PK at emit
+//       topn_sink,            // bounded min-heap, capacity = 20
+//       params})
+//
+//     Visitor::on_customer  → snapshot the 7 FD customer columns
+//                             onto the visitor's per-customer state;
+//                             no gate (Q10 has no per-customer pred)
+//     Visitor::on_order     → q10_predicate_orders (orderdate
+//                             window); SkipGroup on miss
+//     Visitor::on_lineitem  → q10_predicate_lineitem (returnflag='R');
+//                             on match, accumulate revenue into
+//                             per-customer cell
+//     Visitor::on_group_end → finalise per-customer aggregate;
+//                             NATION INL → n_name; offer to
+//                             topn_sink (D2)
+//     Visitor::on_walk_end  → drain topn_sink (sorted DESC by
+//                             revenue, at most 20 rows) → emit
+//                             q10_agg_row_t
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── COL MI pipeline ───────────
+  mi [label="MergedScanner(MI_COL)\n= [customer_coli_t, orders_coli_t,\n   lineitem_col_t]\nkeyed by custkey (tagged keys)\n[loaded UNFILTERED — secondary structure;\n params apply only at walk time]",
+      shape=box3d, style=filled, fillcolor="#E8F0FE"];
+
+  walk [label="COLGroupWalk(Q10GroupWalkVisitor)\nbespoke visitor on col_group_walk (D1):\n  • on_customer: snapshot FD columns\n      (c_custkey, c_name, c_acctbal,\n       c_address, c_phone, c_comment,\n       c_nationkey); NO gate\n  • on_order:    o_orderdate ∈ [:d, :d+3mo)\n      → SkipGroup on miss\n  • on_lineitem: l_returnflag = 'R'\n      → accumulate revenue into\n        per-customer cell\n  • on_group_end (D2 + D6):\n      finalise per-customer SUM;\n      INL NATION on c_nationkey → n_name;\n      offer to bounded top-20 sink\n  • chain joins #1 + #2: lowered to a 3-way\n      custkey-byte-lex merge inside the walker\n      (no separate operator)\n  • per-order SUM step from family_logical:\n      DEGENERATE here (walker only admits\n      lineitems for orders that survived\n      on_order)",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── NATION attachment: INL inside on_group_end (D6) ───────────
+  // Modelled here as a data-flow input to the walker rather than a
+  // downstream operator: the walker calls NATION PK lookup inline
+  // and the result never leaves the walker as an intermediate.
+  nat [label="NATION primary index\n(B-tree on n_nationkey)\n→ INL probe per finalised customer\n  (Decision D6)",
+       shape=box3d, style=filled, fillcolor="#E0F2F1"];
+
+  // ─────────── Bounded top-20 sink (D2) ───────────
+  topn [label="TopN(20, revenue DESC)\nbounded min-heap by revenue ASC,\ncapacity = 20.\n  on_group_end offer:\n    if heap.size() < 20  → push\n    else if rev > heap.top().rev\n                       → pop + push\n  on_walk_end → drain sorted\n  DESC into result vector",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges ───────────
+  mi  -> walk;
+  nat -> walk [style=dashed, label="INL probe\n(at on_group_end)"];
+  walk -> topn;
+
+}

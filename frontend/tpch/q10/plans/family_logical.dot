@@ -1,0 +1,108 @@
+// Q10 family logical plan — shared by S1, S2, S3.
+//
+// Departs from Calcite's vanilla Q10 plan in two ways, mirroring Q3 /
+// Q5's COL-family treatment:
+//
+//   1. Pipeline sort key is CUSTKEY, not ORDERKEY. ORDERS and
+//      LINEITEM secondaries are extended with the custkey FD (orders
+//      key `(custkey, orderkey)`, lineitem key
+//      `(custkey, orderkey, linenumber)`) so the COL MI's natural
+//      sort key is custkey. Per OPERATORS.md §1, the family logical
+//      plan must match the COL MI's natural sort key.
+//
+//   2. NATION attaches as an **index nested-loop join** (Rule 13),
+//      not as an in-memory dimension subtree. Q10 has no filter on
+//      NATION (no region clause), so a nation_set hashset would be
+//      degenerate (all 25 rows). Across all four storage structures,
+//      `n_name` is resolved by a per-customer point lookup on the
+//      NATION primary index at emit time. There is no nation_set,
+//      no nation_name_map, no pre-materialised name array. (See
+//      memory `feedback-nation-lookup-pattern` — newer Q-family
+//      docs do not import Q5's `nation_name_map` framing.)
+//
+// The chain itself is identical in shape to Q3 / Q5: customer ×
+// orders × lineitem in custkey-byte-lex order. Filter pushdown:
+//
+//   • o_orderdate ∈ [:d, :d + 3mo)  → fused with TableScan(ORDERS)
+//   • l_returnflag = 'R'            → fused with TableScan(LINEITEM)
+//   • l_extendedprice * (1 - l_discount) → per-lineitem accumulator
+//
+// FILTER PUSHDOWN: every parameterised filter is pushed as far down
+// as possible, stopping ONLY at secondary structures. The COL MI,
+// COL secondaries, and pipeline view are all loaded UNFILTERED.
+// Neither the orderdate window (parameterised) nor `l_returnflag`
+// (spec-hardcoded but kept live for view reusability across the
+// hypothetical Q10-without-returns variant) is baked into any
+// secondary; predicate hoisting per PLAYBOOK §3.5 step 7.
+//
+// AGGREGATION SHAPE (Decision D4): the GROUP BY key is c_custkey
+// plus 7 functionally-dependent customer/nation columns. Because
+// `o_orderdate` is hoisted out of any secondary and applies at
+// **order** granularity, the post-pipeline operator chain MUST roll
+// lineitems up to per-order revenue first, then prune orders by the
+// orderdate filter, then roll qualifying orders up to per-customer
+// revenue. Per-customer SUM cannot precede the orderdate filter
+// without contaminating customers with out-of-window orders. (In
+// S3 the per-order step is degenerate — the walker only admits
+// lineitems for orders that already passed `on_order` — so the
+// physical plan collapses the two SUMs into one accumulator. In
+// S1/S2/S4 the per-order step is materialised.)
+//
+// Q10 has NO sibling sub-aggregate, NO region restriction, and NO
+// supplier-side cross-equality. The MI benefit is purely §3.1.3
+// hierarchical-prefix scan locality on the COL chain. NATION is a
+// dimension lookup, not a chain participant.
+//
+// TopN(20) sits OUTSIDE the pipeline. Decision D2 (S3 only) feeds
+// the bounded sink incrementally during the walk so the per-customer
+// intermediate vector never materialises in full; logically the
+// shape here is unchanged.
+
+digraph {
+  rankdir=BT;
+
+  // Logical joins (Rule 12):
+  //   #1 CUSTOMER ⋈ ORDERS   on c_custkey  = o_custkey
+  //   #2 ORDERS   ⋈ LINEITEM on o_orderkey = l_orderkey
+  //   #3 CUSTOMER ⋈ NATION   on c_nationkey = n_nationkey
+  //      — lowered to per-customer INL on NATION PK (Rule 13)
+
+  // ─────────── Inside pipeline (custkey-sorted chain) ───────────
+  s_cust [label="TableScan(CUSTOMER)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ [:d, :d+3mo))",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  s_lin  [label="TableScan(LINEITEM)\n+ Filter(l_returnflag = 'R')",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+
+  joinB [label="#2 MergeJoin (inner)\nORDERS ⋈ LINEITEM\n  on (custkey, orderkey)\nstill custkey-sorted (FD via parent);\norders_sec: (custkey, orderkey)\nlineitem_sec: (custkey, orderkey, linenumber)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+  joinA [label="#1 MergeJoin (inner)\nCUSTOMER ⋈ <ord-line>\n  on custkey\nsorted on custkey;\ncustomer-row payload preserved\n  (c_custkey, c_name, c_acctbal,\n   c_address, c_phone, c_comment,\n   c_nationkey)",
+         shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  // ─────────── Per-order then per-customer aggregation (D4) ───────────
+  agg_o [label="SortedAggregate per orderkey\n  rev_order = SUM(l_extendedprice\n              * (1 - l_discount))\n  carries custkey + customer payload\n  forward (FD via parent)",
+         shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+  agg_c [label="HashAggregate per c_custkey\n  revenue = SUM(rev_order)\n  carries the 6 FD customer columns\n  (c_name, c_acctbal, c_address,\n   c_phone, c_comment, c_nationkey)",
+         shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  // ─────────── NATION attachment: INL on PK (D6) ───────────
+  inl_n [label="#3 INL-Join NATION\n  probe.c_nationkey =\n    NATION.PK(n_nationkey)\n→ attaches n_name to each\n  per-customer aggregate row\n(no nation_set; no in-memory map)",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  topn [label="TopN(20, revenue DESC)\n[partial std::sort or bounded heap;\n result is at most 20 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  // ─────────── Edges (chain) ───────────
+  s_ord  -> joinB [label="0"];
+  s_lin  -> joinB [label="1"];
+
+  s_cust -> joinA [label="0"];
+  joinB  -> joinA [label="1"];
+
+  joinA -> agg_o;
+  agg_o -> agg_c;
+  agg_c -> inl_n;
+  inl_n -> topn;
+
+}

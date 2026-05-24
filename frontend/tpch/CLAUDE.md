@@ -182,6 +182,14 @@ Per-query subdirectories:
   wired; Linux perf sweep pending (`LINUX_PENDING.md`).
 - `q9/`  — Product Type Profit Measure (6 tables, 5 joins; adds NATION,
   SUPPLIER, PART, PARTSUPP adapters).
+- `q10/` — Returned Item Reporting (4 tables: CUSTOMER × ORDERS ×
+  LINEITEM in the COL chain + NATION as a per-customer INL on PK).
+  §3.1.3 pure-hierarchical sibling to Q3 / Q5; per-customer top-20
+  shape (the only Track-1 query with that grouping). **Phase 0
+  design doc complete**; skeleton + bodies pending. Experimental
+  scope: 5L cell only (paper-axis headline). No S5 — same
+  soundness-rule argument as Q5. See
+  [`q10/CLAUDE.md §Implementation Phases`](q10/CLAUDE.md).
 - `q3i/` — Q3 + Invoice sibling aggregate (COLI MI showcase; S1–S4
   are the paper-reported axis and parity-verified. S5 aCOLI MI is
   implemented and parity-verified but **deferred from the paper

@@ -1,0 +1,88 @@
+// Q10 S4 baseline — HashJoin chain over base tables only (no
+// `col.split_*` secondaries; fairness vs S3).
+//
+// Build/probe direction (Decision D5):
+//
+//   1. Build hash on CUSTOMER, keyed by c_custkey. CUSTOMER is the
+//      smallest input (~150K rows at SF=1) and carries the widest
+//      payload (8 output cols + c_nationkey). Built once.
+//   2. Probe with orderdate-filtered ORDERS to produce C⋈O. The
+//      orderdate window (~1/24 of orders for a 3-month range)
+//      drops most rows before they touch the hash table.
+//   3. Build a fresh hash on C⋈O, keyed by o_orderkey. C⋈O is the
+//      narrowed intermediate (~150K customers × ~10 orders × 1/24
+//      window ≈ 60K rows at SF=1).
+//   4. Probe with returnflag-filtered LINEITEM (`l_returnflag='R'`
+//      drops ~75% of lineitems before the probe).
+//   5. HashAggregate per c_custkey: SUM revenue across qualifying
+//      lineitems; the 6 FD-attached customer columns ride along.
+//   6. Per-customer NATION INL on n_nationkey (Decision D6) to
+//      resolve `n_name`.
+//   7. TopN(20, revenue DESC) outside the pipeline.
+//
+// Decision D6 uniformly applies: NATION is NOT built as an
+// in-memory map. The per-customer point lookup on NATION's primary
+// index at emit time is the single shape across all four storage
+// structures.
+//
+// PK-only convention (Rule 4): the CUSTOMER and C⋈O hash builds
+// carry only the payload columns the downstream join consumer
+// actually needs. Specifically the CUSTOMER build carries the
+// 7 output FD columns (c_name, c_acctbal, c_address, c_phone,
+// c_comment, c_nationkey, c_custkey) because the per-customer
+// HashAggregate needs them downstream. (Q10 has no PK-only
+// shortcut here — the output is wide; the build payload is the
+// output minus the SUM.)
+//
+// FILTER PUSHDOWN: `o_orderdate ∈ window` is pushed below the
+// ORDERS-side probe; `l_returnflag = 'R'` is pushed below the
+// LINEITEM-side probe. No filter survives to the post-aggregate
+// layer.
+
+digraph {
+  rankdir=BT;
+
+  // ─────────── Stage 1: CUSTOMER build, ORDERS probe ───────────
+  s_cust [label="TableScan(CUSTOMER)",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  hb_c   [label="HashBuild on c_custkey\npayload = 7 FD customer cols\n  (c_name, c_acctbal,\n   c_address, c_phone, c_comment,\n   c_nationkey, c_custkey)",
+          shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+  s_ord  [label="TableScan(ORDERS)\n+ Filter(o_orderdate ∈ [:d, :d+3mo))",
+          shape=box, style=filled, fillcolor="#E8F0FE"];
+  hj_co  [label="#1 HashJoin (inner)\nCUSTOMER ⋈ ORDERS\n  on c_custkey = o_custkey\nsurvivors carry o_orderkey +\n  7 FD customer cols",
+          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  s_cust -> hb_c;
+  hb_c   -> hj_co [label="build"];
+  s_ord  -> hj_co [label="probe (filtered)"];
+
+  // ─────────── Stage 2: C⋈O build, LINEITEM probe ───────────
+  hb_co [label="HashBuild on o_orderkey\npayload = c_custkey +\n  6 FD customer cols\n  (n_nationkey, c_name,\n   c_acctbal, c_address,\n   c_phone, c_comment)",
+         shape=box, style="filled,rounded", fillcolor="#FFF8E1"];
+  s_lin [label="TableScan(LINEITEM)\n+ Filter(l_returnflag = 'R')",
+         shape=box, style=filled, fillcolor="#E8F0FE"];
+  hj_col [label="#2 HashJoin (inner)\n<C⋈O> ⋈ LINEITEM\n  on o_orderkey = l_orderkey\nsurvivors carry c_custkey,\n  6 FD cols, l_extendedprice,\n  l_discount",
+          shape=box, style="filled,rounded", fillcolor="#FFF4E5"];
+
+  hj_co -> hb_co;
+  hb_co -> hj_col [label="build"];
+  s_lin -> hj_col [label="probe (filtered)"];
+
+  // ─────────── Aggregate + NATION INL + TopN ───────────
+  agg [label="HashAggregate per c_custkey\n  revenue = SUM(l_extendedprice\n            * (1 - l_discount))\n  6 FD cols ride along",
+       shape=box, style="filled,rounded", fillcolor="#FCE5CD"];
+
+  nat [label="NATION primary index\n(B-tree on n_nationkey)",
+       shape=box3d, style=filled, fillcolor="#E0F2F1"];
+  inl_n [label="#3 INL-Join NATION\n  probe.c_nationkey =\n    NATION.PK(n_nationkey)\n→ attaches n_name (D6)\n(no nation_set; no in-memory map)",
+         shape=box, style="filled,rounded", fillcolor="#E0F2F1"];
+
+  topn [label="TopN(20, revenue DESC)\n[partial std::sort or bounded heap;\n at most 20 rows]",
+        shape=box, style=filled, fillcolor="#E6F4EA"];
+
+  hj_col -> agg;
+  agg    -> inl_n;
+  nat    -> inl_n [style=dashed, label="INL probe\n(per aggregated customer)"];
+  inl_n  -> topn;
+
+}

@@ -1,12 +1,42 @@
 # Q10: Returned Item Reporting
 
+**Reading guide**: For SQL and plan descriptions, read §TPC-H Definition and §Plan Descriptions. For implementation status and scope, read §Status and §Implementation Phases. For decisions D1–D8 that shape the implementation, read §Locked-In Design Decisions. Skip the rest unless reconstructing a design choice or adding a new storage structure.
+
 ## Status
 
-Design-doc only; skeleton and bodies pending. The invoice-extended
-sibling lives in [`../q10i/`](../q10i/CLAUDE.md) — Q10 here is the
-no-extension baseline.
+**Phase 0 complete; skeleton + bodies pending.** Experimental scope
+is the **5L cell only** (largest data, low memory pressure — the
+headline cell per `paper-data/scripts/PLOTTING.md`). Not committing
+to the full SF×DRAM sweep. The invoice-extended sibling lives in
+[`../q10i/`](../q10i/CLAUDE.md); Q10 is the no-extension baseline
+of the COL family. See §Contingency for the design-only-future-work
+fallback if Phase 1+ results do not land in time.
 
----
+## Sibling Docs
+
+Every non-`CLAUDE.md` Markdown in `q10/` and `q10/plans/` (the
+latter has no `CLAUDE.md`; indexed here as the nearest ancestor).
+Read each on the trigger described:
+
+- [`plans/family_logical.dot`](plans/family_logical.dot) — **shared
+  logical plan for S1, S2, S3**, COL pipeline with NATION attached
+  as a per-customer INL on PK at emit time (no in-memory map).
+- [`plans/family_s3_physical.dot`](plans/family_s3_physical.dot) —
+  **S3 physical specialisation** over the COL MI: bespoke Q10
+  visitor on `col_group_walk` with incremental top-20 emit.
+- [`plans/baseline_s4.dot`](plans/baseline_s4.dot) — **S4 baseline**
+  (HashJoin chain; build on CUSTOMER, probe with filtered ORDERS,
+  then build on C⋈O and probe with filtered LINEITEM).
+- [`RUNS.md`](RUNS.md) — perf-run ledger; appended after every
+  Linux sweep.
+
+Read [`../q5/CLAUDE.md`](../q5/CLAUDE.md) as the closest cousin —
+Q10 mirrors Q5's COL-pipeline structure and reuses the same
+`CustomerOrdersLineitemPipeline<Backend>`, custkey-sorted
+secondaries, and `lineitem_col_t` (which already carries
+`l_returnflag` as a Q10 placeholder). Read
+[`../q10i/CLAUDE.md`](../q10i/CLAUDE.md) for the Track-2 sibling
+that adds INVOICE sub-aggregates (open / late balance).
 
 ## TPC-H Definition (§2.4.10 — "Returned Item Reporting")
 
@@ -20,76 +50,518 @@ WHERE   c_custkey   = o_custkey
   AND   o_orderdate >= ':d'
   AND   o_orderdate <  ':d' + INTERVAL '3' MONTH
   AND   l_returnflag = 'R'
-  AND   c_nationkey = n_nationkey
+  AND   c_nationkey  = n_nationkey
 GROUP BY c_custkey, c_name, c_acctbal, c_phone, n_name, c_address, c_comment
 ORDER BY revenue DESC;
 ```
 
-The official query is run with `LIMIT 20` for top-20 customers.
+The official query is run with **`LIMIT 20`** for top-20 customers.
+
+This is the canonical TPC-H Q10, **unextended**. Q10I extends Q10
+with INVOICE sibling sub-aggregates (open / late balance); Q10
+here is the no-extension baseline of the COL family.
 
 ### Substitution Parameters
 
-| Parameter | Domain | Description |
-|-----------|--------|-------------|
-| `:d` | First day of a month between 1993-02-01 and 1995-01-01 | Start of the 3-month order window |
+| Parameter | Domain | Description | Validation |
+|-----------|--------|-------------|------------|
+| `:d` | First day of a month between 1993-02-01 and 1995-01-01 | Start of the 3-month order window | `1993-10-01` |
 
-**Validation values**: DATE = 1993-10-01.
+**Approved query variants**: none in TPC-H Appendix B.
+
+**Selectivity notes**: NATION has 25 rows; Q10 applies **no**
+filter on NATION (no region clause). The orderdate window is 3
+months — roughly 1/24 of orders fall in any given window at
+SF=1. `l_returnflag = 'R'` selects ~25% of lineitems and is the
+dominant per-lineitem pruner. Customers are ~150K at SF=1; the
+per-customer aggregate spans all customers (no per-customer
+predicate), so the result is at most `LIMIT 20` out of ~150K
+candidate aggregate rows.
 
 ### Real-world meaning
 
 Q10 finds the customers who have returned the most goods (by
-returned-lineitem revenue) over a 3-month window, along with their
-contact info. The intent is operational customer service: if a
-customer is returning a lot of merchandise, the account manager
-should be flagged so they can reach out and understand what's going
-wrong (product quality, mis-shipments, fraud, dissatisfaction with
-fit, etc.). The output drives a "follow up with these customers"
-action list, not a strategic decision.
+returned-lineitem revenue) over a 3-month window, along with
+their contact info. The intent is operational customer service:
+if a customer is returning a lot of merchandise, the account
+manager should be flagged so they can reach out and understand
+what's going wrong (product quality, mis-shipments, fraud,
+dissatisfaction with fit, etc.). The output drives a "follow up
+with these customers" action list, not a strategic decision.
 
 ---
 
-## Plan & execution sketch
+## Motivation
 
-Q10 is a **4-table join** (Customer, Orders, Lineitem, Nation) with
-a per-customer aggregate, top-20 ORDER BY, and a wide GROUP BY (8
-columns) carrying the customer contact row.
+Q10 is a **Track-1 §3.1.3 hierarchical-prefix showcase** of a
+shape no other Q-family query covers: a **per-customer top-N**
+over a narrow date window. Q3 is per-order top-N; Q5 is per-nation
+aggregate (no top-N); Q12 is per-shipmode aggregate. Q10 fills the
+remaining grouping shape — a top-N where the group key matches the
+COL MI's leading sort key (custkey) exactly, so the walker emits
+one aggregate row per custkey group and feeds them directly into
+a bounded top-20 sink. **Cross-reference §Cardinality structure
+framing #1: pure hierarchical along the COL chain.**
 
-- **NATION** (25 rows) is loaded into an in-memory hashmap keyed on
-  `n_nationkey → n_name`.
-- **OL pipeline** drives the main scan; the orderdate window is
-  pushed into the orders side of the join, and `l_returnflag = 'R'`
-  is pushed into the lineitem scan. Only ~25% of lineitems carry
-  `R` so this prunes aggressively.
-- **CUSTOMER** is consulted per qualifying orderkey — at S3 the
-  COLI-style hierarchical scan would already co-locate it; at S1/S4
-  it's a hashmap or merge-join side carrying the 6 fat output
-  columns plus `c_nationkey`.
-- The accumulator is keyed by `c_custkey` and rolls up
-  `l_extendedprice * (1 - l_discount)` over qualifying lineitems.
-  The 7 non-aggregate output columns are FD-attached (each
-  customer has exactly one row in CUSTOMER), so they ride along on
-  the per-custkey state.
-- Post-aggregate: sort by `revenue DESC`, take top 20.
+What Q10 adds beyond Q5:
 
-## Storage-structure variant axis
+- **Group key matches the MI sort key.** Q5 groups by `n_name`
+  (uncorrelated with custkey); Q10 groups by `c_custkey` (the COL
+  MI's leading key). One aggregate row finalises per custkey group
+  during the walk — no in-walker hashmap of partial aggregates.
+- **Top-N inside the walker.** Q5 has no LIMIT (drains ~5 buckets);
+  Q3 has `LIMIT 10` but groups per-order (top-10 inside each
+  custkey group). Q10 maintains a single bounded top-20 sink across
+  the entire walk — see Decision D2.
+- **Wide FD-attached output.** The GROUP BY carries 7 non-aggregate
+  customer/nation columns. These ride along on the per-customer
+  state in S3, on the lineitem-keyed view rows in S2, on the
+  HashJoin build payloads in S1/S4, and are resolved against
+  NATION via per-customer INL at emit time (Decision D6).
+- **No per-customer predicate.** Q3 has the c_mktsegment gate; Q5
+  has the c_nationkey ∈ nation_set gate. Q10 has neither — every
+  customer enters the aggregate; the orderdate window and
+  returnflag predicate do all the pruning.
 
-Same S1–S4 convention as Q3 / Q12 — see the top-level
-[`../CLAUDE.md §Storage-structure → Wrapper Mapping`](../CLAUDE.md#storage-structure--wrapper-mapping).
-Q10's per-customer roll-up makes the COL pipeline (the
-custkey-hierarchical 3-table MI used by Q3) a natural S3 candidate
-once the implementation lands; Q3's `CustomerOrdersLineitemPipeline`
-can likely be reused verbatim. NATION attaches as a small hashmap
-on the side, like Q5. S5 (aCOLI) is not applicable — Q10 has no
-invoice extension; that variant lives in `../q10i/`.
+The MI advantage thesis is the same as Q3 / Q5: `MI[COL]`
+co-locates the chain in custkey-byte-lex order so a single
+`PremergedJoin` pass produces the full 3-way join, and the
+per-customer aggregate naturally aligns with the walker's group
+boundary. Paper-axis framing: 5L-cell showcase that the COL MI's
+per-customer locality matches what Q10's GROUP BY needs.
 
-## Implementation status
+---
 
-| Phase | Status |
-|-------|--------|
-| 0 — design doc (this file) | complete |
-| 0.5 — skeleton (`workload.hpp`, `views.hpp`, `load.tpp`, `query.tpp`, executables) | pending |
-| 1 — `Params::defaults()` + predicate bodies | pending |
-| 2 — `query_by_*` bodies for S1/S2/S3/S4 | pending |
-| 3 — `test_query_q10_{lsm,btree}` parity test | pending |
-| 4 — CMake + `generate_targets.py` wiring | pending |
-| 5 — Linux perf sweep (`RUNS.md`) | pending |
+## Cardinality structure
+
+Q10 is a **pure hierarchical schema along the COL chain** —
+framing #1 from PLAYBOOK §3.5 step 4. CUSTOMER, ORDERS, LINEITEM
+form a strict 3-level prefix chain along
+`custkey ⊃ orderkey ⊃ linenumber`:
+
+- CUSTOMER × ORDERS: 1:N on `c_custkey = o_custkey`
+  (~10 orders per customer at SF=1).
+- ORDERS × LINEITEM: 1:N on `o_orderkey = l_orderkey`
+  (~4 lineitems per order).
+- Total chain cardinality: ~150K customers × 10 × 4 ≈ 6M rows at
+  SF=1 before filters; after `o_orderdate ∈ window` (~1/24) and
+  `l_returnflag = 'R'` (~1/4), ~6M × 1/24 × 1/4 ≈ 62K rows enter
+  the per-customer accumulator.
+
+NATION attaches **outside the chain** as a dimension lookup:
+
+- NATION (25 rows): per-customer INL on the NATION primary index
+  at emit time (Decision D6). No in-memory `nation_set`, no
+  `nation_name_map`, no pre-materialised name array. Q10 has no
+  filter on NATION, so any in-memory sidetable would be degenerate
+  (all 25 rows) and would just duplicate the NATION primary index.
+
+NATION is a dimension lookup, not a chain participant. It does
+**not** contribute M:N rows to the join output. **This is not a
+§3.1.2 sibling pattern** (no per-customer scalar reduction of an
+out-of-chain table) and **not a §3.1.3 genuine-tree pattern** (no
+co-located sub-hierarchy inside the MI). The MI benefit is purely
+hierarchical-prefix scan locality on the COL chain — anti-pattern
+#27 forbids importing "no sibling shortcut" wording from
+sibling-aggregate framings.
+
+---
+
+## Storage Structure Options
+
+| # | Strategy | Secondary structure | Join strategy | Params baked in |
+|---|----------|--------------------|--------------|-----------------|
+| 1 | Traditional indexes + binary merge join | Custkey-sorted secondaries on ORDERS (`(custkey, orderkey)`) and LINEITEM (`(custkey, orderkey, linenumber)`) — **reused verbatim from Q3 / Q5** | 2-BMJ chain: customer ⋈ orders\_sec ⋈ lineitem\_sec on the custkey-extended prefix; NATION attaches as per-customer INL at emit | none |
+| 2 | Intermediate pipeline view | `q10_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_returnflag`, `o_orderdate` + FD-attached 7-column customer payload) | View scan + returnflag filter + per-order SUM + orderdate filter + per-customer SUM + NATION INL at emit (Decision D4) | none |
+| 3 | MI[COL] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys — **reused verbatim from Q3 / Q5** | `col_group_walk` over the COL MI with a bespoke `Q10GroupWalkVisitor` (Decision D1); per-customer accumulator with incremental top-20 emit (Decision D2); NATION INL at on_group_end (Decision D6) | none |
+| 4 | Traditional indexes + hash join | None | Build on CUSTOMER, probe with orderdate-filtered ORDERS → C⋈O; build on C⋈O (by o_orderkey), probe with returnflag-filtered LINEITEM; HashAggregate per c_custkey; NATION INL at emit (Decision D5 + D6) | none |
+
+**S5 deliberately omitted** (Decision D8). Same rationale as Q5:
+revenue cannot be pre-aggregated because the orderdate window is
+parameterised. A returnflag-filtered secondary alone is just a
+narrower S3, not a true pre-aggregated S5 — there is no
+spec-hardcoded aggregate to bake. Storing the unaggregated source
+rows (which is exactly what S3 already does) is the only sound
+choice. **Soundness rule from PLAYBOOK §3.5 step 5 applies;
+anti-pattern #10 / #24 explicitly covers this case.**
+
+---
+
+## Locked-In Design Decisions
+
+Consulted and frozen during Phase 0 — these shape the doc and
+DOTs, and pre-decide Phase 1 questions that would otherwise
+ambush the implementation:
+
+- **D1. S3 visitor is bespoke, built on `col_group_walk`.** Do
+  **not** subclass `q3_family::Q3FamilyVisitor`. That base is a
+  Q3-shaped per-order-with-mktsegment specialisation; the real
+  shared util is the COL walk itself. Q10 writes a fresh visitor
+  (under `q10/`, not in `q3_family/`).
+- **D2. S3 grouping: per-customer accumulator with incremental
+  top-20 emit during the walk.** Each finished custkey group
+  finalises its revenue, resolves `n_name` via NATION INL, then
+  is offered to a bounded min-heap (capacity 20). Avoids
+  materialising the full ~150K-customer intermediate vector
+  before the top-N sort.
+- **D3. S2 view: per-lineitem rows with customer columns
+  FD-attached.** `q10_pipeline_view_t` keyed on
+  `(custkey, orderkey, linenumber)`; each row carries
+  `l_extendedprice`, `l_discount`, `l_returnflag`, `o_orderdate`,
+  plus the 7-column customer payload (`c_custkey`, `c_name`,
+  `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`,
+  `c_comment`). No aggregation baked (orderdate window is
+  parameterised — soundness rule).
+- **D4. S2 aggregation chain has an intermediate per-order step.**
+  Because `o_orderdate` is hoisted out of the view (parameterised)
+  and applies at *order* granularity, the post-view-scan operators
+  must roll lineitems up to per-order revenue first, then prune
+  orders by the orderdate filter, then aggregate qualifying orders
+  per customer. Sequence: view scan → returnflag filter →
+  per-order SUM → orderdate filter → per-customer SUM → NATION
+  INL → top-20. Per-customer SUM cannot precede the orderdate
+  filter without contaminating customers with out-of-window
+  orders. (In S3 the per-order step is degenerate — the walker
+  only admits lineitems for orders that already passed
+  `on_order` — so the physical plan collapses the two SUMs into
+  one accumulator.)
+- **D5. S4 build/probe direction.** Build on CUSTOMER (smallest at
+  ~150K, fattest payload — built once); probe with
+  orderdate-filtered ORDERS to produce C⋈O. Then build a fresh
+  hash on C⋈O (now narrowed) keyed by `o_orderkey` and probe with
+  returnflag-filtered LINEITEM. Aggregate per customer at the top.
+- **D6. NATION is uniformly handled as an index nested-loop join,
+  not as an in-memory sidetable.** Q10 has no filter on NATION,
+  so a `nation_set` hashset is degenerate. Across all four shapes,
+  `n_name` is resolved by a per-customer point lookup on the
+  NATION base index at emit time. No `nation_set`, no
+  `nation_name_map`, no pre-materialised name array.
+- **D7. S1 reuses Q3/Q5's existing custkey-sorted secondaries
+  verbatim:** `orders_sec_t` (Key `(custkey, orderkey)`) and
+  `lineitem_sec_t` (Key `(custkey, orderkey, linenumber)`). The
+  Q5 widening already put `l_returnflag` into the lineitem
+  secondary payload — no new secondary needed.
+- **D8. S5 omitted.** See §Storage Structure Options above for the
+  soundness-rule argument. Paper axis stays at S1–S4.
+
+---
+
+## Plan Descriptions
+
+**Logical joins (Rule 12)** — shared across all four storage
+structures:
+
+- **#1** `CUSTOMER ⋈ ORDERS on c_custkey = o_custkey`
+- **#2** `ORDERS ⋈ LINEITEM on o_orderkey = l_orderkey`
+- **#3** `CUSTOMER ⋈ NATION on c_nationkey = n_nationkey` — lowered
+  to per-customer INL on NATION PK at emit time (Decision D6;
+  Rule 13)
+
+S3 fuses #1 and #2 into the single `col_group_walk` visitor; S1
+lowers them as a 2-BMJ chain over custkey-sorted secondaries; S2
+reads the C-O-L portion pre-materialised from the view; S4
+realises them as two HashJoins with PK-only-ish payloads (the
+CUSTOMER build carries the 7 FD output columns because the
+downstream aggregate consumes them).
+
+Three DOT files in [`plans/`](plans/) document the operator
+graphs:
+
+- `plans/family_logical.dot` — shared logical plan for S1, S2, S3.
+  All three agree on filter placement, the per-order-then-per-
+  customer aggregation chain (D4), and the per-customer NATION INL
+  attachment (D6); only the inside-pipeline physical operator
+  differs.
+- `plans/family_s3_physical.dot` — S3 physical specialisation. A
+  single `col_group_walk` over the 3-table COL MergedAdapter
+  subsumes the per-table filters and the 2-way chain join. A
+  bespoke `Q10GroupWalkVisitor` (Decision D1) accumulates revenue
+  per custkey group; on `on_group_end` it resolves `n_name` via
+  NATION INL (D6) and offers the row to a bounded top-20 sink
+  (D2). The per-order intermediate aggregate from the logical
+  plan is degenerate here.
+- `plans/baseline_s4.dot` — S4 baseline. HashJoin chain over base
+  tables only (no `col.split_*`): build on CUSTOMER, probe with
+  orderdate-filtered ORDERS → C⋈O; build on C⋈O (by o_orderkey),
+  probe with returnflag-filtered LINEITEM; HashAggregate per
+  `c_custkey`; per-customer NATION INL at emit; TopN(20).
+
+### Filter pushdown principle (applied across all four plans)
+
+See the canonical rule in
+[Filter Pushdown](../OPERATORS.md#filter-pushdown). The Q10-specific
+application:
+
+Every parameterised filter is pushed as far down the operator graph
+as possible, **stopping only at secondary structures** so they
+remain reusable across param sets (predicate hoisting). For Q10
+this means:
+
+- The COL MI, the COL custkey-sorted secondaries, and the
+  `q10_pipeline_view_t` are all loaded **without** applying the
+  orderdate window or the returnflag filter. A new param set
+  triggers a new query, not a new load. **No parameterised filter
+  may be baked into any secondary** (PLAYBOOK §3.5 step 7).
+- `o_orderdate ∈ [:d, :d+3mo)` fuses with `TableScan(ORDERS)` (or
+  with the walker's `on_order` hook for S3); pushed below the
+  ORDERS-side probe in S4.
+- `l_returnflag = 'R'` is kept live (not baked) for view-
+  reusability across a hypothetical no-returnflag Q10 variant;
+  fuses with `TableScan(LINEITEM)` (or with the walker's
+  `on_lineitem` hook for S3); pushed below the LINEITEM-side
+  probe in S4.
+- **D6**: NATION attachment is uniformly a per-customer INL on
+  NATION's primary index at emit time. No filter exists on NATION,
+  so the only place it can fire is the moment `n_name` is needed
+  for output — at the boundary between aggregate and TopN.
+- **D4 callout**: in S2, the orderdate filter is hoisted to query
+  time and applies at order granularity, so the post-view-scan
+  aggregator chain must do per-order SUM → orderdate filter →
+  per-customer SUM in that order. In S3 the per-order step is
+  degenerate because the walker only admits lineitems for orders
+  that passed `on_order`. In S1/S4 the per-order step is
+  materialised inside the chain or implicit in the join order.
+
+### How the four approaches differ
+
+**S3 (MI[COL] + COLGroupWalk)** is the tightest expression of the
+plan. The COL tagged-key encoding co-locates customer, orders, and
+lineitem records by `custkey` in byte-lex order
+(`customer → (orders → lineitem*)+`), and a bespoke
+`Q10GroupWalkVisitor` streams through them in a single forward
+pass. `on_customer` snapshots the 7 FD output columns (no gate —
+Q10 has no per-customer predicate); `on_order` applies the
+orderdate window and `SkipGroup`s on miss; `on_lineitem` applies
+the returnflag filter and accumulates revenue into the
+per-customer cell; `on_group_end` resolves `n_name` via per-
+customer NATION INL (D6) and offers the row to a bounded top-20
+sink (D2). At `on_walk_end` the sink drains sorted DESC by
+revenue into the result vector. No buffering of MI rows, no
+per-customer hashmap of partial aggregates (the group boundary
+finalises each customer in turn), no separate aggregate pass.
+
+**S1 (custkey-sorted secondaries + BMJ chain)** runs the same
+logical plan as S3 over three separate custkey-sorted streams
+(CUSTOMER + two secondary indexes on ORDERS and LINEITEM). The
+secondary keys (`(custkey, orderkey)` for orders,
+`(custkey, orderkey, linenumber)` for lineitem) place both inputs
+in the order required by the BMJ chain. Implemented as a 2-BMJ
+chain that emits per-lineitem joined rows; a per-customer
+`HashAggregate` rolls those up, the NATION INL fires per-customer
+at emit time, and the result feeds the same top-20 sink. S1
+differs from S3 only in I/O pattern: three trees instead of one.
+
+**S2 (materialised pipeline view)** caches per-lineitem rows of
+the post-join (pre-aggregate) family plan as a
+`q10_pipeline_view_t` table at load time, keyed by
+`(custkey, orderkey, linenumber)` and carrying
+`l_extendedprice`, `l_discount`, `l_returnflag`, `o_orderdate`,
+plus the 7 FD-attached customer columns. **No filters are baked
+into the view** — both the orderdate window (parameterised) and
+the returnflag predicate (kept live for view reusability) apply
+at query time per predicate hoisting (PLAYBOOK soundness rule).
+Query time follows Decision D4: view scan → returnflag filter →
+per-order SUM → orderdate filter → per-customer SUM → NATION INL
+→ top-20. The view is reusable across all DATE param sets.
+
+**S4 (HashJoin chain baseline)** uses base tables only (no
+`col.split_*` secondaries — fairness vs S3). Decision D5: build
+on CUSTOMER, probe with orderdate-filtered ORDERS; build on the
+narrowed C⋈O (keyed by `o_orderkey`), probe with returnflag-
+filtered LINEITEM. Per-customer `HashAggregate` rolls revenue up,
+per-customer NATION INL resolves `n_name` (D6), TopN(20) outside
+the pipeline. S4 measures the no-merged-index baseline that the
+family is compared against.
+
+### Comparison axis summary
+
+All four plans share the same logical shape (chain join + per-
+customer HashAggregate + per-customer NATION INL + TopN(20));
+they differ only in physical operators and filter substrate.
+
+| Approach | Inside-pipeline physical | Aggregate | NATION attachment |
+|----------|--------------------------|-----------|-------------------|
+| S1 (merge family) | 2-BMJ chain over custkey-sorted split indexes | per-customer HashAggregate above the chain | per-customer INL on NATION PK at emit (D6) |
+| S2 (merge family) | sequential per-lineitem view scan + returnflag filter + per-order SUM + orderdate filter | per-customer HashAggregate above the per-order intermediate (D4) | per-customer INL on NATION PK at emit (D6) |
+| S3 (merge family) | `col_group_walk` over MI[COL] with bespoke visitor (D1); per-customer accumulator finalised at group boundary | bounded top-20 sink fed incrementally at `on_group_end` (D2) | per-customer INL on NATION PK inside `on_group_end` (D6) |
+| S4 (baseline) | HashJoin chain over base tables (D5); CUSTOMER build → ORDERS probe → C⋈O build → LINEITEM probe | per-customer HashAggregate above the chain | per-customer INL on NATION PK at emit (D6) |
+
+All four agree on what's outside the pipeline: drain the per-
+customer aggregate, attach `n_name`, take the top 20 by revenue
+DESC. **LIMIT 20** — `apply_topN` or a bounded min-heap.
+
+---
+
+## Required Record Types
+
+Composition with sibling queries: **share record types with Q3,
+Q5, and Q10I wherever the shape is identical.** Per PLAYBOOK §3.5
+step 8, the relationship is composition (DRY), not inheritance.
+
+Reused verbatim from `tpch_family/views_col.hpp`:
+
+- `customer_coli_t` — tagged record, sentinel id reused.
+  Payload already carries the full Q10 output payload:
+  `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`,
+  `c_mktsegment` (Q3-only — Q10 ignores it), `c_comment`
+  (`views_coli.hpp:237–243`). **No widening required.**
+- `orders_coli_t` — tagged record, Key `(custkey, orderkey)`.
+  Payload carries `o_orderdate` (already present for Q3 / Q5).
+  **No widening required.**
+- `lineitem_col_t` — tagged record, Key
+  `(custkey, orderkey, linenumber)`. Payload already carries
+  `l_returnflag` as an **explicit Q10 placeholder**
+  (`views_col.hpp:79, 133`). Also carries `l_extendedprice`,
+  `l_discount`. **No widening required.**
+
+For S1 (split secondaries) — reused from Q3 / Q5:
+
+- `orders_sec_t` — un-tagged secondary, Key `(custkey, orderkey)`.
+- `lineitem_sec_t` — un-tagged secondary, Key
+  `(custkey, orderkey, linenumber)`, already carrying
+  `l_returnflag`.
+
+New for Q10 (S2 view + final aggregate):
+
+- `q10_pipeline_view_t` — Key `(custkey, orderkey, linenumber)`,
+  one row per lineitem. Payload: `l_extendedprice`, `l_discount`,
+  `l_returnflag`, `o_orderdate` + 7 FD-attached customer columns
+  (`c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`,
+  `c_acctbal`, `c_comment`). `n_name` is **not** stored here —
+  resolved per-customer at emit via NATION INL (D6). **No
+  pre-aggregated revenue field** (parameterised by orderdate;
+  soundness rule).
+- `q10_agg_row_t` — Key `c_custkey`, payload `revenue` + 7 output
+  columns (`c_name`, `c_acctbal`, `n_name`, `c_address`,
+  `c_phone`, `c_comment` + `c_nationkey` retained for downstream
+  joins or sanity checks). At most 20 rows, sorted `revenue DESC`
+  outside the pipeline (or fed incrementally to a bounded heap
+  per D2).
+
+**Composition with Q10I.** Q10I's `q10i_agg_row_t` should derive
+from `q10_agg_row_t` (adds `open_balance`, `late_balance`); the
+visitor base for Q10I may either reuse Q10's bespoke visitor with
+extra hooks (preferred if shape matches) or fork. Defer to Q10I
+Phase 0 — Q10 does not pre-commit.
+
+### Side-table runtime structures
+
+**None.** Decision D6 makes NATION a per-customer INL on the
+primary index; there is no `nation_set`, no `nation_name_map`,
+no per-query in-memory hashmap. The only runtime structures
+beyond the COL adapters are:
+
+- The bespoke S3 visitor's per-customer accumulator cell (a single
+  `(c_custkey, customer_payload, revenue)` tuple resetting at
+  `on_customer`).
+- The bounded top-20 sink (a 20-element min-heap by revenue ASC).
+
+Both are sub-kilobyte; their cost is negligible.
+
+---
+
+## Filter pushdown principle
+
+(Stated above in §"Filter pushdown principle (applied across all
+four plans)" — kept under §Plan Descriptions to mirror Q3 / Q5's
+structure. Cross-referenced here so the PLAYBOOK §3.5 required-
+section checklist is satisfied.)
+
+---
+
+## Open Questions
+
+### Visitor placement: q10/ vs q10_family/
+
+D1 settles that the S3 visitor is bespoke and does not subclass
+`q3_family::Q3FamilyVisitor`. Open: whether the bespoke visitor
+lives directly under `q10/` (one consumer) or in a new
+`q10_family/` (anticipating Q10I reuse). Deferred to Q10I
+Phase 0 — only mint the family namespace if Q10I genuinely shares
+the per-customer top-N + NATION-INL shape. Default for Phase 1:
+keep the visitor under `q10/` and hoist later if reuse
+materialises.
+
+### `q10_pipeline_view_t` wide-payload duplication
+
+D3 settles the per-lineitem shape with FD-attached customer
+columns. The 7-column customer payload duplicates per lineitem
+(~6M view rows × ~50 bytes of customer payload ≈ 300 MB at SF=1
+overhead vs a split shape). Decided to accept this for now —
+single scanner is simpler, and 5L is the only paper-target cell
+so storage cost is bounded. Phase 4b may revisit if S2 paging
+becomes a bottleneck.
+
+### Top-20 sink: `apply_topN` reuse vs custom min-heap
+
+D2 settles the incremental-emit shape. Open: whether to reuse
+the existing `apply_topN` helper used by Q3 (which sorts the
+full vector and truncates) or implement a tighter bounded
+min-heap. For Q3's `LIMIT 10` the difference is negligible; for
+Q10's `LIMIT 20` over ~150K candidates it may matter. Phase 1
+decision; not a Phase 0 design lock.
+
+### Workload follow-up: param rotation harness
+
+Q3I exposed a bug (the `pre_revenue` shipdate-bake) that hid for
+months because the runner only used `Params::defaults()`. Q10
+should follow the Q3 / Q5 convention: drive a sequence of param
+sets (DATE rotation across the substitution domain) per executable
+run, not just defaults. Tracked as a Phase 4 §7 checklist item;
+not a Phase 0 design decision.
+
+---
+
+## Implementation Phases
+
+- **Phase 0** (this commit) — design doc + DOT plans.
+- **Phase 1** — skeleton + schema + pipeline-owned load: `views.hpp`
+  (`q10_pipeline_view_t`, `q10_agg_row_t`),
+  `workload.hpp` (`Q10Workload<Backend>`, Params + DATE rotation
+  table, predicate declarations), `load.tpp` (delegates to
+  `CustomerOrdersLineitemPipeline<Backend>` + view loader),
+  `per_structure_workload.hpp` (alias-only),
+  `query.tpp` stubs returning empty vectors. CMake + test harness
+  wired so `test_query_q10_lsm` reports `[OK]` parity at digest 0x0.
+- **Phase 4 §7.1** — S3 `query_by_merged` via `col_group_walk` +
+  bespoke `Q10GroupWalkVisitor` + bounded top-20 sink (D1, D2).
+  NATION INL resolved inside `on_group_end` (D6).
+- **Phase 4 §7.2** — S1 `query_by_base` via 2-BMJ chain over COL
+  split indexes (D7); per-emit feeds the per-customer aggregator;
+  NATION INL at emit.
+- **Phase 4 §7.3** — S2 `query_by_view` via per-lineitem view scan
+  with the D4 aggregation chain (per-order then per-customer);
+  NATION INL at emit.
+- **Phase 4 §7.5** — S4 `query_by_hash` via D5 build/probe chain;
+  NATION INL at emit.
+- **Phase 5–8** — strict 4-way XOR parity test (`test_query_q10_{lsm,btree}`);
+  CMake + `generate_targets.py` entries; doc refresh + cross-link
+  from `frontend/tpch/CLAUDE.md`.
+- **S5** — omitted by design (Decision D8; no parameter-independent
+  aggregate to bake).
+- **Linux perf sweep — 5L cell only** (Decision: paper scope). Logged
+  in `LINUX_PENDING.md` once Phase 1+ lands.
+
+---
+
+## Contingency: "couldn't get results ready"
+
+If Phase 1+ stalls or the 5L cell does not return clean numbers
+before the paper deadline, the Phase 0 design doc lets Q10 be
+cited as **design-only future work** without overclaiming. The
+doc is structured for that case:
+
+- §Status is explicit that scope is 5L-only and results are
+  pending — no SF×DRAM sweep commitment.
+- §Motivation makes no predictive perf claim. The COL MI thesis
+  is stated as "the same as Q3 / Q5", not as a per-query promise.
+- D6 (NATION = INL only) and D8 (no S5) read as **deliberate
+  design constraints**, not omissions — so reviewers see a
+  bounded, defensible plan rather than a half-finished sketch.
+- The cross-link to Q10I makes the pair's joint status legible:
+  Q10 and Q10I stand or fall together.
+
+If results do land, this doc converts into the frozen target for
+code review and the implementation tracks the locked-in decisions
+above. If they don't, it reads as a self-contained future-work
+appendix and nothing in the paper has overclaimed.
