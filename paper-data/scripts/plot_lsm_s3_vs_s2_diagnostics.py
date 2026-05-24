@@ -37,6 +37,17 @@ QUERIES = [
     ("q5i", r"$\mathtt{q5i}$"),
 ]
 
+# TPC-H vanilla → circle; TPC-Hi invoice-extended → diamond.
+QUERY_FAMILY = {"q3": "tpch", "q5": "tpch", "q3i": "tpchi", "q5i": "tpchi"}
+FAMILY_MARKER = {"tpch": "o", "tpchi": "D"}
+FAMILY_LABEL = {"tpch": "TPC-H (q3, q5)", "tpchi": "TPC-Hi (q3i, q5i)"}
+QUERY_COLOR = {
+    "q3":  "#4C72B0",
+    "q5":  "#55A868",
+    "q3i": "#C44E52",
+    "q5i": "#8172B2",
+}
+
 
 def load_ratio(tag: str, metric: str, fname: str) -> dict[str, float]:
     """Median-then-ratio S3/S2 per query on lsm c0 bg=2."""
@@ -104,5 +115,85 @@ def render() -> None:
     plt.close(fig)
 
 
+def render_correlations() -> None:
+    """2x2 grid: rows = SSD/HDD, cols = sst_read vs ms/tx | cpu_cycles vs ms/tx.
+
+    Each point is one query (4 per panel). Marker by family:
+    TPC-H (q3,q5) = circle, TPC-Hi (q3i,q5i) = diamond. Dashed y=x
+    diagonal — points on the line mean the counter ratio fully
+    explains the latency ratio.
+    """
+    counter_metrics = [
+        ("sst_read_us_per_tx", r"sst_read / tx ratio",   "diagnostics.csv"),
+        ("cpu_cycles_per_tx",  r"cpu_cycles / tx ratio", "diagnostics.csv"),
+    ]
+    ms = {disk: load_ratio(tag, "ms_per_tx", "headline.csv")
+          for disk, tag in TAGS.items()}
+    counters = {disk: {m: load_ratio(tag, m, f) for m, _, f in counter_metrics}
+                for disk, tag in TAGS.items()}
+
+    fig, axes = plt.subplots(2, 2, figsize=(6.5, 5.2),
+                             sharex="col", sharey=True)
+
+    for row, (disk, row_label) in enumerate([("ssd", "(a) SSD"), ("hdd", "(b) HDD")]):
+        for col, (metric, xlabel, _) in enumerate(counter_metrics):
+            ax = axes[row, col]
+            for q, _ in QUERIES:
+                x = counters[disk][metric][q]
+                y = ms[disk][q]
+                fam = QUERY_FAMILY[q]
+                ax.scatter(x, y, s=70, marker=FAMILY_MARKER[fam],
+                           color=QUERY_COLOR[q], edgecolor="white",
+                           linewidth=0.6, zorder=3)
+                ax.annotate(q, (x, y), xytext=(5, 4),
+                            textcoords="offset points",
+                            fontsize=8, color="#333")
+
+            # y = x diagonal — counter ratio fully explains latency.
+            lim_lo, lim_hi = 0.7, 2.1
+            ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi],
+                    "--", color="#999", linewidth=0.7, zorder=1)
+            ax.axhline(1.0, color="#ccc", linewidth=0.5, zorder=0)
+            ax.axvline(1.0, color="#ccc", linewidth=0.5, zorder=0)
+
+            ax.set_xlim(lim_lo, lim_hi)
+            ax.set_ylim(lim_lo, lim_hi)
+            ax.set_aspect("equal")
+            ax.tick_params(axis="both", labelsize=8)
+            for spine in ("top", "right"):
+                ax.spines[spine].set_visible(False)
+
+            if row == 1:
+                ax.set_xlabel(xlabel, fontsize=9)
+            if col == 0:
+                ax.set_ylabel(f"{row_label}\nms/tx ratio", fontsize=9)
+
+    # Family-marker legend at the top.
+    handles = [
+        plt.Line2D([0], [0], marker=FAMILY_MARKER[fam], color="#555",
+                   linestyle="", markersize=8, label=FAMILY_LABEL[fam])
+        for fam in ("tpch", "tpchi")
+    ]
+    handles.append(plt.Line2D([0], [0], linestyle="--", color="#999",
+                              label=r"$y = x$ (counter explains latency)"))
+    fig.legend(handles=handles, loc="upper center",
+               bbox_to_anchor=(0.5, 0.99), ncol=3, frameon=False, fontsize=8)
+
+    fig.suptitle("S3 / S2 ratio: counter vs latency on RocksDB (c0, bg=2)",
+                 fontsize=10, y=0.94)
+    fig.tight_layout(rect=[0, 0, 1, 0.91])
+
+    out_dir = PAPER_DATA / TAGS["ssd"] / "figures" / "paper"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base = out_dir / "lsm_s3_vs_s2_correlation"
+    for ext in ("pdf", "png"):
+        path = base.with_suffix(f".{ext}")
+        fig.savefig(path, bbox_inches="tight",
+                    dpi=200 if ext == "png" else None)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     render()
+    render_correlations()
