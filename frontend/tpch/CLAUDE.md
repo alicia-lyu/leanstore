@@ -43,6 +43,16 @@ trigger described:
   **when picking which pipeline a new MI should target**: argues for
   >2-table MIs over the 2-table OL pipeline, framed against the
   paper's "combinatorial advantage" claim.
+- [`ACOL_ACOLI_PLAYBOOK.md`](ACOL_ACOLI_PLAYBOOK.md) — read **when
+  adding or revisiting an S5 pre-aggregated merged index** (aCOL =
+  per-order/child reduction, drop children; aCOLI = per-customer
+  sibling scalar, keep children). Step-by-step recipe + the two
+  load-bearing rules: the **grain-dependent soundness rule** (bake
+  only spec-constant-filtered aggregates, at the grain where every
+  filter is constant) and the **hand-rolled-walker requirement**
+  (a generic `std::visit` scan is why Q3I's aCOLI S5 lost to S3;
+  Q10's hand-rolled `acol_group_walk` is why its S5 is the fastest
+  structure).
 
 For supplemental cross-cutting context, the top-level
 [`TPCH_experiments.md`](../../TPCH_experiments.md) owns the experiment
