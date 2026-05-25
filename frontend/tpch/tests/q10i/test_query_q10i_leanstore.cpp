@@ -13,18 +13,17 @@
 //     HybridPageGuard, which requires a Worker TLS the main thread lacks.
 //   - No raw-byte / per-CF metadata reporting: LeanStore has no column
 //     families; those blocks are dropped and size() is reported instead.
-//   - S2 pipeline_view is deferred (Pattern B): expect rows == 0 at Phase 1.
 //
 // Usage (Linux only):
 //   ./build/frontend/test_query_q10i_btree \
-//       --ssd_path=/mnt/ssd/q10i_btree \
-//       --tpch_scale_factor=1
+//       --ssd_path=/mnt/ssd/q10i_btree.db --wal=true --trunc=true \
+//       --tpch_scale_factor=1 --dram_gib=8
 //
-// Expected (Phase 1):
-//   - [OK] pipeline_view rows == 0 (deferred to Phase 4a Pattern B)
+// Expected (Phase 4):
+//   - [OK] pipeline_view rows == |lineitem| (Pattern B view loader)
 //   - [OK] strict-equality cardinality on splits + merged_coli
 //   - [OK] sentinel ordering: customer < invoice < orders < lineitem per custkey group
-//   - [OK] parity at digest 0x0 (stubs return empty)
+//   - [OK] 4-way XOR parity (S1 ≡ S2 ≡ S3 ≡ S4 at a non-zero digest)
 //   - exit 0
 
 #include <gflags/gflags.h>
@@ -147,8 +146,8 @@ int main(int argc, char** argv)
       leanstore::cr::Worker::my().commitTX();
    });
 
-   // Populate ALL secondaries so every query_by_* path sees the same data.
-   // S2 view (Pattern B) deferred to Phase 4a — expect 0 rows at Phase 1.
+   // Populate ALL secondaries so every query_by_* path sees the same data
+   // (splits, COLI MI, and the S2 Pattern-B view — Phase 4).
    std::cout << "=== Populating secondaries ===\n";
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
@@ -158,6 +157,11 @@ int main(int argc, char** argv)
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
       q10i.coli_pipeline().populate_merged();
+      leanstore::cr::Worker::my().commitTX();
+   });
+   crm.scheduleJobSync(0, [&]() {
+      leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
+      q10i.populate_q10i_view();  // S2 view (Pattern B) — consumes the COLI MI
       leanstore::cr::Worker::my().commitTX();
    });
 
@@ -264,12 +268,12 @@ int main(int argc, char** argv)
              << " lineitems=" << n_lineitems_ref
              << " invoices=" << n_invoices_ref << "\n";
 
-   // Pipeline view: deferred to Phase 4a (Pattern B) — expect 0 at Phase 1.
+   // Pipeline view: Pattern B loader emits one row per lineitem.
    {
-      bool ok = (n_view == 0);
+      bool ok = (n_view == n_lineitems_ref);
       stats_ok &= ok;
       check("pipeline_view", ok, n_view,
-            "0 [deferred to Phase 4a (Pattern B)]");
+            "= " + std::to_string(n_lineitems_ref));
    }
    // Split adapters: strict 1:1 retagging of base tables.
    {
@@ -350,7 +354,7 @@ int main(int argc, char** argv)
    }
 
    // Run all four paths inside one OLAP transaction.
-   std::cout << "\n=== Running queries (Phase 1: all stubs → digest 0x0) ===\n";
+   std::cout << "\n=== Running queries (Phase 4: all four query_by_* live) ===\n";
    std::vector<tpch::q10i::q10i_agg_row_t> r_base, r_view, r_merged, r_hash;
 
    crm.scheduleJobSync(0, [&]() {
@@ -400,7 +404,7 @@ int main(int argc, char** argv)
    parity_line("S4 hash  ", ok_h, d_hash);
 
    bool parity_ok = ok_b && ok_v && ok_m && ok_h;
-   if (parity_ok) std::cout << "[OK] parity (S1 ≡ S2 ≡ S3 ≡ S4 at digest 0x0)\n";
+   if (parity_ok) std::cout << "[OK] parity (S1 ≡ S2 ≡ S3 ≡ S4 at matching non-zero digest)\n";
 
    bool all_ok = stats_ok && parity_ok;
    if (!all_ok) {
