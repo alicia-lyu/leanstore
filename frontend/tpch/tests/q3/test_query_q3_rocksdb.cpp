@@ -198,6 +198,40 @@ int main(int argc, char** argv)
    parity_line("S3 merged", d_merged, (long)r_merged.size());
    parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
 
+   // ------------------------------------------------------------------
+   // Param-rotation fairness (audit-response). The perf harness now runs
+   // set_params_for_iter(param_seed + count), so the first measured query
+   // need not be pinned to PARAM_TABLE[0] (the validation default). The
+   // sweep passes one param_seed to all four structure processes of a
+   // given rep; the property that makes that fair is that every structure
+   // sees the SAME parameter. Verify (a) strict 4-way parity still holds
+   // at a non-default parameter (hard fail otherwise) and (b) a different
+   // parameter actually changes the result (informational). Reset to
+   // iter 0 so the RF round-trip section below runs at the default.
+   {
+      constexpr long kRotIter = 3;  // a different (segment, date) than [0]
+      q3.set_params_for_iter(kRotIter);
+      std::vector<tpch::q3::q3_agg_row_t> a, b, c, d;
+      q3.query_by_base(a); q3.query_by_view(b);
+      q3.query_by_merged(c); q3.query_by_hash(d);
+      uint64_t da = digest_rows(a), db = digest_rows(b),
+               dc = digest_rows(c), dd = digest_rows(d);
+      bool agree = (da == db && db == dc && dc == dd);
+      bool rotated = (dc != d_merged);
+      std::cout << "\n=== Param-rotation parity (iter=" << kRotIter << ") ===\n"
+                << (agree ? "[OK]   " : "[FAIL] ")
+                << "4-way agreement at non-default param: 0x" << std::hex << dc
+                << std::dec << " (rows=" << c.size() << ")\n"
+                << (rotated ? "[OK]   " : "[WARN] ")
+                << "digest differs from iter=0 0x" << std::hex << d_merged
+                << std::dec << " (rotation exercised)\n";
+      q3.set_params_for_iter(0);  // restore validation default
+      if (!agree) {
+         std::cout << "[FAIL] param-rotation broke cross-structure parity\n";
+         return 1;
+      }
+   }
+
    // Skip-seek counters across all four paths.  S1 has two physical streams
    // (orders + lineitem), so s1_groups_skipped can be up to ~2× the
    // single-stream counters (S2/S3); what matters is that it is > 0 and of

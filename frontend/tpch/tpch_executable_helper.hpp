@@ -168,7 +168,15 @@ struct TpchExecutableHelper {
          out.clear();
          jumpmuTry()
          {
-            wrapper.set_params_for_iter(static_cast<long>(count.load()));
+            // param_seed is an additive offset into the per-query
+            // PARAM_TABLE rotation: the first iteration uses
+            // PARAM_TABLE[(param_seed + 0) % N] instead of always [0].
+            // The sweep passes a per-rep seed identical across all four
+            // structures, so structures stay comparable while reps sample
+            // distinct parameters. Default param_seed=0 ⇒ historical
+            // behaviour (validation default).
+            wrapper.set_params_for_iter(
+                static_cast<long>(FLAGS_param_seed) + static_cast<long>(count.load()));
             db_traits->run_tx([&]() { wrapper.query(out); });
             count++;
          }

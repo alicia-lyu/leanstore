@@ -27,6 +27,20 @@ TPCH_FLAG_INT(storage_structure, 1,
               "1=base merge-join, 2=pipeline view, 3=MI[0] premerged, 4=base hash-join");
 TPCH_FLAG_INT(tx_seconds, 15, "Seconds to run each transaction type");
 TPCH_FLAG_INT(warmup_seconds, 0, "Warmup seconds");
+TPCH_FLAG_INT(param_seed, 0,
+              "Additive offset into the per-query substitution-parameter "
+              "rotation table (PARAM_TABLE). The query loop runs "
+              "set_params_for_iter(param_seed + iteration), so the first "
+              "measured query uses PARAM_TABLE[param_seed % N] instead of "
+              "always PARAM_TABLE[0] (the validation default). Default 0 "
+              "preserves the historical single-default-param behaviour. "
+              "The paper sweep passes a per-REP value identical across all "
+              "four storage structures, so the 3 reps sample 3 distinct "
+              "parameters while every structure sees the same one per rep "
+              "(fairness: not a head-to-head bias). At the 5L cell only one "
+              "query fits the window, so this picks that single query's "
+              "parameter; below 5L the rotation also advances across "
+              "iterations within a run.");
 TPCH_FLAG_INT(bgw_pct, 0, "Percentage of background write transactions");
 TPCH_FLAG_BOOL(bg_query_thread, false,
                "Spawn a read-only background thread that runs the same foreground query "

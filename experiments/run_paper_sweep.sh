@@ -47,6 +47,10 @@ Usage: $(basename "$0") [--tag <tag>] [--cells c2,c1,c3,c0]
                 sudo) before each per-structure run for a cold start.
   --continue    Re-use the latest existing tag instead of creating a
                 new one; skip per-run snapshots that already exist.
+  --rotate-params  Pass param_seed=<rep> (identical across the four
+                structures in each rep) so the reps sample distinct
+                substitution parameters. Off by default (param_seed=0,
+                the historical single-validation-param behaviour).
 
 Tag dir layout:
   paper-data/<tag>/{manifest.yaml,run.log,raw/,summary/}
@@ -62,6 +66,7 @@ SKIP_LOAD=0
 SMOKE_TEST=0
 CONTINUE=0
 DROP_CACHES=0
+ROTATE_PARAMS=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --tag)        TAG="$2"; shift 2 ;;
@@ -73,6 +78,7 @@ while [[ $# -gt 0 ]]; do
         --smoke-test) SMOKE_TEST=1; shift ;;
         --drop-caches) DROP_CACHES=1; shift ;;
         --continue)   CONTINUE=1; shift ;;
+        --rotate-params) ROTATE_PARAMS=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)            echo "unknown arg: $1" >&2; usage; exit 1 ;;
     esac
@@ -397,9 +403,20 @@ for cell in "${CELL_LIST[@]}"; do
                     log "      rep $rep / bg=$bg  ($bg_flags)"
                     reset_run_dir "$binary" "$sf" "$dram"
                     csv_db_dir="build/${binary}"
+                    # Param-rotation: when --rotate-params is set, every
+                    # structure in THIS rep gets the SAME seed (=$rep), so
+                    # the four structures stay comparable while the reps
+                    # sample distinct PARAM_TABLE entries. Default (off) =
+                    # param_seed=0 for every run, i.e. the historical
+                    # single-validation-param behaviour.
+                    if [[ $ROTATE_PARAMS -eq 1 ]]; then
+                        param_seed_flag="param_seed=$rep"
+                    else
+                        param_seed_flag="param_seed=0"
+                    fi
                     for n in $(structures_for "$binary"); do
                         target="${binary}_${n}"
-                        cmd="make $target scale=$sf dram=$dram $bg_flags"
+                        cmd="make $target scale=$sf dram=$dram $bg_flags $param_seed_flag"
                         log "        $cmd"
                         if [[ $DRY_RUN -eq 1 ]]; then
                             continue
