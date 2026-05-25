@@ -49,6 +49,14 @@ FAMILY_OF: Dict[str, Tuple[str, str, str]] = {
     "q3i_btree": ("tpchi",   "btree", "q3i"),
     "q5i_lsm":   ("tpchi",   "lsm",   "q5i"),
     "q5i_btree": ("tpchi",   "btree", "q5i"),
+    # Q10 / Q10I: previously hand-ported (bg=0, single-rep) into sibling
+    # tags and spliced into the figure with a bg relabel. Now first-class
+    # so a genuine bg=2, 3-rep sweep is analyzable like the other queries.
+    # SF_TPCH is backend-keyed, so c0 = btree 1550 / lsm 3850 already apply.
+    "q10_lsm":    ("vanilla", "lsm",   "q10"),
+    "q10_btree":  ("vanilla", "btree", "q10"),
+    "q10i_lsm":   ("tpchi",   "lsm",   "q10i"),
+    "q10i_btree": ("tpchi",   "btree", "q10i"),
     "geo_lsm":   ("geo",     "lsm",   "geo"),
     "geo_btree": ("geo",     "btree", "geo"),
 }
