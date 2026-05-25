@@ -26,6 +26,11 @@
 #include "workload.hpp"
 
 DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping");
+DEFINE_bool(q10_stats, false,
+            "After the run, print the Q10Stats cardinality counters (rows scanned / "
+            "passing filters / aggregated) for the chosen --storage_structure. "
+            "Investigation instrumentation; keep --bg_query_thread=false (a bg worker "
+            "races the shared counters).");
 
 thread_local rocksdb::Transaction* RocksDB::txn = nullptr;
 
@@ -72,12 +77,16 @@ int main(int argc, char** argv)
    tpch.recover_last_ids();
 
    using AggRow = tpch::q10::q10_agg_row_t;
+   tpch::q10::Q10Stats qstats;
+   if (FLAGS_q10_stats) q10.stats = &qstats;
+   long q10_txc = 0;
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q10::BaseQ10<B> w{q10};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
              rocks_db, std::move(w), tpch, "base_merge_join");
          helper.run();
+         q10_txc = helper.tx_count();
          break;
       }
       case 2: {
@@ -85,6 +94,7 @@ int main(int argc, char** argv)
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
              rocks_db, std::move(w), tpch, "pipeline_view");
          helper.run();
+         q10_txc = helper.tx_count();
          break;
       }
       case 3: {
@@ -92,6 +102,7 @@ int main(int argc, char** argv)
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
              rocks_db, std::move(w), tpch, "mi_col_walk");
          helper.run();
+         q10_txc = helper.tx_count();
          break;
       }
       case 4: {
@@ -99,11 +110,13 @@ int main(int argc, char** argv)
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
              rocks_db, std::move(w), tpch, "base_hash_join");
          helper.run();
+         q10_txc = helper.tx_count();
          break;
       }
       default:
          std::cerr << "Invalid storage_structure: " << FLAGS_storage_structure << std::endl;
          return 1;
    }
+   if (FLAGS_q10_stats) tpch::q10::print_q10_stats(std::cout, qstats, q10_txc);
    return 0;
 }
