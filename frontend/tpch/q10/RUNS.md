@@ -17,6 +17,25 @@ need consolidating.
 
 ## Runs
 
+### 2026-05-25 — S5 aCOL 5L confirmation (both backends)
+- **Commit**: `fd771c13` (binary; tree at `5d1fc153`), host `node0` (Linux)
+- **Logs**: `build/q10_{btree,lsm}/{1550,3850}-in-1.0/structure5_acol.log`
+  (`build/scratch/q10_5L_acol.sh`). Ported to
+  `paper-data/2026-05-25-q10/summary/headline.csv` (`mi_acol_preagg` rows).
+- **Config**: 5L (c0) DRAM=1.0, SF=1550 btree / 3850 lsm, isolated, tx_seconds=15.
+  S5-only (reload built the aCOL into the image; S1-S4/S2-B 5L numbers stand from
+  the prior sweep `f92d1868` — Q10 COL data deterministic + unchanged by the q10i
+  merge). Ran serially (waited out a concurrent tpchi reload).
+- **ms/query** — **btree**: S5 aCOL **160** ≪ S2-preagg 17,435 < S1 18,652 <
+  S3 35,024 < S4 126,280 < S2-A 175,506. **lsm**: S5 aCOL **1,367** < S2-preagg
+  1,658 < S3-phys 10,110 < S3 11,110 < S1 14,400 < S2-A 17,209 < S4 77,570.
+- **Claim check**: the **fair pre-aggregated MI (aCOL, S5) is the fastest
+  structure on both backends** — decisively on btree (~109× over the pre-agg
+  view, ~219× over raw S3; the lineitem-free aCOL fits the 1 GiB pool while view
+  and S3 are page-bound) and still ahead on lsm (1.2× over the view, ~8× over
+  S3; block cache softens the page penalty so the co-location margin shrinks).
+  Confirms the iteration-cell result. See `PERFORMANCE.md §7`.
+
 ### 2026-05-25 — S5 aCOL iteration-cell smoke (btree SF=150 dram=0.1)
 - **Commit**: `fd771c13` (`calcite-integration`), host `node0` (Linux)
 - **Logs**: `build/q10_btree/150-in-0.1/structureN_clean.log` (clean — re-run

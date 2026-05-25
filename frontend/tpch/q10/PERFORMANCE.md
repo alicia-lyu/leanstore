@@ -322,11 +322,33 @@ hand-tuned walker, gets the view's pre-computation benefit **plus** the MI's
 co-location benefit (no per-order customer-col duplication) — it is the best
 structure, not a slow baseline. This is the honest, fair MI result for Q10.
 
-### 5L confirmation (both backends) — *pending* (next sweep; see RUNS.md)
+### 5L confirmation (both backends, dram=1.0) — measured (RUNS.md 2026-05-25)
 
-> Reload both 5L images (load.tpp added the aCOL), run S1–S5 + S2-preagg on one
-> consistent image per backend; port to `paper-data/2026-05-25-q10`.
+S5-only fresh sweep (`build/scratch/q10_5L_acol.sh`); S1–S4 / S2-B numbers from
+the prior 5L sweep (`paper-data/2026-05-25-q10`, deterministic + comparable).
 
-Reproduce (iteration cell): `make q10_btree_5 scale=150 dram=0.1 q10_stats=true`
+| ms/query (5L) | S1 | S2-A | S2-B preagg | S3 | S4 | **S5 aCOL** |
+|---|--:|--:|--:|--:|--:|--:|
+| **btree** (SF=1550) | 18,652 | 175,506 | 17,435 | 35,024 | 126,280 | **160** |
+| **lsm** (SF=3850) | 14,400 | 17,209 | 1,658 | 11,110 | 77,570 | **1,367** |
+
+**The aCOL (S5) is the fastest structure on both backends at 5L.**
+- **btree**: 160 ms/q — **~109× faster than the pre-agg view**, **~219× than raw
+  S3**, ~117× than S1. The lineitem-free aCOL (3,513 MiB incl. base) fits the
+  1 GiB pool, so it stays compute-bound while the view (8.6 GiB) and S3 are
+  page-bound. The margin is *larger* than the iteration cell — at 5L the
+  page-bound structures overflow harder.
+- **lsm**: 1,367 ms/q — fastest, but only **1.2× over the pre-agg view** and
+  ~8× over S3. On LSM the block cache absorbs much of the page penalty, so the
+  aCOL's co-location edge over the (also pre-aggregated) view shrinks. The big
+  win is over the raw/page-heavy structures (S3, S4).
+
+The honest cross-backend story: **pre-aggregating the MI (aCOL) closes and
+reverses the S3-loses-on-btree gap** — when the MI is allowed to pre-aggregate
+*and* gets a hand-tuned walker, it is the best structure everywhere; the
+remaining backend asymmetry is just how much the page-bound penalty matters
+(severe on btree, softened by the LSM block cache).
+
+Reproduce: `make q10_{btree,lsm}_5 scale={1550,3850} dram=1.0 q10_stats=true`
 (S5 = `--storage_structure=5`, method `mi_acol_preagg`). Parity: the S5-vs-S3
 A/B check in `test_query_q10_{lsm,btree}` (digest ≡ S3 at both param iters).

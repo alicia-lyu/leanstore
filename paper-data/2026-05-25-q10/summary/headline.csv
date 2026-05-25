@@ -11,4 +11,6 @@ q10_lsm,vanilla,lsm,q10,c0,3850,1.0,2,pipeline_view_preagg,query,0,1,0.602815,10
 q10_lsm,vanilla,lsm,q10,c0,3850,1.0,3,mi_col_walk,query,0,1,0.090009,2,,11109.87,3939.27,f92d1868,ssd
 q10_lsm,vanilla,lsm,q10,c0,3850,1.0,3,mi_col_walk_physskip,query,0,1,0.098912,2,,10110.05,3926.83,f92d1868,ssd
 q10_lsm,vanilla,lsm,q10,c0,3850,1.0,4,base_hash_join,query,0,1,0.012892,1,,77569.56,3138.77,f92d1868,ssd
+q10_btree,vanilla,btree,q10,c0,1550,1.0,5,mi_acol_preagg,query,0,1,6.243757,94,,160.16,3513.34,fd771c13,ssd
+q10_lsm,vanilla,lsm,q10,c0,3850,1.0,5,mi_acol_preagg,query,0,1,0.731454,11,,1367.14,3251.52,fd771c13,ssd
 

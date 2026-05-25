@@ -35,6 +35,16 @@ re-analyzable, add q10 to `analyze_paper_sweep.py` maps. Q10 is the
 boundary/negative case for the merged-index pitch — pairs with q3i/q5i (where
 the customer-level prune makes S3 win).
 
+**Addendum 2026-05-25 — S5 aCOL (the fair pre-aggregated MI).** Added
+`mi_acol_preagg` (structure 5) rows for both backends (commit `fd771c13`; the
+aCOL MI = `customer_coli_t + orders_acol_t`, per-order returned revenue baked,
+no lineitems, hand-rolled `acol_group_walk`). It overturns the "S3<S1 on btree"
+negative result by letting the MI pre-aggregate too: **S5 aCOL is the fastest
+structure on both backends** — btree **160 ms/q** (~109× over the pre-agg view,
+~219× over S3; lineitem-free, fits the pool) and lsm **1,367 ms/q** (1.2× over
+the view, ~8× over S3). The grain-soundness + hand-rolled-walk lessons are
+written up in `frontend/tpch/ACOL_ACOLI_PLAYBOOK.md`.
+
 ## Done: tag `2026-05-24-a-ssd` — q3/q5/q3i/q5i at 5L (c0) on the **real SSD**
 
 **Finished 2026-05-24 ~18:00 UTC**, commit `c9b5f594`, host

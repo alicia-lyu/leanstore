@@ -6,7 +6,7 @@ finished_at: 2026-05-25
 cells: c0
 families: vanilla
 reps: 1
-runs_ok: 12
+runs_ok: 14
 runs_err: 0
 note: >
   Hand-ported, NOT analyzer-generated. Q10 is not in the standard paper
@@ -23,3 +23,11 @@ note: >
   To make this re-analyzable/plottable, add q10 to FAMILY_OF (vanilla),
   SF_TPCH (c0: btree 1550 / lsm 3850), and a method/structure handling
   for the two A/B variants per structure.
+
+  2026-05-25 addendum: structure 5 = mi_acol_preagg (the aCOL MI — per-order
+  pre-aggregated COL merged index, hand-rolled acol_group_walk) added for both
+  backends from build/scratch/q10_5L_acol.sh (commit fd771c13; S1-S4/S2-B rows
+  stand from f92d1868 — Q10 COL data is deterministic + unchanged by the q10i
+  merge, so a fresh S5 is comparable). aCOL is the FASTEST structure on both:
+  btree 160 ms/q (vs S2-preagg 17,435, S3 35,024); lsm 1,367 ms/q (vs
+  S2-preagg 1,658, S3 11,110). See q10/PERFORMANCE.md §7.
