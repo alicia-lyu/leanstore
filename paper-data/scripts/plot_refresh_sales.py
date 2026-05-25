@@ -373,7 +373,7 @@ def _render_figure(ls_by_budget: Dict[float, pd.DataFrame],
     """Build the 1×(memory budgets) refresh figure for one backend and
     write it. The B-tree figure includes the DBToaster comparison; the
     LSM figure does not (DBToaster is a separate engine, shown once)."""
-    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 2.0),
+    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 1.4),
                              sharey=False)
     for j, (budget, label) in enumerate(MEMORY_BUDGETS):
         budget_df = ls_by_budget.get(budget, pd.DataFrame())
@@ -429,6 +429,21 @@ def main() -> int:
 
     df = _load_ls(csv_path, schema)
     disk = _disk_tag(df)
+    if not disk:
+        # Newer summary CSVs (e.g. 2026-05-24 SSD reruns) drop the
+        # `disk` column; fall back to the manifest's `disk:` line
+        # (first whitespace token) so the output basename keeps the
+        # `_ssd` suffix the paper symlinks target.
+        manifest_path = root / "manifest.yaml"
+        if manifest_path.exists():
+            with manifest_path.open() as fh:
+                try:
+                    m = yaml.safe_load(fh) or {}
+                except yaml.YAMLError:
+                    m = {}
+            raw = str(m.get("disk", "")).strip()
+            if raw:
+                disk = raw.split()[0]
     # Auto-load the 9 GiB prewarm sibling when present. It lives in a
     # separate tag (different binary build), but conceptually it's the
     # second memory-budget panel of the same figure.
