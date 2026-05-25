@@ -354,3 +354,28 @@ project and stays in [`LINUX_PENDING.md`](LINUX_PENDING.md).
   merged into `pair_vs_dbtoaster.csv`) precisely because there is no in-memory
   advantage to compare apples-to-apples. Committed `8daaf0f2`; README addendum +
   `refresh_sales/RUNS.md` entry landed.
+
+## Closed 2026-05-25 — Q10I merge + aCOLI (S5) + fair S2 view
+
+- **Q10I merged to calcite-integration + S5 aCOLI added** (was
+  worktree-only on `worktree-agent-a86745538133069de`). The merge widened
+  the shared `lineitem_coli_t` (`l_returnflag`, D14), which invalidated the
+  Q3I/Q5I COLI 5L images — reloaded on merge. Fixed a stale Linux-only
+  `test_query_q10i_btree` harness (never populated the S2 view; the author's
+  Phase-4 parity was macOS/LSM-only) and a `generate_targets` mis-mapping
+  (q10i was wired to recover from the q3i/q5i family image, which lacks
+  q10i's view → degenerate S2; q10i now loads standalone).
+  Smoke test reproduced Q10's two btree anomalies (per-lineitem S2 strawman;
+  S3<S1, prune below the COLI co-location grain), so the Q10 fixes were
+  ported: a per-order **pre-aggregated** S2 view (`q10i_pipeline_view_preagg_t`,
+  `--q10i_view_variant=preagg`) and an **S5 aCOLI MI**
+  (`<customer_coli_t, orders_acoli_q10i_t>`, per-order paid/open/late baked,
+  lineitems+invoices dropped, hand-rolled `acoli_group_walk`). D3 overturned
+  (per-order grain is soundly bakeable). Parity green at SF=1 both backends
+  (S1≡S2≡S3≡S4≡S2-preagg≡S5). **The aCOLI is the fastest structure on both
+  backends** at 5L: btree S5 181 ms ≪ S2-B 21,349 / S3 47,296; lsm S5 1,561 ms
+  < S2-B 2,014 / S3 16,570. Validates ACOL_ACOLI_PLAYBOOK §6. The
+  S3-physical-skip characterization for the 4-table `coli_group_walk` was NOT
+  done — superseded by S5 (the aCOLI is the fast path; revisit via the
+  playbook only if a raw-S3 q10i number is needed). See
+  `frontend/tpch/q10i/{RUNS.md,CLAUDE.md}`.
