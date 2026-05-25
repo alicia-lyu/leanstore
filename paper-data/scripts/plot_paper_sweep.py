@@ -54,6 +54,11 @@ STYLE = {
         # green family.
         22: "#7fb3d5",
         3: "#27ae60",  # S3 merged index — green (headline)
+        # Q10/Q10i partial-aggregate Merged-Idx variant (aCOL / aCOLI MI
+        # with baked-in partial agg at load time). Same green family,
+        # lightened, so the legend reads as a Merged-Idx variant rather
+        # than a new approach — paired with id 22 on the Mat-View side.
+        33: "#7fcaa0",
         4: "#e67e22",  # S4 hash join — orange
         5: "#8e44ad",  # S5 aCOLI — purple (deferred from paper sweep)
     },
@@ -90,6 +95,8 @@ PAPER_STRUCTURE_LABELS = {
     # Q10-only partial-aggregate Mat-View variant.
     22: r"\textsc{Mat-View} (partial agg)",
     3: r"\textsc{Merged-Idx}",
+    # Q10/Q10i partial-aggregate Merged-Idx variant (aCOL / aCOLI MI).
+    33: r"\textsc{Merged-Idx} (partial agg)",
     4: r"\textsc{Base-Hash}",
     5: r"\textsc{aCOLI}",
 }
@@ -359,34 +366,45 @@ def _all_or_empty(fig: plt.Figure, ax, msg: str) -> None:
 #   diagnostic outputs
 
 PAPER_TPCH_QUERIES = ["q3", "q5", "q3i", "q5i"]   # left-to-right panel order
-# Q10 lives in its own figure (paper_q10) so its 5-bar layout doesn't
-# disrupt the 4-bar headline row geometry.
+# Q10 / Q10I live in their own figure (paper_q10) so their 5-bar layout
+# doesn't disrupt the 4-bar headline row geometry. They each carry an
+# extra Mat-View bar (naive per-lineitem vs pre-agg per-order) which
+# makes a 5-bar panel.
 Q10_QUERY = "q10"
+Q10I_QUERY = "q10i"
 
-# Q10 lives in its own ad-hoc sibling tag (not in the standard sweep
-# matrix yet — see 2026-05-25-q10/manifest.yaml). When rendering the
-# headline row we merge Q10 rows in from this tag and keep only the
-# canonical method per structure (the per-order pre-aggregated view
-# matches the §5 narrative; the COL walker is the standard MI path).
-Q10_SIBLING_TAG = "2026-05-25-q10"
+# Q10 / Q10I live in their own ad-hoc sibling tags (not in the standard
+# sweep matrix yet — see 2026-05-25-q10/manifest.yaml and
+# 2026-05-25-q10i/manifest.yaml). When rendering the headline row we
+# merge their rows in from these tags and keep only the canonical
+# method per structure (the per-order pre-aggregated view matches the
+# §5 narrative; the COL[I] walker is the standard MI path).
+Q10_SIBLING_TAG  = "2026-05-25-q10"
+Q10I_SIBLING_TAG = "2026-05-25-q10i"
 # Method → synthetic structure id. The naive per-lineitem view keeps
 # the canonical S2 (Mat-View) slot; the partial-aggregate variant goes
-# to id 22 so it draws as its own bar next to the naive Mat-View. The
-# merged-index physskip variant is currently dropped (the standard
-# COL walker is the canonical S3 in the paper text).
+# to id 22 so it draws as its own bar next to the naive Mat-View. S5
+# (`mi_acoli_preagg`) is paper-deferred and dropped here.
+# Q10I's MI walker is named `mi_coli_walk` (COLI MI) vs Q10's
+# `mi_col_walk` (COL MI); both map to S3.
 Q10_METHOD_TO_STRUCT = {
     "base_merge_join":      1,
     "pipeline_view":        2,
     "pipeline_view_preagg": 22,
     "mi_col_walk":          3,
+    "mi_coli_walk":         3,
+    "mi_acol_preagg":       33,
+    "mi_acoli_preagg":      33,
     "base_hash_join":       4,
 }
 # Per-query bar order for the headline panels. Defaults to
 # PAPER_LEGEND_ORDER (4 bars) when the query is not listed.
-# Q10 layout: place the partial-agg variant immediately after the
-# naive S2 so the two Mat-View bars sit together.
+# Q10/Q10i layout: pair each canonical with its partial-agg variant
+# so the two Mat-View bars sit together and the two Merged-Idx bars
+# sit together at the right.
 PAPER_PANEL_STRUCTURES = {
-    "q10": [4, 1, 2, 22, 3],
+    "q10":  [4, 1, 2, 22, 3, 33],
+    "q10i": [4, 1, 2, 22, 3, 33],
 }
 PAPER_HEADLINE_BG = 2                              # paper's contention cohort
 PAPER_STRUCTURES = [1, 2, 3, 4]                    # S5 deferred
@@ -455,7 +473,10 @@ def _apply_paper_overlap_style(ax) -> None:
 def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
                      cell: str, show_ylabel: bool,
                      structures: Optional[Sequence[int]] = None,
-                     title: Optional[str] = None) -> bool:
+                     title: Optional[str] = None,
+                     n_overflow: int = 1,
+                     log_y: bool = False,
+                     log_bottom: Optional[float] = None) -> bool:
     """One compact bar panel of the paper TPC-H headline row. bg=2,
     one cell, one bar per structure in ``structures`` (defaults to
     ``PAPER_LEGEND_ORDER``). ms → seconds; linear y with a per-panel
@@ -496,30 +517,53 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
         hi = float(row["s_q75"].iloc[0]) if "s_q75" in row.columns \
             and not pd.isna(row["s_q75"].iloc[0]) else h
         plotted.append((x, h, struct, lo, hi))
-    # Pick the panel's y-cap from the second-tallest bar (with a small
-    # headroom factor) rather than as a multiple of the shortest. This
-    # makes the non-outlier bars occupy most of the panel even when a
-    # single hash-join bar is two orders of magnitude taller; the over-
-    # cap bar gets the value annotation above the top border.
+    # Pick the panel's y-cap from the (n_overflow+1)-th tallest bar (with
+    # a small headroom factor) rather than as a multiple of the shortest.
+    # ``n_overflow=1`` (default) lets a single outlier overflow; Q10/Q10i
+    # uses ``n_overflow=2`` because Mat-View *and* Base-Hash are both
+    # ~100s while the headline aCOL/aCOLI bar is sub-second, so a
+    # 2nd-tallest cap would still squash everything visible.
     if plotted:
         finite = sorted((h for _, h, _, _, _ in plotted if h > 0), reverse=True)
-        if len(finite) >= 2:
-            cap = finite[1] * 1.15
-        elif finite:
-            cap = finite[0] * 1.15
+        idx = min(n_overflow, max(len(finite) - 1, 0))
+        if finite:
+            cap = finite[idx] * 1.15
         else:
             cap = None
     else:
         cap = None
-    ylim_top = cap * 1.08 if cap is not None else None
+    # On log scale every bar fits naturally — no need to cap / overflow.
+    ylim_top = None if log_y else (cap * 1.08 if cap is not None else None)
+    # Log axis needs a positive bar bottom; pick one decade below the
+    # smallest positive bar so even sub-second bars render visibly.
+    # Caller can pass an explicit ``log_bottom`` so a row of panels
+    # shares the same anchor (otherwise per-panel mins drift and bars
+    # in different panels look anchored at different floors).
+    if log_y and log_bottom is None and plotted:
+        positives = [h for _, h, _, _, _ in plotted if h > 0]
+        if positives:
+            log_bottom = min(positives) * 0.5
+    # Bars under this fraction of the cap render as a thin sliver and
+    # are effectively invisible; annotate their numeric value above the
+    # sliver so the reader can still read the headline number.
+    short_thresh = 0.04
     for x, h, struct, lo, hi in plotted:
         # Over-cap bars extend all the way to the top border; the
         # printed value sits just above the border so the reader can
         # still read the true number.
         draw_h = min(h, ylim_top) if ylim_top is not None else h
-        ax.bar([x], [draw_h], width=bar_w,
-               color=STYLE["structure_colors"][struct],
-               linewidth=0, clip_on=False)
+        if log_y and log_bottom is not None:
+            # bar() expects (bottom, height) on a log axis to avoid
+            # drawing from 0 (which is -inf in log space and confuses
+            # the layout engine into producing a 100k-pixel figure).
+            ax.bar([x], [draw_h - log_bottom], width=bar_w,
+                   bottom=log_bottom,
+                   color=STYLE["structure_colors"][struct],
+                   linewidth=0)
+        else:
+            ax.bar([x], [draw_h], width=bar_w,
+                   color=STYLE["structure_colors"][struct],
+                   linewidth=0, clip_on=False)
         if ylim_top is not None and h > ylim_top:
             ax.annotate(f"{h:.0f}", xy=(x, 1.0),
                         xycoords=("data", "axes fraction"),
@@ -527,10 +571,20 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
                         ha="center", va="bottom", fontsize=10,
                         color=STYLE["structure_colors"][struct],
                         annotation_clip=False)
+        elif ylim_top is not None and h > 0 and h < ylim_top * short_thresh:
+            # Sub-second bars next to multi-tens-of-seconds bars: show
+            # the value (one decimal for h<10s, integer otherwise) just
+            # above the sliver so it doesn't disappear visually.
+            fmt = f"{h:.1f}" if h < 10 else f"{h:.0f}"
+            ax.annotate(fmt, xy=(x, draw_h),
+                        xytext=(0, 2), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=8,
+                        color=STYLE["structure_colors"][struct],
+                        annotation_clip=False)
         else:
             # Error bar = inter-quartile range over the reps. Drawn only
-            # for in-frame bars; an over-cap bar shows its true value as
-            # the printed annotation above instead.
+            # for in-frame, non-sliver bars; an over-cap bar shows its
+            # true value as the printed annotation above instead.
             yerr_lo = max(0.0, h - lo)
             yerr_hi = max(0.0, hi - h)
             if yerr_lo > 0 or yerr_hi > 0:
@@ -542,13 +596,27 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
     if show_ylabel:
         ax.set_ylabel("seconds / query", fontsize=12)
     ax.set_xticks([])
-    # Linear y-axis for headline bars — log scale would compress the
-    # S3 vs S2/S4 gap and undersell the win.
-    if ylim_top is not None:
+    if log_y:
+        # Q10/Q10i: aCOL/aCOLI bars are 100-1000× smaller than the
+        # giants, so linear scale leaves them invisible even with a
+        # tight cap. Log scale lets every bar register at the cost
+        # of compressing the upper end.
+        ax.set_yscale("log")
+        positive = [h for _, h, _ in plotted if h > 0]
+        if positive:
+            lo = log_bottom if log_bottom is not None else min(positive) * 0.5
+            hi = max(positive) * 1.8
+            ax.set_ylim(lo, hi)
+    elif ylim_top is not None:
         ax.set_ylim(0, ylim_top)
     else:
         ax.set_ylim(bottom=0)
-    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
+    if not log_y:
+        # MaxNLocator forces linear-spaced ticks; combining it with a
+        # log axis can produce a degenerate tick set (and blew up
+        # constrained_layout to absurd heights). Let matplotlib's
+        # default LogLocator handle log-scale ticks.
+        ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
     ax.tick_params(axis="y", which="major", labelsize=11)
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
@@ -604,40 +672,54 @@ def _add_two_row_legend(fig, legend_structs: Sequence[int],
     fig.add_artist(second)
 
 
-def _augment_with_q10(head: pd.DataFrame, data: SweepData,
-                      backend: str) -> pd.DataFrame:
-    """Splice Q10 rows from the sibling tag into a filtered headline
-    frame. The sibling carries two methods per S2/S3 (the A/B variants
-    from a perf investigation); we keep only the canonical method per
-    structure so each panel has one bar per structure. No-op when the
-    sibling isn't reachable from this tag's root.
+def _augment_with_sibling(head: pd.DataFrame, data: SweepData,
+                          backend: str, *, sibling_tag: str,
+                          query: str, family: str) -> pd.DataFrame:
+    """Splice ad-hoc per-query rows from a sibling tag into a filtered
+    headline frame. The sibling carries multiple methods per S2/S3
+    (the A/B variants from a perf investigation); we keep only the
+    canonical method per structure (via ``Q10_METHOD_TO_STRUCT``) so
+    each panel has one bar per structure. No-op when the sibling isn't
+    reachable from this tag's root.
 
-    Q10 only has SSD data, so we only splice it in when the parent
-    tag is SSD-tagged (otherwise the panel just stays empty).
+    Q10 / Q10I currently only have SSD data, so we only splice them in
+    when the parent tag is SSD-tagged (otherwise the panel stays empty).
     """
     if data.disk and data.disk != "ssd":
         return head
-    sibling = data.summary_root.parent.parent / Q10_SIBLING_TAG \
+    sibling = data.summary_root.parent.parent / sibling_tag \
         / "summary" / "headline.csv"
     if not sibling.exists():
         return head
-    q10 = pd.read_csv(sibling)
-    q10 = q10[(q10["backend"] == backend) & (q10["tx"] == "query")
-              & (q10["query"] == "q10")
-              & (q10["method"].isin(Q10_METHOD_TO_STRUCT.keys()))]
-    if q10.empty:
+    rows = pd.read_csv(sibling)
+    rows = rows[(rows["backend"] == backend) & (rows["tx"] == "query")
+                & (rows["query"] == query)
+                & (rows["method"].isin(Q10_METHOD_TO_STRUCT.keys()))]
+    if rows.empty:
         return head
-    # Remap method → synthetic structure id so the naive Mat-View
-    # variant draws as its own bar (id 22) alongside the pre-agg S2.
-    q10 = q10.copy()
-    q10["structure"] = q10["method"].map(Q10_METHOD_TO_STRUCT).astype(int)
+    rows = rows.copy()
+    rows["structure"] = rows["method"].map(Q10_METHOD_TO_STRUCT).astype(int)
     # Sibling sweep ran one rep at bg=0 (isolated), parent sweeps run
     # at bg=2 (contention cohort) — relabel to the headline bg so the
     # row is picked up by _paper_bar_panel's filter.
-    q10["bg"] = PAPER_HEADLINE_BG
-    q10["family"] = "vanilla"
-    common = [c for c in head.columns if c in q10.columns]
-    return pd.concat([head, q10[common]], ignore_index=True)
+    rows["bg"] = PAPER_HEADLINE_BG
+    rows["family"] = family
+    common = [c for c in head.columns if c in rows.columns]
+    return pd.concat([head, rows[common]], ignore_index=True)
+
+
+def _augment_with_q10(head: pd.DataFrame, data: SweepData,
+                      backend: str) -> pd.DataFrame:
+    return _augment_with_sibling(head, data, backend,
+                                 sibling_tag=Q10_SIBLING_TAG,
+                                 query=Q10_QUERY, family="vanilla")
+
+
+def _augment_with_q10i(head: pd.DataFrame, data: SweepData,
+                       backend: str) -> pd.DataFrame:
+    return _augment_with_sibling(head, data, backend,
+                                 sibling_tag=Q10I_SIBLING_TAG,
+                                 query=Q10I_QUERY, family="tpchi")
 
 
 def fig_paper_tpch_row(data: SweepData, backend: str,
@@ -665,7 +747,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     # column width at \includegraphics time. constrained_layout
     # handles the external legend bbox without leaving stray
     # whitespace that tight_layout sometimes does with sharey=False.
-    fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 2.6),
+    fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 1.82),
                              sharey=False, constrained_layout=True)
     has_any = False
     legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
@@ -687,60 +769,95 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
         # with the second row. When no variants are present, the main
         # row drops closer to the panel since there's nothing below
         # it competing with the over-cap labels.
+        # Bumped up after the figure was shortened by 30% — at 1.82"
+        # tall, the over-cap value annotations (drawn at axes-fraction
+        # y=1.0) collide with a legend anchored at y=1.12 / 1.16.
         _add_two_row_legend(fig, legend_structs, fontsize=13,
-                            bbox_main=(0.5, 1.28),
-                            bbox_variants=(0.5, 1.16),
-                            bbox_main_no_variants=(0.5, 1.12))
+                            bbox_main=(0.5, 1.42),
+                            bbox_variants=(0.5, 1.24),
+                            bbox_main_no_variants=(0.5, 1.26))
     name = data.paper_name(f"paper_tpch_{backend}_headline")
     dest = data.figures_root / "paper" / name
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
 def fig_paper_q10(data: SweepData) -> Optional[Path]:
-    """1×2 dedicated Q10 figure: B-tree | LSM. Q10 carries an extra
-    Mat-View bar (naive per-lineitem vs pre-agg per-order) which
-    makes a 5-bar panel; keeping it out of the four-query headline
-    row preserves that row's regular 4-bar geometry.
+    """2×2 dedicated Q10/Q10I figure: rows = (Q10, Q10I); columns =
+    (B-tree, LSM-tree). Both queries carry an extra Mat-View bar
+    (naive per-lineitem vs pre-agg per-order) which makes a 5-bar
+    panel; keeping them out of the four-query headline row preserves
+    that row's regular 4-bar geometry.
     """
-    # Start from an empty frame and pull Q10 rows from the sibling tag
-    # for both backends; the standard sweep tag doesn't carry Q10 yet.
+    # Pull Q10 + Q10I rows from their respective sibling tags for both
+    # backends; the standard sweep tag doesn't carry either yet.
     empty = pd.DataFrame(columns=data.headline.columns)
-    head_parts = [p for p in (_augment_with_q10(empty, data, b)
-                              for b in ("btree", "lsm"))
-                  if not p.empty]
+    head_parts: List[pd.DataFrame] = []
+    for b in ("btree", "lsm"):
+        for augment in (_augment_with_q10, _augment_with_q10i):
+            p = augment(empty, data, b)
+            if not p.empty:
+                head_parts.append(p)
     if not head_parts:
         return None
     head = pd.concat(head_parts, ignore_index=True)
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
 
-    panel_structs = PAPER_PANEL_STRUCTURES.get(Q10_QUERY, PAPER_LEGEND_ORDER)
-    fig, axes = plt.subplots(1, 2, figsize=(5.4, 2.8), sharey=False,
-                             constrained_layout=True)
-    titles = {"btree": "Q10 (B-tree)", "lsm": "Q10 (LSM-tree)"}
+    # 1×4 row: Q10 btree | Q10 lsm | Q10i btree | Q10i lsm. Single row
+    # keeps the figure narrow enough to slot under the main headline
+    # row in LaTeX while still showing both queries × both backends.
+    panels = [
+        (Q10_QUERY,  "btree", "Q10 (B-tree)"),
+        (Q10_QUERY,  "lsm",   "Q10 (LSM-tree)"),
+        (Q10I_QUERY, "btree", "Q10i (B-tree)"),
+        (Q10I_QUERY, "lsm",   "Q10i (LSM-tree)"),
+    ]
+    fig, axes = plt.subplots(1, len(panels), figsize=(2.1 * len(panels), 1.96),
+                             sharey=False, constrained_layout=True)
+    # Shared log-axis bottom across all panels so every bar is anchored
+    # at the same floor — without this, panel-local mins drift and bars
+    # look like they start from different heights.
+    pos = ms_df["ms_median"][ms_df["ms_median"] > 0] / 1000.0
+    shared_log_bottom = float(pos.min()) * 0.5 if not pos.empty else None
     drew_any = False
-    for j, backend in enumerate(("btree", "lsm")):
-        binary = f"{Q10_QUERY}_{backend}"
-        drew = _paper_bar_panel(axes[j], ms_df, binary, PAPER_HEADLINE_CELL,
+    legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
+    for j, (query, backend, title) in enumerate(panels):
+        panel_structs = PAPER_PANEL_STRUCTURES.get(query, PAPER_LEGEND_ORDER)
+        for s in panel_structs:
+            if s not in legend_structs:
+                legend_structs.append(s)
+        binary = f"{query}_{backend}"
+        drew = _paper_bar_panel(axes[j], ms_df, binary,
+                                PAPER_HEADLINE_CELL,
                                 show_ylabel=(j == 0),
                                 structures=panel_structs,
-                                title=titles[backend])
+                                title=title,
+                                n_overflow=2,
+                                log_y=True,
+                                log_bottom=shared_log_bottom)
         drew_any = drew_any or drew
     if not drew_any:
         plt.close(fig)
         return None
 
-    legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
-    for s in panel_structs:
-        if s not in legend_structs:
-            legend_structs.append(s)
-    handles = [plt.Rectangle((0, 0), 1, 1,
-                             color=STYLE["structure_colors"][s],
-                             label=PAPER_STRUCTURE_LABELS[s])
-               for s in legend_structs]
+    # Share y-limits across all panels so bar heights are directly
+    # comparable. Tick marks stay on every panel; tick *labels* only
+    # render on the leftmost panel since the scale is shared and
+    # repeating them would just eat horizontal space.
+    los = [ax.get_ylim()[0] for ax in axes if ax.get_ylim()[1] > 0]
+    his = [ax.get_ylim()[1] for ax in axes if ax.get_ylim()[1] > 0]
+    if los and his:
+        shared_lo, shared_hi = min(los), max(his)
+        for ax in axes:
+            ax.set_ylim(shared_lo, shared_hi)
+    for j, ax in enumerate(axes):
+        ax.tick_params(axis="y", labelleft=(j == 0))
+
+    # Bumped up after the figure was shortened by 30% — keep clear of
+    # the over-cap value annotations sitting at axes-fraction y=1.0.
     _add_two_row_legend(fig, legend_structs, fontsize=13,
-                        bbox_main=(0.5, 1.30),
-                        bbox_variants=(0.5, 1.17))
+                        bbox_main=(0.5, 1.40),
+                        bbox_variants=(0.5, 1.22))
 
     name = data.paper_name("paper_q10")
     dest = data.figures_root / "paper" / name
@@ -1227,12 +1344,22 @@ def fig_diag_ssd_lsm_sst_path(data: SweepData) -> Optional[Path]:
     agg = _ssd_diag_aggregate(data, "lsm", [m[0] for m in metrics])
     if agg.empty:
         return None
-    fig, axes = plt.subplots(1, 4, figsize=(9.0, 2.8), sharey=False,
-                             constrained_layout=True)
+    # Restrict to Q3/Q3i: the SST-path story is cleanest on the
+    # 2-table-deep pipelines (Q5/Q5i add cross-table I/O that muddies
+    # the read-vs-compaction split). Keeps the figure narrower too.
+    diag_queries = ["q3", "q3i"]
+    n_panels = len(diag_queries)
+    # Wide-and-short layout: 4 xtick labels per panel sit horizontally
+    # (no rotation) and need ~1.4" of width each to keep
+    # \textsc{Base-Merge} / \textsc{Merged-Idx} from overlapping.
+    fig, axes = plt.subplots(1, n_panels,
+                             figsize=(3.5 * n_panels, 2.2),
+                             sharey=False, constrained_layout=True)
+    if n_panels == 1:
+        axes = [axes]
     drew_any = False
     sec_axes: List = []
-    n_panels = len(PAPER_TPCH_QUERIES)
-    for j, q in enumerate(PAPER_TPCH_QUERIES):
+    for j, q in enumerate(diag_queries):
         # Left ylabel only on the first panel; right ylabel only on
         # the last panel (set via the secondary axis after creation).
         drew = _ssd_bar_panel(axes[j], agg, q, metrics,
@@ -1245,6 +1372,12 @@ def fig_diag_ssd_lsm_sst_path(data: SweepData) -> Optional[Path]:
                  and a.bbox.bounds == axes[j].bbox.bounds]
         sec_axes.append(twins[0] if twins else None)
         drew_any = drew_any or drew
+        # Override the shared panel's 30° rotation: with only 4 labels
+        # and a wide panel, horizontal reads cleaner.
+        for lbl in axes[j].get_xticklabels():
+            lbl.set_rotation(0)
+            lbl.set_ha("center")
+            lbl.set_rotation_mode("default")
     if not drew_any:
         plt.close(fig)
         return None
