@@ -33,7 +33,7 @@
 namespace tpch::q10
 {
 
-enum class Q10FilterMode { Query, ViewLoad };
+enum class Q10FilterMode { Query, ViewLoad, ViewLoadPreagg };
 
 // Q10GroupWalkVisitor<NationAdapter, Sink, Mode>
 //
@@ -75,6 +75,40 @@ struct Q10GroupWalkVisitor {
    Numeric      cur_revenue    = 0;
    Timestamp    cached_orderdate = 0;
 
+   // ViewLoadPreagg-mode per-order accumulator. Revenue sums the order's
+   // l_returnflag='R' lineitems (returnflag baked); flushed as one
+   // q10_pipeline_view_preagg_t row at each order boundary / group end.
+   Integer      preagg_orderkey   = 0;
+   Numeric      preagg_revenue    = 0;
+   Timestamp    preagg_orderdate  = 0;
+   bool         preagg_order_open = false;
+
+   // Emit the currently-open order's pre-aggregated row (if it accrued any
+   // returned revenue), then close it. Reads the FD customer snapshot, so it
+   // must run before on_group_end resets the per-customer state.
+   void flush_preagg_order()
+   {
+      if constexpr (Mode == Q10FilterMode::ViewLoadPreagg) {
+         if (preagg_order_open && preagg_revenue != Numeric{0}) {
+            q10_pipeline_view_preagg_t::Key k{cur_custkey, preagg_orderkey};
+            q10_pipeline_view_preagg_t      r{
+                /*returned_revenue*/ preagg_revenue,
+                /*o_orderdate     */ preagg_orderdate,
+                /*c_name          */ cur_c_name,
+                /*c_address       */ cur_c_address,
+                /*c_nationkey     */ cur_c_nationkey,
+                /*c_phone         */ cur_c_phone,
+                /*c_acctbal       */ cur_c_acctbal,
+                /*c_comment       */ cur_c_comment,
+            };
+            sink.emit_view_preagg(k, r);
+            if (stats) stats->view_rows_scanned++;
+         }
+         preagg_order_open = false;
+         preagg_revenue    = 0;
+      }
+   }
+
    // ------------------------------------------------------------------
    // Walker callbacks for cardinality stats (optional hooks).
 
@@ -112,7 +146,7 @@ struct Q10GroupWalkVisitor {
    // on_order
    //   Query    — orderdate ∈ [date_lo, date_lo+90); SkipOrder on miss.
    //   ViewLoad — admit all; cache orderdate to ride on each view row.
-   ::tpch::WalkAction on_order(const orders_coli_t::Key& /*k*/,
+   ::tpch::WalkAction on_order(const orders_coli_t::Key& k,
                                const orders_coli_t&      o)
    {
       if (stats) stats->orders_scanned++;
@@ -126,6 +160,15 @@ struct Q10GroupWalkVisitor {
             return ::tpch::WalkAction::SkipOrder;
          }
          if (stats) stats->orders_passing_date++;
+      } else if constexpr (Mode == Q10FilterMode::ViewLoadPreagg) {
+         // Flush the previous order, open the new one. No date filter —
+         // o_orderdate is hoisted out of the view (parameterised); the
+         // returnflag constant is baked in on_lineitem below.
+         flush_preagg_order();
+         preagg_orderkey   = k.orderkey;
+         preagg_orderdate  = o.o_orderdate;
+         preagg_revenue    = 0;
+         preagg_order_open = true;
       }
       cached_orderdate = o.o_orderdate;
       return ::tpch::WalkAction::Continue;
@@ -154,7 +197,14 @@ struct Q10GroupWalkVisitor {
          if (stats) stats->lineitems_passing_returnflag++;
          // revenue = l_extendedprice * (1 - l_discount).
          cur_revenue += l.l_extendedprice * (Numeric{1} - l.l_discount);
-      } else {
+      } else if constexpr (Mode == Q10FilterMode::ViewLoadPreagg) {
+         // Bake the returnflag='R' constant: accumulate only returned
+         // lineitems into the open order's running revenue.
+         if (l.l_returnflag.data[0] == 'R') {
+            if (stats) stats->lineitems_passing_returnflag++;
+            preagg_revenue += l.l_extendedprice * (Numeric{1} - l.l_discount);
+         }
+      } else {  // ViewLoad — per-lineitem emit
          q10_pipeline_view_t::Key vk{cur_custkey, k.orderkey, k.linenumber};
          q10_pipeline_view_t      vr{
              /*l_extendedprice*/ l.l_extendedprice,
@@ -181,6 +231,10 @@ struct Q10GroupWalkVisitor {
    //   ViewLoad — no-op.
    void on_group_end(Integer /*ck*/)
    {
+      // Flush the customer's last open order before the FD snapshot resets.
+      if constexpr (Mode == Q10FilterMode::ViewLoadPreagg) {
+         flush_preagg_order();
+      }
       if constexpr (Mode == Q10FilterMode::Query) {
          if (have_customer && cur_revenue != Numeric{0}) {
             if (stats) stats->aggregator_rows_out++;
@@ -210,11 +264,13 @@ struct Q10GroupWalkVisitor {
          }
       }
       // Reset per-group state.
-      have_customer    = false;
-      cur_custkey      = 0;
-      cur_c_nationkey  = 0;
-      cur_revenue      = 0;
-      cached_orderdate = 0;
+      have_customer     = false;
+      cur_custkey       = 0;
+      cur_c_nationkey   = 0;
+      cur_revenue       = 0;
+      cached_orderdate  = 0;
+      preagg_order_open = false;
+      preagg_revenue    = 0;
    }
 };
 

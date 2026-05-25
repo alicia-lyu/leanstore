@@ -52,8 +52,9 @@ int main(int argc, char** argv)
    B::Adapter<nation_t>    nation(rocks_db);
    B::Adapter<region_t>    region(rocks_db);
 
-   // Q10-specific view.
-   B::Adapter<tpch::q10::q10_pipeline_view_t> q10_view(rocks_db);
+   // Q10-specific views (S2 variants A + B; one image carries both).
+   B::Adapter<tpch::q10::q10_pipeline_view_t>        q10_view(rocks_db);
+   B::Adapter<tpch::q10::q10_pipeline_view_preagg_t> q10_view_preagg(rocks_db);
 
    // COL pipeline (shared with Q3 / Q5).
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
@@ -67,7 +68,7 @@ int main(int argc, char** argv)
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
-                                  q10_view, merged_col,
+                                  q10_view, q10_view_preagg, merged_col,
                                   split_orders, split_lineitem);
 
    if (!FLAGS_recover) {

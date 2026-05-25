@@ -166,8 +166,9 @@ int main(int argc, char** argv)
    B::Adapter<nation_t>    nation(rocks_db);
    B::Adapter<region_t>    region(rocks_db);
 
-   // Q10-specific view.
-   B::Adapter<tpch::q10::q10_pipeline_view_t> pipeline_view(rocks_db);
+   // Q10-specific views (S2 variant A per-lineitem + variant B per-order).
+   B::Adapter<tpch::q10::q10_pipeline_view_t>        pipeline_view(rocks_db);
+   B::Adapter<tpch::q10::q10_pipeline_view_preagg_t> pipeline_view_preagg(rocks_db);
 
    // COL pipeline (shared with Q3 / Q5).
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
@@ -193,7 +194,7 @@ int main(int argc, char** argv)
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
-                                  pipeline_view, merged_col,
+                                  pipeline_view, pipeline_view_preagg, merged_col,
                                   split_orders, split_lineitem);
 
    std::cout << "=== Loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
@@ -413,11 +414,46 @@ int main(int argc, char** argv)
    std::cout << "[stat] orders_inl_lookups           = " << s4_stats.orders_inl_lookups << "\n";
    std::cout << "[stat] customer_inl_lookups         = " << s4_stats.customer_inl_lookups << "\n";
 
-   if (stats_ok && iter0.ok && iter1.ok) return 0;
+   // ------------------------------------------------------------------
+   // S2 variant B (per-order pre-aggregated view) A/B parity. Both views
+   // live in this one image; flip --q10_view_variant=preagg and re-run S2,
+   // asserting it still matches S3 at both param iters. Guards the preagg
+   // loader (returnflag bake + per-order rollup) and the preagg query path.
+   long n_view_preagg = count_typed(pipeline_view_preagg,
+                                    tpch::q10::q10_pipeline_view_preagg_t{});
+   std::cout << "\n=== S2 variant B (per-order preagg view) ===\n";
+   std::cout << "[info] preagg view rows=" << n_view_preagg
+             << " size=" << std::fixed << std::setprecision(3)
+             << pipeline_view_preagg.size() << " MiB"
+             << "   (variant A per-lineitem rows=" << n_view
+             << " size=" << pipeline_view.size() << " MiB)\n";
+
+   FLAGS_q10_view_variant = "preagg";
+   bool preagg_ok = true;
+   for (long iter : {0L, 1L}) {
+      q10.set_params_for_iter(iter);
+      std::vector<tpch::q10::q10_agg_row_t> r_preagg;
+      tpch::q10::Q10Stats sp{};
+      q10.stats = &sp; q10.query_by_view(r_preagg); q10.stats = nullptr;
+      const auto& r_ref = (iter == 0) ? iter0.r_merged : iter1.r_merged;
+      uint64_t d_preagg = digest_rows(r_preagg);
+      uint64_t d_ref    = digest_rows(r_ref);
+      bool ok = (d_preagg == d_ref) && (r_preagg.size() == r_ref.size());
+      preagg_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                << "S2-preagg vs S3 [iter=" << iter << "] digest=0x"
+                << std::hex << d_preagg << std::dec << " rows=" << r_preagg.size()
+                << " (S3 digest=0x" << std::hex << d_ref << std::dec
+                << " rows=" << r_ref.size() << ")\n";
+   }
+   FLAGS_q10_view_variant = "lineitem";  // restore default
+
+   if (stats_ok && iter0.ok && iter1.ok && preagg_ok) return 0;
    if (!stats_ok)  std::cout << "[FAIL] cardinality / sentinel check failed\n";
    if (!iter0.ok)  std::cout << "[FAIL] iter=0 parity / S3 sanity failed\n";
    if (!iter1.ok)  std::cout << "[FAIL] iter=1 parity / S3 sanity failed — "
                                 "suggests a param-bake regression (some path "
                                 "hardcoded the iter=0 date)\n";
+   if (!preagg_ok) std::cout << "[FAIL] S2-preagg (variant B) parity vs S3 failed\n";
    return 1;
 }

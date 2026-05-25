@@ -47,7 +47,8 @@ int main(int argc, char** argv)
    B::Adapter<nation_t>    nation;
    B::Adapter<region_t>    region;
 
-   B::Adapter<tpch::q10::q10_pipeline_view_t> q10_view;
+   B::Adapter<tpch::q10::q10_pipeline_view_t>        q10_view;
+   B::Adapter<tpch::q10::q10_pipeline_view_preagg_t> q10_view_preagg;
 
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_col_t>  merged_col;
@@ -65,6 +66,7 @@ int main(int argc, char** argv)
       nation         = B::Adapter<nation_t>(db, "nation");
       region         = B::Adapter<region_t>(db, "region");
       q10_view       = B::Adapter<tpch::q10::q10_pipeline_view_t>(db, "q10_pipeline_view");
+      q10_view_preagg = B::Adapter<tpch::q10::q10_pipeline_view_preagg_t>(db, "q10_pipeline_view_preagg");
       merged_col     = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                                         tpch::lineitem_col_t>(db, "col_merged");
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "col_split_orders");
@@ -75,7 +77,7 @@ int main(int argc, char** argv)
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
-                                  q10_view, merged_col,
+                                  q10_view, q10_view_preagg, merged_col,
                                   split_orders, split_lineitem);
 
    if (!FLAGS_recover) {

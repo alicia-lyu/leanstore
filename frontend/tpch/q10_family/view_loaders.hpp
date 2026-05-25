@@ -62,4 +62,45 @@ void populate_q10_view(
    ::tpch::col_group_walk<Backend>(merged_col, visitor);
 }
 
+// Forwarding sink for the per-order pre-aggregated view (variant B).
+template <typename ViewAdapter>
+struct Q10ViewPreaggLoadSink {
+   ViewAdapter& adapter;
+   Q10Stats*    stats         = nullptr;
+   long         rows_inserted = 0;
+
+   void emit_view_preagg(const q10_pipeline_view_preagg_t::Key& k,
+                         const q10_pipeline_view_preagg_t&      v)
+   {
+      adapter.insert(k, v);
+      ++rows_inserted;
+   }
+};
+
+// populate_q10_view_preagg — Pattern B loader for the per-order view.
+// Same single-walker discipline as populate_q10_view: the S3 walker in
+// ViewLoadPreagg mode bakes l_returnflag='R' (sums returned revenue per
+// order) and emits one q10_pipeline_view_preagg_t per order with returned
+// revenue > 0. The date window stays live (applied at query time).
+template <typename Backend>
+void populate_q10_view_preagg(
+    typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
+                                             lineitem_col_t>& merged_col,
+    typename Backend::template Adapter<q10_pipeline_view_preagg_t>& pipeline_view_preagg,
+    typename Backend::template Adapter<nation_t>&             nation,
+    Q10Stats* stats = nullptr)
+{
+   using ViewAdapterT  = typename Backend::template Adapter<q10_pipeline_view_preagg_t>;
+   using NationAdapter = typename Backend::template Adapter<nation_t>;
+
+   Q10ViewPreaggLoadSink<ViewAdapterT> sink{pipeline_view_preagg, stats};
+   std::unordered_map<Integer, Varchar<25>> nation_cache;
+   Params dummy_params{};
+   Q10GroupWalkVisitor<NationAdapter,
+                       Q10ViewPreaggLoadSink<ViewAdapterT>,
+                       Q10FilterMode::ViewLoadPreagg>
+       visitor{dummy_params, nation, sink, nation_cache, stats};
+   ::tpch::col_group_walk<Backend>(merged_col, visitor);
+}
+
 }  // namespace tpch::q10

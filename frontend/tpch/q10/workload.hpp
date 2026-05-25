@@ -129,8 +129,13 @@ class Q10Workload
    // modifications.
    CustomerOrdersLineitemPipeline<Backend> col;
 
-   // Structure 2: intermediate pipeline view (per-lineitem rows, unfiltered).
+   // Structure 2 variant A: per-lineitem pipeline view (unfiltered).
    typename Backend::template Adapter<q10_pipeline_view_t>& pipeline_view;
+
+   // Structure 2 variant B: per-order pre-aggregated view (returnflag baked,
+   // date live). Selected at query time via --q10_view_variant=preagg. Both
+   // views are populated at load so one image serves the A/B.
+   typename Backend::template Adapter<q10_pipeline_view_preagg_t>& pipeline_view_preagg;
 
   public:
    Params    params;
@@ -147,6 +152,7 @@ class Q10Workload
        typename Backend::template Adapter<lineitem_t>&   lineitem,
        typename Backend::template Adapter<nation_t>&     nation,
        typename Backend::template Adapter<q10_pipeline_view_t>& pipeline_view,
+       typename Backend::template Adapter<q10_pipeline_view_preagg_t>& pipeline_view_preagg,
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_col_t>& merged_col,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
@@ -162,9 +168,16 @@ class Q10Workload
    // Queries — one per storage structure.
    // Returns the number of result rows (≤ 20 — TPC-H Q10 has LIMIT 20).
    long query_by_base  (std::vector<q10_agg_row_t>& out);  // structure 1
-   long query_by_view  (std::vector<q10_agg_row_t>& out);  // structure 2
+   long query_by_view  (std::vector<q10_agg_row_t>& out);  // structure 2 (A/B dispatch)
    long query_by_merged(std::vector<q10_agg_row_t>& out);  // structure 3
    long query_by_hash  (std::vector<q10_agg_row_t>& out);  // structure 4
+
+  private:
+   // S2 variant B — per-order pre-aggregated view scan. Selected by
+   // query_by_view when --q10_view_variant=preagg.
+   long query_by_view_preagg(std::vector<q10_agg_row_t>& out);
+
+  public:
 
    void   load();
    double get_size() const;
