@@ -594,7 +594,11 @@ figure. See [`../PLAYBOOK.md §S5`](../PLAYBOOK.md) for the deferral
 rationale (S3 > S5 anomaly traced to S5 lacking the hand-tuned
 `coli_group_walk` — closing it is infrastructure, not per-query). The
 phase notes below remain accurate as design / implementation history;
-do not stand up new aCOLI MIs as part of paper work.
+do not stand up new aCOLI MIs as part of paper work. **Decision
+2026-05-25: this S5 is also not described in the paper prose** (the
+proposed disclosure, `paper-data/PAPER_EDITS.md` Edit 2, was withdrawn) —
+it is an archived in-tree reference, kept partly because Q10I's aCOLI
+reuses its record types.
 
 Earlier status: complete 2026-05-02; revised 2026-05-03 (revenue de-bake).
 

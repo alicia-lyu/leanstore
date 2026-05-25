@@ -187,7 +187,10 @@ complete at `on_lineitem` time (CONVENTIONS.md Rule 10).
 | S3 | COLI MI (4-table merged index) | `COLIPipeline` — `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | Sequential group-walk: invoice prefix buffered (Rule 10 Pattern B); per-order date semi-join; per-lineitem `i_status` lookup → 3 partial aggregates | none |
 | S4 | Hash join baseline | Base tables only | Customer hash-build on `custkey` → lineitem scan; orders semi-join via hash probe on `orderkey`; per-lineitem seek on `invoice_t[l_invoicekey]` | none |
 
-S5 deferred (same rationale as Q3I S5).
+S5 deferred (same rationale as Q3I S5) — and, per the 2026-05-25
+decision, not described in the paper prose either (`paper-data/PAPER_EDITS.md`
+Edit 2 withdrawn); kept only as an archived in-tree reference. See
+[`../PLAYBOOK.md §S5`](../PLAYBOOK.md).
 
 ---
 

@@ -72,7 +72,17 @@ inversion):
 
 ---
 
-### Edit 2 — Disclose the partial-aggregation (S5) asymmetry as an engineering-time choice  (audit Finding #3, reviewer Q3)
+### Edit 2 — ~~Disclose the partial-aggregation (S5) asymmetry as an engineering-time choice~~  **WITHDRAWN (2026-05-25)**  (audit Finding #3, reviewer Q3)
+
+> **Decision (2026-05-25):** Not adopting this edit. The paper will **not**
+> discuss the Q3i/Q5i S5 / partial-aggregation asymmetry at all — no sentence,
+> no footnote. The supporting aCOLI (generic-scanner) S5 code is kept in tree
+> as an **archived reference** — it builds and parity-passes, and Q10i's
+> hand-rolled aCOLI reuses its `customer_acoli_t` / `lineitem_acoli_t` record
+> types — but it is **not maintained for the paper, not in any reported
+> figure/sweep, and not described in the prose.** Canonical doc statement:
+> `frontend/tpch/PLAYBOOK.md §S5`. The original proposal is kept below for the
+> record only.
 
 `q10.pdf` shows the partial-aggregation variants of Merged-Idx and Mat-View
 winning for Q10/Q10i; they are not shown for Q3i/Q5i. For Q3i/Q5i a partial-agg
@@ -168,9 +178,10 @@ Honest caveats to add (none change a number):
    (the 2026-05-25 supplemental was bg=0, single-rep, hand-ported; the figure
    script's bg relabel is removed once the genuine data lands). See
    `SWEEP_LOG.md` audit-response entry.
-3. **Partial-agg shown only where it wins** — Edit 2 states plainly the Q3i/Q5i
-   deferral is an implementation-effort choice (walker not yet hand-rolled), the
-   same fix already shipped for Q10/Q10i.
+3. **Partial-agg shown only where it wins** — Edit 2 **withdrawn (2026-05-25)**:
+   the paper no longer discusses S5 for Q3i/Q5i at all (see the Edit 2 banner).
+   The Q3i/Q5i aCOLI S5 code stays in tree as an archived reference only; the
+   paper's Q3i/Q5i story is the S1–S4 axis.
 4. **H3 cross-query sharing** — already in the LaTeX (`tab:exp-baselines` caption
    + §B-trees-vs-LSM); `space_table.py` regenerates the per-query `Sx − S4` and
    the shared-MI-vs-per-query-views aggregate.
