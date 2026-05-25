@@ -494,10 +494,12 @@ been moved to `TRASH/`.
 - Q10 — `test_query_q10_lsm` (Phase 1 commit 2: stubs return empty,
   digests all 0x0, `[OK]` parity at SF=1; strict-equality cardinality
   + sentinel-ordering land in commit 3)
-- Q10I — `test_query_q10i_lsm` (Phase 1: stubs return empty, digests
-  all 0x0, `[OK]` parity at SF=1; full strict-equality cardinality
-  + sentinel-ordering checks already in place; **worktree-only** —
-  not on main, see q10i/CLAUDE.md §Status)
+- Q10I — `test_query_q10i_lsm` (Phase 4 complete: all four
+  `query_by_*` real, strict 4-way XOR digest parity at SF=1, SF=5,
+  SF=10; full strict-equality cardinality + sentinel-ordering
+  (incl. invoice tag) checks pass; **worktree-only** — not on main,
+  see q10i/CLAUDE.md §Status. Phase-4 digests recorded in
+  `q10i/RUNS.md`.)
 - Q9 — none yet (load/query bodies TODO)
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
