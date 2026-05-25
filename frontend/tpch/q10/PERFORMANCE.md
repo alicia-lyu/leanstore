@@ -146,6 +146,28 @@ assumption.
 leaf pages they share with the next order** (orders are sub-page-sized). The
 regime is page-bound, so wall-time barely moves.
 
+**Why S1's per-order lineitem seek skips pages but S3's SkipOrder seek does
+not** (both scan all 225K orders to apply the date filter, both admit the same
+~34K surviving lineitems; the difference is whether the ~860K date-failing
+lineitems' *pages* are read):
+
+- **S1's lineitem secondary is a separate tree, seeked only for surviving
+  orders.** A date-failing order `continue`s without touching the lineitem
+  tree, so consecutive rejects contribute zero lineitem reads. Survivors are
+  sparse (~1 in 26), so each lineitem seek hops to the next survivor over a
+  ~25-order run (~100 lineitems ≈ a whole leaf page) of co-sorted date-failing
+  lineitems — the seek *batches the rejected run into one page-spanning jump*.
+- **S3 cannot batch.** It must read every order record to apply the date
+  filter, and in the MI those order records are interleaved on the *same leaf
+  pages* as the lineitems — so reading orders forces reading their lineitem
+  pages. Its SkipOrder seek hops one order at a time; a rejected order's ~4
+  lineitems share a page with the next order's record, so the hop is sub-page
+  (skips *decoding*, the 4× `mi_records_visited` drop, but not *reading*). It
+  cannot seek straight to the next survivor because it only learns an order is
+  rejected by reading its `o_orderdate` — which is on that page. The seek would
+  skip pages only if one order's lineitems spanned ≥1 full leaf page; TPC-H's
+  ~4-lineitem orders never do.
+
 **The finding.** The COL-MI advantage is **filter-hierarchy-dependent**. It
 pays off when the dominant prune is *at or above* the co-location grain
 (customer-level `SkipGroup`, as in Q3I/Q5I — skip whole groups, skip whole
