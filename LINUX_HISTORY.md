@@ -379,3 +379,20 @@ project and stays in [`LINUX_PENDING.md`](LINUX_PENDING.md).
   done — superseded by S5 (the aCOLI is the fast path; revisit via the
   playbook only if a raw-S3 q10i number is needed). See
   `frontend/tpch/q10i/{RUNS.md,CLAUDE.md}`.
+
+## Closed 2026-05-25 — refresh_sales 5H memory-pressure A/B
+
+- **refresh_sales at 5H (c3, DRAM 0.4) — LSM strength under memory pressure**
+  (was the only Active item in `LINUX_PENDING.md`). Ran
+  `build/scratch/run_refresh_5H_ssd.sh` + `summarize_refresh_5H_ssd.sh`, and
+  re-ran the 5L cell at the same commit (`83240c0a`, re-stamped from
+  `c9b5f594`) so the A/B is clean: same SF (1550 btree / 3850 lsm), same
+  per-structure-copy + drop-caches cold-start; only DRAM changes 1.0→0.4 GiB.
+  **Hypothesis confirmed.** LSM throughput is flat under pressure (±2% across
+  S1–S4: write-optimized SST flush/compaction doesn't depend on buffer-pool
+  residency), while btree degrades 21–59% from random page eviction once the
+  working set spills the pool (S4 the worst, 5531→2269 pair_tps, 0.41×). At
+  5H, LSM overtakes btree on S1/S2/S3 and btree's S4 lead collapses 4.2×→1.8×.
+  Pairs with `2026-05-24-refresh-prewarm9` (the abundant-memory regime, where
+  LSM showed no in-memory speedup) — the pressured regime is where LSM wins.
+  Tags `paper-data/2026-05-24-refresh-{5L,5H}-ssd`; SWEEP_LOG entry landed.
