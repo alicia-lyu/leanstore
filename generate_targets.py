@@ -456,6 +456,9 @@ class Experiment:
                 diag_flags = ""
             else:
                 diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant) --use_seek_skip=$(use_seek_skip)"
+                # --q10_stats is declared only by the q10 executables.
+                if self.exec_fname.startswith("q10_"):
+                    diag_flags += " --q10_stats=$(q10_stats)"
             if IS_MACOS:
                 print(
                     f'\tscript -q {self.runtime_dir}/structure{structure}.log',

@@ -50,6 +50,9 @@ cfstats     ?= false
 coli_walker_variant ?= fused_emit
 # A3-Linux re-A/B: -1=use Backend trait (default), 0=force off, 1=force on.
 use_seek_skip ?= -1
+# Q10 perf-investigation: print per-query Q10Stats cardinality counters to the
+# structure log after each run (q10_{lsm,btree} only). Default off.
+q10_stats ?= false
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
