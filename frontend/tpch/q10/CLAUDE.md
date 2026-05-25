@@ -52,6 +52,14 @@ Read each on the trigger described:
   then build on C⋈O and probe with filtered LINEITEM).
 - [`RUNS.md`](RUNS.md) — perf-run ledger; appended after every
   Linux sweep.
+- [`PERFORMANCE.md`](PERFORMANCE.md) — read **when interpreting the
+  btree S2 / S3 numbers**. Records the investigation into the 5L
+  anomalies (S2 174 s regression; S3 < S1): the S2 per-lineitem view
+  was a strawman (the fair per-order pre-aggregated view, variant B,
+  is 855× faster); the S3 < S1 btree gap is the filter-hierarchy
+  effect (Q10's only prune is below the co-location grain) and a
+  physical SkipOrder seek cuts CPU but not the page-bound gap. A/B
+  knobs: `--q10_view_variant`, `--skip_order_physical`.
 
 Read [`../q5/CLAUDE.md`](../q5/CLAUDE.md) as the closest cousin —
 Q10 mirrors Q5's COL-pipeline structure and reuses the same
