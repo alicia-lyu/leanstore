@@ -1,0 +1,13 @@
+binary,family,backend,query,cell,sf,dram_gib,structure,method,tx,bg,rep,tx_per_s,tx_count,bg_tx_count,ms_per_tx,size_mib,commit_sha,disk
+q10_btree,vanilla,btree,q10,c0,1550,1.0,1,base_merge_join,query,0,1,0.053613,1,,18652.20,4286.63,f92d1868,ssd
+q10_btree,vanilla,btree,q10,c0,1550,1.0,2,pipeline_view,query,0,1,0.005698,1,,175505.63,8623.83,f92d1868,ssd
+q10_btree,vanilla,btree,q10,c0,1550,1.0,2,pipeline_view_preagg,query,0,1,0.057354,1,,17435.43,3890.55,f92d1868,ssd
+q10_btree,vanilla,btree,q10,c0,1550,1.0,3,mi_col_walk,query,0,1,0.028552,1,,35023.68,4386.23,f92d1868,ssd
+q10_btree,vanilla,btree,q10,c0,1550,1.0,3,mi_col_walk_physskip,query,0,1,0.027689,1,,36116.14,4386.23,f92d1868,ssd
+q10_btree,vanilla,btree,q10,c0,1550,1.0,4,base_hash_join,query,0,1,0.007919,1,,126280.35,3399.88,f92d1868,ssd
+q10_lsm,vanilla,lsm,q10,c0,3850,1.0,1,base_merge_join,query,0,1,0.069446,2,,14399.63,3854.15,f92d1868,ssd
+q10_lsm,vanilla,lsm,q10,c0,3850,1.0,2,pipeline_view,query,0,1,0.058109,1,,17209.02,4309.09,f92d1868,ssd
+q10_lsm,vanilla,lsm,q10,c0,3850,1.0,2,pipeline_view_preagg,query,0,1,0.602815,10,,1658.22,3288.28,f92d1868,ssd
+q10_lsm,vanilla,lsm,q10,c0,3850,1.0,3,mi_col_walk,query,0,1,0.090009,2,,11109.87,3939.27,f92d1868,ssd
+q10_lsm,vanilla,lsm,q10,c0,3850,1.0,3,mi_col_walk_physskip,query,0,1,0.098912,2,,10110.05,3926.83,f92d1868,ssd
+q10_lsm,vanilla,lsm,q10,c0,3850,1.0,4,base_hash_join,query,0,1,0.012892,1,,77569.56,3138.77,f92d1868,ssd
