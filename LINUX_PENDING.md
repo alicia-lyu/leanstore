@@ -9,6 +9,22 @@ actionable.
 
 ## Active
 
+- **Q10I — Linux perf validation, smoke-test-first (2026-05-25)**: merged
+  to calcite-integration this session (was worktree-only on
+  `worktree-agent-a86745538133069de`). Phase 4 parity verified at
+  SF=1/5/10 (strict 4-way XOR). **Plan mirrors the Q10 investigation
+  ([`frontend/tpch/q10/PERFORMANCE.md`](frontend/tpch/q10/PERFORMANCE.md)):**
+  build `q10i_{lsm,btree}` → parity-gate `test_query_q10i_{lsm,btree}` at
+  SF=1 (digest `0xfe5d346e48bc1e8d`) → **smoke test at the cheap c2 cell
+  (SF=150 btree / 380 lsm, dram=0.1) FIRST**. Q10I shares Q10's filter
+  hierarchy (order-level prune only, no customer filter) and a per-lineitem
+  S2 view, so expect the same two anomalies — S2 strawman regression and
+  S3 < S1 on btree. Port the Q10 fixes (per-order pre-aggregated view
+  partitioned paid/open/late; S3 filter-hierarchy characterization) before
+  any 5L. **5L cell deferred** until the cheap-cell fixes land.
+  Pair-fates with Q10. (This entry is refined in-session after the smoke
+  test; see q10i/RUNS.md.)
+
 - **refresh_sales at 5H (c3, DRAM 0.4) — show LSM strength under memory
   pressure (2026-05-24)** — the 5L refresh (DRAM 1.0,
   `paper-data/2026-05-24-refresh-5L-ssd`) is done; 5H keeps the same SF

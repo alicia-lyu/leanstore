@@ -16,7 +16,7 @@ vscode_launch_obj = {
 }
 
 build_dirs = ["build", "build-debug"]
-exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm", "q3i_btree", "q3i_lsm", "q3_btree", "q3_lsm", "q5_btree", "q5_lsm", "q5i_btree", "q5i_lsm", "q10_btree", "q10_lsm"]
+exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm", "q3i_btree", "q3i_lsm", "q3_btree", "q3_lsm", "q5_btree", "q5_lsm", "q5i_btree", "q5i_lsm", "q10_btree", "q10_lsm", "q10i_btree", "q10i_lsm"]
 data_disk = Path("$(data_disk)")
 IS_MACOS = platform.system() == "Darwin"
 shared_flags: dict[str, str] = {
@@ -56,8 +56,10 @@ TPCH_FAMILY = {
     # Invoice-extended COLI family
     "q3i_lsm":   "tpchi_lsm",
     "q5i_lsm":   "tpchi_lsm",
+    "q10i_lsm":  "tpchi_lsm",
     "q3i_btree": "tpchi_btree",
     "q5i_btree": "tpchi_btree",
+    "q10i_btree": "tpchi_btree",
 }
 
 def image_basename(exec_fname: str) -> str:
@@ -575,6 +577,8 @@ DIFF_DIRS = {
  "q5i_btree": "tpch/q5i",
  "q10_lsm": "tpch/q10",
  "q10_btree": "tpch/q10",
+ "q10i_lsm": "tpch/q10i",
+ "q10i_btree": "tpch/q10i",
 }
 
 STRUCTURE_OPTIONS = {
@@ -592,6 +596,8 @@ STRUCTURE_OPTIONS = {
     "q5i_lsm": [1, 2, 3, 4],
     "q10_btree": [1, 2, 3, 4],
     "q10_lsm": [1, 2, 3, 4],
+    "q10i_btree": [1, 2, 3, 4],
+    "q10i_lsm": [1, 2, 3, 4],
 }
 
 def main() -> None:

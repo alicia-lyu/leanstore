@@ -201,7 +201,15 @@ Per-query subdirectories:
   Linux perf sweep pending (`LINUX_PENDING.md`). See
   [`q5i/CLAUDE.md §Implementation Status`](q5i/CLAUDE.md). Canonical
   Pattern B reference (view loader reuses S3 group-walk).
-- `q10i/` — Q10 + Customer payment-behaviour overlay (design doc only; no skeleton yet).
+- `q10i/` — Q10 + return-payment-status partition (paid/open/late
+  buckets on returned revenue, joined via `l_invoicekey =
+  i_invoicekey`). **Phase 4 complete + merged to calcite-integration
+  (2026-05-25)**: all four `query_by_*` bodies parity-verified at
+  SF=1/5/10 (strict 4-way XOR digest). The merge widened
+  `lineitem_coli_t` with `l_returnflag` (D14), which invalidated the
+  Q3I/Q5I persisted COLI images — reloaded on merge. Linux perf
+  validation is smoke-test-first (see `LINUX_PENDING.md` /
+  `q10/PERFORMANCE.md`). See [`q10i/CLAUDE.md §Status`](q10i/CLAUDE.md).
 
 Each per-query directory contains the same 8-file shape described in
 §Per-query file convention below.
@@ -402,6 +410,8 @@ point. Run from the repo root.
 | `test_side_tables` | `q5/` | RocksDB (mac+Linux) | `tests/q5/test_side_tables.cpp` |
 | `test_query_q10_lsm` | `q10/` | RocksDB (mac+Linux) | `tests/q10/test_query_q10_rocksdb.cpp` |
 | `test_query_q10_btree` | `q10/` | LeanStore (Linux only) | `tests/q10/test_query_q10_leanstore.cpp` |
+| `test_query_q10i_lsm` | `q10i/` | RocksDB (mac+Linux) | `tests/q10i/test_query_q10i_rocksdb.cpp` |
+| `test_query_q10i_btree` | `q10i/` | LeanStore (Linux only) | `tests/q10i/test_query_q10i_leanstore.cpp` |
 | Q9 tests | `q9/` | — | none yet (load/query bodies TODO) |
 
 ### Commands for this directory's tests
@@ -485,6 +495,9 @@ been moved to `TRASH/`.
   strict 4-way XOR parity at SF=1 across two distinct param sets
   — iter=0 default + iter=1 off-default for the param-bake guard
   per PLAYBOOK §10; per-path Q10Stats blocks)
+- Q10I — `test_query_q10i_lsm` (Phase 4: all four query bodies live;
+  strict 4-way XOR parity at SF=1/5/10; per-path Q10IStats +
+  cardinality / sentinel-ordering checks)
 - Q9 — none yet (load/query bodies TODO)
 - Q3I — see [`q3i/CLAUDE.md §Tests`](q3i/CLAUDE.md#tests)
 
