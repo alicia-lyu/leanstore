@@ -30,11 +30,18 @@ aCOLI MI `<customer_coli_t, orders_acoli_q10i_t>` with per-order
 paid/open/late baked, lineitems+invoices dropped, walked by the
 hand-rolled `acoli_group_walk`; the fair S2-B is the per-order preagg
 view (`--q10i_view_variant=preagg`). Both parity-verified at SF=1 both
-backends (S1≡S2≡S3≡S4≡S2-preagg≡S5). **c2 iteration cell (btree, ms/q):
-S5 aCOLI 10.6 < S2-B 27.2 < S1 550 < S3 3,323 < S4 13,127 < S2-A
-16,751** — the aCOLI is the fastest structure, beating the fair view and
-raw S3 (RUNS.md; mirrors Q10's aCOL). 5L confirmation pending. See
-[`../ACOL_ACOLI_PLAYBOOK.md`](../ACOL_ACOLI_PLAYBOOK.md).
+backends (S1≡S2≡S3≡S4≡S2-preagg≡S5). **The aCOLI is the fastest
+structure on both backends** (mirrors Q10's aCOL), beating the fair
+per-order preagg view *and* raw S3:
+- **c2 (SF=150 dram=0.1) btree ms/q**: S5 10.6 < S2-B 27.2 < S1 550 <
+  S3 3,323 < S4 13,127 < S2-A 16,751.
+- **5L (c0, dram=1.0) btree (SF=1550) ms/q**: S5 **181** ≪ S2-B 21,349 <
+  S1 26,797 < S3 47,296 ≪ S4 137,778 < S2-A 173,623 (S5 beats S2-B 118×,
+  S3 260×).
+- **5L lsm (SF=3850) ms/q**: S5 **1,561** < S2-B 2,014 < S2-A 14,109 <
+  S3 16,570 < S1 26,002 ≪ S4 92,711.
+
+See `RUNS.md` and [`../ACOL_ACOLI_PLAYBOOK.md`](../ACOL_ACOLI_PLAYBOOK.md).
 
 ## Sibling Docs
 

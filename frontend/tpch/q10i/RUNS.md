@@ -17,6 +17,24 @@ file unless their numbers are scattered across other docs.
 
 ## Runs
 
+### 2026-05-25 — S5 aCOLI 5L confirmation (both backends)
+- **Commit**: `aeb16049` (`calcite-integration`), host `node0` (Linux)
+- **Logs**: `build/q10i_{btree,lsm}/{1550,3850}-in-1.0/structureN_{baseA,preagg}.log`;
+  `build/scratch/q10i_5L_sweep.sh`. Parity green first at SF=1 both backends.
+- **Config**: 5L (c0) DRAM=1.0, SF=1550 (btree) / 3850 (lsm), isolated,
+  `tx_seconds=15` (queries run to completion). Fresh standalone q10i load both
+  scales (own image dir). A/B: `--q10i_view_variant` (S2), `q10i_*_5` (S5 aCOLI).
+- **ms/query** — **btree**: **S5 aCOLI 181** ≪ S2-B 21,349 < S1 26,797 < S3
+  47,296 ≪ S4 137,778 < S2-A 173,623. **lsm**: **S5 aCOLI 1,561** < S2-B 2,014
+  < S2-A 14,109 < S3 16,570 < S1 26,002 ≪ S4 92,711.
+- **Claim check**: **5L confirms the fair-MI thesis for Q10I on BOTH backends**,
+  mirroring Q10's aCOL. The aCOLI (per-order paid/open/late baked, lineitems +
+  invoices dropped, hand-rolled `acoli_group_walk`) is the **fastest structure**:
+  btree beats the fair per-order preagg view **118×** and raw S3 **260×**; lsm
+  beats S2-B 1.3× and S3 10.6×. The per-lineitem S2-A is the strawman (btree
+  173.6 s). Validates ACOL_ACOLI_PLAYBOOK §6 (S5 beats the *fair* S2, not just
+  the strawman). No anomaly. See `CLAUDE.md §Status` + `../ACOL_ACOLI_PLAYBOOK.md`.
+
 ### 2026-05-25 — S5 aCOLI + fair S2 view: c2 iteration-cell A/B (btree)
 - **Commit**: `7d376515` (`calcite-integration`), host `node0` (Linux)
 - **Logs**: `build/q10i_btree/150-in-0.1/structureN.log` (+ `structure2_{lineitem,preagg}.log`),
