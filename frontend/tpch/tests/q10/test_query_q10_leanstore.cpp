@@ -231,12 +231,42 @@ int main(int argc, char** argv)
    }
    FLAGS_q10_view_variant = "lineitem";  // restore default
 
+   // ------------------------------------------------------------------
+   // S3 variant B (physical SkipOrder seek) A/B parity. Flip
+   // --skip_order_physical=1 and re-run S3 (col_group_walk), asserting it
+   // still matches the logical S3 at both param iters.
+   std::cout << "\n=== S3 variant B (physical SkipOrder seek) ===\n";
+   std::cout << "[info] S3-logical mi_records_visited (iter=0) = "
+             << iter0.s3_stats.mi_records_visited << "\n";
+   FLAGS_skip_order_physical = 1;
+   bool skip_phys_ok = true;
+   for (long iter : {0L, 1L}) {
+      std::vector<tpch::q10::q10_agg_row_t> r_phys;
+      tpch::q10::Q10Stats sp{};
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+         q10.set_params_for_iter(iter);
+         q10.stats = &sp; q10.query_by_merged(r_phys); q10.stats = nullptr;
+         leanstore::cr::Worker::my().commitTX();
+      });
+      uint64_t d_phys = digest_rows(r_phys);
+      uint64_t d_ref  = (iter == 0) ? iter0.d_merged : iter1.d_merged;
+      bool ok = (d_phys == d_ref);
+      skip_phys_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                << "S3-physical vs S3-logical [iter=" << iter << "] digest=0x"
+                << std::hex << d_phys << std::dec << " rows=" << r_phys.size()
+                << " mi_visited=" << sp.mi_records_visited << "\n";
+   }
+   FLAGS_skip_order_physical = -1;  // restore default
+
    if (!iter0.ok) std::cout << "[FAIL] iter=0 parity / S3 sanity failed\n";
    if (!iter1.ok) std::cout << "[FAIL] iter=1 parity / S3 sanity failed — "
                                 "suggests a param-bake regression (some path "
                                 "hardcoded the iter=0 date)\n";
-   if (!preagg_ok) std::cout << "[FAIL] S2-preagg (variant B) parity vs S3 failed\n";
-   return (iter0.ok && iter1.ok && preagg_ok) ? 0 : 1;
+   if (!preagg_ok)    std::cout << "[FAIL] S2-preagg (variant B) parity vs S3 failed\n";
+   if (!skip_phys_ok) std::cout << "[FAIL] S3-physical (SkipOrder seek) parity vs S3-logical failed\n";
+   return (iter0.ok && iter1.ok && preagg_ok && skip_phys_ok) ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY
