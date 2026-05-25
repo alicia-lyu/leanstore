@@ -16,7 +16,7 @@ vscode_launch_obj = {
 }
 
 build_dirs = ["build", "build-debug"]
-exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm", "q3i_btree", "q3i_lsm", "q3_btree", "q3_lsm", "q5_btree", "q5_lsm", "q5i_btree", "q5i_lsm", "q10_btree", "q10_lsm"]
+exec_names = ["geo_btree", "geo_lsm", "q12_btree", "q12_lsm", "q3i_btree", "q3i_lsm", "q3_btree", "q3_lsm", "q5_btree", "q5_lsm", "q5i_btree", "q5i_lsm", "q10_btree", "q10_lsm", "q10i_btree", "q10i_lsm"]
 data_disk = Path("$(data_disk)")
 IS_MACOS = platform.system() == "Darwin"
 shared_flags: dict[str, str] = {
@@ -53,7 +53,12 @@ TPCH_FAMILY = {
     "q5_lsm":    "tpch_lsm",
     "q3_btree":  "tpch_btree",
     "q5_btree":  "tpch_btree",
-    # Invoice-extended COLI family
+    # Invoice-extended COLI family. NOTE: q10i is intentionally NOT a member —
+    # its executable loads independently (q10i.load(); see
+    # q10i/executable_*.cpp "Not plugged into the Q3I+Q5I family cohort") and
+    # load_tpchi_family(tpch, q3i, q5i) does not populate q10i's view. Mapping
+    # it here would make `make q10i_*` recover from a q3i/q5i image lacking the
+    # q10i pipeline view (degenerate S2). q10i keeps its own image dir + loader.
     "q3i_lsm":   "tpchi_lsm",
     "q5i_lsm":   "tpchi_lsm",
     "q3i_btree": "tpchi_btree",
@@ -575,6 +580,8 @@ DIFF_DIRS = {
  "q5i_btree": "tpch/q5i",
  "q10_lsm": "tpch/q10",
  "q10_btree": "tpch/q10",
+ "q10i_lsm": "tpch/q10i",
+ "q10i_btree": "tpch/q10i",
 }
 
 STRUCTURE_OPTIONS = {
@@ -590,8 +597,10 @@ STRUCTURE_OPTIONS = {
     "q5_lsm": [1, 2, 3, 4],
     "q5i_btree": [1, 2, 3, 4],
     "q5i_lsm": [1, 2, 3, 4],
-    "q10_btree": [1, 2, 3, 4],
-    "q10_lsm": [1, 2, 3, 4],
+    "q10_btree": [1, 2, 3, 4, 5],
+    "q10_lsm": [1, 2, 3, 4, 5],
+    "q10i_btree": [1, 2, 3, 4],
+    "q10i_lsm": [1, 2, 3, 4],
 }
 
 def main() -> None:

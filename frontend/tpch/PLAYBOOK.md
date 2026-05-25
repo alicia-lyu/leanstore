@@ -158,6 +158,13 @@ of per-query implementation.** This playbook assumes the pipeline exists.
 
 ### S5 (aCOLI / pre-aggregated MI) — DEFERRED for the current paper (all queries)
 
+> **Adding or revisiting an S5? Read [`ACOL_ACOLI_PLAYBOOK.md`](ACOL_ACOLI_PLAYBOOK.md)
+> first** — the full recipe + the two rules (grain-dependent soundness; the
+> hand-rolled-walker requirement). The deferral below is *because* aCOLI shipped
+> a generic-scanner S5; Q10's aCOL (hand-rolled walker) is the "S5 done right"
+> counterexample where S5 is the fastest structure. Whether any S5 enters the
+> paper sweep is a separate scope decision.
+
 The aCOLI MI (`MergedAdapter<customer_acoli_t, orders_coli_t,
 lineitem_acoli_t>` with `pre_open_due` baked at load time) is
 **deferred indefinitely** from the paper sweep, **for all queries

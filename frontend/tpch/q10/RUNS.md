@@ -17,6 +17,22 @@ need consolidating.
 
 ## Runs
 
+### 2026-05-25 — S5 aCOL iteration-cell smoke (btree SF=150 dram=0.1)
+- **Commit**: `fd771c13` (`calcite-integration`), host `node0` (Linux)
+- **Logs**: `build/q10_btree/150-in-0.1/structureN_clean.log` (clean — re-run
+  after a concurrent tpchi reload finished; an earlier contended run was
+  discarded). TPut.csv rows scale=150.
+- **Config**: iteration cell SF=150 dram=0.1, isolated, tx_seconds=15. Smoke
+  test for the new aCOL S5 (correctness already green at SF=1 both backends).
+- **ms/query** — **S5 aCOL 9.98** < S2-preagg 21.5 < S1 134 < S3 1,017 < S4
+  12,071 < S2-A 17,234. **S5 is the fastest structure.** R MiB/q: S5 0.009,
+  S2-preagg 0.072, S3 26.35; records visited/q: S5 118,589 (no lineitems) vs
+  S3 1,146,669. aCOL get_size 340 MiB vs S3 424.
+- **Claim check**: validates the fair-MI thesis — the aCOL (merged index
+  allowed to pre-aggregate, hand-rolled walk) beats both the pre-agg view
+  (~2.2×, no per-order customer-col duplication) and the raw S3 MI (~100×, no
+  lineitem bulk). No anomaly. 5L confirmation next. See `PERFORMANCE.md §7`.
+
 ### 2026-05-25 — 5L A/B confirmation: S2 per-order preagg + S3 physical SkipOrder
 - **Commit**: `f92d1868` (`calcite-integration`), host `node0` (Linux)
 - **TPut.csv**: `build/q10_btree/TPut.csv` (scale=1550 rows) + LSM structure logs

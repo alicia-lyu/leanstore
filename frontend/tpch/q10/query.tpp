@@ -19,6 +19,7 @@
 #include "../q10_family/admit.hpp"
 #include "../q10_family/visitor.hpp"
 #include "../q10_family/out_class.hpp"
+#include "../q10_family/acol_walk.tpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_string(q10_view_variant);
@@ -453,6 +454,32 @@ long Q10Workload<Backend>::query_by_hash(std::vector<q10_agg_row_t>& out)
    }
 
    q10_finalize_aggregator(agg, nation, nation_cache, sink, stats);
+   sink.finalize(out);
+   return static_cast<long>(out.size());
+}
+
+template <typename Backend>
+long Q10Workload<Backend>::query_by_aggregated(std::vector<q10_agg_row_t>& out)
+{
+   // S5: hand-rolled acol_group_walk over the aCOL MI
+   // (customer_coli_t + orders_acol_t). Per-order returned revenue is BAKED at
+   // load, so there are no lineitems to read and no returnflag filter — the
+   // walk snapshots the customer FD cols, sums the baked revenue of in-window
+   // orders, and emits one row per custkey group (NATION INL at on_group_end,
+   // bounded TopN(20)). The hand-rolled walker (fused raw-dispatch, no
+   // std::variant) is the whole point: aCOLI's generic getScanner+std::visit
+   // is why its S5 lost to S3 (q3i/PERFORMANCE.md). Same per-customer
+   // finalisation as S3 (query_by_merged), minus the lineitem level.
+   out.clear();
+
+   using NationAdapterT = typename Backend::template Adapter<nation_t>;
+   Q10QuerySink sink(stats);
+   std::unordered_map<Integer, Varchar<25>> nation_cache;  // ≤25 entries
+
+   Q10AcolVisitor<NationAdapterT, Q10QuerySink>
+       visitor{params, nation, sink, nation_cache, stats};
+   acol_group_walk<Backend>(acol, visitor);
+
    sink.finalize(out);
    return static_cast<long>(out.size());
 }

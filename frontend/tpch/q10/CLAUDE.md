@@ -232,14 +232,27 @@ selected at query time by `--q10_view_variant`:
   so one image serves the A/B; `q10_admit_revenue_from_join` and the
   shared aggregator are reused. This is the **fair** S2 baseline.
 
-**S5 deliberately omitted** (Decision D8). Same rationale as Q5:
-revenue cannot be pre-aggregated because the orderdate window is
-parameterised. A returnflag-filtered secondary alone is just a
-narrower S3, not a true pre-aggregated S5 — there is no
-spec-hardcoded aggregate to bake. Storing the unaggregated source
-rows (which is exactly what S3 already does) is the only sound
-choice. **Soundness rule from PLAYBOOK §3.5 step 5 applies;
-anti-pattern #10 / #24 explicitly covers this case.**
+**S5 — aCOL MI, implemented (D8 overturned at the per-order grain).**
+D8 originally omitted S5 by reasoning only about *per-customer*
+pre-aggregation: a customer's total returned revenue can't be baked
+because the orderdate window is parameterised. But the **per-order**
+grain *is* sound — the window filters at *order* granularity, and
+`l_returnflag='R'` is a spec constant — so per-order returned revenue
+is parameter-independent and bakeable (exactly the insight behind the
+S2 per-order preagg view). The **aCOL MI** (`--storage_structure=5`,
+`AggregatedQ10`) stores `MergedAdapter<customer_coli_t, orders_acol_t>`:
+one full customer record + one `orders_acol_t` per order carrying
+`{o_orderdate (live), returned_revenue (baked)}`, **no lineitems**. It
+carries new information and drops the lineitem bulk — not a degenerate
+copy of S3. Query path: hand-rolled `acol_group_walk`
+(`q10_family/acol_walk.tpp`, `next_raw` raw-dispatch — NOT the generic
+variant walk that made Q3I's aCOLI S5 lose to S3) → per-customer SUM →
+NATION INL → TopN(20). This is the **fair** pre-aggregated merged index
+vs the S2 preagg *view*: same pre-computation, but co-located (customer
+payload stored once, not duplicated per order). At SF=150 it is the
+fastest structure (9.98 ms/q vs the view's 21.5, S3's 1,017). See
+[`PERFORMANCE.md §7`](PERFORMANCE.md). Row shape: `orders_acol_t`
+(idx=37) in `tpch_family/views_col.hpp`.
 
 ---
 
@@ -309,8 +322,11 @@ ambush the implementation:
   `lineitem_sec_t` (Key `(custkey, orderkey, linenumber)`). The
   Q5 widening already put `l_returnflag` into the lineitem
   secondary payload — no new secondary needed.
-- **D8. S5 omitted.** See §Storage Structure Options above for the
-  soundness-rule argument. Paper axis stays at S1–S4.
+- **D8 (REVISED). S5 = aCOL MI, implemented.** D8 originally omitted S5,
+  but that reasoning only covered *per-customer* pre-agg. The *per-order*
+  returned-revenue aggregate IS soundly bakeable (window filters at order
+  grain; returnflag is constant), so S5 is now the aCOL MI. See
+  §Storage Structure Options above and [`PERFORMANCE.md §7`](PERFORMANCE.md).
 
 ---
 
@@ -675,8 +691,10 @@ not a Phase 0 design decision.
   `LINUX_PENDING.md`. Production binaries (`q10_lsm`, `q10_btree`),
   CMake targets, and `generate_targets.py` entries already landed
   in Phase 1.
-- **S5** — omitted by design (Decision D8; no parameter-independent
-  aggregate to bake).
+- **S5 (aCOL MI)** — implemented 2026-05-25 (D8 revised). Per-order
+  pre-aggregated COL merged index + hand-rolled `acol_group_walk`;
+  parity-verified SF=1 both backends, fastest structure at SF=150.
+  See [`PERFORMANCE.md §7`](PERFORMANCE.md).
 - **Linux perf sweep — 5L cell only** (Decision: paper scope). Logged
   in `LINUX_PENDING.md` once Phase 1+ lands.
 

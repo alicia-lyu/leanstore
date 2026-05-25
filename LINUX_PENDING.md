@@ -9,6 +9,29 @@ actionable.
 
 ## Active
 
+- **Q10I — port the Q10 S2/S3 fixes, then 5L (2026-05-25)**: merged to
+  calcite-integration (was worktree-only on
+  `worktree-agent-a86745538133069de`); SF=1 parity green on **both**
+  backends (fixed a stale btree test harness that never populated the S2
+  view). The widening's COLI-image hazard is handled — Q3I/Q5I tpchi 5L
+  images reloaded this session.
+  **Smoke test DONE** (btree c2, SF=150 dram=0.1): **both Q10 anomalies
+  reproduce** (q10i/RUNS.md) — S2 per-lineitem view is a page-bound
+  strawman (16,938 ms/q, 513 MiB read, 995 MiB view ≫ pool); S3 < S1
+  (3,351 vs 1,012 ms, 5.7× IO) because Q10I has no customer-level filter
+  (prune below the COLI co-location grain).
+  **Next (before any 5L), mirroring Q10
+  ([`frontend/tpch/q10/PERFORMANCE.md`](frontend/tpch/q10/PERFORMANCE.md)):**
+  (a) add a per-order **pre-aggregated** S2 view partitioned into
+  paid/open/late pre-sums (both `l_returnflag='R'` and the `i_status`
+  bucketing are spec constants — soundly bakeable; only `:d` is
+  parameterised), A/B via `--q10i_view_variant`, parity-gated; (b)
+  characterize S3 (physical SkipOrder cuts CPU not btree page IO; wire
+  `--skip_order_physical` into the 4-table `coli_group_walk` — it currently
+  only reaches the 3-table `col_group_walk` — to A/B it, expecting neutral
+  btree / +9% LSM as in Q10). **5L cell deferred** until these land.
+  Pair-fates with Q10.
+
 - **refresh_sales at 5H (c3, DRAM 0.4) — show LSM strength under memory
   pressure (2026-05-24)** — the 5L refresh (DRAM 1.0,
   `paper-data/2026-05-24-refresh-5L-ssd`) is done; 5H keeps the same SF

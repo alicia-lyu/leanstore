@@ -17,4 +17,35 @@ file unless their numbers are scattered across other docs.
 
 ## Runs
 
-_(Q10I is design-doc only as of 2026-05-08 — no executable, no runs.)_
+### 2026-05-25 — first Linux smoke test (btree c2, anomaly diagnosis)
+- **Commit**: `1077fe8e` (`calcite-integration`, post-merge), host `node0`
+- **TPut.csv**: `build/q10i_btree/150-in-0.1/` + `build/q10i_btree/TPut.csv`
+- **Config**: btree, SF=150, DRAM=0.1 GiB (c2 — cheap DRAM-overflowing cell,
+  ~8x view overflow), structures S1–S4, `tx_seconds=15`. Standalone load
+  (own image dir after the generate_targets fix). Parity gate green first
+  (test_query_q10i_{lsm,btree} SF=1, 4-way XOR).
+- **ms/query**: S1 1,012 · **S3 3,351** · S4 13,254 · **S2 16,938**.
+  R MiB/q: S1 16.6 · S3 94.5 · S4 395 · S2 513 (BM-counter fix).
+- **Claim check**: **does NOT yet support the S3 ≥ S2 > S1/S4 claim** —
+  smoke test reproduces *both* Q10 btree anomalies. (1) S2's per-lineitem
+  view (`q10i_pipeline_view_t`) is a page-bound strawman (995 MiB view ≫
+  pool, 513 MiB read/q). (2) S3 < S1 (3.3x slower, 5.7x more IO): Q10I has
+  no customer-level filter (only the order-date prune), below the COLI
+  co-location grain, so the walk drags in co-located invoices+lineitems of
+  date-failing orders. The Q10 fixes transfer (per-order pre-aggregated
+  view partitioned paid/open/late; S3 filter-hierarchy characterization) —
+  queued in LINUX_PENDING before any 5L run. See `../q10/PERFORMANCE.md`.
+
+_(Q10I was design-doc only as of 2026-05-08; Phase 4 + this smoke test
+followed.)_
+
+### 2026-05-24 — Phase 4 multi-SF parity (correctness-only)
+- **Commit**: (pre-commit; about to land Phase 4 query bodies)
+- **Branch**: `worktree-agent-a86745538133069de`
+- **TPut.csv**: n/a — correctness-only run (test_query_q10i_lsm)
+- **Config**: macOS RocksDB; SF=1, SF=5, SF=10; structures S1–S4
+- **Outcome**: strict 4-way XOR parity `[OK]` at all three SFs.
+  SF=1 digest `0xfe5d346e48bc1e8d`, SF=5 `0xf88a36288a3eb1a4`,
+  SF=10 `0xd39b971cf074297e`; 20 rows each. Q3I/Q5I regressions
+  clean. Validates the design's S1/S2/S3/S4 equivalence claim
+  for the paper's headline 5L cell.
