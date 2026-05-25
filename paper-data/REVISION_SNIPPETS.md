@@ -189,6 +189,40 @@ of \textsf{trad\_idx} while \textsf{mat\_view} inflates by
 $\sim$Y$\times$.
 ```
 
+### §5.3 addendum — why `Mat-View`'s LSM gain vanishes on HDD
+
+Full investigation: [`paragraph-lsm-trees-improve-the-query-silly-raven.md`](../.claude/plans/paragraph-lsm-trees-improve-the-query-silly-raven.md).
+
+Both halves of the draft's `Mat-View` explanation — fewer wider rows
+(fewer `Next()` / decode steps per group) and longer shared key
+prefixes (better RocksDB restart-interval delta-key compression) —
+are CPU-side savings on the LSM read path. They land in wall time
+only when CPU is a meaningful share of total query time.
+
+Latency decomposition at lsm/c0/bg=2 (medians; `sst_read_us` is
+parallel reader-thread work, often > wall):
+
+| medium | query | structure | wall (s) | sst_read par (s) | cpu_eq (s) |
+| ------ | ----- | --------- | -------: | ---------------: | ---------: |
+| HDD    | q3    | S2 view   | 13.0     | 23.2             | 4.0        |
+| HDD    | q3    | S3 MI     | 11.2     | 19.7             | 4.4        |
+| SSD    | q3    | S2 view   |  6.8     | 11.3             | 3.6        |
+| SSD    | q3    | S3 MI     |  8.7     | 15.5             | 4.3        |
+
+`cpu_cycles_per_tx` is 10–45 % higher for S3 on **both** media, so
+the CPU penalty is structural; what changes is the denominator. On
+HDD, sequential SST bandwidth dominates wall time (`cpu_util_pct`
+~1–2 %, workers sleeping on I/O), so the extra CPU work S3 pays
+sits off the critical path. At the same time S3 stores each parent
+row once where S2 replicates parent columns onto every
+lineitem-grain row, so S3 reads slightly **less** SST data per
+query — a saving that only matters when I/O is the bottleneck. The
+two effects cancel on HDD and the S2 lead disappears.
+
+Source CSVs: `2026-05-18-b/summary/` (HDD),
+`2026-05-24-a-ssd/summary/` (SSD); filter `backend=lsm`, `cell=c0`,
+`bg=2`, `structure ∈ {2,3}`, `tx=query`.
+
 ---
 
 ## §5.4 — Update / space (lightly revised)
@@ -485,16 +519,22 @@ is not the differentiator. Block-count counters are NaN on this build.
 
 Two compounding factors, both structural to the COLI MI on LSM:
 
-1. **Wider record-type interleaving forces more block touches.** Q3I's
-   view `q3i_pipeline_view_t` is one record type at lineitem grain
-   (~30 rows per custkey). The COLI MI walker scans **all 4 record
-   types per custkey group**: 1 customer + ~2 invoice + ~10 orders +
-   ~30 lineitems ≈ 43 records, with different `idx_id` tag bytes
-   interleaved within each custkey's key range. RocksDB groups by key
-   prefix but spreads the tag-distinct records across more SST blocks.
-   This is the dominant contributor — explains both the sst_read_us
-   inflation and the cpu_cycles inflation (more decoded records → more
-   `std::variant` dispatch).
+1. **More records per custkey group — even though the MI carries
+   fewer bytes.** Q3I's view `q3i_pipeline_view_t` is one record type
+   at lineitem grain (~30 rows per custkey), but each row duplicates
+   the parent customer + orders columns. The COLI MI stores each
+   parent once: 1 customer + ~2 invoice + ~10 orders + ~30 lineitems
+   ≈ 43 narrow records per custkey. *Bytes per custkey are actually
+   lower on the MI* (no parent duplication), so this is not an I/O
+   volume effect and not a "tag bytes spread across SSTs" effect —
+   records at the same custkey prefix are contiguous in the SST
+   regardless of their trailing `idx_id` tag. The cost is per-record
+   iterator work in RocksDB's read path: ~43 `Next()` calls / decode
+   bookkeeping per group on the MI vs ~30 on the view. Variant
+   dispatch is **not** a contributor either — the COLI walker is
+   hand-rolled to avoid `std::variant` overhead. This per-record
+   overhead explains both the sst_read_us inflation and the
+   cpu_cycles inflation.
 2. **Physical skip-seeks are disabled on RocksDB.** `coli_pipeline.tpp`
    sets `Backend::USE_PHYSICAL_SEEK_SKIP = false` for RocksDB because
    `rocksdb::Iterator::Seek` invalidates the prefetch buffer (comment

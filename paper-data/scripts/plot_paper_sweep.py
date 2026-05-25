@@ -21,6 +21,14 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib
 matplotlib.use("Agg")  # no display required on the experiment host
+# usetex so \textsc{...} in legends / labels renders as proper small
+# caps, matching tab:exp-baselines in the paper. Requires a working
+# LaTeX install (TeX Live's pdflatex on the experiment host).
+matplotlib.rcParams.update({
+    "text.usetex": True,
+    "font.family": "serif",
+    "text.latex.preamble": r"\usepackage{lmodern}",
+})
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -38,7 +46,13 @@ import yaml
 STYLE = {
     "structure_colors": {
         1: "#c0392b",  # S1 base merge join — muted red
-        2: "#2980b9",  # S2 materialized view — blue
+        2: "#2980b9",  # S2 materialized view (naive) — blue
+        # Q10-only partial-aggregate Mat-View variant. Same blue
+        # family, lightened, so the legend reads as a Mat-View variant
+        # rather than a new approach. The Merged-Idx partial-agg
+        # variant (to be added) will follow the same convention on the
+        # green family.
+        22: "#7fb3d5",
         3: "#27ae60",  # S3 merged index — green (headline)
         4: "#e67e22",  # S4 hash join — orange
         5: "#8e44ad",  # S5 aCOLI — purple (deferred from paper sweep)
@@ -66,13 +80,28 @@ STRUCTURE_LABELS = {
 # Labels matching tab:exp-baselines in the paper (monospace).
 # Used for all paper-mode and diagnostics figures so the legend
 # vocabulary stays in sync with the typeset table.
+# Labels matching tab:exp-baselines in the paper. The paper uses
+# \textsc{...} (small caps with hyphens); plain matplotlib doesn't
+# render small caps so we mirror the exact label text and let LaTeX
+# pickup happen at typeset time.
 PAPER_STRUCTURE_LABELS = {
-    1: r"$\mathtt{base\_merge}$",
-    2: r"$\mathtt{mat\_view}$",
-    3: r"$\mathtt{merged\_idx}$",
-    4: r"$\mathtt{base\_hash}$",
-    5: r"$\mathtt{aCOLI}$",
+    1: r"\textsc{Base-Merge}",
+    2: r"\textsc{Mat-View}",
+    # Q10-only partial-aggregate Mat-View variant.
+    22: r"\textsc{Mat-View} (partial agg)",
+    3: r"\textsc{Merged-Idx}",
+    4: r"\textsc{Base-Hash}",
+    5: r"\textsc{aCOLI}",
 }
+
+def _query_title(binary: str) -> str:
+    """Strip backend suffix and uppercase the leading Q so panel titles
+    read as Q3 / Q5 / Q3i / Q5i — matching the paper's prose."""
+    q = binary.replace("_lsm", "").replace("_btree", "")
+    if q.startswith("q"):
+        q = "Q" + q[1:]
+    return q
+
 
 # Cell → (DRAM GiB, secondary GiB). Kept for reference and used by
 # anything that wants to render the cell key in a caption / legend.
@@ -323,6 +352,35 @@ def _all_or_empty(fig: plt.Figure, ax, msg: str) -> None:
 #   diagnostic outputs
 
 PAPER_TPCH_QUERIES = ["q3", "q5", "q3i", "q5i"]   # left-to-right panel order
+# Q10 lives in its own figure (paper_q10) so its 5-bar layout doesn't
+# disrupt the 4-bar headline row geometry.
+Q10_QUERY = "q10"
+
+# Q10 lives in its own ad-hoc sibling tag (not in the standard sweep
+# matrix yet — see 2026-05-25-q10/manifest.yaml). When rendering the
+# headline row we merge Q10 rows in from this tag and keep only the
+# canonical method per structure (the per-order pre-aggregated view
+# matches the §5 narrative; the COL walker is the standard MI path).
+Q10_SIBLING_TAG = "2026-05-25-q10"
+# Method → synthetic structure id. The naive per-lineitem view keeps
+# the canonical S2 (Mat-View) slot; the partial-aggregate variant goes
+# to id 22 so it draws as its own bar next to the naive Mat-View. The
+# merged-index physskip variant is currently dropped (the standard
+# COL walker is the canonical S3 in the paper text).
+Q10_METHOD_TO_STRUCT = {
+    "base_merge_join":      1,
+    "pipeline_view":        2,
+    "pipeline_view_preagg": 22,
+    "mi_col_walk":          3,
+    "base_hash_join":       4,
+}
+# Per-query bar order for the headline panels. Defaults to
+# PAPER_LEGEND_ORDER (4 bars) when the query is not listed.
+# Q10 layout: place the partial-agg variant immediately after the
+# naive S2 so the two Mat-View bars sit together.
+PAPER_PANEL_STRUCTURES = {
+    "q10": [4, 1, 2, 22, 3],
+}
 PAPER_HEADLINE_BG = 2                              # paper's contention cohort
 PAPER_STRUCTURES = [1, 2, 3, 4]                    # S5 deferred
 # Legend order requested by the writer: worst → best baseline → winner.
@@ -380,62 +438,171 @@ def _apply_paper_overlap_style(ax) -> None:
     # uncertainty signal.
     for coll in list(ax.collections):
         coll.set_visible(False)
-    ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
-    ax.yaxis.set_major_formatter(
-        mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
-    ax.yaxis.set_minor_locator(
-        mticker.LogLocator(base=10.0, subs=tuple(range(2, 10))))
-    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    # Linear y-axis for headline plots so magnitude differences read
+    # directly. Cap at 0 to keep the bars/lines anchored to a real baseline.
+    ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
     ax.tick_params(axis="y", which="major", labelsize=7)
-    ax.tick_params(axis="y", which="minor", length=2)
 
 
 def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
-                     cell: str, show_ylabel: bool) -> bool:
+                     cell: str, show_ylabel: bool,
+                     structures: Optional[Sequence[int]] = None,
+                     title: Optional[str] = None) -> bool:
     """One compact bar panel of the paper TPC-H headline row. bg=2,
-    S1-S4, single cell (default 5L = ``c0``). Four coloured bars per
-    panel, one per structure in PAPER_LEGEND_ORDER. ms → seconds; log y.
+    one cell, one bar per structure in ``structures`` (defaults to
+    ``PAPER_LEGEND_ORDER``). ms → seconds; linear y with a per-panel
+    20× cap so a single outlier doesn't squash the rest. The panel
+    label is rendered along the bottom (via ``set_xlabel``) so the
+    top edge stays clear for cut-off-bar value annotations.
     """
+    panel_structs = list(structures or PAPER_LEGEND_ORDER)
+    panel_title = title if title is not None else _query_title(binary)
     sub = ms_df[(ms_df["binary"] == binary) & (ms_df["cell"] == cell)
                 & (ms_df["bg"] == PAPER_HEADLINE_BG)
-                & (ms_df["structure"].isin(PAPER_STRUCTURES))]
+                & (ms_df["structure"].isin(panel_structs))]
     if sub.empty:
         _all_or_empty(plt.gcf(), ax, "—")
-        ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
-                     fontsize=10)
+        ax.set_xlabel(panel_title, fontsize=14)
         return False
     sub = sub.copy()
     sub["s_median"] = sub["ms_median"] / 1000.0
-    # One bar per structure, centred on x=0.
-    bar_w = 0.18
-    n = len(PAPER_LEGEND_ORDER)
+    # One bar per structure, centred on x=0. Q10 has 5 bars (extra
+    # Mat-View variant), so the per-bar width scales with the panel's
+    # structure count to keep the cluster the same total width.
+    n = len(panel_structs)
+    bar_w = 0.72 / max(n, 1)
     drew = False
-    for k, struct in enumerate(PAPER_LEGEND_ORDER):
+    plotted: List[Tuple[float, float, int]] = []  # (x, height, struct)
+    for k, struct in enumerate(panel_structs):
         row = sub[sub["structure"] == struct]
         if row.empty or pd.isna(row["s_median"].iloc[0]):
             continue
         x = (k - (n - 1) / 2) * bar_w
-        ax.bar([x], [float(row["s_median"].iloc[0])], width=bar_w,
+        h = float(row["s_median"].iloc[0])
+        plotted.append((x, h, struct))
+    # Pick the panel's y-cap from the second-tallest bar (with a small
+    # headroom factor) rather than as a multiple of the shortest. This
+    # makes the non-outlier bars occupy most of the panel even when a
+    # single hash-join bar is two orders of magnitude taller; the over-
+    # cap bar gets the value annotation above the top border.
+    if plotted:
+        finite = sorted((h for _, h, _ in plotted if h > 0), reverse=True)
+        if len(finite) >= 2:
+            cap = finite[1] * 1.15
+        elif finite:
+            cap = finite[0] * 1.15
+        else:
+            cap = None
+    else:
+        cap = None
+    ylim_top = cap * 1.08 if cap is not None else None
+    for x, h, struct in plotted:
+        # Over-cap bars extend all the way to the top border; the
+        # printed value sits just above the border so the reader can
+        # still read the true number.
+        draw_h = min(h, ylim_top) if ylim_top is not None else h
+        ax.bar([x], [draw_h], width=bar_w,
                color=STYLE["structure_colors"][struct],
-               linewidth=0)
+               linewidth=0, clip_on=False)
+        if ylim_top is not None and h > ylim_top:
+            ax.annotate(f"{h:.0f}", xy=(x, 1.0),
+                        xycoords=("data", "axes fraction"),
+                        xytext=(0, 2), textcoords="offset points",
+                        ha="center", va="bottom", fontsize=10,
+                        color=STYLE["structure_colors"][struct],
+                        annotation_clip=False)
         drew = True
-    ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
-                 fontsize=10)
+    ax.set_xlabel(panel_title, fontsize=14)
     if show_ylabel:
-        ax.set_ylabel("seconds / query", fontsize=8)
+        ax.set_ylabel("seconds / query", fontsize=12)
     ax.set_xticks([])
-    ax.set_yscale("log")
-    ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
-    ax.yaxis.set_major_formatter(
-        mticker.LogFormatterSciNotation(base=10.0, labelOnlyBase=True))
-    ax.yaxis.set_minor_locator(
-        mticker.LogLocator(base=10.0, subs=tuple(range(2, 10))))
-    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
-    ax.tick_params(axis="y", which="major", labelsize=7)
-    ax.tick_params(axis="y", which="minor", length=2)
+    # Linear y-axis for headline bars — log scale would compress the
+    # S3 vs S2/S4 gap and undersell the win.
+    if ylim_top is not None:
+        ax.set_ylim(0, ylim_top)
+    else:
+        ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
+    ax.tick_params(axis="y", which="major", labelsize=11)
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
     return drew
+
+
+def _add_two_row_legend(fig, legend_structs: Sequence[int],
+                        *, fontsize: int,
+                        bbox_main: Tuple[float, float],
+                        bbox_variants: Tuple[float, float]) -> None:
+    """Render the headline legend across two rows: canonical S1..S4 on
+    top, partial-agg variants (synthetic ids ≥ 22) on a separate row
+    below. matplotlib's column-major fill orders entries by column so a
+    single ``fig.legend`` with ``ncol=4`` would scramble row 1; using
+    two legends keeps the two groups aligned independently.
+    """
+    main = [s for s in legend_structs if s in PAPER_LEGEND_ORDER]
+    variants = [s for s in legend_structs if s not in PAPER_LEGEND_ORDER]
+    main_handles = [plt.Rectangle((0, 0), 1, 1,
+                                  color=STYLE["structure_colors"][s],
+                                  label=PAPER_STRUCTURE_LABELS[s])
+                    for s in main]
+    fig.legend(handles=main_handles, loc="upper center",
+               ncol=len(main_handles) or 1,
+               fontsize=fontsize, bbox_to_anchor=bbox_main,
+               frameon=False, columnspacing=1.5, handletextpad=0.4)
+    if not variants:
+        return
+    variant_handles = [plt.Rectangle((0, 0), 1, 1,
+                                     color=STYLE["structure_colors"][s],
+                                     label=PAPER_STRUCTURE_LABELS[s])
+                       for s in variants]
+    # Second legend attaches directly to the figure (fig.legend would
+    # overwrite the first), so use add_artist with a manually-built
+    # Legend bound to the figure's transform.
+    from matplotlib.legend import Legend
+    second = Legend(fig, variant_handles,
+                    [h.get_label() for h in variant_handles],
+                    loc="upper center", ncol=len(variant_handles),
+                    fontsize=fontsize, bbox_to_anchor=bbox_variants,
+                    bbox_transform=fig.transFigure,
+                    frameon=False, columnspacing=1.5, handletextpad=0.4)
+    fig.add_artist(second)
+
+
+def _augment_with_q10(head: pd.DataFrame, data: SweepData,
+                      backend: str) -> pd.DataFrame:
+    """Splice Q10 rows from the sibling tag into a filtered headline
+    frame. The sibling carries two methods per S2/S3 (the A/B variants
+    from a perf investigation); we keep only the canonical method per
+    structure so each panel has one bar per structure. No-op when the
+    sibling isn't reachable from this tag's root.
+
+    Q10 only has SSD data, so we only splice it in when the parent
+    tag is SSD-tagged (otherwise the panel just stays empty).
+    """
+    if data.disk and data.disk != "ssd":
+        return head
+    sibling = data.summary_root.parent.parent / Q10_SIBLING_TAG \
+        / "summary" / "headline.csv"
+    if not sibling.exists():
+        return head
+    q10 = pd.read_csv(sibling)
+    q10 = q10[(q10["backend"] == backend) & (q10["tx"] == "query")
+              & (q10["query"] == "q10")
+              & (q10["method"].isin(Q10_METHOD_TO_STRUCT.keys()))]
+    if q10.empty:
+        return head
+    # Remap method → synthetic structure id so the naive Mat-View
+    # variant draws as its own bar (id 22) alongside the pre-agg S2.
+    q10 = q10.copy()
+    q10["structure"] = q10["method"].map(Q10_METHOD_TO_STRUCT).astype(int)
+    # Sibling sweep ran one rep at bg=0 (isolated), parent sweeps run
+    # at bg=2 (contention cohort) — relabel to the headline bg so the
+    # row is picked up by _paper_bar_panel's filter.
+    q10["bg"] = PAPER_HEADLINE_BG
+    q10["family"] = "vanilla"
+    common = [c for c in head.columns if c in q10.columns]
+    return pd.concat([head, q10[common]], ignore_index=True)
 
 
 def fig_paper_tpch_row(data: SweepData, backend: str,
@@ -457,30 +624,84 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
     binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
+    n_panels = len(binaries)
     # Author the figure at full-page width (~6.5") so each panel has
     # room for tick labels + line markers; LaTeX scales it down to
     # column width at \includegraphics time. constrained_layout
     # handles the external legend bbox without leaving stray
     # whitespace that tight_layout sometimes does with sharey=False.
-    fig, axes = plt.subplots(1, 4, figsize=(6.5, 2.0), sharey=False,
-                             constrained_layout=True)
+    fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 2.6),
+                             sharey=False, constrained_layout=True)
     has_any = False
-    for j, binary in enumerate(binaries):
+    legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
+    for j, (binary, q) in enumerate(zip(binaries, PAPER_TPCH_QUERIES)):
+        panel_structs = PAPER_PANEL_STRUCTURES.get(q, PAPER_LEGEND_ORDER)
+        for s in panel_structs:
+            if s not in legend_structs:
+                legend_structs.append(s)
         drew = _paper_bar_panel(axes[j], ms_df, binary, PAPER_HEADLINE_CELL,
-                                show_ylabel=(j == 0))
+                                show_ylabel=(j == 0),
+                                structures=panel_structs)
         has_any = has_any or drew
     if not has_any:
         plt.close(fig)
         return None
     if include_legend:
-        handles = [plt.Rectangle((0, 0), 1, 1,
-                                 color=STYLE["structure_colors"][s],
-                                 label=PAPER_STRUCTURE_LABELS[s])
-                   for s in PAPER_LEGEND_ORDER]
-        fig.legend(handles=handles, loc="upper center", ncol=4,
-                   fontsize=8, bbox_to_anchor=(0.5, 1.14),
-                   frameon=False, columnspacing=1.5, handletextpad=0.4)
+        _add_two_row_legend(fig, legend_structs, fontsize=13,
+                            bbox_main=(0.5, 1.16),
+                            bbox_variants=(0.5, 1.06))
     name = data.paper_name(f"paper_tpch_{backend}_headline")
+    dest = data.figures_root / "paper" / name
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
+def fig_paper_q10(data: SweepData) -> Optional[Path]:
+    """1×2 dedicated Q10 figure: B-tree | LSM. Q10 carries an extra
+    Mat-View bar (naive per-lineitem vs pre-agg per-order) which
+    makes a 5-bar panel; keeping it out of the four-query headline
+    row preserves that row's regular 4-bar geometry.
+    """
+    # Start from an empty frame and pull Q10 rows from the sibling tag
+    # for both backends; the standard sweep tag doesn't carry Q10 yet.
+    empty = pd.DataFrame(columns=data.headline.columns)
+    head_parts = [p for p in (_augment_with_q10(empty, data, b)
+                              for b in ("btree", "lsm"))
+                  if not p.empty]
+    if not head_parts:
+        return None
+    head = pd.concat(head_parts, ignore_index=True)
+    ms_df = aggregate_ms_per_query(
+        head, group_cols=["binary", "cell", "structure", "bg"])
+
+    panel_structs = PAPER_PANEL_STRUCTURES.get(Q10_QUERY, PAPER_LEGEND_ORDER)
+    fig, axes = plt.subplots(1, 2, figsize=(5.4, 2.8), sharey=False,
+                             constrained_layout=True)
+    titles = {"btree": "Q10 (B-tree)", "lsm": "Q10 (LSM-tree)"}
+    drew_any = False
+    for j, backend in enumerate(("btree", "lsm")):
+        binary = f"{Q10_QUERY}_{backend}"
+        drew = _paper_bar_panel(axes[j], ms_df, binary, PAPER_HEADLINE_CELL,
+                                show_ylabel=(j == 0),
+                                structures=panel_structs,
+                                title=titles[backend])
+        drew_any = drew_any or drew
+    if not drew_any:
+        plt.close(fig)
+        return None
+
+    legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
+    for s in panel_structs:
+        if s not in legend_structs:
+            legend_structs.append(s)
+    handles = [plt.Rectangle((0, 0), 1, 1,
+                             color=STYLE["structure_colors"][s],
+                             label=PAPER_STRUCTURE_LABELS[s])
+               for s in legend_structs]
+    _add_two_row_legend(fig, legend_structs, fontsize=13,
+                        bbox_main=(0.5, 1.18),
+                        bbox_variants=(0.5, 1.07))
+
+    name = data.paper_name("paper_q10")
     dest = data.figures_root / "paper" / name
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
@@ -495,7 +716,7 @@ def _memory_pressure_panel(ax, ms_df: pd.DataFrame, binary: str,
                 & (ms_df["structure"].isin(PAPER_STRUCTURES))]
     if sub.empty:
         _all_or_empty(plt.gcf(), ax, "—")
-        ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+        ax.set_title(_query_title(binary),
                      fontsize=10)
         return False
     sub = sub.copy()
@@ -506,14 +727,13 @@ def _memory_pressure_panel(ax, ms_df: pd.DataFrame, binary: str,
         hue_col="structure", x_order=cells,
         hue_labels=STRUCTURE_LABELS, linestyle="-",
     )
-    ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+    ax.set_title(_query_title(binary),
                  fontsize=10)
     if show_ylabel:
         ax.set_ylabel("seconds / query", fontsize=8)
     ax.set_xticks(np.arange(len(cells)))
     ax.set_xticklabels([PAPER_CELL_TICK.get(c, c) for c in cells],
                        fontsize=8)
-    ax.set_yscale("log")
     ax.tick_params(axis="y", labelsize=6)
     ax.grid(False)
     if ax.get_legend():
@@ -614,7 +834,6 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
                 x_order=PAPER_CELLS, hue_labels=STRUCTURE_LABELS,
                 linestyle="-",
             )
-            ax.set_yscale("log")
             ax.grid(False)
             if i == 0:
                 ax.set_title(tx, fontsize=10)
@@ -664,8 +883,8 @@ DIAG_BTREE_METRICS: List[Tuple[str, str, str, bool]] = [
     ("dt_split",  "dt_struct_split",     "B-tree splits",      True),
 ]
 DIAG_LSM_METRICS: List[Tuple[str, str, str, bool]] = [
-    ("sst_read",       "sst_read_us_per_tx",  "SST read µs / TX",    True),
-    ("sst_compaction", "sst_compaction_us",   "SST compaction µs",   True),
+    ("sst_read",       "sst_read_us_per_tx",  r"SST read $\mu$s / TX",    True),
+    ("sst_compaction", "sst_compaction_us",   r"SST compaction $\mu$s",   True),
     ("cpu_cycles",     "cpu_cycles_per_tx",   "CPU cycles / TX",     True),
 ]
 
@@ -699,7 +918,7 @@ def _diag_panel(ax, agg: pd.DataFrame, binary: str, col: str,
     sub = agg[(agg["binary"] == binary) & (agg["cell"].isin(cells))]
     if sub.empty or col not in sub.columns:
         _all_or_empty(plt.gcf(), ax, "—")
-        ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+        ax.set_title(_query_title(binary),
                      fontsize=10)
         return False
     drew = False
@@ -714,7 +933,7 @@ def _diag_panel(ax, agg: pd.DataFrame, binary: str, col: str,
                 color=style["color"], marker="o", markersize=4,
                 linewidth=1.2, alpha=0.7)
         drew = True
-    ax.set_title(binary.replace("_lsm", "").replace("_btree", ""),
+    ax.set_title(_query_title(binary),
                  fontsize=10)
     if show_ylabel:
         ax.set_ylabel(ylabel, fontsize=8)
@@ -797,9 +1016,10 @@ def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
 FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     # Paper-mode builders (typeset-ready, bg=2 only, S1-S4 only).
     "paper_tpch_btree":      lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
-    "paper_tpch_lsm":        lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
+    "paper_tpch_lsm":        lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=True),
     "paper_tpch_btree_memory": lambda d: fig_paper_memory_pressure(d, "btree", include_legend=True),
     "paper_tpch_lsm_memory":   lambda d: fig_paper_memory_pressure(d, "lsm",   include_legend=False),
+    "paper_q10":             fig_paper_q10,
     "paper_geo_condensed":   fig_paper_geo_condensed,
     # Diagnostics exploration — per-query 1×4 rows. btree gets the
     # full LeanStore counter family; lsm gets RocksDB SST timing
@@ -823,6 +1043,7 @@ MODE_FIGURES: Dict[str, List[str]] = {
     "paper-figures":       ["paper_tpch_btree", "paper_tpch_lsm",
                             "paper_tpch_btree_memory",
                             "paper_tpch_lsm_memory",
+                            "paper_q10",
                             "paper_geo_condensed"],
     "diagnostics-explore": DIAG_EXPLORE_FIGS,
     "all":                 list(FIGURE_BUILDERS.keys()),

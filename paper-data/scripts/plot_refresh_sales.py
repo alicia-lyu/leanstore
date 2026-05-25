@@ -21,6 +21,14 @@ from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
+# usetex so \textsc{...} in the bar xticklabels renders as proper
+# small caps, matching tab:exp-baselines in the paper. Requires a
+# working LaTeX install (TeX Live's pdflatex on this machine).
+matplotlib.rcParams.update({
+    "text.usetex": True,
+    "font.family": "serif",
+    "text.latex.preamble": r"\usepackage{lmodern}",
+})
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -45,7 +53,7 @@ PANELS: List[Tuple[str, str]] = [
     ("rf1_tps_hot", ""),
 ]
 
-BACKENDS = ["btree", "lsm"]
+BACKENDS = ["btree"]
 
 # Per-CSV-schema view: which throughput column is the headline, what
 # unit to label it with, and the figure basename. 5L files report a
@@ -55,7 +63,7 @@ BACKENDS = ["btree", "lsm"]
 CSV_SCHEMAS = {
     "refresh_sales_5L_throughput.csv": {
         "tps_col": "pair_tps_tail30",
-        "unit": "µs / RF pair",
+        "unit": r"$\mu$s / RF pair",
         "scale": 1e6,  # tps → µs/op
         "basename": "refresh_5L_pair_latency",
     },
@@ -70,12 +78,12 @@ CSV_SCHEMAS = {
         # rates, unlike DBToaster which can't measure pairs).
         "tps_col": "pair_med_ops",
         "scale": 2e6,  # 2 (orders/pair) × 1e6 (µs/s)
-        "unit": "µs / RF pair",
+        "unit": r"$\mu$s / RF pair",
         "basename": "refresh_prewarm9_pair_latency",
     },
     "refresh_sales_rf_throughput.csv": {
         "tps_col": "rf1_tps_hot",
-        "unit": "µs / RF1 insert (hot)",
+        "unit": r"$\mu$s / RF1 insert (hot)",
         "scale": 1e6,
         "basename": "refresh_sales_rf1_latency",
     },
@@ -105,10 +113,25 @@ def _dbtoaster_pair_us(db_df: pd.DataFrame,
     # Pin to the largest SF DBToaster managed — that's the "comparable
     # to LeanStore 5L" anchor (manifest: SF=0.36 ≈ 5 GiB working set).
     # Smaller SFs aren't meaningful baselines for the LeanStore scales.
-    row = db_df.loc[db_df["sf"].idxmax()]
+    df = db_df
+    if "mode" in df.columns:
+        # Drop SUPERSEDED phased_derived rows; keep measured interleaved.
+        df = df[df["mode"] == "interleaved"]
+        if df.empty:
+            df = db_df
+    sf_max = df["sf"].max()
+    rows = df[df["sf"] == sf_max]
     budget_kb = budget_gib * 1024 * 1024
-    if float(row["peak_rss_kb"]) > budget_kb:
+    if float(rows["peak_rss_kb"].iloc[0]) > budget_kb:
         return None  # caller renders OOM
+    # Prefer the directly measured interleaved pair rate when present
+    # (median across runs). Falls back to the phased-derived sum of
+    # per-op latencies for the legacy throughput CSV.
+    if "pairs_per_s_med" in rows.columns and rows["pairs_per_s_med"].notna().any():
+        pairs_per_s = float(rows["pairs_per_s_med"].median())
+        if pairs_per_s > 0:
+            return 1e6 / pairs_per_s
+    row = rows.iloc[0]
     rf1 = float(row["rf1_orders_per_s"])
     rf2 = float(row["rf2_orders_per_s"])
     if rf1 <= 0 or rf2 <= 0:
@@ -129,14 +152,18 @@ MEMORY_BUDGETS: List[Tuple[float, str]] = [(1.0, "1 GiB DRAM"),
 # Labels frame the y-axis question: *what extra storage structure
 # (beyond primary indexes) does Q3 / Q5 maintain?* S4 = none; S1 =
 # extra secondary indexes; S2 = pipeline views; S3 = merged indexes.
+# Labels mirror tab:exp-baselines in the paper. Wrapped in
+# \textsc{} and rendered via matplotlib's usetex backend so the
+# typeset small-caps style matches the table verbatim.
 REFRESH_LABELS = {
-    1: r"$\mathtt{base\_merge}$",
-    2: r"$\mathtt{mat\_view}$",
-    3: r"$\mathtt{merged\_idx}$",
-    # S4 (base_hash, "None") is intentionally omitted from the refresh
+    1: r"\textsc{Base-Merge}",
+    2: r"\textsc{Mat-View}",
+    3: r"\textsc{Merged-Idx}",
+    # S4 (Base-Hash, "None") is intentionally omitted from the refresh
     # figure: with no secondary structures to maintain, it's the
     # trivial ceiling and crowds the comparison.
 }
+DBTOASTER_LABEL_TEX = r"\textsc{DBToaster}"
 REFRESH_OMIT = {4}
 
 
@@ -151,68 +178,74 @@ def _series_style(struct: int) -> Tuple[str, str]:
     return color, label
 
 
-# X-axis positions: two backends plus DBToaster (engine-agnostic).
-X_LABELS = ["btree", "lsm", "DBToaster"]
-DBTOASTER_X = 2
+# With LSM removed, each LeanStore structure gets its own x slot
+# labelled with the storage approach, alongside DBToaster. The
+# per-bar xticklabel makes the legend redundant.
 
 
 def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
            db_df: pd.DataFrame, budget_gib: float, budget_label: str,
            y_unit: str, show_ylabel: bool) -> None:
-    """One panel = one memory budget. Bars at x ∈ {btree, lsm, DBToaster}.
+    """One panel = one memory budget. One bar per LeanStore-btree
+    structure (xticklabel = storage approach), plus a DBToaster bar.
 
     ``ls_df`` must carry a normalised ``pair_ms`` column and the usual
-    ``backend`` / ``structure`` keys. Empty ``ls_df`` → all LeanStore
-    slots render as italic "pending" text. DBToaster gets one bar at
-    the budget-appropriate SF (the largest one fitting peak_rss); if
-    none fit we render an "OOM ↑" hatched bar capped at the top of
-    the log axis after y-limits sync.
+    ``backend`` / ``structure`` keys. Missing rows render as italic
+    "pending" text in that x slot. DBToaster gets one bar at the
+    budget-appropriate SF (the largest one fitting peak_rss); if none
+    fit we render an "OOM ↑" hatched bar capped at the top of the
+    axis after y-limits sync.
     """
-    n_ls = len(ls_series)
-    bar_w = 0.8 / max(n_ls, 1)
-    backends_with_data = (set(ls_df["backend"].unique())
-                          if not ls_df.empty else set())
+    bar_w = 0.7
 
-    ax.set_yscale("log")
-    for bi, backend in enumerate(BACKENDS):
-        if backend not in backends_with_data:
-            ax.text(bi, 0.5, "pending", ha="center", va="center",
+    # In-memory budgets (9 GiB here) compress into a narrow ~30-100 µs
+    # range — linear scale shows the spread honestly. Memory-pressured
+    # budgets span 10-1000+ µs, so log stays.
+    use_log = budget_gib < PREWARM9_BUDGET_GIB
+    ax.set_yscale("log" if use_log else "linear")
+
+    panel_xlabels: List[str] = []
+    for i, struct in enumerate(ls_series):
+        color, label = _series_style(struct)
+        panel_xlabels.append(label)
+        row = (ls_df[(ls_df["backend"] == "btree")
+                     & (ls_df["structure"] == struct)]
+               if not ls_df.empty else pd.DataFrame())
+        if row.empty:
+            ax.text(i, 0.5, "pending", ha="center", va="center",
                     transform=blended_transform(ax),
                     fontsize=7, color="#999", style="italic")
             continue
-        for k, struct in enumerate(ls_series):
-            color, _ = _series_style(struct)
-            row = ls_df[(ls_df["backend"] == backend)
-                        & (ls_df["structure"] == struct)]
-            if row.empty:
-                continue
-            pair_ms = float(row["pair_ms"].iloc[0])
-            if not np.isfinite(pair_ms) or pair_ms <= 0:
-                continue
-            x = bi + (k - (n_ls - 1) / 2) * bar_w
-            ax.bar([x], [pair_ms], width=bar_w, color=color, linewidth=0)
+        pair_ms = float(row["pair_ms"].iloc[0])
+        if not np.isfinite(pair_ms) or pair_ms <= 0:
+            continue
+        ax.bar([i], [pair_ms], width=bar_w, color=color, linewidth=0)
 
+    db_x = len(ls_series)
+    panel_xlabels.append(DBTOASTER_LABEL_TEX)
     db_us = _dbtoaster_pair_us(db_df, budget_gib)
-    db_bar_w = bar_w  # match LeanStore bar width for visual consistency
     if db_us is not None:
-        ax.bar([DBTOASTER_X], [db_us], width=db_bar_w,
+        ax.bar([db_x], [db_us], width=bar_w,
                color=DBTOASTER_COLOR, linewidth=0)
     elif not db_df.empty:
         # OOM: defer to _annotate_oom after the shared y-limits are known.
-        ax._oom_bar = (DBTOASTER_X, db_bar_w)
+        ax._oom_bar = (db_x, bar_w)
 
     ax.set_title(budget_label, fontsize=9)
-    ax.set_xticks(np.arange(len(X_LABELS)))
-    ax.set_xticklabels(X_LABELS, fontsize=8)
-    ax.set_xlim(-0.5, len(X_LABELS) - 0.5)
-    # Ticks at 1×, 2×, 5× of each decade with plain decimal labels.
-    # The 9 GiB panel autoscales into a narrow range (e.g. 23-76 µs)
-    # that doesn't cross any 10ⁿ boundary, so the old base-10-only
-    # labeller left it tickless and the bars looked unscaled.
-    ax.yaxis.set_major_locator(
-        mticker.LogLocator(base=10.0, subs=(1.0, 2.0, 5.0), numticks=10))
-    ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
-    ax.yaxis.set_minor_locator(mticker.NullLocator())
+    ax.set_xticks(np.arange(len(panel_xlabels)))
+    ax.set_xticklabels(panel_xlabels, fontsize=8, rotation=30,
+                       ha="right", rotation_mode="anchor")
+    ax.set_xlim(-0.5, len(panel_xlabels) - 0.5)
+    if use_log:
+        # Ticks at 1×, 2×, 5× of each decade with plain decimal labels —
+        # log autoscale otherwise leaves narrow ranges tickless.
+        ax.yaxis.set_major_locator(
+            mticker.LogLocator(base=10.0, subs=(1.0, 2.0, 5.0), numticks=10))
+        ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+        ax.yaxis.set_minor_locator(mticker.NullLocator())
+    else:
+        ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
+        ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
     ax.tick_params(axis="y", which="major", labelsize=7)
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
@@ -242,7 +275,7 @@ def _annotate_oom(ax) -> None:
     ax.set_ylim(ymin, ymax)
     # Label sits in axes coords just above the top spine so it can't
     # collide with the bar or be clipped by the data area.
-    ax.annotate("OOM ↑", xy=(x, 1.0), xycoords=("data", "axes fraction"),
+    ax.annotate(r"OOM $\uparrow$", xy=(x, 1.0), xycoords=("data", "axes fraction"),
                 xytext=(0, 2), textcoords="offset points",
                 ha="center", va="bottom", fontsize=7,
                 color=DBTOASTER_COLOR, annotation_clip=False)
@@ -340,10 +373,17 @@ def main() -> int:
     if args.dbtoaster is not None:
         dbtoaster_path = args.dbtoaster
     else:
-        sibling = root.parent / "2026-05-24-dbtoaster" / "summary" \
-                  / "refresh_sales_dbtoaster_throughput.csv"
-        legacy = summary / "dbtoaster_rf_throughput.csv"
-        dbtoaster_path = sibling if sibling.exists() else legacy
+        db_summary = root.parent / "2026-05-24-dbtoaster" / "summary"
+        # Prefer the measured-interleaved CSV (typed on_insert/on_delete
+        # 1+1 pair) over the legacy phased throughput CSV, which carried
+        # SUPERSEDED derived rates.
+        candidates = [
+            db_summary / "refresh_sales_dbtoaster_interleaved.csv",
+            db_summary / "refresh_sales_dbtoaster_throughput.csv",
+            summary / "dbtoaster_rf_throughput.csv",
+        ]
+        dbtoaster_path = next((p for p in candidates if p.exists()),
+                              candidates[-1])
     db_df = _load_dbtoaster(dbtoaster_path)
 
     # Bucket LeanStore data by buffer-pool budget so each panel pulls
@@ -358,35 +398,39 @@ def main() -> int:
     # 10-100× faster than SSD-spilling (1 GiB), so a shared axis would
     # squash one or the other. The unit is the same (µs/pair), the
     # ticks just live at different decades.
-    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.4, 2.6),
+    # Narrower canvas — the \textsc xticklabels are angled below so
+    # they fit without horizontal overlap. Same height as before.
+    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 2.6),
                              sharey=False)
     for j, (budget, label) in enumerate(MEMORY_BUDGETS):
         budget_df = ls_by_budget.get(budget, pd.DataFrame())
         _panel(axes[j], budget_df, ls_series, db_df,
                budget_gib=budget, budget_label=label,
                y_unit=schema["unit"], show_ylabel=(j == 0))
-    # OOM bar is drawn after each panel's autoscale settles.
+    # Floor each panel's y-axis so bar height matches the labelled
+    # value. Log axes: snap ymin down to the nearest decade (autoscale
+    # otherwise lands just under the minimum value, drawing the
+    # shortest bar as a near-zero stub). Linear axes: anchor at 0 so
+    # bars draw from the natural baseline.
+    for ax in axes:
+        ymin, ymax = ax.get_ylim()
+        if ax.get_yscale() == "log" and ymin > 0:
+            floor = 10 ** np.floor(np.log10(ymin))
+            ax.set_ylim(floor, ymax)
+        elif ax.get_yscale() == "linear":
+            ax.set_ylim(0, ymax)
+    # OOM bar is drawn after each panel's y-floor + autoscale settle.
     for ax in axes:
         _annotate_oom(ax)
 
-    handles = []
-    for s in ls_series:
-        color, label = _series_style(s)
-        handles.append(plt.Rectangle((0, 0), 1, 1, color=color, label=label))
-    handles.append(plt.Rectangle((0, 0), 1, 1, color=DBTOASTER_COLOR,
-                                 label=DBTOASTER_LABEL))
-    fig.legend(handles=handles, loc="upper center",
-               ncol=4, fontsize=7,
-               bbox_to_anchor=(0.5, 1.0),
-               frameon=False, columnspacing=1.2, handletextpad=0.4,
-               title="extra storage beyond primary indexes",
-               title_fontsize=7)
+    # Legend removed: each bar's xticklabel names its storage approach,
+    # making a separate legend redundant.
 
     out_dir = root / "figures" / "paper"
     out_dir.mkdir(parents=True, exist_ok=True)
     basename = schema["basename"] + (f"_{disk}" if disk else "")
     base = out_dir / basename
-    fig.subplots_adjust(left=0.10, right=0.98, top=0.78, bottom=0.12,
+    fig.subplots_adjust(left=0.10, right=0.98, top=0.90, bottom=0.16,
                         wspace=0.30)
     primary = base.with_suffix(f".{args.format}")
     fig.savefig(primary, format=args.format, bbox_inches="tight")
