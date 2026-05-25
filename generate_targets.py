@@ -53,13 +53,16 @@ TPCH_FAMILY = {
     "q5_lsm":    "tpch_lsm",
     "q3_btree":  "tpch_btree",
     "q5_btree":  "tpch_btree",
-    # Invoice-extended COLI family
+    # Invoice-extended COLI family. NOTE: q10i is intentionally NOT a member —
+    # its executable loads independently (q10i.load(); see
+    # q10i/executable_*.cpp "Not plugged into the Q3I+Q5I family cohort") and
+    # load_tpchi_family(tpch, q3i, q5i) does not populate q10i's view. Mapping
+    # it here would make `make q10i_*` recover from a q3i/q5i image lacking the
+    # q10i pipeline view (degenerate S2). q10i keeps its own image dir + loader.
     "q3i_lsm":   "tpchi_lsm",
     "q5i_lsm":   "tpchi_lsm",
-    "q10i_lsm":  "tpchi_lsm",
     "q3i_btree": "tpchi_btree",
     "q5i_btree": "tpchi_btree",
-    "q10i_btree": "tpchi_btree",
 }
 
 def image_basename(exec_fname: str) -> str:
