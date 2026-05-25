@@ -154,12 +154,16 @@ def aggregate_ms_per_query(headline: pd.DataFrame,
                            group_cols: Sequence[str]) -> pd.DataFrame:
     """Aggregate per-rep ms/query (= 1000/tx_per_s) over ``group_cols``.
 
-    Returns ``group_cols + ['ms_median', 'ms_iqr', 'n']``. Median + IQR
-    are computed in ms space (not derived from TX/s aggregates) so the
-    error bars are correct under the non-linear transform.
+    Returns ``group_cols + ['ms_median', 'ms_iqr', 'ms_q25', 'ms_q75',
+    'n']``. Median, IQR, and the quartiles are computed in ms space (not
+    derived from TX/s aggregates) so the error bars are correct under the
+    non-linear transform. ``ms_q25`` / ``ms_q75`` let bar panels draw
+    asymmetric error bars anchored on the actual quartiles rather than a
+    median±IQR/2 approximation.
     """
+    cols = list(group_cols) + ["ms_median", "ms_iqr", "ms_q25", "ms_q75", "n"]
     if headline.empty:
-        return pd.DataFrame(columns=list(group_cols) + ["ms_median", "ms_iqr", "n"])
+        return pd.DataFrame(columns=cols)
     df = headline.copy()
     # ms_per_tx is already in headline.csv (see analyzer), but recompute
     # from tx_per_s defensively in case rows have it blank.
@@ -170,8 +174,11 @@ def aggregate_ms_per_query(headline: pd.DataFrame,
         ms_median="median",
         n="count",
     ).reset_index()
-    iqr = grouped.apply(lambda s: _quantile(s, 0.75) - _quantile(s, 0.25)).rename("ms_iqr")
-    out = out.merge(iqr.reset_index(), on=list(group_cols), how="left")
+    q25 = grouped.apply(lambda s: _quantile(s, 0.25)).rename("ms_q25")
+    q75 = grouped.apply(lambda s: _quantile(s, 0.75)).rename("ms_q75")
+    out = out.merge(q25.reset_index(), on=list(group_cols), how="left")
+    out = out.merge(q75.reset_index(), on=list(group_cols), how="left")
+    out["ms_iqr"] = out["ms_q75"] - out["ms_q25"]
     return out
 
 
@@ -467,27 +474,35 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
         return False
     sub = sub.copy()
     sub["s_median"] = sub["ms_median"] / 1000.0
+    for col in ("ms_q25", "ms_q75"):
+        if col in sub.columns:
+            sub[col.replace("ms_", "s_")] = sub[col] / 1000.0
     # One bar per structure, centred on x=0. Q10 has 5 bars (extra
     # Mat-View variant), so the per-bar width scales with the panel's
     # structure count to keep the cluster the same total width.
     n = len(panel_structs)
     bar_w = 0.72 / max(n, 1)
     drew = False
-    plotted: List[Tuple[float, float, int]] = []  # (x, height, struct)
+    # (x, height, struct, q25, q75) — quartiles drive the error bars.
+    plotted: List[Tuple[float, float, int, float, float]] = []
     for k, struct in enumerate(panel_structs):
         row = sub[sub["structure"] == struct]
         if row.empty or pd.isna(row["s_median"].iloc[0]):
             continue
         x = (k - (n - 1) / 2) * bar_w
         h = float(row["s_median"].iloc[0])
-        plotted.append((x, h, struct))
+        lo = float(row["s_q25"].iloc[0]) if "s_q25" in row.columns \
+            and not pd.isna(row["s_q25"].iloc[0]) else h
+        hi = float(row["s_q75"].iloc[0]) if "s_q75" in row.columns \
+            and not pd.isna(row["s_q75"].iloc[0]) else h
+        plotted.append((x, h, struct, lo, hi))
     # Pick the panel's y-cap from the second-tallest bar (with a small
     # headroom factor) rather than as a multiple of the shortest. This
     # makes the non-outlier bars occupy most of the panel even when a
     # single hash-join bar is two orders of magnitude taller; the over-
     # cap bar gets the value annotation above the top border.
     if plotted:
-        finite = sorted((h for _, h, _ in plotted if h > 0), reverse=True)
+        finite = sorted((h for _, h, _, _, _ in plotted if h > 0), reverse=True)
         if len(finite) >= 2:
             cap = finite[1] * 1.15
         elif finite:
@@ -497,7 +512,7 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
     else:
         cap = None
     ylim_top = cap * 1.08 if cap is not None else None
-    for x, h, struct in plotted:
+    for x, h, struct, lo, hi in plotted:
         # Over-cap bars extend all the way to the top border; the
         # printed value sits just above the border so the reader can
         # still read the true number.
@@ -512,6 +527,16 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
                         ha="center", va="bottom", fontsize=10,
                         color=STYLE["structure_colors"][struct],
                         annotation_clip=False)
+        else:
+            # Error bar = inter-quartile range over the reps. Drawn only
+            # for in-frame bars; an over-cap bar shows its true value as
+            # the printed annotation above instead.
+            yerr_lo = max(0.0, h - lo)
+            yerr_hi = max(0.0, hi - h)
+            if yerr_lo > 0 or yerr_hi > 0:
+                ax.errorbar([x], [h], yerr=[[yerr_lo], [yerr_hi]],
+                            fmt="none", ecolor="#333333", elinewidth=0.8,
+                            capsize=2, clip_on=False, zorder=5)
         drew = True
     ax.set_xlabel(panel_title, fontsize=14)
     if show_ylabel:

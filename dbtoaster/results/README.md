@@ -31,7 +31,7 @@ btree S2 ≈ 22.6k, lsm S2 ≈ 4.2k RF1 inserts/s.
 
 The paper memory-pressure cells fix a **5 GiB secondary** and sweep DRAM
 **5L = 1.0 GiB** / **5H = 0.4 GiB** (`paper-data/scripts/plot_paper_sweep.py:66-69`,
-`paper-data/REVISION_SNIPPETS.md:82-88`). We pin the DBToaster maintained
+`paper-data/CLAUDE.md §Sweep-matrix conventions`). We pin the DBToaster maintained
 working set to the same ~5 GB by choosing SF empirically: load at SF
 0.01 / 0.1, read post-warmup VmRSS, extrapolate to ~5 GB, regenerate at that SF
 (measured: ~140 MB at SF=0.01, ~1.41 GiB at SF=0.1 → **SF≈0.36** for ~5 GB;

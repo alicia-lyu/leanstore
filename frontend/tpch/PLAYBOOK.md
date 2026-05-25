@@ -189,6 +189,15 @@ the aCOLI MergedAdapter family with the same dispatch tuning and
 Seek-skip facility. That is not a per-query task — it's
 infrastructure work on the order of the original COLI walker.
 
+> **Paper framing (audit-response):** the Q3I/Q5I S5 deferral is an
+> **engineering-time choice, not a structural property of the index.**
+> Q10's aCOL and Q10I's aCOLI ship hand-rolled walkers and are the
+> *fastest* structures on those queries (2026-05-25 supplemental), which
+> is exactly the fix the 4-table aCOLI lacks. Any paper text that defers
+> S5 for Q3I/Q5I should say so in those terms (walker not yet written),
+> not imply the pre-aggregated MI is inherently slower — see
+> `paper-data/PAPER_EDITS.md`.
+
 **For the paper's story, S1–S4 are sufficient**. The pitch is **S3
 matches S2 while beating S1/S4** — i.e. raw co-location with a tuned
 walker reaches the throughput of full materialisation without paying

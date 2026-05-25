@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """CPU utilization across queries × storage structures, B-tree vs LSM.
 
-Reproduces the observation: B-tree is flat at moderate CPU (~30-45%)
-across queries and indexes; LSM is bimodal — range-style queries push
-CPU high (~60-80%) while point/short-range queries sit low (~5-20%).
-The current tag (2026-05-24-a-ssd) only carries Q3 / Q5 / Q3i / Q5i, so
-this figure shows the high-CPU LSM regime; Q1/Q2/Q4/Q6 would extend the
-range but aren't sweep-resident yet.
+On the 2026-05-24-a-ssd tag the measured ``cpu_util_pct`` values are
+**low in absolute terms** (sub-2% B-tree, sub-5% LSM): this counter
+reports a single query worker's utilization on a many-core node, not
+whole-system utilization, and the workload is IO-bound at the 5L
+beyond-memory operating point. The qualitative observation the figure
+supports is only *relative* — LSM runs hotter than the B-tree, and the
+per-structure spread within each backend. Because the magnitudes are
+small, the panels use per-backend y-limits (``backend_ylim`` below), so
+**bar heights are NOT comparable across the two panels** — read each
+panel against its own axis. (This figure is currently commented out in
+the paper LaTeX; kept here as a diagnostic.)
 
 Reads ``diagnostics.csv`` from a tag, filters to c0 / bg=2, medians
 across reps, and emits a 1x2 grouped-bar figure (btree | lsm) under the

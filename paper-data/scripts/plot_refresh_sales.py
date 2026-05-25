@@ -160,8 +160,13 @@ REFRESH_LABELS = {
     2: r"\textsc{Mat-View}",
     3: r"\textsc{Merged-Idx}",
     # S4 (Base-Hash, "None") is intentionally omitted from the refresh
-    # figure: with no secondary structures to maintain, it's the
-    # trivial ceiling and crowds the comparison.
+    # figure: it maintains *no* secondary structure at all, so it is a
+    # different baseline class than the secondary-maintaining structures
+    # this figure compares. H2's claim is that Merged-Idx maintains its
+    # secondary as fast as the traditional secondary indexes used by
+    # Base-Merge (S1) -- not "as fast as maintaining nothing". S4 is the
+    # trivial no-secondary ceiling; it is acknowledged in prose (~3.3x
+    # faster on btree) rather than plotted here.
 }
 DBTOASTER_LABEL_TEX = r"\textsc{DBToaster}"
 REFRESH_OMIT = {4}
@@ -185,9 +190,12 @@ def _series_style(struct: int) -> Tuple[str, str]:
 
 def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
            db_df: pd.DataFrame, budget_gib: float, budget_label: str,
-           y_unit: str, show_ylabel: bool) -> None:
-    """One panel = one memory budget. One bar per LeanStore-btree
-    structure (xticklabel = storage approach), plus a DBToaster bar.
+           y_unit: str, show_ylabel: bool, backend: str = "btree",
+           include_dbtoaster: bool = True) -> None:
+    """One panel = one memory budget. One bar per LeanStore ``backend``
+    structure (xticklabel = storage approach), plus a DBToaster bar when
+    ``include_dbtoaster`` (DBToaster is its own engine, compared once on
+    the B-tree figure; the LSM figure omits it).
 
     ``ls_df`` must carry a normalised ``pair_ms`` column and the usual
     ``backend`` / ``structure`` keys. Missing rows render as italic
@@ -208,7 +216,7 @@ def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
     for i, struct in enumerate(ls_series):
         color, label = _series_style(struct)
         panel_xlabels.append(label)
-        row = (ls_df[(ls_df["backend"] == "btree")
+        row = (ls_df[(ls_df["backend"] == backend)
                      & (ls_df["structure"] == struct)]
                if not ls_df.empty else pd.DataFrame())
         if row.empty:
@@ -221,15 +229,16 @@ def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
             continue
         ax.bar([i], [pair_ms], width=bar_w, color=color, linewidth=0)
 
-    db_x = len(ls_series)
-    panel_xlabels.append(DBTOASTER_LABEL_TEX)
-    db_us = _dbtoaster_pair_us(db_df, budget_gib)
-    if db_us is not None:
-        ax.bar([db_x], [db_us], width=bar_w,
-               color=DBTOASTER_COLOR, linewidth=0)
-    elif not db_df.empty:
-        # OOM: defer to _annotate_oom after the shared y-limits are known.
-        ax._oom_bar = (db_x, bar_w)
+    if include_dbtoaster:
+        db_x = len(ls_series)
+        panel_xlabels.append(DBTOASTER_LABEL_TEX)
+        db_us = _dbtoaster_pair_us(db_df, budget_gib)
+        if db_us is not None:
+            ax.bar([db_x], [db_us], width=bar_w,
+                   color=DBTOASTER_COLOR, linewidth=0)
+        elif not db_df.empty:
+            # OOM: defer to _annotate_oom after shared y-limits are known.
+            ax._oom_bar = (db_x, bar_w)
 
     ax.set_title(budget_label, fontsize=9)
     ax.set_xticks(np.arange(len(panel_xlabels)))
@@ -319,6 +328,24 @@ def _load_ls(csv_path: Path, schema: Dict) -> pd.DataFrame:
     return df
 
 
+def _load_lsm_9gib(path: Path) -> pd.DataFrame:
+    """Read the LSM 9 GiB refresh CSV (its own schema: ``pairs_per_s``,
+    ``prewarm`` flag) and normalise to the panel shape (``backend``,
+    ``structure``, ``pair_ms`` = µs/pair). Keeps only the no-prewarm
+    rows — prewarm backfires on LSM (fills the block cache, starves the
+    write path), so the honest steady-state point is prewarm=false."""
+    if not path.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(path)
+    if "prewarm" in df.columns:
+        mask = df["prewarm"].astype(str).str.lower().isin(["false", "0"])
+        df = df[mask]
+    pps = pd.to_numeric(df.get("pairs_per_s"), errors="coerce")
+    df = df.copy()
+    df["pair_ms"] = 1e6 / pps.where(pps > 0)  # µs/pair
+    return df
+
+
 def _disk_tag(df: pd.DataFrame) -> Optional[str]:
     if "disk" not in df.columns:
         return None
@@ -336,6 +363,47 @@ def _footer(manifest: Dict[str, str], tag: str) -> str:
         if v:
             parts.append(f"{k.split('_')[0]} {v}")
     return "  |  ".join(parts)
+
+
+def _render_figure(ls_by_budget: Dict[float, pd.DataFrame],
+                   db_df: pd.DataFrame, ls_series: List[int],
+                   y_unit: str, out_dir: Path, basename: str, fmt: str,
+                   *, backend: str = "btree",
+                   include_dbtoaster: bool = True) -> List[Path]:
+    """Build the 1×(memory budgets) refresh figure for one backend and
+    write it. The B-tree figure includes the DBToaster comparison; the
+    LSM figure does not (DBToaster is a separate engine, shown once)."""
+    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 2.0),
+                             sharey=False)
+    for j, (budget, label) in enumerate(MEMORY_BUDGETS):
+        budget_df = ls_by_budget.get(budget, pd.DataFrame())
+        _panel(axes[j], budget_df, ls_series, db_df,
+               budget_gib=budget, budget_label=label,
+               y_unit=y_unit, show_ylabel=(j == 0),
+               backend=backend, include_dbtoaster=include_dbtoaster)
+    # Floor each panel's y-axis so bar height matches the labelled value.
+    for ax in axes:
+        ymin, ymax = ax.get_ylim()
+        if ax.get_yscale() == "log" and ymin > 0:
+            floor = 10 ** np.floor(np.log10(ymin))
+            ax.set_ylim(floor, ymax)
+        elif ax.get_yscale() == "linear":
+            ax.set_ylim(0, ymax)
+    for ax in axes:
+        _annotate_oom(ax)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base = out_dir / basename
+    fig.subplots_adjust(left=0.10, right=0.98, top=0.90, bottom=0.16,
+                        wspace=0.30)
+    primary = base.with_suffix(f".{fmt}")
+    fig.savefig(primary, format=fmt, bbox_inches="tight")
+    written = [primary]
+    if fmt == "pdf":
+        png = base.with_suffix(".png")
+        fig.savefig(png, format="png", dpi=180, bbox_inches="tight")
+        written.append(png)
+    plt.close(fig)
+    return written
 
 
 def main() -> int:
@@ -389,58 +457,41 @@ def main() -> int:
     # Bucket LeanStore data by buffer-pool budget so each panel pulls
     # its own bars. Missing budgets render as "pending" placeholders.
     primary_budget = float(df["dram_gib"].iloc[0]) if "dram_gib" in df.columns else 1.0
-    ls_by_budget: Dict[float, pd.DataFrame] = {primary_budget: df}
+    # B-tree budgets: 1 GiB (5L file) + 9 GiB (prewarm9 sibling).
+    btree_by_budget: Dict[float, pd.DataFrame] = {primary_budget: df}
     if not df_9g.empty:
-        ls_by_budget[PREWARM9_BUDGET_GIB] = df_9g
+        btree_by_budget[PREWARM9_BUDGET_GIB] = df_9g
+
+    # LSM budgets: the 5L file carries both backends at 1 GiB; the 9 GiB
+    # LSM point lives in its own file (different schema) in the prewarm9
+    # sibling. Both are µs/pair, so they share the panel code.
+    lsm_9g_path = root.parent / PREWARM9_SIBLING / "summary" \
+                  / "lsm_9gib_refresh.csv"
+    lsm_9g = _load_lsm_9gib(lsm_9g_path)
+    lsm_by_budget: Dict[float, pd.DataFrame] = {primary_budget: df}
+    if not lsm_9g.empty:
+        lsm_by_budget[PREWARM9_BUDGET_GIB] = lsm_9g
 
     ls_series = [s for s in PAPER_LEGEND_ORDER if s not in REFRESH_OMIT]
-    # Each panel autoscales its own y-range: in-memory (9 GiB) is
-    # 10-100× faster than SSD-spilling (1 GiB), so a shared axis would
-    # squash one or the other. The unit is the same (µs/pair), the
-    # ticks just live at different decades.
-    # Narrower canvas — the \textsc xticklabels are angled below so
-    # they fit without horizontal overlap. Slimmer height to keep the
-    # figure compact within column width.
-    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 2.0),
-                             sharey=False)
-    for j, (budget, label) in enumerate(MEMORY_BUDGETS):
-        budget_df = ls_by_budget.get(budget, pd.DataFrame())
-        _panel(axes[j], budget_df, ls_series, db_df,
-               budget_gib=budget, budget_label=label,
-               y_unit=schema["unit"], show_ylabel=(j == 0))
-    # Floor each panel's y-axis so bar height matches the labelled
-    # value. Log axes: snap ymin down to the nearest decade (autoscale
-    # otherwise lands just under the minimum value, drawing the
-    # shortest bar as a near-zero stub). Linear axes: anchor at 0 so
-    # bars draw from the natural baseline.
-    for ax in axes:
-        ymin, ymax = ax.get_ylim()
-        if ax.get_yscale() == "log" and ymin > 0:
-            floor = 10 ** np.floor(np.log10(ymin))
-            ax.set_ylim(floor, ymax)
-        elif ax.get_yscale() == "linear":
-            ax.set_ylim(0, ymax)
-    # OOM bar is drawn after each panel's y-floor + autoscale settle.
-    for ax in axes:
-        _annotate_oom(ax)
-
-    # Legend removed: each bar's xticklabel names its storage approach,
-    # making a separate legend redundant.
-
     out_dir = root / "figures" / "paper"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    basename = schema["basename"] + (f"_{disk}" if disk else "")
-    base = out_dir / basename
-    fig.subplots_adjust(left=0.10, right=0.98, top=0.90, bottom=0.16,
-                        wspace=0.30)
-    primary = base.with_suffix(f".{args.format}")
-    fig.savefig(primary, format=args.format, bbox_inches="tight")
-    written = [primary]
-    if args.format == "pdf":
-        png = base.with_suffix(".png")
-        fig.savefig(png, format="png", dpi=180, bbox_inches="tight")
-        written.append(png)
-    plt.close(fig)
+    suffix = f"_{disk}" if disk else ""
+
+    written: List[Path] = []
+    # B-tree figure (with the DBToaster comparison) — unchanged output.
+    written += _render_figure(
+        btree_by_budget, db_df, ls_series, schema["unit"], out_dir,
+        schema["basename"] + suffix, args.format,
+        backend="btree", include_dbtoaster=True)
+    # LSM figure: same structures, no DBToaster (separate engine). The
+    # LSM rows were previously present in the CSV but never rendered;
+    # this gives the LSM backend its own honest refresh figure.
+    has_lsm = (not df.empty) and (df["backend"] == "lsm").any()
+    if has_lsm:
+        written += _render_figure(
+            lsm_by_budget, db_df, ls_series, schema["unit"], out_dir,
+            schema["basename"] + "_lsm" + suffix, args.format,
+            backend="lsm", include_dbtoaster=False)
+
     for w in written:
         print(f"[plot_refresh_sales] wrote {w}", file=sys.stderr)
     return 0
