@@ -140,8 +140,7 @@ def _panel(ax, df_5L: pd.DataFrame, df_5H: pd.DataFrame,
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
     if show_ylabel:
-        ax.set_ylabel(r"RF1+RF2 pair throughput (pairs/s, tail-30\,s)",
-                      fontsize=9)
+        ax.set_ylabel(r"RF pairs / s", fontsize=9)
 
 
 def _figure_legend(fig) -> None:
@@ -203,7 +202,7 @@ def main() -> int:
     df_5L = _load_summary(root_5L, "refresh_sales_5L_throughput.csv")
     df_5H = _load_summary(root_5H, "refresh_sales_5H_throughput.csv")
 
-    fig, axes = plt.subplots(1, 2, figsize=(6.6, 3.0), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(6.6, 2.1), sharey=True)
     for ax, (backend, label) in zip(axes, BACKENDS):
         _panel(ax, df_5L, df_5H, backend, label,
                show_ylabel=(ax is axes[0]))

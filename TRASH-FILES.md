@@ -57,3 +57,4 @@ build/scratch/q5_parity/ - moved to TRASH/ - stale RocksDB scratch from prior pa
 build/scratch/{q5,q12}_parity/ - moved to TRASH/ - rotated scratch dirs across wildcard-key sweep verification runs
 build/scratch/q5_parity/ - moved to TRASH/ - rotated again across post-audit verification run
 frontend/tpch/q10/{views.hpp,workload.hpp,per_structure_workload.hpp,load.tpp} - moved to TRASH/q10_other_agent_run/ - stale Phase 1 skeleton left by a parallel agent whose context window collided with this session; restarting Phase 1 execution from a clean tree
+refresh_5L_pair_latency_lsm.{pdf,png} - moved to TRASH/ - stale un-suffixed siblings produced before disk-from-manifest fallback; the canonical names carry the _ssd suffix
