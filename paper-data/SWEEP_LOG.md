@@ -14,6 +14,31 @@ HDD-measured and is now stamped `disk=hdd` (see `scripts/mark_disk_media.py`).
 Disk fixed (HDD → `/mnt/hdd` label `leanstore-hdd`; SSD → `/mnt/ssd` label
 `leanstore-ssd`); see `../LINUX_SETUP.md §3`.
 
+## Done: tag `2026-05-24-refresh-5H-ssd` — refresh_sales memory-pressure A/B (SSD)
+
+**Re-run 2026-05-25**, commit `83240c0a`, host `c220g2-011011`.
+`build/scratch/run_refresh_5H_ssd.sh` + `summarize_refresh_5H_ssd.sh`. Both
+cells re-run this session at the **same commit** so the A/B is clean:
+`2026-05-24-refresh-5L-ssd` (c0, DRAM 1.0 — re-stamped from `c9b5f594` to
+`83240c0a`) and `2026-05-24-refresh-5H-ssd` (c3, DRAM 0.4). Same SF
+(1550 btree / 3850 lsm, ~5 GiB secondaries) and same per-structure-copy +
+drop-caches mechanics; only the buffer pool shrinks 1.0→0.4 GiB, so any
+divergence is a pure memory-pressure effect. S1–S4 both backends, 90s,
+isolated. RF2 does not exhaust → `pair_tps` (RF1+RF2 iteration rate) is the
+metric.
+
+**Findings (pair_tps, 5L→5H).** Confirms the hypothesis cleanly — **LSM is
+flat under pressure, btree degrades**. lsm holds within ±2% (S1 1155→1156
+1.00×, S2 939→916, S3 1150→1157, S4 1310→1282); btree drops 21–59% (S1
+1430→868 0.61×, S2 781→614, S3 1674→1105 0.66×, **S4 5531→2269 0.41×** — the
+write-heaviest hot path degrades most). At 5H, LSM overtakes btree on S1/S2/S3
+(S1 1156 vs 868, S2 916 vs 614, S3 1157≈1105) and btree's S4 lead collapses
+4.2×→1.8×. Write-optimized SST flush/compaction doesn't depend on buffer-pool
+residency; btree pays random page eviction once the working set spills the
+pool. Complements the abundant-memory `2026-05-24-refresh-prewarm9` finding
+(at DRAM 9 LSM showed no in-memory speedup) — the pressured regime is where
+LSM instead wins.
+
 ## Done: tag `2026-05-25-q10i` — Q10I 5L (c0) aCOLI + fair S2, both backends (SSD)
 
 **Hand-ported 2026-05-25**, commit `aeb16049`, host `node0`. NOT from the paper
