@@ -1,0 +1,35 @@
+tag: 2026-05-25-q10i
+commit_sha: aeb16049
+host: node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
+started_at: 2026-05-25
+finished_at: 2026-05-25
+cells: c0
+families: tpchi
+reps: 1
+runs_ok: 12
+runs_err: 0
+note: >
+  Hand-ported, NOT analyzer-generated. Q10I is not in the standard paper
+  sweep matrix (FAMILY_OF / SF_TPCH in analyze_paper_sweep.py cover only
+  q3/q5/q3i/q5i + geo), so these rows were written directly from the 5L
+  sweep (build/scratch/q10i_5L_sweep.sh) rather than the paper harness.
+  Single rep, isolated (bg=0), c0 only (5L: DRAM 1.0 GiB, SF 1550 btree /
+  3850 lsm). Structure 2 carries TWO methods (the S2 A/B): pipeline_view
+  (per-lineitem, variant A — the strawman) + pipeline_view_preagg
+  (per-order paid/open/late, the fair S2). Structure 5 = mi_acoli_preagg,
+  the aCOLI MI (MergedAdapter<customer_coli_t, orders_acoli_q10i_t>:
+  per-order paid/open/late baked, lineitems+invoices dropped, hand-rolled
+  acoli_group_walk). Q10I is the invoice-extended sibling of Q10
+  (2026-05-25-q10); same per-order pre-aggregation lesson, three status
+  buckets instead of one.
+
+  Headline (ms/query): the aCOLI (S5) is the FASTEST structure on BOTH
+  backends, beating the FAIR per-order preagg view (S2-B) and raw S3 —
+  btree S5 181 (vs S2-B 21,349, S3 47,296); lsm S5 1,561 (vs S2-B 2,014,
+  S3 16,570). The per-lineitem S2-A is the strawman (btree 173.6 s).
+  Validates ACOL_ACOLI_PLAYBOOK §6. See frontend/tpch/q10i/{RUNS.md,CLAUDE.md}
+  and frontend/tpch/q10/PERFORMANCE.md §7.
+
+  To make this re-analyzable/plottable, add q10i to FAMILY_OF (tpchi),
+  SF_TPCH (c0: btree 1550 / lsm 3850), and method/structure handling for
+  the two S2 A/B methods.

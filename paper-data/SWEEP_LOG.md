@@ -14,6 +14,28 @@ HDD-measured and is now stamped `disk=hdd` (see `scripts/mark_disk_media.py`).
 Disk fixed (HDD → `/mnt/hdd` label `leanstore-hdd`; SSD → `/mnt/ssd` label
 `leanstore-ssd`); see `../LINUX_SETUP.md §3`.
 
+## Done: tag `2026-05-25-q10i` — Q10I 5L (c0) aCOLI + fair S2, both backends (SSD)
+
+**Hand-ported 2026-05-25**, commit `aeb16049`, host `node0`. NOT from the paper
+harness — q10i isn't in the sweep matrix; rows written from
+`build/scratch/q10i_5L_sweep.sh` into `2026-05-25-q10i/summary/headline.csv`
+(see its `manifest.yaml`). Single rep, isolated (bg=0), c0 only (DRAM 1.0; SF
+1550 btree / 3850 lsm). Q10I = Q10 + invoice payment-status split (paid/open/late
+return-revenue buckets). Structure 2 carries two methods (S2 A/B: `pipeline_view`
+per-lineitem strawman + `pipeline_view_preagg` per-order fair view); structure 5
+= `mi_acoli_preagg` (the aCOLI MI — `<customer_coli_t, orders_acoli_q10i_t>`,
+per-order paid/open/late baked, lineitems+invoices dropped, hand-rolled
+`acoli_group_walk`). Parity green first at SF=1 both backends.
+
+**Findings (ms/query).** The **aCOLI (S5) is the fastest structure on both
+backends**, beating the *fair* per-order preagg view and raw S3 (validates
+ACOL_ACOLI_PLAYBOOK §6, mirroring Q10's aCOL): btree **S5 181** ≪ S2-B 21,349 <
+S1 26,797 < S3 47,296 ≪ S4 137,778 < S2-A 173,623 (S5 beats S2-B 118×, S3 260×);
+lsm **S5 1,561** < S2-B 2,014 < S2-A 14,109 < S3 16,570 < S1 26,002 ≪ S4 92,711.
+The per-lineitem S2-A is the strawman (btree 173.6 s). To make this tag
+re-analyzable, add q10i to `analyze_paper_sweep.py` maps. Pairs with the
+`2026-05-25-q10` tag (vanilla sibling).
+
 ## Done: tag `2026-05-25-q10` — Q10 5L (c0) A/B perf investigation, both backends (SSD)
 
 **Hand-ported 2026-05-25**, commit `f92d1868`, host `node0`. NOT from the paper
