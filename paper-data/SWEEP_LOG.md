@@ -14,6 +14,33 @@ HDD-measured and is now stamped `disk=hdd` (see `scripts/mark_disk_media.py`).
 Disk fixed (HDD → `/mnt/hdd` label `leanstore-hdd`; SSD → `/mnt/ssd` label
 `leanstore-ssd`); see `../LINUX_SETUP.md §3`.
 
+## Audit-response (2026-05-25) — honesty fixes + Q10/Q10i rerun
+
+Preempting a reviewer integrity audit (`/tmp/figure_audit_FINAL.md`). No
+fabrication found; the fixes are scope/presentation. Landed (code/doc):
+- **Figures**: headline bars now carry IQR error bars (`aggregate_ms_per_query`
+  emits `ms_q25`/`ms_q75`); y-cap convention documented in `PLOTTING.md`; a new
+  **LSM refresh figure** (`refresh_5L_pair_latency_lsm`) renders the LSM rows
+  that were previously in-CSV-but-unplotted (S4 still omitted — it maintains no
+  secondary; H2's claim is "as fast as the traditional *secondary* indexes of
+  Base-Merge"); CPU plotter docstring corrected (sub-5% per-worker, panels not
+  cross-comparable; figure is commented out in the LaTeX anyway).
+- **Docs**: `STATUS.md` Q10/Q10I rows de-staled (Q10I is implemented; Q10/Q10i
+  hand-rolled S5 wins); S5 deferral reframed as an engineering-time choice in
+  `STATUS.md` + `PLAYBOOK.md §S5`. Paper-side changes recorded in
+  `PAPER_EDITS.md` (REVISION_SNIPPETS.md retired — LaTeX is the source of truth).
+- **Param rotation**: `--param_seed` flag added (fair per-rep, identical across
+  structures); **default 0 = current behavior**, so reported numbers are
+  unchanged. Not exercised for this submission (time); single-param point
+  disclosed in `PAPER_EDITS.md`.
+
+**In progress — Q10/Q10i bg=2 3-rep rerun.** The paper setup commits all
+measured queries to bg=2 + 3 reps, but the 2026-05-25-q10/q10i tags are bg=0,
+single-rep, hand-ported (the figure script relabeled bg=0→2). Rerunning under
+the paper harness (q10/q10i added to `analyze_paper_sweep.py` + `sweep.yaml`),
+`param_seed=0`, c0 5L, both backends — then dropping the bg relabel and
+regenerating `q10.pdf` from genuine bg=2 data. ~80 h; checkpoints pushed.
+
 ## Done: tag `2026-05-24-refresh-5H-ssd` — refresh_sales memory-pressure A/B (SSD)
 
 **Re-run 2026-05-25**, commit `83240c0a`, host `c220g2-011011`.
@@ -190,7 +217,7 @@ rerun on SSD if those cells are needed. Original log below for history.
 - **Vanilla COL (q3, q5)**: S3 wins for q3_lsm, q5_btree, q5_lsm at c3/c0. q3_btree essentially tied. Paper claim holds — **S3 ≥ S2 at large SF** for vanilla family.
 - **q5_btree S4 (hash)**: 5–10× slower than S3 at large SF — clean S3-vs-hash margin.
 - **Invoice family**: q5i_btree wins decisively (0.69×). q5i_lsm closes to 1.04× at c0 (S2 still ahead but marginal).
-- **Paper-concern: q3i_lsm and q3i_btree** — both have S2 winning consistently. q3i_lsm is the worst: ratio **worsens** with DRAM (1.03× → 1.44×). This suggests S3's COLI walk doesn't benefit from extra DRAM the way S2's view does (S2 is fully materialised; more DRAM = more of it cached; S3 must still traverse). Worth investigating before paper submission.
+- **Paper-concern: q3i_lsm and q3i_btree** — both have S2 winning consistently. q3i_lsm is the worst: ratio **worsens** with DRAM (1.03× → 1.44×). This suggests S3's COLI walk doesn't benefit from extra DRAM the way S2's view does (S2 is fully materialised; more DRAM = more of it cached; S3 must still traverse). **Resolved for the paper (audit-response, 2026-05-25):** the LSM COLI-family inversion is no longer framed as a single Q3I exception. On the SSD tag `2026-05-24-a-ssd` at c0/bg=2 there are **three** LSM S3>S2 inversions — q3_lsm 1.29×, q3i_lsm 1.34×, q5i_lsm **1.83×** — all now disclosed in `PAPER_EDITS.md` (LSM widens Mat-View's scan advantage; COLI-walker read-amplification on RocksDB; B-tree preserves the merged-index advantage on all four).
 
 34 S3-vs-S2 inversions flagged (was 20) — c0 q3i*/q5i* additions account for the 14-row increase.
 
