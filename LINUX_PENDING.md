@@ -9,21 +9,28 @@ actionable.
 
 ## Active
 
-- **Q10I — Linux perf validation, smoke-test-first (2026-05-25)**: merged
-  to calcite-integration this session (was worktree-only on
-  `worktree-agent-a86745538133069de`). Phase 4 parity verified at
-  SF=1/5/10 (strict 4-way XOR). **Plan mirrors the Q10 investigation
+- **Q10I — port the Q10 S2/S3 fixes, then 5L (2026-05-25)**: merged to
+  calcite-integration (was worktree-only on
+  `worktree-agent-a86745538133069de`); SF=1 parity green on **both**
+  backends (fixed a stale btree test harness that never populated the S2
+  view). The widening's COLI-image hazard is handled — Q3I/Q5I tpchi 5L
+  images reloaded this session.
+  **Smoke test DONE** (btree c2, SF=150 dram=0.1): **both Q10 anomalies
+  reproduce** (q10i/RUNS.md) — S2 per-lineitem view is a page-bound
+  strawman (16,938 ms/q, 513 MiB read, 995 MiB view ≫ pool); S3 < S1
+  (3,351 vs 1,012 ms, 5.7× IO) because Q10I has no customer-level filter
+  (prune below the COLI co-location grain).
+  **Next (before any 5L), mirroring Q10
   ([`frontend/tpch/q10/PERFORMANCE.md`](frontend/tpch/q10/PERFORMANCE.md)):**
-  build `q10i_{lsm,btree}` → parity-gate `test_query_q10i_{lsm,btree}` at
-  SF=1 (digest `0xfe5d346e48bc1e8d`) → **smoke test at the cheap c2 cell
-  (SF=150 btree / 380 lsm, dram=0.1) FIRST**. Q10I shares Q10's filter
-  hierarchy (order-level prune only, no customer filter) and a per-lineitem
-  S2 view, so expect the same two anomalies — S2 strawman regression and
-  S3 < S1 on btree. Port the Q10 fixes (per-order pre-aggregated view
-  partitioned paid/open/late; S3 filter-hierarchy characterization) before
-  any 5L. **5L cell deferred** until the cheap-cell fixes land.
-  Pair-fates with Q10. (This entry is refined in-session after the smoke
-  test; see q10i/RUNS.md.)
+  (a) add a per-order **pre-aggregated** S2 view partitioned into
+  paid/open/late pre-sums (both `l_returnflag='R'` and the `i_status`
+  bucketing are spec constants — soundly bakeable; only `:d` is
+  parameterised), A/B via `--q10i_view_variant`, parity-gated; (b)
+  characterize S3 (physical SkipOrder cuts CPU not btree page IO; wire
+  `--skip_order_physical` into the 4-table `coli_group_walk` — it currently
+  only reaches the 3-table `col_group_walk` — to A/B it, expecting neutral
+  btree / +9% LSM as in Q10). **5L cell deferred** until these land.
+  Pair-fates with Q10.
 
 - **refresh_sales at 5H (c3, DRAM 0.4) — show LSM strength under memory
   pressure (2026-05-24)** — the 5L refresh (DRAM 1.0,
