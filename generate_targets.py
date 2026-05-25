@@ -470,6 +470,10 @@ class Experiment:
                     diag_flags += " --q10_stats=$(q10_stats)"
                     diag_flags += " --q10_view_variant=$(q10_view_variant)"
                     diag_flags += " --skip_order_physical=$(skip_order_physical)"
+                # --q10i_view_variant is declared in tpch_flags.hpp; only acted
+                # on by q10i. q10i_ does NOT match the q10_ prefix above.
+                if self.exec_fname.startswith("q10i_"):
+                    diag_flags += " --q10i_view_variant=$(q10i_view_variant)"
             if IS_MACOS:
                 print(
                     f'\tscript -q {self.runtime_dir}/structure{structure}.log',
@@ -599,8 +603,8 @@ STRUCTURE_OPTIONS = {
     "q5i_lsm": [1, 2, 3, 4],
     "q10_btree": [1, 2, 3, 4, 5],
     "q10_lsm": [1, 2, 3, 4, 5],
-    "q10i_btree": [1, 2, 3, 4],
-    "q10i_lsm": [1, 2, 3, 4],
+    "q10i_btree": [1, 2, 3, 4, 5],
+    "q10i_lsm": [1, 2, 3, 4, 5],
 }
 
 def main() -> None:

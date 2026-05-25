@@ -79,6 +79,17 @@ class Q10IWorkload
 
    typename Backend::template Adapter<q10i_pipeline_view_t>& pipeline_view;
 
+   // S2 variant B: per-order pre-aggregated view (paid/open/late baked, date
+   // live). Selected at query time via --q10i_view_variant=preagg.
+   typename Backend::template Adapter<q10i_pipeline_view_preagg_t>& pipeline_view_preagg;
+
+   // S5: Q10I aCOLI MI — pre-aggregated 2-type merged index
+   // (customer_coli_t + orders_acoli_q10i_t, NO lineitems/invoices; per-order
+   // paid/open/late returned revenue baked). The "fair MI" answer to the S2
+   // preagg view — co-locates the customer payload once per customer. Walked by
+   // the hand-rolled acoli_group_walk.
+   typename Backend::template MergedAdapter<customer_coli_t, orders_acoli_q10i_t>& acoli_q10i;
+
   public:
    Params      params;
    Q10IStats*  stats = nullptr;
@@ -87,9 +98,11 @@ class Q10IWorkload
    // and populate_merged() directly without routing through load().
    CustomerOrdersLineitemInvoicePipeline<Backend>& coli_pipeline() { return coli; }
 
-   // Pattern B view loader — exposed so test harnesses can drive it after
+   // Pattern B view loaders — exposed so test harnesses can drive them after
    // populate_merged() without going through load().
-   void populate_q10i_view();
+   void populate_q10i_view();         // S2 variant A (per-lineitem)
+   void populate_q10i_view_preagg();  // S2 variant B (per-order, paid/open/late)
+   void populate_q10i_acoli();        // S5 aCOLI MI (customer scan + per-order aggs)
 
    Q10IWorkload(
        TPCHIWorkload<Backend::template Adapter>& tpch,
@@ -105,7 +118,9 @@ class Q10IWorkload
        typename Backend::template Adapter<lineitem_coli_t>& split_lineitem,
        typename Backend::template Adapter<invoice_coli_t>&  split_invoice,
        typename Backend::template MergedAdapter<customer_acoli_t, orders_coli_t,
-                                                lineitem_acoli_t>& acoli);
+                                                lineitem_acoli_t>& acoli,
+       typename Backend::template Adapter<q10i_pipeline_view_preagg_t>& pipeline_view_preagg,
+       typename Backend::template MergedAdapter<customer_coli_t, orders_acoli_q10i_t>& acoli_q10i);
 
    // Param cycling: rotate through the 24-entry PARAM_TABLE so each TX
    // iteration exercises a different month start (PLAYBOOK §3.6 rationale).
@@ -113,10 +128,11 @@ class Q10IWorkload
 
    // Queries — one per storage structure.
    // Returns the number of result rows (≤ 20 — Q10I has LIMIT 20).
-   long query_by_base  (std::vector<q10i_agg_row_t>& out);  // structure 1
-   long query_by_view  (std::vector<q10i_agg_row_t>& out);  // structure 2
-   long query_by_merged(std::vector<q10i_agg_row_t>& out);  // structure 3
-   long query_by_hash  (std::vector<q10i_agg_row_t>& out);  // structure 4
+   long query_by_base      (std::vector<q10i_agg_row_t>& out);  // structure 1
+   long query_by_view      (std::vector<q10i_agg_row_t>& out);  // structure 2 (A/B dispatch)
+   long query_by_merged    (std::vector<q10i_agg_row_t>& out);  // structure 3
+   long query_by_hash      (std::vector<q10i_agg_row_t>& out);  // structure 4
+   long query_by_aggregated(std::vector<q10i_agg_row_t>& out);  // structure 5 (aCOLI)
 
    void   load();
    double get_size() const;

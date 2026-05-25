@@ -80,6 +80,50 @@ struct q10i_pipeline_view_t {
    void print(std::ostream& os) const;
 };
 
+// Structure 2 variant B — per-ORDER pre-aggregated view (the *fair* S2
+// baseline; perf-investigation fix for the btree S2 regression, mirroring
+// Q10's q10_pipeline_view_preagg_t). One row per (custkey, orderkey) carrying
+// the order's returned revenue SPLIT by invoice payment status — {paid, open,
+// late}. Both l_returnflag='R' and the i_status partition are TPC-H spec
+// constants (soundly baked at load); o_orderdate stays live (the parameterised
+// window filters at query time). FD customer payload rides per-order (vs
+// per-lineitem in variant A). Orders with zero returned revenue are not
+// emitted. Selected at query time via --q10i_view_variant=preagg; both views
+// live in one image for the A/B.
+struct q10i_pipeline_view_preagg_t {
+   static constexpr int id = 73;
+
+   struct Key {
+      static constexpr int id = 73;
+      Integer custkey;
+      Integer orderkey;
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
+      auto operator<=>(const Key&) const = default;
+   };
+
+   // Pre-summed returned revenue, partitioned by invoice payment status
+   // (returnflag='R' + the P/O/L split baked at load).
+   Numeric    paid_returns;
+   Numeric    open_returns;
+   Numeric    late_returns;
+
+   // FD-attached order column — the parameterised window filters here.
+   Timestamp  o_orderdate;
+
+   // FD-attached customer payload (7 output cols + c_nationkey for the
+   // NATION INL probe at record-assembly time). Same shape as variant A.
+   Varchar<25>  c_name;
+   Varchar<40>  c_address;
+   Integer      c_nationkey;
+   Varchar<15>  c_phone;
+   Numeric      c_acctbal;
+   Varchar<117> c_comment;
+
+   ADD_RECORD_TRAITS(q10i_pipeline_view_preagg_t)
+
+   void print(std::ostream& os) const;
+};
+
 // Conceptual post-assembly output row — materialised only at the TopN-sink
 // boundary (at most 20 rows). In-memory only; no ADD_RECORD_TRAITS, no
 // stored schema. Derives from q10_agg_row_t (D13) and adds three

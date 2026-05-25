@@ -22,4 +22,8 @@ using MergedQ10I = ::tpch::MergedStructure<Q10IWorkload<Backend>, q10i_agg_row_t
 template <typename Backend>
 using HashQ10I   = ::tpch::HashStructure  <Q10IWorkload<Backend>, q10i_agg_row_t>;
 
+// S5: aCOLI pre-aggregated merged index → query_by_aggregated.
+template <typename Backend>
+using AggregatedQ10I = ::tpch::AggregatedStructure<Q10IWorkload<Backend>, q10i_agg_row_t>;
+
 }  // namespace tpch::q10i

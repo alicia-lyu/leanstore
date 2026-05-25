@@ -109,6 +109,10 @@ int main(int argc, char** argv)
    B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                     tpch::lineitem_acoli_t> acoli(rocks_db);
 
+   // S2 variant B (per-order preagg view) + S5 Q10I aCOLI MI (2-type).
+   B::Adapter<tpch::q10i::q10i_pipeline_view_preagg_t> pipeline_view_preagg(rocks_db);
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acoli_q10i_t> acoli_q10i(rocks_db);
+
    // Defensive wipe: if --ssd_path holds a prior DB, remove it before opening.
    {
       namespace fs = std::filesystem;
@@ -129,7 +133,8 @@ int main(int argc, char** argv)
 
    tpch::q10i::Q10IWorkload<B> q10i(tpch, customer, orders, lineitem, invoice,
                                      nation, pipeline_view, merged_coli,
-                                     split_orders, split_lineitem, split_invoice, acoli);
+                                     split_orders, split_lineitem, split_invoice, acoli,
+                                     pipeline_view_preagg, acoli_q10i);
 
    // Load base tables and populate ALL secondaries up front so all four
    // query_by_* paths see the same data.
@@ -139,7 +144,9 @@ int main(int argc, char** argv)
    std::cout << "=== Populating secondaries ===\n";
    q10i.coli_pipeline().populate_split();    // S1 splits
    q10i.coli_pipeline().populate_merged();   // S3 COLI MI
-   q10i.populate_q10i_view();                // S2 view (Pattern B)
+   q10i.populate_q10i_view();                // S2 view (Pattern B, per-lineitem)
+   q10i.populate_q10i_view_preagg();         // S2-B per-order pre-aggregated view
+   q10i.populate_q10i_acoli();               // S5 aCOLI MI
    // S4 needs no secondary.
 
    // ------------------------------------------------------------------
@@ -365,7 +372,7 @@ int main(int argc, char** argv)
    // ------------------------------------------------------------------
    // Run all four query_by_* paths (stubs at Phase 1 — digest 0x0).
 
-   std::cout << "\n=== Running queries (Phase 1: all stubs → digest 0x0) ===\n";
+   std::cout << "\n=== Running queries (all four query_by_* live) ===\n";
    std::vector<tpch::q10i::q10i_agg_row_t> r_base, r_view, r_merged, r_hash;
 
    q10i.query_by_base  (r_base);
@@ -411,10 +418,35 @@ int main(int argc, char** argv)
 
    bool parity_ok = ok_b && ok_v && ok_m && ok_h;
    if (parity_ok) {
-      std::cout << "[OK] parity (S1 ≡ S2 ≡ S3 ≡ S4 at digest 0x0)\n";
+      std::cout << "[OK] parity (S1 ≡ S2 ≡ S3 ≡ S4 at matching digest)\n";
    }
 
-   bool all_ok = stats_ok && parity_ok;
+   // ------------------------------------------------------------------
+   // S2-B (per-order preagg view) and S5 (aCOLI MI) A/B vs S3. Both must
+   // produce the identical digest; the preagg view + aCOLI bake per-order
+   // paid/open/late, the query reads them back date-filtered.
+   std::cout << "\n=== S2-B (preagg view) + S5 (aCOLI) vs S3 ===\n";
+   long n_view_preagg = count_typed(pipeline_view_preagg,
+                                    tpch::q10i::q10i_pipeline_view_preagg_t{});
+   std::cout << "[info] preagg view rows=" << n_view_preagg
+             << "  (per-lineitem view rows=" << n_view << ")\n";
+
+   FLAGS_q10i_view_variant = "preagg";
+   std::vector<tpch::q10i::q10i_agg_row_t> r_view_preagg;
+   q10i.query_by_view(r_view_preagg);
+   FLAGS_q10i_view_variant = "lineitem";
+   uint64_t d_view_preagg = digest_rows(r_view_preagg);
+   bool ok_vp = (d_view_preagg == ref) && (r_view_preagg.size() == r_merged.size());
+
+   std::vector<tpch::q10i::q10i_agg_row_t> r_agg;
+   q10i.query_by_aggregated(r_agg);
+   uint64_t d_agg = digest_rows(r_agg);
+   bool ok_s5 = (d_agg == ref) && (r_agg.size() == r_merged.size());
+
+   parity_line("S2-preagg", ok_vp, d_view_preagg);
+   parity_line("S5 aCOLI ", ok_s5, d_agg);
+
+   bool all_ok = stats_ok && parity_ok && ok_vp && ok_s5;
    if (!all_ok) {
       std::cerr << "\n[FAIL] One or more checks failed — see [FAIL] lines above.\n";
       return 1;

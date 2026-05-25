@@ -63,6 +63,11 @@ TPCH_FLAG_STRING(q10_view_variant, "lineitem",
                  "pre-aggregated view (returnflag baked at load, date live at query). "
                  "Both views live in one image; this selects which query_by_view reads. "
                  "Read only by the q10 query path; inert for other queries.");
+TPCH_FLAG_STRING(q10i_view_variant, "lineitem",
+                 "Q10I S2 view A/B: 'lineitem' = per-lineitem view (baseline); "
+                 "'preagg' = per-order pre-aggregated view (returnflag + i_status "
+                 "partition baked at load, date live at query). Both views live in one "
+                 "image; selects which query_by_view reads. Read only by the q10i path.");
 TPCH_FLAG_INT(skip_order_physical, -1,
               "Q10 S3 SkipOrder A/B (q10/PERFORMANCE.md): override the COL "
               "col_group_walk order-level skip strategy. -1 = default "

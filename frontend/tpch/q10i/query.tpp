@@ -19,8 +19,10 @@
 #include "../tpch_tables.hpp"
 #include "../tpch_family/walk_action.hpp"
 #include "../tpchi_family/coli_pipeline.hpp"
+#include "acoli_walk.tpp"  // S5 hand-rolled acoli_group_walk
 
 DECLARE_int32(storage_structure);
+DECLARE_string(q10i_view_variant);  // S2 A/B: "lineitem" (default) | "preagg"
 
 namespace tpch::q10i
 {
@@ -121,6 +123,12 @@ inline void q10i_pipeline_view_t::print(std::ostream& os) const
       << c_name          << '\t' << c_nationkey   << '\n';
 }
 
+inline void q10i_pipeline_view_preagg_t::print(std::ostream& os) const
+{
+   os << paid_returns << '\t' << open_returns << '\t' << late_returns << '\t'
+      << o_orderdate  << '\t' << c_name       << '\t' << c_nationkey  << '\n';
+}
+
 inline void q10i_agg_row_t::print(std::ostream& os) const
 {
    os << c_custkey    << '\t' << c_name      << '\t'
@@ -195,6 +203,95 @@ inline void drain_to_sink(
       sink.offer(std::move(row));
    }
 }
+
+// Q10IAcolVisitor — drives the hand-rolled acoli_group_walk over the S5 aCOLI
+// MI (customer_coli_t + orders_acoli_q10i_t). The per-order paid/open/late
+// returned revenue is BAKED at load, so this visitor has no on_lineitem /
+// on_invoice hook and no returnflag/i_status work: it snapshots the customer FD
+// cols, sums the baked buckets of in-window orders, and emits one row per
+// custkey group (NATION INL on PK, cached) into the bounded TopN sink. Same
+// per-customer finalisation as query_by_merged, minus the lineitem+invoice
+// levels — that is the efficiency point of the aCOLI.
+template <typename NationAdapter, typename Sink>
+struct Q10IAcolVisitor {
+   NationAdapter& nation;
+   Sink&          sink;
+   std::unordered_map<Integer, Varchar<25>>& nation_cache;
+   const Params&  params;
+   Q10IStats*     stats = nullptr;
+
+   // Per-group state (reset at on_group_end).
+   Integer      cur_custkey = 0;
+   Varchar<25>  c_name{};
+   Varchar<40>  c_address{};
+   Integer      c_nationkey = 0;
+   Varchar<15>  c_phone{};
+   Numeric      c_acctbal = 0;
+   Varchar<117> c_comment{};
+   bool         have_customer = false;
+   Numeric      paid = 0, open = 0, late = 0;
+
+   void on_record_visited() { if (stats) stats->mi_records_visited++; }
+
+   void on_customer(Integer ck, const customer_coli_t& c)
+   {
+      if (stats) stats->customers_scanned++;
+      cur_custkey   = ck;
+      c_name        = c.c_name;      c_address = c.c_address;
+      c_nationkey   = c.c_nationkey; c_phone   = c.c_phone;
+      c_acctbal     = c.c_acctbal;   c_comment = c.c_comment;
+      have_customer = true;
+      paid = open = late = Numeric{0};
+   }
+
+   void on_order(const orders_acoli_q10i_t::Key& /*k*/, const orders_acoli_q10i_t& o)
+   {
+      if (stats) stats->orders_scanned++;
+      // Order-granular date window (the only live filter — returnflag and the
+      // i_status partition are baked into the buckets at load).
+      if (o.o_orderdate < params.date_lo
+          || o.o_orderdate >= params.date_lo + 90) {
+         return;
+      }
+      if (stats) stats->orders_passing_date++;
+      paid += o.paid_returns;
+      open += o.open_returns;
+      late += o.late_returns;
+   }
+
+   void on_group_end(Integer /*ck*/)
+   {
+      const Numeric revenue = paid + open + late;
+      if (have_customer && revenue != Numeric{0}) {
+         if (stats) stats->aggregator_rows_out++;
+         Varchar<25> n_name{};
+         auto it = nation_cache.find(c_nationkey);
+         if (it != nation_cache.end()) {
+            n_name = it->second;
+         } else {
+            nation.lookup1(typename nation_t::Key{c_nationkey},
+                           [&](const nation_t& n) { n_name = n.n_name; });
+            nation_cache.emplace(c_nationkey, n_name);
+         }
+         q10i_agg_row_t row;
+         row.c_custkey    = cur_custkey;
+         row.revenue      = revenue;
+         row.c_name       = c_name;
+         row.c_acctbal    = c_acctbal;
+         row.n_name       = n_name;
+         row.c_address    = c_address;
+         row.c_phone      = c_phone;
+         row.c_comment    = c_comment;
+         row.paid_returns = paid;
+         row.open_returns = open;
+         row.late_returns = late;
+         sink.offer(std::move(row));
+      }
+      have_customer = false;
+      cur_custkey   = 0;
+      paid = open = late = Numeric{0};
+   }
+};
 
 }  // namespace q10i_detail
 
@@ -291,6 +388,41 @@ long Q10IWorkload<Backend>::query_by_base(std::vector<q10i_agg_row_t>& out)
 template <typename Backend>
 long Q10IWorkload<Backend>::query_by_view(std::vector<q10i_agg_row_t>& out)
 {
+   // S2 A/B dispatch. Variant B (per-order pre-aggregated view) is the *fair*
+   // S2 baseline; variant A (this body, below) is the per-lineitem view.
+   if (FLAGS_q10i_view_variant == "preagg") {
+      out.clear();
+      std::unordered_map<Integer, q10i_detail::CustBucket> by_cust;
+      const Timestamp date_lo = params.date_lo;
+      const Timestamp date_hi = params.date_lo + 90;
+      // Each row IS one order with paid/open/late baked: date-filter the order,
+      // add the three pre-summed buckets to its customer. No returnflag filter,
+      // no per-orderkey rollup (the D4 anomaly is gone).
+      auto sc = pipeline_view_preagg.getScanner();
+      while (auto kv = sc->next()) {
+         if (stats) stats->view_rows_scanned++;
+         const auto& v = kv->second;
+         if (v.o_orderdate < date_lo || v.o_orderdate >= date_hi) continue;
+         auto& b = by_cust[kv->first.custkey];
+         if (!b.cust_loaded) {
+            b.c_name      = v.c_name;      b.c_address = v.c_address;
+            b.c_nationkey = v.c_nationkey; b.c_phone   = v.c_phone;
+            b.c_acctbal   = v.c_acctbal;   b.c_comment = v.c_comment;
+            b.cust_loaded = true;
+         }
+         b.paid    += v.paid_returns;
+         b.open    += v.open_returns;
+         b.late    += v.late_returns;
+         b.revenue += v.paid_returns + v.open_returns + v.late_returns;
+      }
+      TopNSink<q10i_agg_row_t, decltype(&q10::q10_agg_row_t::cmp)>
+          sink(20, &q10::q10_agg_row_t::cmp);
+      q10i_detail::drain_to_sink(by_cust, nation, sink);
+      sink.drain_sorted(out);
+      return static_cast<long>(out.size());
+   }
+
+   // S2 variant A: per-lineitem view (the original D-chain).
    out.clear();
    std::unordered_map<Integer, q10i_detail::CustBucket> by_cust;
 
@@ -607,6 +739,33 @@ long Q10IWorkload<Backend>::query_by_hash(std::vector<q10i_agg_row_t>& out)
    TopNSink<q10i_agg_row_t, decltype(&q10::q10_agg_row_t::cmp)>
        sink(20, &q10::q10_agg_row_t::cmp);
    q10i_detail::drain_to_sink(by_cust, nation, sink);
+   sink.drain_sorted(out);
+   return static_cast<long>(out.size());
+}
+
+// ---------------------------------------------------------------------------
+// S5: hand-rolled acoli_group_walk over the aCOLI MI
+// (customer_coli_t + orders_acoli_q10i_t). Per-order paid/open/late returned
+// revenue is BAKED at load, so there are no lineitems/invoices to read and no
+// returnflag/i_status work — the walk snapshots the customer FD cols, sums the
+// baked buckets of in-window orders, and emits one row per custkey group
+// (NATION INL at on_group_end, bounded TopN(20)). The hand-rolled fused
+// raw-dispatch walk (no std::variant) is the whole point: Q3I's aCOLI generic
+// getScanner+std::visit is why its S5 lost to S3 (ACOL_ACOLI_PLAYBOOK §3).
+template <typename Backend>
+long Q10IWorkload<Backend>::query_by_aggregated(std::vector<q10i_agg_row_t>& out)
+{
+   out.clear();
+
+   using NationAdapterT = typename Backend::template Adapter<nation_t>;
+   using SinkT = TopNSink<q10i_agg_row_t, decltype(&q10::q10_agg_row_t::cmp)>;
+   SinkT sink(20, &q10::q10_agg_row_t::cmp);
+   std::unordered_map<Integer, Varchar<25>> nation_cache;  // ≤25 entries
+
+   q10i_detail::Q10IAcolVisitor<NationAdapterT, SinkT>
+       visitor{nation, sink, nation_cache, params, stats};
+   acoli_group_walk<Backend>(acoli_q10i, visitor);
+
    sink.drain_sorted(out);
    return static_cast<long>(out.size());
 }

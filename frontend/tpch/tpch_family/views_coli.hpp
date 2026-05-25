@@ -61,6 +61,7 @@ enum class coli_idx_id : u8 {
    invoice         = 3,
    customer_acoli  = 49,  // customer_acoli_t — carries pre_open_due
    lineitem_acoli  = 53,  // lineitem_acoli_t — no invoicekey segment
+   orders_acoli_q10i = 54,  // orders_acoli_q10i_t — Q10I per-order paid/open/late buckets
 };
 
 // ---------------------------------------------------------------------------
@@ -692,6 +693,86 @@ struct lineitem_acoli_t {
    }
 };
 
+// orders_acoli_q10i_t — pre-aggregated order record for the Q10I aCOLI MI (S5).
+//
+// The COLI analogue of orders_acol_t (Q10's aCOL, views_col.hpp): same
+// (custkey, orderkey) tagged key as orders_coli_t but a DISTINCT idx_id (54).
+// Payload bakes the per-order returned revenue SPLIT by the linked invoice's
+// payment status: {paid, open, late} = SUM(l_extendedprice*(1-l_discount))
+// over the order's l_returnflag='R' lineitems whose invoice i_status is
+// 'P'/'O'/'L'. Both l_returnflag='R' and the i_status partition are TPC-H spec
+// constants, so the three buckets are soundly bakeable; o_orderdate stays live
+// (the parameterised 3-month window filters here at query time).
+//
+// The aCOLI MI is MergedAdapter<customer_coli_t, orders_acoli_q10i_t> — NO
+// lineitem AND NO invoice level (both collapse into the per-order buckets at
+// load). Per custkey: 1 customer record + N order-agg records. Co-locates the
+// customer payload ONCE per customer (vs the per-order preagg VIEW which
+// duplicates it per order) and drops the lineitem+invoice bulk that makes S3
+// page-bound on btree.
+//
+// Key layout: [t=1][custkey:4][t=3][orderkey:4][t=0][idx=54]  = 12 B
+// (byte-compatible with orders_coli_t except the trailing idx byte).
+struct orders_acoli_q10i_t {
+   static constexpr int id = 54;
+
+   struct Key {
+      static constexpr int id = 54;
+
+      Integer custkey;
+      Integer orderkey;
+
+      using path = tagged_path<
+          coli_idx_id::orders_acoli_q10i,
+          tag_field_step<coli_domain_tag::customer, &Key::custkey>,
+          tag_field_step<coli_domain_tag::orders,   &Key::orderkey>>;
+
+      static constexpr unsigned maxFoldLength() { return path::maxFoldLength(); }
+
+      static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
+      static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
+
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
+      {
+         return key_len == maxFoldLength()
+             && key_bytes[key_len - 1] == static_cast<u8>(coli_idx_id::orders_acoli_q10i);
+      }
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& k)
+      {
+         return os << "orders_acoli_q10i_key(custkey=" << k.custkey
+                   << ",orderkey=" << k.orderkey << ")";
+      }
+   };
+
+   Timestamp o_orderdate;    // live — parameterised window filters here
+   Numeric   paid_returns;   // baked: SUM rev WHERE i_status='P' (returnflag='R')
+   Numeric   open_returns;   // baked: SUM rev WHERE i_status='O'
+   Numeric   late_returns;   // baked: SUM rev WHERE i_status='L'
+
+   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
+   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
+   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+   void print(std::ostream& os) const
+   {
+      os << "orders_acoli_q10i(orderdate=" << o_orderdate
+         << ",paid=" << paid_returns << ",open=" << open_returns
+         << ",late=" << late_returns << ")";
+   }
+
+   friend std::ostream& operator<<(std::ostream& os, const orders_acoli_q10i_t& r)
+   {
+      r.print(os);
+      return os;
+   }
+
+   static Key key_from_base(Integer custkey, Integer orderkey)
+   {
+      return Key{custkey, orderkey};
+   }
+};
+
 // Note: customer_acoli_q3i_t (id=51) and orders_acoli_q3i_t (id=52) —
 // the Q3I-projected aCOLI pair — were retired 2026-05-03.  They embedded
 // pre_revenue (parameterised by l_shipdate) and were never wired into
@@ -955,5 +1036,40 @@ struct SKMatcher<tpch::invoice_coli_t, tpch::lineitem_coli_t> {
                     const tpch::lineitem_coli_t::Key& b, const tpch::lineitem_coli_t&)
    {
       return -SKMatcher<tpch::lineitem_coli_t, tpch::invoice_coli_t>::match(b, {}, a, {});
+   }
+};
+
+// ---------------------------------------------------------------------------
+// SKMatcher specializations for the Q10I aCOLI MI
+// (customer_coli_t + orders_acoli_q10i_t). customer_coli_t's self-pair already
+// exists above; orders_acoli_q10i_t is the only new co-resident type.
+
+template <>
+struct SKMatcher<tpch::orders_acoli_q10i_t, tpch::orders_acoli_q10i_t> {
+   static int match(const tpch::orders_acoli_q10i_t::Key& a, const tpch::orders_acoli_q10i_t&,
+                    const tpch::orders_acoli_q10i_t::Key& b, const tpch::orders_acoli_q10i_t&)
+   {
+      if (a.custkey  != b.custkey)  return a.custkey  < b.custkey  ? -1 : 1;
+      if (a.orderkey != b.orderkey) return a.orderkey < b.orderkey ? -1 : 1;
+      return 0;
+   }
+};
+
+template <>
+struct SKMatcher<tpch::customer_coli_t, tpch::orders_acoli_q10i_t> {
+   static int match(const tpch::customer_coli_t::Key&     a, const tpch::customer_coli_t&,
+                    const tpch::orders_acoli_q10i_t::Key& b, const tpch::orders_acoli_q10i_t&)
+   {
+      if (a.custkey != b.custkey) return a.custkey < b.custkey ? -1 : 1;
+      return 0;
+   }
+};
+
+template <>
+struct SKMatcher<tpch::orders_acoli_q10i_t, tpch::customer_coli_t> {
+   static int match(const tpch::orders_acoli_q10i_t::Key& a, const tpch::orders_acoli_q10i_t&,
+                    const tpch::customer_coli_t::Key&     b, const tpch::customer_coli_t&)
+   {
+      return -SKMatcher<tpch::customer_coli_t, tpch::orders_acoli_q10i_t>::match(b, {}, a, {});
    }
 };

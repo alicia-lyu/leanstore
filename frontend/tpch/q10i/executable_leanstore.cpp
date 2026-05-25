@@ -60,6 +60,10 @@ int main(int argc, char** argv)
    B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                     tpch::lineitem_acoli_t> acoli;
 
+   // S2 variant B (per-order preagg view) + S5 Q10I aCOLI MI (2-type).
+   B::Adapter<tpch::q10i::q10i_pipeline_view_preagg_t> q10i_view_preagg;
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acoli_q10i_t> acoli_q10i;
+
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
       part           = B::Adapter<part_t>(db, "part");
@@ -79,6 +83,8 @@ int main(int argc, char** argv)
       split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "coli_split_invoice");
       acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_coli_t,
                                         tpch::lineitem_acoli_t>(db, "coli_acoli");
+      q10i_view_preagg = B::Adapter<tpch::q10i::q10i_pipeline_view_preagg_t>(db, "q10i_pipeline_view_preagg");
+      acoli_q10i     = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acoli_q10i_t>(db, "q10i_acoli_merged");
    });
 
    LeanStoreLogger logger(db);
@@ -87,7 +93,7 @@ int main(int argc, char** argv)
    tpch::q10i::Q10IWorkload<B> q10i(tpch, customer, orders, lineitem, invoice,
                                      nation, q10i_view, merged_coli,
                                      split_orders, split_lineitem, split_invoice,
-                                     acoli);
+                                     acoli, q10i_view_preagg, acoli_q10i);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
@@ -126,6 +132,13 @@ int main(int argc, char** argv)
          tpch::q10i::HashQ10I<B> w{q10i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(
              crm, std::move(w), tpch, "base_hash_join");
+         helper.run();
+         break;
+      }
+      case 5: {
+         tpch::q10i::AggregatedQ10I<B> w{q10i};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(
+             crm, std::move(w), tpch, "mi_acoli_preagg");
          helper.run();
          break;
       }
