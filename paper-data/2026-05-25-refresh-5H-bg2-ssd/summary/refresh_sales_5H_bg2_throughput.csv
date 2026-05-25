@@ -1,0 +1,9 @@
+binary,backend,cell,scale,dram_gib,bg,structure,struct_label,total_rf1,total_rf2,bg_txs,elapsed_s,n_rows,rf1_tps,rf2_tps,pair_tps,pair_tps_tail30,commit,host
+refresh_sales_btree,btree,c3,1550,0.4,2,1,split_S1,60483,60483,2,90.00,60483,672.0,672.0,672.0,700.0,05e5bf98,c220g2-011011.wisc.cloudlab.us
+refresh_sales_btree,btree,c3,1550,0.4,2,2,view_S2,40569,40569,148721,90.00,40569,450.8,450.8,450.8,516.7,05e5bf98,c220g2-011011.wisc.cloudlab.us
+refresh_sales_btree,btree,c3,1550,0.4,2,3,merged_S3,74053,74053,184425,90.00,74053,822.8,822.8,822.8,931.6,05e5bf98,c220g2-011011.wisc.cloudlab.us
+refresh_sales_btree,btree,c3,1550,0.4,2,4,base_S4,98567,98567,2,90.00,98567,1095.2,1095.2,1095.2,808.9,05e5bf98,c220g2-011011.wisc.cloudlab.us
+refresh_sales_lsm,lsm,c3,3850,0.4,2,1,split_S1,84078,84078,201785,90.00,84078,934.2,934.2,934.2,937.2,05e5bf98,c220g2-011011.wisc.cloudlab.us
+refresh_sales_lsm,lsm,c3,3850,0.4,2,2,view_S2,73422,73422,232668,90.00,73422,815.8,815.8,815.8,810.7,05e5bf98,c220g2-011011.wisc.cloudlab.us
+refresh_sales_lsm,lsm,c3,3850,0.4,2,3,merged_S3,89664,89664,250707,90.00,89664,996.3,996.3,996.3,983.1,05e5bf98,c220g2-011011.wisc.cloudlab.us
+refresh_sales_lsm,lsm,c3,3850,0.4,2,4,base_S4,102031,102031,2,90.00,102031,1133.7,1133.7,1133.7,986.9,05e5bf98,c220g2-011011.wisc.cloudlab.us

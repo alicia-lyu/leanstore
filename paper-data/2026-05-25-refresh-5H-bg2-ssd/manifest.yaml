@@ -1,0 +1,16 @@
+tag: 2026-05-25-refresh-5H-bg2-ssd
+experiment: refresh_sales (TPC-H RF1/RF2 update throughput) — 5H cell (c3) — bg=2 HTAP contention — REAL SSD
+commit_sha: 05e5bf98
+host: c220g2-011011.wisc.cloudlab.us
+disk: ssd (Intel DC S3500 480GB SATA)
+cell: c3 (5H = ~5 GiB secondaries, DRAM 0.4 GiB)
+bg: 2 (--bg_query_thread=true --bg_point_lookups=true; concurrent Q3/Q5 family reads + random base-table point lookups at the same storage_structure)
+scale_factor: {btree: 1550, lsm: 3850}
+dram_gib: 0.4
+refresh_seconds: 90
+update_size: 1
+backends: btree, lsm
+structures: {1: split_S1, 2: view_S2, 3: merged_S3, 4: base_S4}
+metric: count-based throughput over actual elapsed; pair_tps = #iterations/elapsed (size-stable RF1+RF2 pair); RF2 does NOT exhaust at this scale. bg_txs = read TXs the cohort completed during the same window (achieved contention level).
+source_image: recovered from existing tpch family image (shared adapter names) on a per-structure copy; canonical read images untouched. OS page cache dropped between copy and run.
+note: foreground RF loop runs on MAIN_WORKER, the bg cohort on BG_WORKER (CRMG per-worker mutex — no slot contention). Both engines use direct I/O (RocksDB use_direct_reads=true; LeanStore O_DIRECT).

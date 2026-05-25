@@ -41,6 +41,41 @@ the paper harness (q10/q10i added to `analyze_paper_sweep.py` + `sweep.yaml`),
 `param_seed=0`, c0 5L, both backends — then dropping the bg relabel and
 regenerating `q10.pdf` from genuine bg=2 data. ~80 h; checkpoints pushed.
 
+## Done: tags `2026-05-25-refresh-{5L,5H,5HH}-bg2-ssd` — refresh_sales bg=2 HTAP contention (SSD)
+
+commit `05e5bf98`, host `c220g2-011011`. `build/scratch/run_refresh_bg2_ssd.sh
+<cell>` + `summarize_refresh_bg2_ssd.sh`. **Adds the bg=2 axis to the refresh
+experiment** (new wiring `d4e06bfb`: a concurrent Q3/Q5 + point-lookup read
+cohort on BG_WORKER while RF1/RF2 runs on MAIN_WORKER), aligning refresh with
+the paper-wide bg=2 standard. Three cells, same SF (1550 btree / 3850 lsm,
+~5 GiB secondaries) + per-structure-copy + drop-caches mechanics; only the
+buffer pool varies: **5L** c0 DRAM 1.0, **5H** c3 DRAM 0.4, **5HH** c4 DRAM 0.1
+(new, highest pressure). S1–S4 both backends, 90s, isolated, single-rep
+(matches prior refresh cadence; 3-rep is a follow-up to fully match the query
+harness). `pair_tps` metric (RF2 doesn't exhaust). All 24 runs exit 0.
+
+**Findings (pair_tps).** btree (1.0/0.4/0.1): S1 995/672/528, S2 520/451/322,
+S3 1157/823/679, S4 1688/1095/939. lsm (1.0/0.4/0.1): S1 993/934/938,
+S2 809/816/765, S3 986/996/886, S4 1100/1134/1091.
+- **§5.4 ordering survives bg=2**: within each backend S3 ≥ S1 > S2, S4 the
+  no-maintenance ceiling — the merged index still maintains at/above split,
+  both above the view, under read contention.
+- **LSM is contention-robust, btree is not.** vs the bg=0 5L baseline, bg=2
+  costs lsm only ~14% (≈0.86× across S1–S4) but btree ~30%, and **btree S4
+  collapses 0.31×** (5531→1688): the cohort's heavy hash-join queries scan the
+  *same* base tables S4 uses, so its bg=0 ceiling lead largely evaporates.
+- **Memory pressure compounds (5L→5HH, bg=2)**: btree degrades ~0.5× (S3
+  1157→679, S1 995→528) while **lsm stays flat ~0.9–1.0×** (S3 986→886, S1
+  993→938) — same write-path-is-buffer-pool-independent story as bg=0.
+- **At 5HH (extreme pressure + contention) LSM beats btree on every
+  structure**, including base: lsm S4 1091 > btree S4 939, S1 938 vs 528,
+  S2 765 vs 322, S3 886 vs 679.
+- **`bg_txs` caveat**: at S4 (all cells) and btree S1 (5H/5HH) the cohort
+  un-rotates to **2** heavy cold scans that eat the 90s window before the cheap
+  point-lookup step is picked (time-balanced picker, single bg worker — same as
+  the read binaries). A *low* `bg_txs` there = *heaviest* contention, not light;
+  the count understates pressure. S1–S3 elsewhere rotate to 80k–254k.
+
 ## Done: tag `2026-05-24-refresh-5H-ssd` — refresh_sales memory-pressure A/B (SSD)
 
 **Re-run 2026-05-25**, commit `83240c0a`, host `c220g2-011011`.
