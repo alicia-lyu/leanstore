@@ -12,6 +12,7 @@
 // helpers below; q3.maintain_rf1 + q5.maintain_rf1 are no-ops unless
 // --storage_structure=2, in which case each maintains its own pipeline view.
 
+#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -211,6 +212,46 @@ int main(int argc, char** argv)
 
    tpch::RefreshState<B::Adapter> refresh(tpch);
 
+   // bg=2 contention cohort (optional). A separate OS thread cycles the Q3/Q5
+   // family queries (+ random base-table point lookups when --bg_point_lookups)
+   // at the same --storage_structure, mirroring the read binaries'
+   // TpchExecutableHelper bg loop. RocksDB::txn is thread_local, so the bg
+   // thread's read transactions are independent of the foreground RF writes on
+   // main. bg results are discarded — this is a contention axis, not a parity
+   // check.
+   RocksDBTraits db_traits(rocks_db);
+   std::atomic<bool> keep_running = true;
+   std::atomic<long> bg_count = 0;
+   std::vector<tpch::BgStepFn> bg_steps =
+       FLAGS_bg_query_thread
+           ? tpch::register_vanilla_bg_steps<B>(db_traits, tpch, q3, q5,
+                                                 FLAGS_storage_structure,
+                                                 FLAGS_bg_point_lookups)
+           : std::vector<tpch::BgStepFn>{};
+   std::thread bg_thread;
+   if (FLAGS_bg_query_thread) {
+      std::cout << "  (--bg_query_thread=true: bg cohort of " << bg_steps.size()
+                << " steps, point_lookups=" << FLAGS_bg_point_lookups << ")\n";
+      bg_thread = std::thread([&]() {
+         std::vector<double> step_elapsed(bg_steps.size(), 0.0);
+         while (keep_running.load()) {
+            jumpmuTry()
+            {
+               size_t pick = 0;
+               for (size_t i = 1; i < step_elapsed.size(); ++i)
+                  if (step_elapsed[i] < step_elapsed[pick]) pick = i;
+               auto s = std::chrono::steady_clock::now();
+               bg_steps[pick]();
+               step_elapsed[pick] += std::chrono::duration<double>(
+                                         std::chrono::steady_clock::now() - s).count();
+               bg_count++;
+            }
+            jumpmuCatchNoPrint() { db_traits.rollback_tx(BG_WORKER); }
+         }
+         db_traits.cleanup_thread(BG_WORKER);
+      });
+   }
+
    const auto t_start = std::chrono::steady_clock::now();
    const auto deadline = t_start + std::chrono::seconds(FLAGS_refresh_seconds);
 
@@ -252,9 +293,16 @@ int main(int argc, char** argv)
       csv << elapsed_s << "," << rf1_rate << "," << rf2_rate << "," << pair_rate << "\n";
    }
 
+   // Foreground deadline reached — stop and join the bg cohort.
+   keep_running = false;
+   if (bg_thread.joinable()) bg_thread.join();
+
    std::cout << "refresh_sales done — total RF1=" << total_rf1
              << " RF2=" << total_rf2
              << " over " << FLAGS_refresh_seconds << "s"
-             << " (storage_structure=" << FLAGS_storage_structure << ")\n";
+             << " (storage_structure=" << FLAGS_storage_structure << ")";
+   if (FLAGS_bg_query_thread)
+      std::cout << " | bg_query_thread: " << bg_count.load() << " bg TXs";
+   std::cout << "\n";
    return 0;
 }

@@ -4,9 +4,11 @@
 // the RF1+RF2 refresh pair, not a read-query helper. See
 // refresh_sales/executable_rocksdb.cpp for the RF1/RF2 design notes.
 
+#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <iostream>
+#include <thread>
 
 #include <gflags/gflags.h>
 
@@ -226,8 +228,54 @@ int main(int argc, char** argv)
 
    tpch::RefreshState<B::Adapter> refresh(tpch);
 
+   // bg=2 contention cohort (optional). A concurrent read-only worker on
+   // BG_WORKER cycles the Q3/Q5 family queries (+ random base-table point
+   // lookups when --bg_point_lookups) at the same --storage_structure,
+   // mirroring the read binaries' TpchExecutableHelper bg loop. The foreground
+   // RF loop runs on MAIN_WORKER so the two CRM workers never contend for the
+   // same per-worker slot (CRMG.hpp: one mutex/cv/job per worker). bg results
+   // are discarded — this is a contention axis, not a parity check.
+   LeanStoreTraits db_traits(crm);
+   std::atomic<bool> keep_running = true;
+   std::atomic<long> bg_count = 0;
+   std::vector<tpch::BgStepFn> bg_steps =
+       FLAGS_bg_query_thread
+           ? tpch::register_vanilla_bg_steps<B>(db_traits, tpch, q3, q5,
+                                                 FLAGS_storage_structure,
+                                                 FLAGS_bg_point_lookups)
+           : std::vector<tpch::BgStepFn>{};
+   std::thread bg_thread;
+   if (FLAGS_bg_query_thread) {
+      std::cout << "  (--bg_query_thread=true: bg cohort of " << bg_steps.size()
+                << " steps on BG_WORKER, point_lookups="
+                << FLAGS_bg_point_lookups << ")\n";
+      bg_thread = std::thread([&]() {
+         // Time-balanced step pick: always run the step with the smallest
+         // cumulative elapsed time, so heterogeneous step costs stay ~1:1.
+         std::vector<double> step_elapsed(bg_steps.size(), 0.0);
+         while (keep_running.load()) {
+            jumpmuTry()
+            {
+               size_t pick = 0;
+               for (size_t i = 1; i < step_elapsed.size(); ++i)
+                  if (step_elapsed[i] < step_elapsed[pick]) pick = i;
+               auto s = std::chrono::steady_clock::now();
+               bg_steps[pick]();
+               step_elapsed[pick] += std::chrono::duration<double>(
+                                         std::chrono::steady_clock::now() - s).count();
+               bg_count++;
+            }
+            jumpmuCatchNoPrint() { db_traits.rollback_tx(BG_WORKER); }
+         }
+         db_traits.cleanup_thread(BG_WORKER);
+      });
+   }
+
+   // With bg on, the foreground takes MAIN_WORKER so BG_WORKER (0) is free for
+   // the cohort; with bg off, stay on worker 0 (byte-identical to prior runs).
+   const u64 fg_worker = FLAGS_bg_query_thread ? MAIN_WORKER : 0;
    long total_rf1 = 0, total_rf2 = 0;
-   crm.scheduleJobSync(0, [&]() {
+   crm.scheduleJobSync(fg_worker, [&]() {
       const auto t_start  = std::chrono::steady_clock::now();
       const auto deadline = t_start + std::chrono::seconds(FLAGS_refresh_seconds);
       std::ofstream csv("RefreshTPut.s" + std::to_string(FLAGS_storage_structure) + ".csv");
@@ -271,10 +319,17 @@ int main(int argc, char** argv)
       }
    });
 
+   // Foreground deadline reached — stop and join the bg cohort.
+   keep_running = false;
+   if (bg_thread.joinable()) bg_thread.join();
+
    std::cout << "refresh_sales done — total RF1=" << total_rf1
              << " RF2=" << total_rf2
              << " over " << FLAGS_refresh_seconds << "s"
-             << " (storage_structure=" << FLAGS_storage_structure << ")\n";
+             << " (storage_structure=" << FLAGS_storage_structure << ")";
+   if (FLAGS_bg_query_thread)
+      std::cout << " | bg_query_thread: " << bg_count.load() << " bg TXs";
+   std::cout << "\n";
    return 0;
 }
 
