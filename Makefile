@@ -53,6 +53,10 @@ use_seek_skip ?= -1
 # Q10 perf-investigation: print per-query Q10Stats cardinality counters to the
 # structure log after each run (q10_{lsm,btree} only). Default off.
 q10_stats ?= false
+# Q10 S2 view A/B: lineitem (per-lineitem, baseline) | preagg (per-order).
+q10_view_variant ?= lineitem
+# Q10 S3 SkipOrder A/B: -1=default (logical iterate), 0=logical, 1=physical seek.
+skip_order_physical ?= -1
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
