@@ -460,7 +460,7 @@ class Experiment:
             if self.exec_fname.startswith("geo_"):
                 diag_flags = ""
             else:
-                diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant) --use_seek_skip=$(use_seek_skip)"
+                diag_flags = "--micro_perf=$(micro_perf) --cfstats=$(cfstats) --coli_walker_variant=$(coli_walker_variant) --use_seek_skip=$(use_seek_skip) --param_seed=$(param_seed)"
                 # --q10_stats is declared only by the q10 executables.
                 # --q10_view_variant / --skip_order_physical are declared in
                 # tpch_flags.hpp (all tpch binaries) but only acted on by q10;

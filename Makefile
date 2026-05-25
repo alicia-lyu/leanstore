@@ -59,6 +59,12 @@ q10_view_variant ?= lineitem
 q10i_view_variant ?= lineitem
 # Q10 S3 SkipOrder A/B: -1=default (logical iterate), 0=logical, 1=physical seek.
 skip_order_physical ?= -1
+# Substitution-parameter rotation offset (all tpch per-query binaries).
+# 0 (default) = historical behaviour: every run uses PARAM_TABLE[0], the
+# validation default. The paper sweep passes a per-rep value (identical
+# across the four storage structures) so the 3 reps sample 3 distinct
+# parameters without introducing a head-to-head bias. See tpch_flags.hpp.
+param_seed ?= 0
 
 # A one‑off check we always do before building any binary
 .PHONY: check_perf_event_paranoid
