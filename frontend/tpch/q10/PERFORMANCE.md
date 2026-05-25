@@ -38,11 +38,13 @@ Both anomalies are explained and one is fully fixed:
   predicate, so the COL walker's only prune is order-level (`SkipOrder`), which
   forward-iterates each date-failing order's co-located lineitems. The
   **physical SkipOrder seek** (variant B) cuts records-visited ~4× (CPU) but
-  **does not** close the wall-time gap on btree: the regime is page-bound and
-  the ~4-lineitem orders are sub-page-sized, so the seek skips *decoding* the
-  lineitems but not *reading* the leaf pages they share with the next order.
-  **This is a citable lesson, not a bug: COL-MI co-location is a btree
-  liability when the only prune is below the co-location grain.**
+  **does not** close the wall-time gap on btree (5L: 35.0→36.1 s, R MiB
+  unchanged at 1016): the regime is page-bound and the ~4-lineitem orders are
+  sub-page-sized, so the seek skips *decoding* the lineitems but not *reading*
+  the leaf pages they share with the next order. **On LSM the same seek is a
+  clean +9% (11.1→10.1 s)** with no regression — so it is a real win there, just
+  not on btree. **The citable lesson: COL-MI co-location is a btree liability
+  when the only prune is below the co-location grain.**
 
 ### Iteration cell (btree, SF=150, dram=0.1) — measured
 
@@ -63,13 +65,55 @@ Both anomalies are explained and one is fully fixed:
   wall-time 1,011 → 986 ms (−2.5%). Page-bound; seek can't skip sub-page-sized
   orders' pages.
 
-### 5L confirmation (both backends) — *pending sweep*
+### 5L confirmation — measured (both backends, dram=1.0; RUNS.md 2026-05-25)
 
-> Filled from `build/scratch/q10_5L_sweep.sh` output once it lands; logged in
-> `RUNS.md`. Expected: S2-B collapses the 174 s btree S2 toward S1/S3 levels;
-> S3-B trims btree S3 CPU but leaves the page-bound gap; LSM S3 stays the
-> winner (S3-B neutral-or-better — the macOS "Seek kills prefetch" finding was
-> refuted on Linux, `backend.hpp`).
+**btree, SF=1550** (R/Evicted MiB from the fixed BM counters):
+
+| structure | ms/query | R MiB/q | Evicted MiB/q | mi_visited |
+|---|--:|--:|--:|--:|
+| S1 base | 18,652 | 554 | 0 | — |
+| **S2-A** per-lineitem | **175,506** | 5,276 | 4,386 | — |
+| **S2-B** per-order preagg | **17,435** | 520 | **0** | — |
+| S3-A logical | 35,024 | 1,016 | 125 | 11.86M |
+| S3-B physical | 36,116 | **1,016** | 125 | 2.90M |
+| S4 hash | 126,280 | 3,757 | 2,866 | — |
+
+**LSM, SF=3850** (ms/query; RocksDB logger has no per-window R MiB):
+
+| structure | ms/query | mi_visited |
+|---|--:|--:|
+| S1 base | 14,400 | — |
+| S2-A per-lineitem | 17,209 | — |
+| **S2-B** per-order preagg | **1,658** | — |
+| S3-A logical | 11,110 | 29.46M |
+| **S3-B** physical | **10,110** | 7.22M |
+| S4 hash | 77,569 | — |
+
+- **S2-B** confirms the fix at scale: btree 175.5 s → **17.4 s (10×, 0
+  evictions** — the preagg view ~fits the 1 GiB pool, R MiB 520 < S1's 554),
+  now ≈ S1 and beats S3; LSM 17.2 s → **1.66 s (10.4×)**, the fastest
+  structure on either backend. The "S2 regression" was the per-lineitem view
+  design, full stop.
+- **S3-B** confirms the finding: btree `mi_records_visited` 11.86M → 2.90M
+  (4.1× fewer, the seek works) but **R MiB is identical (1016 → 1016)** and
+  wall-time is *neutral-to-worse* (35.0 → 36.1 s) — page-bound, IO unchanged,
+  the gap does not close. **On LSM the same seek is a clean +9% (11.1 → 10.1
+  s)** with `mi_visited` 29.46M → 7.22M and **no regression** — the macOS
+  "Seek invalidates RocksDB prefetch (5×)" finding stays refuted on Linux.
+
+### 5L ordering (best→worst)
+
+- **btree**: S2-B (17.4) ≈ S1 (18.7) < S3 (35) ≪ S4 (126) < S2-A (175.5)
+- **LSM**: S2-B (1.66) ≪ S3-B (10.1) < S3-A (11.1) < S1 (14.4) < S2-A (17.2) ≪ S4 (77.6)
+
+On Q10 the **pre-aggregated materialised view (S2-B) is the query-time winner
+on both backends** — the COL-MI (S3) has no query-time advantage here (loses to
+S1 on btree, to S2-B on both). Q10 is the **boundary case** of the MI thesis:
+its only prune is below the co-location grain, so co-location is paid for but
+not exploited. Combined with Q3I/Q5I (customer-level prune → S3 wins), Q10
+delineates *when* a COL-MI helps. The recommended LSM config enables
+`--skip_order_physical=1` for the free +9% on S3 (default left logical to
+preserve Q3/Q5 behaviour until validated there — see §4).
 
 ---
 
