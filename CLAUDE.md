@@ -88,10 +88,14 @@ and hash (S4) baselines. S5 (aCOLI MI with `pre_open_due` baked at load time)
 is implemented and parity-verified but **deferred from the paper sweep**
 across all queries — see `frontend/tpch/PLAYBOOK.md §S5` for rationale (S3 >
 S5 anomaly traced to S5 lacking the hand-tuned COLI walker; closing it is
-infrastructure work, not per-query). Production `q3i_lsm` / `q3i_btree`
-targets are wired into CMake and `generate_targets.py`. Q5I and Q10I are
-design-doc only. See `frontend/tpch/q3i/CLAUDE.md §Implementation Phases` for
-full detail.
+infrastructure work, not per-query). Q3I / Q5I / Q10I targets are wired into
+CMake and `generate_targets.py`. Q3I and Q5I are production on `main`; Q10I
+is **Phase 4 complete on worktree branch
+`worktree-agent-a86745538133069de`** — parity-verified at SF=1/5/10, but
+paper-deferred merge per Q10I E1 (the `lineitem_coli_t` widening invalidates
+Q3I/Q5I persisted images on `main`). See
+`frontend/tpch/q3i/CLAUDE.md §Implementation Phases` and
+`frontend/tpch/q10i/CLAUDE.md §Status` for full detail.
 
 ### TPC-H Q12 Implementation (In Progress)
 
