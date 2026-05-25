@@ -17,6 +17,26 @@ need consolidating.
 
 ## Runs
 
+### 2026-05-25 01:16 UTC — first Linux 5L perf sweep (both backends)
+- **Commit**: `8aac715a` (`calcite-integration`), host `c220g2-011011` (Linux)
+- **TPut.csv**: `build/q10_lsm/TPut.csv` (SF=3850) + `build/q10_btree/TPut.csv` (SF=1550)
+- **Config**: 5L cell (c0) — DRAM=1.0 GiB, structures=1+2+3+4, SF=3850 (lsm) /
+  1550 (btree), isolated (bg=0), `tx_seconds=15` (each Q10 query runs to
+  completion past the budget). Fresh `q10.load()` at both scales (the S2
+  `q10_view` is not in the shared q3/q5 images). Parity gate green first at
+  SF=1: `test_query_q10_lsm` (iter0 `0xe8eb…`, iter1 `0xc6a7…`) and
+  `test_query_q10_btree` (iter0 `0xa0c7…`, iter1 `0xe78c…`; the leanstore test
+  needs `--wal=true --trunc=true`), strict 4-way XOR parity, 20 rows.
+- **ms/query** (lower=better): **LSM** S3 11,326 < S1 16,059 < S2 17,169 ≪ S4
+  77,989; **btree** S1 23,535 < S3 35,262 ≪ S4 127,486 < S2 174,260.
+- **Claim check**: **supports** the §3.1.3 hierarchical-prefix COL-MI thesis —
+  **S3 ≥ S2 and S3 ≫ S4 on both backends** (btree S3 beats the 8.6 GiB view
+  ~5×; both ≫ hash). S3 wins outright on LSM; on btree the dense
+  custkey-sorted split S1 edges S3 while both crush S2/S4. No q3i-style S2>S3
+  anomaly (Q10 is vanilla COL, no invoice sibling). 31 benign
+  `turnPage→gotoPage` fallbacks during btree S3 under page pressure; query
+  completed clean (exit 0), S3 correctness already pinned by the SF=1 parity gate.
+
 ### 2026-05-24 — Phase 5 complete (correctness-only, macOS SF=1)
 - **Commit**: Phase 5 commit 1 (`calcite-integration`)
 - **TPut.csv**: not produced — macOS correctness check only
