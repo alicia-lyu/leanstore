@@ -15,6 +15,13 @@ struct LeanStoreLogger : public Logger {
 
    std::vector<leanstore::profiling::ProfilingTable*> tables;
 
+   // Window-START absolute snapshots of the buffer-manager IO counters,
+   // captured at reset(). The bm counters are absolute-cumulative, so a
+   // per-window figure requires (end - start). The base Logger::log() only
+   // advances cpu+configs at window end, so summarize_other_stats() must
+   // advance bm itself and subtract these. See the .cpp.
+   double bm_r_mib_start = 0, bm_w_mib_start = 0, bm_evicted_mib_start = 0;
+
    LeanStoreLogger(leanstore::LeanStore& db)
        : bm_table(*db.buffer_manager.get()), dt_table(*db.buffer_manager.get()), tables({&bm_table, &dt_table, &cpu_table, &cr_table})
    {
@@ -38,6 +45,11 @@ struct LeanStoreLogger : public Logger {
       for (auto& t : tables) {
          t->next();
       }
+      // bm_table.next() just refreshed the absolute counters; snapshot them
+      // as the window start so summarize_other_stats() can report the delta.
+      bm_r_mib_start = std::stod(bm_table.get("0", "r_mib"));
+      bm_w_mib_start = std::stod(bm_table.get("0", "w_mib"));
+      bm_evicted_mib_start = std::stod(bm_table.get("0", "evicted_mib"));
    }
 
    void log_details() override

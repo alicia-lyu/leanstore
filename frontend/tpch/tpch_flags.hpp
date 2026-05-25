@@ -57,6 +57,19 @@ TPCH_FLAG_INT(use_seek_skip, -1,
               "Override Backend::USE_PHYSICAL_SEEK_SKIP at runtime: "
               "-1 = use trait (default), 0 = force off, 1 = force on. "
               "A3-Linux re-A/B (q3i/PERFORMANCE.md §3 A3 RocksDB re-open).");
+TPCH_FLAG_STRING(q10_view_variant, "lineitem",
+                 "Q10 S2 view A/B (q10/PERFORMANCE.md): 'lineitem' = per-lineitem "
+                 "view + D4 drain-time date filter (baseline); 'preagg' = per-order "
+                 "pre-aggregated view (returnflag baked at load, date live at query). "
+                 "Both views live in one image; this selects which query_by_view reads. "
+                 "Read only by the q10 query path; inert for other queries.");
+TPCH_FLAG_INT(skip_order_physical, -1,
+              "Q10 S3 SkipOrder A/B (q10/PERFORMANCE.md): override the COL "
+              "col_group_walk order-level skip strategy. -1 = default "
+              "(logical forward-iterate, current behaviour on both backends), "
+              "0 = force logical, 1 = force physical seek to the next order. "
+              "Physical seek skips a date-failing order's co-located lineitems "
+              "instead of decoding them; A/B'd on both backends.");
 // acoli_projected flag retired 2026-05-03 alongside customer_acoli_q3i_t /
 // orders_acoli_q3i_t (ids 51/52).  The projected aCOLI variant embedded
 // pre_revenue (parameterised by l_shipdate) and was never wired into

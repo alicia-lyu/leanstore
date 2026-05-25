@@ -288,3 +288,69 @@ project and stays in [`LINUX_PENDING.md`](LINUX_PENDING.md).
   `Varchar<25>` and converted at the two call sites
   (`q5/load.tpp` emit, `q5/query.tpp` S2 scan). SF=1 / SF=5
   parity verified post-fix on both backends.
+
+## Closed by 2026-05-24 — DBToaster baseline (Phase 0)
+
+- **DBToaster RF1/RF2 baseline (`dbtoaster/`): Phase 0 install + build +
+  sweep** (was Active in [`LINUX_PENDING.md`](LINUX_PENDING.md), 2026-05-24).
+  All Phase-0 sub-items landed:
+  - **Install** (`LINUX_SETUP.md §6`): DBToaster 2.3 at `/opt/dbtoaster`,
+    `openjdk-11`, tpch-dbgen — done on `c220g2-011011`.
+  - **Codegen + harness**: `make refresh_sales.hpp` compiles
+    `refresh_sales.sql` (the Q3 and Q5 pipeline-view `SELECT`s) to C++ via
+    the DBToaster compiler; `main.cpp` is complete — it streams base+RF1
+    inserts through `process_stream_event`, fires typed `on_delete_ORDERS` /
+    `on_delete_LINEITEM` triggers for RF2, and has an `RF_INTERLEAVE` mode that
+    replays RF1/RF2 as size-stable pairs. Built to `dbtoaster/build/refresh_sales`.
+  - **Measured** (results in `dbtoaster/results/`): interleaved size-stable
+    pairs **33.2k pairs/s** (66.4k order-events/s; commit `df63c5cb`) at the
+    ~5 GiB working-set anchor (`SF≈0.36`, pinned by extrapolating VmRSS from
+    SF 0.01/0.1). VmRSS ≈ 5.0 GiB after warmup, ≈ 8.25 GiB peak (~1.7×).
+  - **Correctness**: the two maintained views (`QUERY_1`/`QUERY_2`) hold equal,
+    size-stable row counts (2160142 each) across RF1/RF2 pairs — used as the
+    correctness signal (row-count consistency + size-stable delta; no separate
+    DuckDB join cross-check was run).
+  - **Methodology note**: the originally-planned `ulimit` ladder (unlimited /
+    1.0 GiB / 0.4 GiB) was **dropped for DBToaster** — it is pure in-memory, so
+    a cap below the working set OOMs rather than degrades. Replaced by an
+    unlimited-memory run reporting working-set/peak RSS as the RAM lower bound.
+    Full rationale in `dbtoaster/results/README.md`.
+  - **Comparison target**: LeanStore S2 ≈ 22.6k (btree) / 4.2k (lsm) RF1
+    inserts/s at SF=1; in-memory prewarm9 (btree) pairs S1 41k … S2 10.4k. The
+    LeanStore-side **LSM** in-memory counterpart is closed by the 2026-05-25
+    entry below.
+
+## Closed by 2026-05-25 — Q10 first Linux 5L sweep + refresh LSM 9 GiB
+
+- **Q10 5L perf sweep (first Linux)** — rotated from
+  [`LINUX_PENDING.md`](LINUX_PENDING.md). Built `q10_{lsm,btree}` +
+  `test_query_q10_{lsm,btree}` clean on Linux. **Parity gate** (SF=1, strict
+  4-way XOR, 20 rows, both default + off-default param iters): `test_query_q10_lsm`
+  green (iter0 `0xe8eb55a779a831df`, iter1 `0xc6a760d87c0005bc`);
+  `test_query_q10_btree` green (iter0 `0xa0c771f080c2ab35`, iter1
+  `0xe78cdec20e02a9d2`) — needs `--wal=true --trunc=true` (the test runs
+  `--vi=true`; production `make q10_btree` runs `--vi=false` so it needs
+  neither). **5L sweep** (c0, DRAM=1.0, SF=3850 lsm / 1550 btree, isolated,
+  fresh `q10.load()` at each scale; commit `8aac715a`): ms/query — LSM **S3
+  11,326** < S1 16,059 < S2 17,169 ≪ S4 77,989; btree **S1 23,535** < S3 35,262
+  ≪ S4 127,486 < S2 174,260. **Supports** the §3.1.3 COL-MI claim: S3 ≥ S2 and
+  S3 ≫ S4 on both backends (btree S3 beats the 8.6 GiB view ~5×); S3 wins
+  outright on LSM, while on btree the dense custkey-sorted split S1 edges S3. No
+  q3i-style S2>S3 anomaly. Full numbers in
+  [`frontend/tpch/q10/RUNS.md`](frontend/tpch/q10/RUNS.md) (2026-05-25 entry).
+  (Benign `turnPage→gotoPage` scan fallbacks fired ~31× during btree S3 under
+  page pressure; query completed exit 0, correctness pinned by the SF=1 gate.)
+
+- **refresh_sales LSM 9 GiB in-memory run** — rotated from
+  [`LINUX_PENDING.md`](LINUX_PENDING.md). The LSM counterpart to the btree
+  prewarm9 ran via `build/scratch/run_refresh_lsm9_ssd.sh` (SF=3850, DRAM=9,
+  `--prewarm=false`), closing the DBToaster comparison on the LSM side.
+  **Finding: LSM has no in-memory speedup for refresh** — pairs/s S1 781 / S2
+  473 / S3 606 / S4 672, i.e. ~0.5× the 5L (DRAM=1.0) rates, because LSM refresh
+  is write/compaction-bound (more block cache hurts), and `--prewarm` actively
+  backfires on RocksDB (S1 59.6 pairs/s with prewarm vs 780 without — fills the
+  strict-capacity block cache and starves the write path). Headline LSM number
+  stays the 5L run. Kept as a **separate** `summary/lsm_9gib_refresh.csv` (not
+  merged into `pair_vs_dbtoaster.csv`) precisely because there is no in-memory
+  advantage to compare apples-to-apples. Committed `8daaf0f2`; README addendum +
+  `refresh_sales/RUNS.md` entry landed.

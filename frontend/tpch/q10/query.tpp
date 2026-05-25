@@ -21,6 +21,7 @@
 #include "../q10_family/out_class.hpp"
 
 DECLARE_int32(storage_structure);
+DECLARE_string(q10_view_variant);
 
 namespace tpch::q10
 {
@@ -120,6 +121,12 @@ inline void q10_pipeline_view_t::print(std::ostream& os) const
       << c_name          << '\t' << c_nationkey << '\n';
 }
 
+inline void q10_pipeline_view_preagg_t::print(std::ostream& os) const
+{
+   os << returned_revenue << '\t' << o_orderdate << '\t'
+      << c_name           << '\t' << c_nationkey << '\n';
+}
+
 inline void q10_agg_row_t::print(std::ostream& os) const
 {
    os << c_custkey << '\t' << c_name      << '\t' << revenue   << '\t'
@@ -195,7 +202,14 @@ long Q10Workload<Backend>::query_by_base(std::vector<q10_agg_row_t>& out)
 template <typename Backend>
 long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
 {
-   // S2: pipeline-view scan with the D4 anomaly chain.
+   // S2 A/B dispatch (q10/PERFORMANCE.md). Variant B (per-order pre-aggregated
+   // view) is the perf-investigation fix for the btree S2 regression; variant
+   // A (this body) is the original per-lineitem view + D4 anomaly chain.
+   if (FLAGS_q10_view_variant == "preagg") {
+      return query_by_view_preagg(out);
+   }
+
+   // S2 variant A: pipeline-view scan with the D4 anomaly chain.
    //
    //   view scan → returnflag filter → SUM-per-orderkey
    //   → Filter[orderdate ∈ window] → SUM-per-c_custkey
@@ -262,6 +276,58 @@ long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
       if (stats) stats->orders_passing_date++;
       q10_admit_revenue_from_join(st.custkey, st.cust_snapshot,
                                    st.sum_revenue, agg, stats);
+   }
+
+   q10_finalize_aggregator(agg, nation, nation_cache, sink, stats);
+   sink.finalize(out);
+   return static_cast<long>(out.size());
+}
+
+template <typename Backend>
+long Q10Workload<Backend>::query_by_view_preagg(std::vector<q10_agg_row_t>& out)
+{
+   // S2 variant B: per-order pre-aggregated view scan. The D4 anomaly is
+   // gone — each view row IS one order carrying SUM(returned revenue) baked
+   // at load, so there is no per-orderkey rollup and no per-row returnflag
+   // filter. Chain collapses to:
+   //
+   //   view scan → Filter[orderdate ∈ window] → SUM-per-c_custkey
+   //   → NATION INL → TopN
+   //
+   // The orderdate window is still applied live (parameterised; hoisted out
+   // of the view payload). Reads ~|ORDERS-with-returns| narrow rows instead
+   // of the full per-lineitem view, so it does not churn the buffer pool.
+   out.clear();
+
+   Q10QuerySink sink(stats);
+   Q10PerCustomerAggregator agg{};
+   agg.stats = stats;
+   std::unordered_map<Integer, Varchar<25>> nation_cache;
+
+   auto sc = pipeline_view_preagg.getScanner();
+   while (auto kv = sc->next()) {
+      const auto& k = kv->first;
+      const auto& v = kv->second;
+      if (stats) { stats->view_rows_scanned++; stats->orders_scanned++; }
+
+      // Order-granular date window (the only live filter — returnflag is
+      // baked into returned_revenue at load).
+      if (v.o_orderdate < params.date_lo
+          || v.o_orderdate >= params.date_lo + 90) continue;
+      if (stats) stats->orders_passing_date++;
+
+      // Build a one-shot FD snapshot from the view payload; q10_admit_revenue
+      // adopts it on the customer's first surviving order and folds revenue.
+      Q10PartialCustomerAgg snap{};
+      snap.c_name        = v.c_name;
+      snap.c_acctbal     = v.c_acctbal;
+      snap.c_nationkey   = v.c_nationkey;
+      snap.c_address     = v.c_address;
+      snap.c_phone       = v.c_phone;
+      snap.c_comment     = v.c_comment;
+      snap.customer_seen = true;
+      q10_admit_revenue_from_join(k.custkey, snap, v.returned_revenue,
+                                   agg, stats);
    }
 
    q10_finalize_aggregator(agg, nation, nation_cache, sink, stats);

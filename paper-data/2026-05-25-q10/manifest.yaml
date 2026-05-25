@@ -1,0 +1,25 @@
+tag: 2026-05-25-q10
+commit_sha: f92d1868
+host: node0.alicial-306097.advosuwmadison-pg0.wisc.cloudlab.us
+started_at: 2026-05-25
+finished_at: 2026-05-25
+cells: c0
+families: vanilla
+reps: 1
+runs_ok: 12
+runs_err: 0
+note: >
+  Hand-ported, NOT analyzer-generated. Q10 is not in the standard paper
+  sweep matrix (FAMILY_OF / SF_TPCH in analyze_paper_sweep.py cover only
+  q3/q5/q3i/q5i + geo), so these rows were written directly from the
+  ad-hoc 5L A/B sweep (build/scratch/q10_5L_sweep.sh) rather than the
+  paper harness. Single rep, isolated (bg=0), c0 only (5L: DRAM 1.0 GiB,
+  SF 1550 btree / 3850 lsm). The S2 and S3 rows each carry TWO methods
+  (the A/B variants from the perf investigation): structure 2 =
+  pipeline_view (per-lineitem, variant A) + pipeline_view_preagg
+  (per-order, variant B); structure 3 = mi_col_walk (logical SkipOrder,
+  A) + mi_col_walk_physskip (physical SkipOrder seek, B). See
+  ../../frontend/tpch/q10/PERFORMANCE.md and frontend/tpch/q10/RUNS.md.
+  To make this re-analyzable/plottable, add q10 to FAMILY_OF (vanilla),
+  SF_TPCH (c0: btree 1550 / lsm 3850), and a method/structure handling
+  for the two A/B variants per structure.

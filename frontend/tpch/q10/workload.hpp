@@ -17,6 +17,9 @@
 // S5 is omitted (Decision D8) — Q10 has no parameter-independent aggregate
 // to bake; orderdate window is parameterised.
 
+#include <iomanip>
+#include <iostream>
+#include <ostream>
 #include <vector>
 
 #include "../backend.hpp"
@@ -74,6 +77,39 @@ struct Q10Stats {
    long orders_inl_lookups            = 0;  // S4 per-orderkey-transition recoveries
 };
 
+// Pretty-print a Q10Stats block. Used by the production executables under
+// --q10_stats and by the test harness. The query loop accumulates these
+// counters across `tx_count` query iterations (the executable's
+// helper.tx_count()); when tx_count > 0 the per-query average is shown beside
+// each total. NOTE: only meaningful with --bg_query_thread=false — a bg worker
+// bumps the same counters concurrently (data race on the shared pointer).
+inline void print_q10_stats(std::ostream& os, const Q10Stats& s, long tx_count)
+{
+   auto line = [&](const char* name, long v) {
+      os << "    " << std::left << std::setw(30) << name << std::right << v;
+      if (tx_count > 0) os << "   (" << (v / tx_count) << " /query)";
+      os << "\n";
+   };
+   os << "  Q10Stats"
+      << (tx_count > 0 ? " [accumulated over " + std::to_string(tx_count) + " queries]" : "")
+      << ":\n";
+   line("customers_scanned",            s.customers_scanned);
+   line("orders_scanned",               s.orders_scanned);
+   line("orders_passing_date",          s.orders_passing_date);
+   line("lineitems_scanned",            s.lineitems_scanned);
+   line("lineitems_passing_returnflag", s.lineitems_passing_returnflag);
+   line("view_rows_scanned",            s.view_rows_scanned);
+   line("mi_records_visited",           s.mi_records_visited);
+   line("mi_groups_skipped",            s.mi_groups_skipped);
+   line("aggregator_rows_out",          s.aggregator_rows_out);
+   line("topn_offers",                  s.topn_offers);
+   line("topn_evictions",               s.topn_evictions);
+   line("nation_inl_lookups",           s.nation_inl_lookups);
+   line("customer_inl_lookups",         s.customer_inl_lookups);
+   line("orders_inl_lookups",           s.orders_inl_lookups);
+   os << std::flush;
+}
+
 // ---------------------------------------------------------------------------
 
 template <typename Backend>
@@ -93,8 +129,13 @@ class Q10Workload
    // modifications.
    CustomerOrdersLineitemPipeline<Backend> col;
 
-   // Structure 2: intermediate pipeline view (per-lineitem rows, unfiltered).
+   // Structure 2 variant A: per-lineitem pipeline view (unfiltered).
    typename Backend::template Adapter<q10_pipeline_view_t>& pipeline_view;
+
+   // Structure 2 variant B: per-order pre-aggregated view (returnflag baked,
+   // date live). Selected at query time via --q10_view_variant=preagg. Both
+   // views are populated at load so one image serves the A/B.
+   typename Backend::template Adapter<q10_pipeline_view_preagg_t>& pipeline_view_preagg;
 
   public:
    Params    params;
@@ -111,6 +152,7 @@ class Q10Workload
        typename Backend::template Adapter<lineitem_t>&   lineitem,
        typename Backend::template Adapter<nation_t>&     nation,
        typename Backend::template Adapter<q10_pipeline_view_t>& pipeline_view,
+       typename Backend::template Adapter<q10_pipeline_view_preagg_t>& pipeline_view_preagg,
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_col_t>& merged_col,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
@@ -126,9 +168,16 @@ class Q10Workload
    // Queries — one per storage structure.
    // Returns the number of result rows (≤ 20 — TPC-H Q10 has LIMIT 20).
    long query_by_base  (std::vector<q10_agg_row_t>& out);  // structure 1
-   long query_by_view  (std::vector<q10_agg_row_t>& out);  // structure 2
+   long query_by_view  (std::vector<q10_agg_row_t>& out);  // structure 2 (A/B dispatch)
    long query_by_merged(std::vector<q10_agg_row_t>& out);  // structure 3
    long query_by_hash  (std::vector<q10_agg_row_t>& out);  // structure 4
+
+  private:
+   // S2 variant B — per-order pre-aggregated view scan. Selected by
+   // query_by_view when --q10_view_variant=preagg.
+   long query_by_view_preagg(std::vector<q10_agg_row_t>& out);
+
+  public:
 
    void   load();
    double get_size() const;

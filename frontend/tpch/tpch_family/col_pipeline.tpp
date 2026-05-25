@@ -16,6 +16,10 @@
 // Defined in tpch_flags.hpp; declared here to avoid an include-order
 // dependency on the per-executable TPCH_DEFINE_FLAGS pattern.
 DECLARE_int32(use_seek_skip);
+// Q10 S3 SkipOrder A/B (q10/PERFORMANCE.md): -1=default (logical
+// forward-iterate), 0=logical, 1=physical seek to the next order. Also
+// defined in tpch_flags.hpp.
+DECLARE_int32(skip_order_physical);
 
 namespace tpch
 {
@@ -333,28 +337,57 @@ void col_group_walk(
       }
       dispatch(*kv);
 
-      // Order-skip: forward-iterate past the rejected order's lineitems.
+      // Order-skip: skip the rejected order's co-located lineitems. Two
+      // strategies, A/B-selectable via --skip_order_physical
+      // (q10/PERFORMANCE.md):
+      //   logical (default, -1/0) — forward-iterate, decoding+discarding
+      //       each lineitem of the rejected order.
+      //   physical (1)            — seek to the next order, skipping the
+      //       rejected order's lineitem leaf entirely.
+      // Unlike the customer-level SkipGroup (governed by the backend
+      // USE_PHYSICAL_SEEK_SKIP trait), order-level skip historically stayed
+      // logical on both backends on the assumption that ~4-lineitem orders
+      // don't pay back a tree descent. Q10's high-order-rejection regime
+      // (no customer filter; ~25/26 of orders fail the date window) is the
+      // case that tests it — hence an explicit A/B flag, not a trait.
       if (group_active && cur_orderkey >= 0 && order_skip_pending) {
          order_skip_pending = false;
+         const bool phys_order_skip =
+             FLAGS_skip_order_physical < 0 ? false
+                                           : (FLAGS_skip_order_physical != 0);
          Integer skip_orderkey = cur_orderkey;
-         while (auto kv2 = scanner->next()) {
-            if constexpr (requires { visitor.on_record_visited(); }) {
-               visitor.on_record_visited();
-            }
-            auto* lk = std::get_if<lineitem_col_t::Key>(&kv2->first);
-            if (!lk || lk->custkey != cur_custkey || lk->orderkey != skip_orderkey) {
-               // Not a lineitem for this order — re-dispatch inline.
-               dispatch(*kv2);
-               // Chained order-skip: re-dispatch produced another SkipOrder?
-               // Retarget the forward-skip and keep skipping.
-               if (group_active && order_skip_pending) {
-                  order_skip_pending = false;
-                  skip_orderkey = cur_orderkey;
-                  continue;
+         if (phys_order_skip) {
+            // Seek to the first record >= (cur_custkey, skip_orderkey+1):
+            // the next order of this customer, or the next customer's
+            // records if this was the last order. The COL key sorts orderkey
+            // before the type tag, so skip_orderkey's lineitems (orderkey ==
+            // skip_orderkey) sort strictly before the target and are skipped
+            // without being read. The outer loop's next() returns the
+            // seeked-to record; dispatch() handles it (and any group
+            // transition) uniformly. on_record_visited is intentionally NOT
+            // called for the skipped lineitems — not visiting them is the win.
+            scanner->template seek<orders_coli_t>(
+                typename orders_coli_t::Key{cur_custkey, skip_orderkey + 1});
+         } else {
+            while (auto kv2 = scanner->next()) {
+               if constexpr (requires { visitor.on_record_visited(); }) {
+                  visitor.on_record_visited();
                }
-               break;
+               auto* lk = std::get_if<lineitem_col_t::Key>(&kv2->first);
+               if (!lk || lk->custkey != cur_custkey || lk->orderkey != skip_orderkey) {
+                  // Not a lineitem for this order — re-dispatch inline.
+                  dispatch(*kv2);
+                  // Chained order-skip: re-dispatch produced another SkipOrder?
+                  // Retarget the forward-skip and keep skipping.
+                  if (group_active && order_skip_pending) {
+                     order_skip_pending = false;
+                     skip_orderkey = cur_orderkey;
+                     continue;
+                  }
+                  break;
+               }
+               // Same order, lineitem — suppress dispatch and continue forward.
             }
-            // Same order, lineitem — suppress dispatch and continue forward.
          }
       }
 

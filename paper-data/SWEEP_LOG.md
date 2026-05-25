@@ -14,6 +14,27 @@ HDD-measured and is now stamped `disk=hdd` (see `scripts/mark_disk_media.py`).
 Disk fixed (HDD → `/mnt/hdd` label `leanstore-hdd`; SSD → `/mnt/ssd` label
 `leanstore-ssd`); see `../LINUX_SETUP.md §3`.
 
+## Done: tag `2026-05-25-q10` — Q10 5L (c0) A/B perf investigation, both backends (SSD)
+
+**Hand-ported 2026-05-25**, commit `f92d1868`, host `node0`. NOT from the paper
+harness — Q10 isn't in the sweep matrix; rows written directly from the ad-hoc
+`build/scratch/q10_5L_sweep.sh` 5L A/B sweep into
+`2026-05-25-q10/summary/headline.csv` (see its `manifest.yaml` note + the
+parent-repo `frontend/tpch/q10/PERFORMANCE.md`). Single rep, isolated (bg=0),
+c0 only (DRAM 1.0; SF 1550 btree / 3850 lsm). Each of S2/S3 carries two methods
+(the investigation's A/B variants).
+
+**Findings (ms/query).** The btree S2 "regression" was a strawman per-lineitem
+view: the fair **per-order pre-aggregated view** is **10× faster on btree**
+(175,506 → 17,435; 0 evictions, now ≈ S1) and **10.4× on LSM** (17,209 → 1,658;
+fastest structure). **S3 < S1 on btree** is the filter-hierarchy effect (Q10's
+only prune is below the COL co-location grain): a physical SkipOrder seek cuts
+records-visited 4.1× but leaves R MiB unchanged → neutral on btree (35.0 →
+36.1 s), a clean **+9% on LSM** (11.1 → 10.1 s, no regression). To make this tag
+re-analyzable, add q10 to `analyze_paper_sweep.py` maps. Q10 is the
+boundary/negative case for the merged-index pitch — pairs with q3i/q5i (where
+the customer-level prune makes S3 win).
+
 ## Done: tag `2026-05-24-a-ssd` — q3/q5/q3i/q5i at 5L (c0) on the **real SSD**
 
 **Finished 2026-05-24 ~18:00 UTC**, commit `c9b5f594`, host

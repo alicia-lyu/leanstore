@@ -81,6 +81,56 @@ struct q10_pipeline_view_t {
    void print(std::ostream& os) const;
 };
 
+// Structure 2 variant B — per-ORDER pre-aggregated view (perf-investigation
+// fix for the btree S2 regression). One row per (custkey, orderkey) carrying
+// SUM(l_extendedprice * (1 - l_discount)) over the order's l_returnflag='R'
+// lineitems. The returnflag CONSTANT is *baked* at load (sound: only `:d` is
+// a substitution parameter; the spec hardcodes l_returnflag='R'). o_orderdate
+// stays *live* (the parameterised 3-month window applies at query time).
+//
+// vs the per-lineitem q10_pipeline_view_t (variant A): ~|ORDERS| rows instead
+// of ~|LINEITEM| rows, the per-row returnflag/rollup work is gone, and the FD
+// customer payload duplicates per-order instead of per-lineitem (~4x less).
+// Orders with zero returned revenue are not emitted (they contribute nothing
+// to any customer aggregate regardless of the date window).
+//
+// Query path: scan → Filter[orderdate ∈ window] → SUM-per-c_custkey →
+// NATION INL → top-20. No per-orderkey rollup (each row IS an order), no
+// per-row returnflag filter. The D4 anomaly aggregate vanishes.
+//
+// Selected at query time via --q10_view_variant=preagg (A/B vs the
+// per-lineitem view, which both live in one image).
+struct q10_pipeline_view_preagg_t {
+   static constexpr int id = 72;
+
+   struct Key {
+      static constexpr int id = 72;
+      Integer custkey;
+      Integer orderkey;
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey)
+      auto operator<=>(const Key&) const = default;
+   };
+
+   // Pre-summed returned revenue (returnflag='R' baked at load).
+   Numeric    returned_revenue;
+
+   // FD-attached order column — the parameterised window filters here.
+   Timestamp  o_orderdate;
+
+   // FD-attached customer payload (7 output columns + c_nationkey for the
+   // NATION INL probe at record-assembly time). Same shape as variant A.
+   Varchar<25>  c_name;
+   Varchar<40>  c_address;
+   Integer      c_nationkey;
+   Varchar<15>  c_phone;
+   Numeric      c_acctbal;
+   Varchar<117> c_comment;
+
+   ADD_RECORD_TRAITS(q10_pipeline_view_preagg_t)
+
+   void print(std::ostream& os) const;
+};
+
 // Conceptual post-assembly output row — materialised only at the TopN-sink
 // boundary, never as a pipeline-internal intermediate. In-memory only;
 // no ADD_RECORD_TRAITS, no stored schema. TopNSink consumes it directly

@@ -7,7 +7,17 @@
 **Phase 4 + 5 complete — all four `query_by_*` paths live; SF=1
 macOS strict 4-way XOR parity verified across two distinct param
 sets (iter=0 default + iter=1 off-default param-bake guard). Linux
-5L perf sweep pending — see [`LINUX_PENDING.md`](../../../LINUX_PENDING.md).** S3 lands the bespoke
+5L perf sweep done (2026-05-25, `RUNS.md`); a follow-up perf
+investigation added two A/B variants — see
+[`PERFORMANCE.md`](PERFORMANCE.md).** The btree S2 "regression"
+(174 s) was a strawman per-lineitem view; the fair **per-order
+pre-aggregated view** (`q10_pipeline_view_preagg_t`,
+`--q10_view_variant=preagg`) is 10×/10.4× faster (btree/LSM) and the
+query-time winner on both. S3<S1 on btree is the filter-hierarchy
+effect (Q10's only prune is below the COL co-location grain); the
+**physical SkipOrder seek** (`--skip_order_physical=1`) cuts records
+visited 4× but not btree page IO (neutral), while giving LSM a clean
++9%. Both variants are parity-gated in `test_query_q10_*`. S3 lands the bespoke
 `Q10GroupWalkVisitor` (D1) on `col_group_walk` plus the canonical
 `Q10QuerySink` wrapping `TopNSink<q10_agg_row_t, &q10_agg_row_t::cmp>`.
 The walker also drives the Pattern B view loader via compile-time
@@ -52,6 +62,14 @@ Read each on the trigger described:
   then build on C⋈O and probe with filtered LINEITEM).
 - [`RUNS.md`](RUNS.md) — perf-run ledger; appended after every
   Linux sweep.
+- [`PERFORMANCE.md`](PERFORMANCE.md) — read **when interpreting the
+  btree S2 / S3 numbers**. Records the investigation into the 5L
+  anomalies (S2 174 s regression; S3 < S1): the S2 per-lineitem view
+  was a strawman (the fair per-order pre-aggregated view, variant B,
+  is 855× faster); the S3 < S1 btree gap is the filter-hierarchy
+  effect (Q10's only prune is below the co-location grain) and a
+  physical SkipOrder seek cuts CPU but not the page-bound gap. A/B
+  knobs: `--q10_view_variant`, `--skip_order_physical`.
 
 Read [`../q5/CLAUDE.md`](../q5/CLAUDE.md) as the closest cousin —
 Q10 mirrors Q5's COL-pipeline structure and reuses the same
@@ -198,6 +216,21 @@ sibling-aggregate framings.
 | 2 | Intermediate pipeline view | `q10_pipeline_view_t` (per-lineitem rows keyed by `(custkey, orderkey, linenumber)` carrying `l_extendedprice`, `l_discount`, `l_returnflag`, `o_orderdate` + FD-attached 7-column customer payload) | View scan + returnflag filter + **SUM-per-orderkey + Filter[orderdate ∈ window]** (S2-only D4 anomaly) + SUM-per-c_custkey + NATION INL at record-assembly | none |
 | 3 | MI[COL] only | `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_col_t>` keyed by custkey-prefixed tagged keys — **reused verbatim from Q3 / Q5** | `col_group_walk` over the COL MI with a bespoke `Q10GroupWalkVisitor` (Decision D1); per-customer accumulator with incremental top-20 emit (Decision D2); NATION INL at on_group_end (Decision D6) | none |
 | 4 | Traditional indexes + hash join | None | PK-only `cust_set<custkey>`; HashJoin against orderdate-filtered ORDERS → PK-only `orders_set<orderkey>`; LINEITEM sorted-seek-on-miss with per-orderkey INL recovery of `c_custkey`; `HashAggregate` per c_custkey (group key only); FD output cols + n_name recovered at record-assembly via `customer.lookup1` + NATION INL (Decisions D5 + D6) | none |
+
+**S2 has two view variants** (perf investigation, `PERFORMANCE.md`),
+selected at query time by `--q10_view_variant`:
+- `lineitem` (default, the table row above) — `q10_pipeline_view_t`, one
+  row per lineitem; the D4 anomaly chain. This is the per-lineitem
+  strawman responsible for the 5L btree S2 regression.
+- `preagg` — `q10_pipeline_view_preagg_t` (id=72), one row per
+  `(custkey, orderkey)` with `returned_revenue` pre-summed over
+  `l_returnflag='R'` (a spec constant — soundly bakeable; only `:d` is
+  parameterised) and `o_orderdate` kept live. The query collapses to
+  scan → date filter → per-customer SUM → NATION INL → TopN (no
+  per-orderkey rollup, no per-row returnflag filter). 10×/10.4× faster
+  than `lineitem` at 5L (btree/LSM). Both views are populated at load
+  so one image serves the A/B; `q10_admit_revenue_from_join` and the
+  shared aggregator are reused. This is the **fair** S2 baseline.
 
 **S5 deliberately omitted** (Decision D8). Same rationale as Q5:
 revenue cannot be pre-aggregated because the orderdate window is
