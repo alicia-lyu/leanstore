@@ -268,3 +268,65 @@ Flags (`tpch_flags.hpp`): `--q10_stats` (Q10Stats block),
 `--q10_view_variant=lineitem|preagg` (S2 A/B), `--skip_order_physical=-1|0|1`
 (S3 A/B; -1/0 logical, 1 physical seek). Defaults preserve original behaviour
 (lineitem / logical).
+
+---
+
+## §7 — S5: the aCOL MI (fair pre-aggregated merged index)
+
+**Motivation (fairness).** §3 showed the *fair* S2 (per-order pre-aggregated
+view) beats the raw S3 MI — but that is not a fair MI comparison: the *view*
+got to pre-aggregate lineitems to per-order revenue while the *MI* still stored
+every raw lineitem and re-aggregated per query. The fair answer is to let the
+MI pre-aggregate too: the **aCOL MI** stores `customer + order(+order_agg)` —
+one `orders_acol_t` per order carrying `SUM(returned revenue)` (returnflag
+baked), **no lineitems**. This is the pre-agg view's data, but co-located by
+custkey (customer payload stored **once** per customer, not duplicated per
+order) and walked by a **hand-rolled** `acol_group_walk`.
+
+**This revives the S5 slot D8 wrongly omitted.** D8 ("no S5") only considered
+*per-customer* pre-agg ("revenue can't be pre-aggregated — the orderdate window
+is parameterised"). The *per-order* grain is sound: the window filters at order
+grain, returnflag is a spec constant. So the aCOL carries **new** information
+(the per-order sum) and **drops** the lineitem bulk — it does not collapse into
+S3 (the `views_col.hpp` "no aCOL" note applies to Q3, which has no bakeable
+per-order aggregate, not Q10).
+
+**The aCOLI lesson — hand-roll the walk.** Q3I's aCOLI S5 lost to S3 only
+because its `query_by_aggregated` used the generic `getScanner` + `std::variant`
++ `std::visit` inline scan; the per-record variant construction + double
+dispatch dominated. Q10's `acol_group_walk` (`q10_family/acol_walk.tpp`) instead
+mirrors `col_group_walk_fused_emit`: `next_raw()` + idx-byte switch + `memcpy`,
+no variant. **That is the difference between S5 winning and losing.**
+
+### Iteration cell (btree, SF=150, dram=0.1) — measured
+
+| structure | ms/query | R MiB/q | Evicted/q | records visited/q | bottleneck |
+|---|--:|--:|--:|--:|--|
+| **S5 aCOL** | **9.98** | **0.009** | 0 | 118,589 (cust + order-aggs, **no lineitems**) | worker 96% |
+| S2-B preagg view | 21.5 | 0.072 | 0 | 96,089 view rows (cust cols duplicated/order) | worker 90% |
+| S1 base | 134 | 2.48 | 1.71 | — | pp_0 99.96% |
+| S3 raw MI | 1,017 | 26.35 | 20.6 | 1,146,669 (all lineitems co-located) | pp_0 99.96% |
+| S4 hash | 12,071 | 361 | 319 | — | pp_0 |
+| S2-A lineitem | 17,234 | 510 | 425 | — | pp_0 |
+
+**S5 (aCOL) is the fastest structure** — ~2.2× faster than even the pre-agg
+*view* and ~100× faster than the raw S3 MI. Mechanism: S5 reads **8× less than
+the view** (`0.009` vs `0.072` MiB/q — the view duplicates the ~215-byte
+customer payload per order; the aCOL stores it once) and **~2,800× less than
+S3** (no co-located lineitems). It fits the pool (0 evictions) and is
+worker-bound (96%). The aCOL MI is also smaller on disk (`get_size` 340 vs S3's
+424 MiB; the aCOL btree itself is ~13 MiB at SF=150 vs the COL MI's ~85).
+
+**Takeaway:** the merged index, when allowed to pre-aggregate *and* given a
+hand-tuned walker, gets the view's pre-computation benefit **plus** the MI's
+co-location benefit (no per-order customer-col duplication) — it is the best
+structure, not a slow baseline. This is the honest, fair MI result for Q10.
+
+### 5L confirmation (both backends) — *pending* (next sweep; see RUNS.md)
+
+> Reload both 5L images (load.tpp added the aCOL), run S1–S5 + S2-preagg on one
+> consistent image per backend; port to `paper-data/2026-05-25-q10`.
+
+Reproduce (iteration cell): `make q10_btree_5 scale=150 dram=0.1 q10_stats=true`
+(S5 = `--storage_structure=5`, method `mi_acol_preagg`). Parity: the S5-vs-S3
+A/B check in `test_query_q10_{lsm,btree}` (digest ≡ S3 at both param iters).
