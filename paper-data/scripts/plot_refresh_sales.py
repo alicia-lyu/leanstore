@@ -399,8 +399,9 @@ def main() -> int:
     # squash one or the other. The unit is the same (µs/pair), the
     # ticks just live at different decades.
     # Narrower canvas — the \textsc xticklabels are angled below so
-    # they fit without horizontal overlap. Same height as before.
-    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 2.6),
+    # they fit without horizontal overlap. Slimmer height to keep the
+    # figure compact within column width.
+    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 2.0),
                              sharey=False)
     for j, (budget, label) in enumerate(MEMORY_BUDGETS):
         budget_df = ls_by_budget.get(budget, pd.DataFrame())

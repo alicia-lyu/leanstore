@@ -533,12 +533,19 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
 def _add_two_row_legend(fig, legend_structs: Sequence[int],
                         *, fontsize: int,
                         bbox_main: Tuple[float, float],
-                        bbox_variants: Tuple[float, float]) -> None:
+                        bbox_variants: Tuple[float, float],
+                        bbox_main_no_variants: Optional[Tuple[float, float]]
+                        = None) -> None:
     """Render the headline legend across two rows: canonical S1..S4 on
     top, partial-agg variants (synthetic ids ≥ 22) on a separate row
     below. matplotlib's column-major fill orders entries by column so a
     single ``fig.legend`` with ``ncol=4`` would scramble row 1; using
     two legends keeps the two groups aligned independently.
+
+    When ``legend_structs`` has no variants, the second row is omitted
+    and the main row drops to ``bbox_main_no_variants`` (closer to the
+    panel) — there's no second row to clear above the cut-off bar
+    value annotations.
     """
     main = [s for s in legend_structs if s in PAPER_LEGEND_ORDER]
     variants = [s for s in legend_structs if s not in PAPER_LEGEND_ORDER]
@@ -546,9 +553,12 @@ def _add_two_row_legend(fig, legend_structs: Sequence[int],
                                   color=STYLE["structure_colors"][s],
                                   label=PAPER_STRUCTURE_LABELS[s])
                     for s in main]
+    bbox_for_main = bbox_main if variants else (
+        bbox_main_no_variants if bbox_main_no_variants is not None
+        else bbox_variants)
     fig.legend(handles=main_handles, loc="upper center",
                ncol=len(main_handles) or 1,
-               fontsize=fontsize, bbox_to_anchor=bbox_main,
+               fontsize=fontsize, bbox_to_anchor=bbox_for_main,
                frameon=False, columnspacing=1.5, handletextpad=0.4)
     if not variants:
         return
@@ -647,9 +657,15 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
         plt.close(fig)
         return None
     if include_legend:
+        # Legend sits well above the panel top so cut-off bar value
+        # annotations (drawn at axes-fraction y=1.0) don't collide
+        # with the second row. When no variants are present, the main
+        # row drops closer to the panel since there's nothing below
+        # it competing with the over-cap labels.
         _add_two_row_legend(fig, legend_structs, fontsize=13,
-                            bbox_main=(0.5, 1.16),
-                            bbox_variants=(0.5, 1.06))
+                            bbox_main=(0.5, 1.28),
+                            bbox_variants=(0.5, 1.16),
+                            bbox_main_no_variants=(0.5, 1.12))
     name = data.paper_name(f"paper_tpch_{backend}_headline")
     dest = data.figures_root / "paper" / name
     return _save(fig, dest, data.footer, include_footer=False)[0]
@@ -698,8 +714,8 @@ def fig_paper_q10(data: SweepData) -> Optional[Path]:
                              label=PAPER_STRUCTURE_LABELS[s])
                for s in legend_structs]
     _add_two_row_legend(fig, legend_structs, fontsize=13,
-                        bbox_main=(0.5, 1.18),
-                        bbox_variants=(0.5, 1.07))
+                        bbox_main=(0.5, 1.30),
+                        bbox_variants=(0.5, 1.17))
 
     name = data.paper_name("paper_q10")
     dest = data.figures_root / "paper" / name
@@ -991,6 +1007,252 @@ def fig_diag_lsm_sst_compaction(data):   return _emit_diag_row(data, "lsm",   *D
 def fig_diag_lsm_cpu_cycles(data):       return _emit_diag_row(data, "lsm",   *DIAG_LSM_METRICS[2])
 
 
+# ---------------------------------------------------------------------------
+# SSD-only single-cell diagnostics. The plotter's diagnostics-explore mode
+# emits line plots across PAPER_CELLS = [c2,c1,c0,c3]; the SSD tag only
+# populates c0, so those line plots collapse to single-point series. The
+# bar-grid builders below render the same counters as compact 1×4 rows for
+# the single-cell SSD snapshot.
+# ---------------------------------------------------------------------------
+
+# Reference CPU clock used to convert cpu_cycles_per_tx → equivalent
+# seconds; matches the c220g2 Xeon E5-2660 v3 nominal 2.6 GHz that the
+# rest of the paper-data scripts assume.
+SSD_DIAG_CPU_GHZ = 2.6
+
+
+def _ssd_diag_aggregate(data: SweepData, backend: str,
+                        cols: Sequence[str]) -> pd.DataFrame:
+    """Median across reps for the paper cohort (cell=c0, bg=2, S1..S4)."""
+    diag = _diag_filter(data.diagnostics)
+    diag = diag[diag["backend"] == backend]
+    if diag.empty:
+        return diag
+    keep = ["query", "structure"] + [c for c in cols if c in diag.columns]
+    if len(keep) == 2:
+        return pd.DataFrame()
+    return (diag[keep]
+            .groupby(["query", "structure"])
+            .median(numeric_only=True).reset_index())
+
+
+def _ssd_bar_panel(ax, agg: pd.DataFrame, query: str,
+                   metric_specs: Sequence[Tuple[str, str, float, str]],
+                   show_ylabel: bool, secondary_metric: Optional[str] = None,
+                   secondary_label: Optional[str] = None,
+                   secondary_log: bool = False) -> bool:
+    """Render one panel: grouped bars per structure × metric. Up to one
+    metric may go on a secondary right-side axis (used for the cache-
+    profile figure where LLC misses and dt_split live on different
+    scales)."""
+    sub = agg[agg["query"] == query]
+    if sub.empty:
+        _all_or_empty(plt.gcf(), ax, "—")
+        ax.set_xlabel(_query_title(f"{query}_btree"), fontsize=14)
+        return False
+
+    structs = [s for s in PAPER_LEGEND_ORDER]
+    n_metrics = len(metric_specs)
+    group_w = 0.78
+    bar_w = group_w / max(n_metrics, 1)
+    x_pos = np.arange(len(structs))
+    drew = False
+    sec_ax = ax.twinx() if secondary_metric else None
+    for mi, (col, _, scale, _) in enumerate(metric_specs):
+        if col not in sub.columns:
+            continue
+        target = sec_ax if (secondary_metric and col == secondary_metric) else ax
+        offset = (mi - (n_metrics - 1) / 2) * bar_w
+        for k, s in enumerate(structs):
+            row = sub[sub["structure"] == s]
+            if row.empty:
+                continue
+            val = row[col].iloc[0]
+            if pd.isna(val):
+                continue
+            # Bar tint comes from the structure (carries paper colour
+            # vocabulary); the metric is encoded by horizontal position
+            # within the cluster — caption / legend explains the order.
+            target.bar([x_pos[k] + offset], [val / scale], bar_w,
+                       color=STYLE["structure_colors"][s], linewidth=0,
+                       alpha=1.0 if mi == 0 else 0.55,
+                       hatch="" if mi == 0 else "//")
+            drew = True
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([PAPER_STRUCTURE_LABELS[s] for s in structs],
+                       fontsize=8, rotation=30, ha="right",
+                       rotation_mode="anchor")
+    ax.set_xlim(-0.6, len(structs) - 0.4)
+    if show_ylabel and metric_specs:
+        ax.set_ylabel(metric_specs[0][1], fontsize=10)
+    ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
+    ax.tick_params(axis="y", labelsize=8)
+    ax.yaxis.grid(True, linestyle=":", alpha=0.4)
+    ax.set_axisbelow(True)
+    if sec_ax is not None:
+        sec_ax.set_ylim(bottom=0)
+        if secondary_log:
+            sec_ax.set_yscale("symlog", linthresh=1.0)
+        if secondary_label:
+            sec_ax.set_ylabel(secondary_label, fontsize=9, color="#444")
+        sec_ax.tick_params(axis="y", labelsize=7, colors="#444")
+    ax.set_title(_query_title(f"{query}_btree"), fontsize=12,
+                 y=-0.45)
+    return drew
+
+
+def _save_ssd_diag(data: SweepData, fig, basename: str) -> Optional[Path]:
+    dest = data.figures_root / "diagnostics" / data.paper_name(basename)
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
+def fig_diag_ssd_lsm_breakdown(data: SweepData) -> Optional[Path]:
+    """1×4 LSM CPU + I/O bar grid. Per query, four structure clusters;
+    within each cluster, the left bar is equivalent CPU seconds
+    (cpu_cycles / 2.6 GHz) and the right bar is parallel SST read
+    seconds (sst_read_us / 1e6, summed across reader threads). Backs
+    the §subsec:btree_vs_lsm claim that Mat-View's LSM win is CPU-side.
+    """
+    metrics = [
+        ("cpu_cycles_per_tx",  "seconds / query",
+         SSD_DIAG_CPU_GHZ * 1e9, "CPU equivalent"),
+        ("sst_read_us_per_tx", "seconds / query", 1e6, "SST read parallel"),
+    ]
+    agg = _ssd_diag_aggregate(data, "lsm",
+                              [m[0] for m in metrics])
+    if agg.empty:
+        return None
+    fig, axes = plt.subplots(1, 4, figsize=(8.5, 2.8), sharey=False,
+                             constrained_layout=True)
+    drew_any = False
+    for j, q in enumerate(PAPER_TPCH_QUERIES):
+        drew = _ssd_bar_panel(axes[j], agg, q, metrics,
+                              show_ylabel=(j == 0))
+        drew_any = drew_any or drew
+    if not drew_any:
+        plt.close(fig)
+        return None
+    # Two-tone legend: bar tint = structure (colours), hatch / alpha =
+    # which counter the bar represents.
+    metric_handles = [
+        plt.Rectangle((0, 0), 1, 1, facecolor="#7f7f7f", alpha=1.0,
+                      label=metrics[0][3]),
+        plt.Rectangle((0, 0), 1, 1, facecolor="#7f7f7f", alpha=0.55,
+                      hatch="//", label=metrics[1][3]),
+    ]
+    fig.legend(handles=metric_handles, loc="upper center", ncol=2,
+               fontsize=10, bbox_to_anchor=(0.5, 1.10),
+               frameon=False, columnspacing=1.5, handletextpad=0.4)
+    return _save_ssd_diag(data, fig, "diag_ssd_lsm_breakdown")
+
+
+def fig_diag_ssd_btree_cache_profile(data: SweepData) -> Optional[Path]:
+    """1×4 B-tree cache-profile panel. Left axis: LLC miss per tx
+    (primary bar); right axis: dt_struct_split (secondary, symlog).
+    Mat-View and Merged-Idx should track each other tightly on both
+    counters, separating cleanly from Base-Hash and Base-Merge.
+    """
+    metrics = [
+        ("cpu_llc_miss_per_tx", "LLC miss / tx", 1.0, "LLC miss"),
+        ("dt_struct_split",     "",              1.0, "B-tree splits"),
+    ]
+    agg = _ssd_diag_aggregate(data, "btree", [m[0] for m in metrics])
+    if agg.empty:
+        return None
+    fig, axes = plt.subplots(1, 4, figsize=(8.5, 2.8), sharey=False,
+                             constrained_layout=True)
+    drew_any = False
+    for j, q in enumerate(PAPER_TPCH_QUERIES):
+        drew = _ssd_bar_panel(axes[j], agg, q, metrics,
+                              show_ylabel=(j == 0),
+                              secondary_metric="dt_struct_split",
+                              secondary_label="B-tree splits",
+                              secondary_log=True)
+        drew_any = drew_any or drew
+    if not drew_any:
+        plt.close(fig)
+        return None
+    metric_handles = [
+        plt.Rectangle((0, 0), 1, 1, facecolor="#7f7f7f", alpha=1.0,
+                      label=metrics[0][3] + " (left)"),
+        plt.Rectangle((0, 0), 1, 1, facecolor="#7f7f7f", alpha=0.55,
+                      hatch="//", label=metrics[1][3] + " (right)"),
+    ]
+    fig.legend(handles=metric_handles, loc="upper center", ncol=2,
+               fontsize=10, bbox_to_anchor=(0.5, 1.10),
+               frameon=False, columnspacing=1.5, handletextpad=0.4)
+    return _save_ssd_diag(data, fig, "diag_ssd_btree_cache_profile")
+
+
+def fig_diag_ssd_lsm_sst_path(data: SweepData) -> Optional[Path]:
+    """1×4 LSM SST-path panel. sst_read (per tx, parallel) on the
+    left axis; sst_compaction (per run total) on the right axis via
+    twinx. The two metrics live in different magnitudes (read µs/tx
+    vs cumulative compaction µs across all background threads), so a
+    shared axis would squash one of them — twinx keeps both readable.
+    Every panel shows tick labels on both sides so any panel can be
+    read standalone.
+    """
+    metrics = [
+        ("sst_read_us_per_tx", "SST read (s / tx)",       1e6, "SST read"),
+        ("sst_compaction_us",  "SST compaction (s)",      1e6, "SST compaction"),
+    ]
+    agg = _ssd_diag_aggregate(data, "lsm", [m[0] for m in metrics])
+    if agg.empty:
+        return None
+    fig, axes = plt.subplots(1, 4, figsize=(9.0, 2.8), sharey=False,
+                             constrained_layout=True)
+    drew_any = False
+    sec_axes: List = []
+    n_panels = len(PAPER_TPCH_QUERIES)
+    for j, q in enumerate(PAPER_TPCH_QUERIES):
+        # Left ylabel only on the first panel; right ylabel only on
+        # the last panel (set via the secondary axis after creation).
+        drew = _ssd_bar_panel(axes[j], agg, q, metrics,
+                              show_ylabel=(j == 0),
+                              secondary_metric="sst_compaction_us",
+                              secondary_label=(metrics[1][1]
+                                               if j == n_panels - 1
+                                               else None))
+        twins = [a for a in fig.axes if a is not axes[j]
+                 and a.bbox.bounds == axes[j].bbox.bounds]
+        sec_axes.append(twins[0] if twins else None)
+        drew_any = drew_any or drew
+    if not drew_any:
+        plt.close(fig)
+        return None
+
+    # Share y-limits across panels so bar heights are comparable;
+    # tick labels appear only at the left edge of panel 0 (primary)
+    # and the right edge of the last panel (secondary) so the strip
+    # reads as one shared scale rather than four independent axes.
+    primary_max = max((ax.get_ylim()[1] for ax in axes), default=1.0)
+    secondary_max = max((a.get_ylim()[1] for a in sec_axes if a is not None),
+                        default=1.0)
+    for j, (ax, sec) in enumerate(zip(axes, sec_axes)):
+        ax.set_ylim(0, primary_max)
+        ax.tick_params(axis="y", left=True,
+                       labelleft=(j == 0), labelsize=8)
+        if sec is not None:
+            sec.set_ylim(0, secondary_max)
+            sec.tick_params(axis="y", right=True,
+                            labelright=(j == n_panels - 1),
+                            labelsize=7, colors="#444")
+
+    metric_handles = [
+        plt.Rectangle((0, 0), 1, 1, facecolor="#7f7f7f", alpha=1.0,
+                      label=metrics[0][3] + " (left)"),
+        plt.Rectangle((0, 0), 1, 1, facecolor="#7f7f7f", alpha=0.55,
+                      hatch="//", label=metrics[1][3] + " (right)"),
+    ]
+    fig.legend(handles=metric_handles, loc="upper center", ncol=2,
+               fontsize=10, bbox_to_anchor=(0.5, 1.10),
+               frameon=False, columnspacing=1.5, handletextpad=0.4)
+    return _save_ssd_diag(data, fig, "diag_ssd_lsm_sst_path")
+
+
 def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
     """One row per (binary, cell, structure) carrying every metric we plot.
     Backend-specific metrics will be NaN for the other backend's rows —
@@ -1030,6 +1292,10 @@ FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     "diag_lsm_sst_read":      fig_diag_lsm_sst_read,
     "diag_lsm_sst_compaction": fig_diag_lsm_sst_compaction,
     "diag_lsm_cpu_cycles":    fig_diag_lsm_cpu_cycles,
+    # SSD-only single-cell diagnostics (bar grids, not line plots).
+    "diag_ssd_lsm_breakdown":      fig_diag_ssd_lsm_breakdown,
+    "diag_ssd_btree_cache_profile": fig_diag_ssd_btree_cache_profile,
+    "diag_ssd_lsm_sst_path":       fig_diag_ssd_lsm_sst_path,
 }
 
 # Curated subsets selectable via --mode. Legacy default-mode builders
@@ -1046,6 +1312,9 @@ MODE_FIGURES: Dict[str, List[str]] = {
                             "paper_q10",
                             "paper_geo_condensed"],
     "diagnostics-explore": DIAG_EXPLORE_FIGS,
+    "ssd-diagnostics":     ["diag_ssd_lsm_breakdown",
+                            "diag_ssd_btree_cache_profile",
+                            "diag_ssd_lsm_sst_path"],
     "all":                 list(FIGURE_BUILDERS.keys()),
 }
 # 'default' is an alias for paper-figures so the runner script
