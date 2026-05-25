@@ -37,9 +37,16 @@
 // Byte-lex sort order within a custkey group:
 //   customer → (orders → lineitems*)+
 //
-// No aCOL / S5: Q3 has no parameter-independent aggregate to bake.  An aCOL
-// MI would carry only the same 3 base record types as the COL MI (S3) with no
-// additional information, so S5 collapses into S3 for Q3 and is omitted.
+// aCOL / S5 — query-dependent:
+//   - Q3 has no parameter-independent aggregate to bake.  A Q3 aCOL MI would
+//     carry only the same 3 base record types as the COL MI (S3) with no
+//     additional information, so S5 collapses into S3 for Q3 and is omitted.
+//   - Q10 DOES have one: per-order returned revenue (SUM over l_returnflag='R',
+//     a spec constant) is parameter-independent — the orderdate window filters
+//     at *order* grain, not lineitem grain.  So Q10's aCOL bakes that per-order
+//     sum into `orders_acol_t` (below) and DROPS the lineitem records entirely:
+//     it carries new information and is strictly smaller than S3, not a
+//     degenerate copy.  See q10/CLAUDE.md (S5) and q10/PERFORMANCE.md.
 
 #include <cassert>
 #include <cstdint>
@@ -162,6 +169,84 @@ struct lineitem_col_t {
    }
 };
 
+// ---------------------------------------------------------------------------
+// orders_acol_t — pre-aggregated order record for the Q10 aCOL MI (S5).
+//
+// Same (custkey, orderkey) tagged key as orders_coli_t but a DISTINCT idx_id
+// (37) so the two never collide inside a merged scanner. Payload swaps
+// o_shippriority (unused by Q10) for a BAKED `returned_revenue` =
+// SUM(l_extendedprice*(1-l_discount)) over the order's l_returnflag='R'
+// lineitems, computed at load time. o_orderdate stays live (the parameterised
+// 3-month window filters here at query time).
+//
+// The aCOL MI is MergedAdapter<customer_coli_t, orders_acol_t> — there is NO
+// lineitem level. Per custkey: 1 customer record + N order-agg records (orders
+// with returned_revenue > 0). This co-locates the customer payload ONCE per
+// customer (vs the per-order pre-agg VIEW which duplicates it per order) and
+// drops the lineitem bulk that makes S3 page-bound.
+//
+// Key layout: [t=1][custkey:4][t=3][orderkey:4][t=0][idx=37]  = 12 B
+// (byte-compatible with orders_coli_t except the trailing idx byte).
+
+inline constexpr coli_idx_id ORDERS_ACOL_IDX_ID = static_cast<coli_idx_id>(37);
+
+struct orders_acol_t {
+   static constexpr int id = 37;
+
+   struct Key {
+      static constexpr int id = 37;
+
+      Integer custkey;
+      Integer orderkey;
+
+      using path = tagged_path<
+          ORDERS_ACOL_IDX_ID,
+          tag_field_step<coli_domain_tag::customer, &Key::custkey>,
+          tag_field_step<coli_domain_tag::orders,   &Key::orderkey>>;
+
+      static constexpr unsigned maxFoldLength() { return path::maxFoldLength(); }
+
+      static unsigned keyfold(uint8_t* out, const Key& k) { return path::foldKey(out, k); }
+      static unsigned keyunfold(const uint8_t* in, Key& k) { return path::unfoldKey(in, k); }
+
+      static bool accepts_key(const u8* key_bytes, size_t key_len)
+      {
+         return key_len == maxFoldLength()
+             && key_bytes[key_len - 1] == static_cast<u8>(ORDERS_ACOL_IDX_ID);
+      }
+
+      friend std::ostream& operator<<(std::ostream& os, const Key& k)
+      {
+         return os << "orders_acol_key(custkey=" << k.custkey
+                   << ",orderkey=" << k.orderkey << ")";
+      }
+   };
+
+   Timestamp o_orderdate;       // live — parameterised window filters here
+   Numeric   returned_revenue;  // baked: SUM over l_returnflag='R' lineitems
+
+   static unsigned foldKey(uint8_t* out, const Key& k) { return Key::keyfold(out, k); }
+   static unsigned unfoldKey(const uint8_t* in, Key& k) { return Key::keyunfold(in, k); }
+   static constexpr unsigned maxFoldLength() { return Key::maxFoldLength(); }
+
+   void print(std::ostream& os) const
+   {
+      os << "orders_acol(orderdate=" << o_orderdate
+         << ",returned_revenue=" << returned_revenue << ")";
+   }
+
+   friend std::ostream& operator<<(std::ostream& os, const orders_acol_t& r)
+   {
+      r.print(os);
+      return os;
+   }
+
+   static Key key_from_base(Integer custkey, Integer orderkey)
+   {
+      return Key{custkey, orderkey};
+   }
+};
+
 }  // namespace tpch
 
 // ---------------------------------------------------------------------------
@@ -225,5 +310,45 @@ struct SKMatcher<tpch::lineitem_col_t, tpch::orders_coli_t> {
                     const tpch::orders_coli_t::Key&  b, const tpch::orders_coli_t&)
    {
       return -SKMatcher<tpch::orders_coli_t, tpch::lineitem_col_t>::match(b, {}, a, {});
+   }
+};
+
+// ---------------------------------------------------------------------------
+// SKMatcher specializations for the aCOL MI (customer_coli_t + orders_acol_t).
+// The merged-adapter instantiation needs every co-resident pair. customer's
+// self-pair and customer_coli_t × orders_coli_t already exist in views_coli.hpp;
+// orders_acol_t is the only new type here.
+
+// --- orders_acol_t self-pair (match on custkey, orderkey) ---
+
+template <>
+struct SKMatcher<tpch::orders_acol_t, tpch::orders_acol_t> {
+   static int match(const tpch::orders_acol_t::Key& a, const tpch::orders_acol_t&,
+                    const tpch::orders_acol_t::Key& b, const tpch::orders_acol_t&)
+   {
+      if (a.custkey  != b.custkey)  return a.custkey  < b.custkey  ? -1 : 1;
+      if (a.orderkey != b.orderkey) return a.orderkey < b.orderkey ? -1 : 1;
+      return 0;
+   }
+};
+
+// --- customer_coli_t × orders_acol_t — match on custkey only ---
+
+template <>
+struct SKMatcher<tpch::customer_coli_t, tpch::orders_acol_t> {
+   static int match(const tpch::customer_coli_t::Key& a, const tpch::customer_coli_t&,
+                    const tpch::orders_acol_t::Key&   b, const tpch::orders_acol_t&)
+   {
+      if (a.custkey != b.custkey) return a.custkey < b.custkey ? -1 : 1;
+      return 0;
+   }
+};
+
+template <>
+struct SKMatcher<tpch::orders_acol_t, tpch::customer_coli_t> {
+   static int match(const tpch::orders_acol_t::Key&   a, const tpch::orders_acol_t&,
+                    const tpch::customer_coli_t::Key& b, const tpch::customer_coli_t&)
+   {
+      return -SKMatcher<tpch::customer_coli_t, tpch::orders_acol_t>::match(b, {}, a, {});
    }
 };

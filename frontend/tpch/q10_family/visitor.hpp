@@ -274,4 +274,98 @@ struct Q10GroupWalkVisitor {
    }
 };
 
+// ---------------------------------------------------------------------------
+// Q10AcolVisitor — drives the hand-rolled acol_group_walk over the aCOL MI
+// (S5: MergedAdapter<customer_coli_t, orders_acol_t>). The per-order returned
+// revenue is BAKED into orders_acol_t at load time, so this visitor has no
+// on_lineitem hook and no returnflag filter: it just snapshots the customer FD
+// cols, sums the baked revenue of in-window orders, and emits one row per
+// custkey group (NATION INL on PK, D6) into the bounded TopN sink.
+//
+// Same per-customer finalisation shape as Q10GroupWalkVisitor (Query mode)
+// minus the lineitem level — that is the whole efficiency point of the aCOL.
+template <typename NationAdapter, typename Sink>
+struct Q10AcolVisitor {
+   const Params&  params;
+   NationAdapter& nation;
+   Sink&          sink;
+   std::unordered_map<Integer, Varchar<25>>& nationkey_cache;
+   Q10Stats*      stats = nullptr;
+
+   // Per-group state (reset at on_group_end).
+   Integer      cur_custkey     = 0;
+   Integer      cur_c_nationkey = 0;
+   Varchar<25>  cur_c_name{};
+   Varchar<40>  cur_c_address{};
+   Varchar<15>  cur_c_phone{};
+   Numeric      cur_c_acctbal   = 0;
+   Varchar<117> cur_c_comment{};
+   bool         have_customer   = false;
+   Numeric      cur_revenue     = 0;
+
+   void on_record_visited()
+   {
+      if (stats) stats->mi_records_visited++;
+   }
+
+   void on_customer(Integer ck, const customer_coli_t& c)
+   {
+      if (stats) stats->customers_scanned++;
+      cur_custkey     = ck;
+      cur_c_nationkey = c.c_nationkey;
+      cur_c_name      = c.c_name;
+      cur_c_address   = c.c_address;
+      cur_c_phone     = c.c_phone;
+      cur_c_acctbal   = c.c_acctbal;
+      cur_c_comment   = c.c_comment;
+      have_customer   = true;
+      cur_revenue     = 0;
+   }
+
+   void on_order(const orders_acol_t::Key& /*k*/, const orders_acol_t& o)
+   {
+      if (stats) stats->orders_scanned++;
+      // Order-granular date window (the only live filter — returnflag is baked
+      // into returned_revenue at load).
+      if (o.o_orderdate < params.date_lo
+          || o.o_orderdate >= params.date_lo + 90) {
+         return;
+      }
+      if (stats) stats->orders_passing_date++;
+      cur_revenue += o.returned_revenue;
+   }
+
+   void on_group_end(Integer /*ck*/)
+   {
+      if (have_customer && cur_revenue != Numeric{0}) {
+         if (stats) stats->aggregator_rows_out++;
+         auto it = nationkey_cache.find(cur_c_nationkey);
+         Varchar<25> n_name{};
+         if (it != nationkey_cache.end()) {
+            n_name = it->second;
+         } else {
+            nation.lookup1(typename nation_t::Key{cur_c_nationkey},
+                           [&](const nation_t& n) { n_name = n.n_name; });
+            nationkey_cache.emplace(cur_c_nationkey, n_name);
+            if (stats) stats->nation_inl_lookups++;
+         }
+         q10_agg_row_t row{
+             /*c_custkey */ cur_custkey,
+             /*revenue   */ cur_revenue,
+             /*c_name    */ cur_c_name,
+             /*c_acctbal */ cur_c_acctbal,
+             /*n_name    */ n_name,
+             /*c_address */ cur_c_address,
+             /*c_phone   */ cur_c_phone,
+             /*c_comment */ cur_c_comment,
+         };
+         sink.emit(std::move(row));
+      }
+      have_customer   = false;
+      cur_custkey     = 0;
+      cur_c_nationkey = 0;
+      cur_revenue     = 0;
+   }
+};
+
 }  // namespace tpch::q10

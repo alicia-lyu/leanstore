@@ -137,6 +137,13 @@ class Q10Workload
    // views are populated at load so one image serves the A/B.
    typename Backend::template Adapter<q10_pipeline_view_preagg_t>& pipeline_view_preagg;
 
+   // Structure 5: aCOL MI — pre-aggregated COL merged index
+   // (customer_coli_t + orders_acol_t, no lineitems; per-order returned
+   // revenue baked). The "fair" merged-index answer to the S2 preagg view —
+   // co-locates the customer payload once per customer instead of duplicating
+   // it per order. Walked by the hand-rolled acol_group_walk.
+   typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol;
+
   public:
    Params    params;
    Q10Stats* stats = nullptr;
@@ -156,7 +163,8 @@ class Q10Workload
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_col_t>& merged_col,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
-       typename Backend::template Adapter<lineitem_col_t>& split_lineitem);
+       typename Backend::template Adapter<lineitem_col_t>& split_lineitem,
+       typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol);
 
    // Param cycling: Phase 1 commit 1 always uses defaults.
    // Commit 3 populates the 24-entry PARAM_TABLE (every valid month start in
@@ -167,10 +175,11 @@ class Q10Workload
 
    // Queries — one per storage structure.
    // Returns the number of result rows (≤ 20 — TPC-H Q10 has LIMIT 20).
-   long query_by_base  (std::vector<q10_agg_row_t>& out);  // structure 1
-   long query_by_view  (std::vector<q10_agg_row_t>& out);  // structure 2 (A/B dispatch)
-   long query_by_merged(std::vector<q10_agg_row_t>& out);  // structure 3
-   long query_by_hash  (std::vector<q10_agg_row_t>& out);  // structure 4
+   long query_by_base      (std::vector<q10_agg_row_t>& out);  // structure 1
+   long query_by_view      (std::vector<q10_agg_row_t>& out);  // structure 2 (A/B dispatch)
+   long query_by_merged    (std::vector<q10_agg_row_t>& out);  // structure 3
+   long query_by_hash      (std::vector<q10_agg_row_t>& out);  // structure 4
+   long query_by_aggregated(std::vector<q10_agg_row_t>& out);  // structure 5 (aCOL MI)
 
   private:
    // S2 variant B — per-order pre-aggregated view scan. Selected by

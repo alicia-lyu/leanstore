@@ -88,6 +88,7 @@ int main(int argc, char** argv)
                     tpch::lineitem_col_t>  merged_col;
    B::Adapter<tpch::orders_coli_t>        split_orders;
    B::Adapter<tpch::lineitem_col_t>       split_lineitem;
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>  acol;  // S5 aCOL MI
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -105,6 +106,7 @@ int main(int argc, char** argv)
                                         tpch::lineitem_col_t>(db, "col_merged");
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "col_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "col_split_lineitem");
+      acol           = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>(db, "acol_merged");
    });
 
    LeanStoreLogger logger(db);
@@ -112,7 +114,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
                                   pipeline_view, pipeline_view_preagg, merged_col,
-                                  split_orders, split_lineitem);
+                                  split_orders, split_lineitem, acol);
 
    std::cout << "=== Loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
    crm.scheduleJobSync(0, [&]() {
@@ -260,13 +262,42 @@ int main(int argc, char** argv)
    }
    FLAGS_skip_order_physical = -1;  // restore default
 
+   // S5 (aCOL MI — per-order pre-aggregated, hand-rolled acol_group_walk) A/B
+   // parity vs the S3 reference at both param iters.
+   std::cout << "\n=== S5 (aCOL MI, hand-rolled walk) ===\n";
+   // .size() touches the btree → must run inside a worker (cr::Worker::my()).
+   double acol_sz = 0, col_sz = 0;
+   crm.scheduleJobSync(0, [&]() { acol_sz = acol.size(); col_sz = merged_col.size(); });
+   std::cout << "[info] aCOL MI size=" << std::fixed << std::setprecision(3)
+             << acol_sz << " MiB  (S3 merged_col=" << col_sz << " MiB)\n";
+   bool acol_ok = true;
+   for (long iter : {0L, 1L}) {
+      std::vector<tpch::q10::q10_agg_row_t> r_acol;
+      tpch::q10::Q10Stats sa{};
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+         q10.set_params_for_iter(iter);
+         q10.stats = &sa; q10.query_by_aggregated(r_acol); q10.stats = nullptr;
+         leanstore::cr::Worker::my().commitTX();
+      });
+      uint64_t d_acol = digest_rows(r_acol);
+      uint64_t d_ref  = (iter == 0) ? iter0.d_merged : iter1.d_merged;
+      bool ok = (d_acol == d_ref);
+      acol_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                << "S5-acol vs S3 [iter=" << iter << "] digest=0x"
+                << std::hex << d_acol << std::dec << " rows=" << r_acol.size()
+                << " mi_visited=" << sa.mi_records_visited << "\n";
+   }
+
    if (!iter0.ok) std::cout << "[FAIL] iter=0 parity / S3 sanity failed\n";
    if (!iter1.ok) std::cout << "[FAIL] iter=1 parity / S3 sanity failed — "
                                 "suggests a param-bake regression (some path "
                                 "hardcoded the iter=0 date)\n";
    if (!preagg_ok)    std::cout << "[FAIL] S2-preagg (variant B) parity vs S3 failed\n";
    if (!skip_phys_ok) std::cout << "[FAIL] S3-physical (SkipOrder seek) parity vs S3-logical failed\n";
-   return (iter0.ok && iter1.ok && preagg_ok && skip_phys_ok) ? 0 : 1;
+   if (!acol_ok)      std::cout << "[FAIL] S5-acol (aCOL MI) parity vs S3 failed\n";
+   return (iter0.ok && iter1.ok && preagg_ok && skip_phys_ok && acol_ok) ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY

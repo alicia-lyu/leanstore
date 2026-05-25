@@ -26,7 +26,8 @@ Q10Workload<Backend>::Q10Workload(
     typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                              lineitem_col_t>& merged_col,
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
-    typename Backend::template Adapter<lineitem_col_t>& split_lineitem)
+    typename Backend::template Adapter<lineitem_col_t>& split_lineitem,
+    typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol)
     : tpch(tpch),
       customer(customer),
       orders(orders),
@@ -35,6 +36,7 @@ Q10Workload<Backend>::Q10Workload(
       col(customer, orders, lineitem, merged_col, split_orders, split_lineitem),
       pipeline_view(pipeline_view),
       pipeline_view_preagg(pipeline_view_preagg),
+      acol(acol),
       params(Params::defaults())
 {
 }
@@ -61,6 +63,11 @@ void Q10Workload<Backend>::load()
    populate_q10_view_preagg<Backend>(col.merged_adapter(), pipeline_view_preagg,
                                       nation, stats);
    // S4: base tables only — nothing to populate.
+   // S5: aCOL MI (customer_coli_t + orders_acol_t). Built from the COL MI
+   // (same per-order returned-revenue accumulation as the preagg view) plus a
+   // customer base scan for the full customer records.
+   populate_q10_acol<Backend>(col.merged_adapter(), customer, acol,
+                              nation, stats);
 }
 
 template <typename Backend>
@@ -79,6 +86,7 @@ double Q10Workload<Backend>::get_size() const
                                  : pipeline_view.size());
       case 3: return base + col.get_merged_size();
       case 4: return base;
+      case 5: return base + acol.size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }
