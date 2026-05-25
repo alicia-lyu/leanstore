@@ -4,10 +4,13 @@
 
 ## Status
 
-**Phase 4 + 5 complete — all four `query_by_*` paths live; SF=1
-macOS strict 4-way XOR parity verified across two distinct param
-sets (iter=0 default + iter=1 off-default param-bake guard). Linux
-5L perf sweep done (2026-05-25, `RUNS.md`); a follow-up perf
+**Phase 4 + 5 complete — all four `query_by_*` paths live + **S5 aCOL
+MI** (`query_by_aggregated`, D8 revised 2026-05-25); SF=1 macOS
+strict 4-way XOR parity verified across two distinct param sets
+(iter=0 default + iter=1 off-default param-bake guard). Linux 5L
+perf sweep done both backends (2026-05-25, `RUNS.md`); **S5 aCOL is
+the fastest structure on both backends** (btree 160 ms ≪ S2-preagg
+17.4 s; LSM 1.37 s < S2-preagg 1.66 s). A follow-up perf
 investigation added two A/B variants — see
 [`PERFORMANCE.md`](PERFORMANCE.md).** The btree S2 "regression"
 (174 s) was a strawman per-lineitem view; the fair **per-order
@@ -62,6 +65,13 @@ Read each on the trigger described:
   then build on C⋈O and probe with filtered LINEITEM).
 - [`RUNS.md`](RUNS.md) — perf-run ledger; appended after every
   Linux sweep.
+- [`AUDIT_MAY_25.md`](AUDIT_MAY_25.md) — read **when reviewing
+  end-of-implementation drift**. End-of-implementation sanity audit
+  conducted 2026-05-25 after the Linux 5L sweep landed and S5 aCOL
+  came online; records the two MED doc-drift findings fixed in the
+  same commit (workload.hpp S5-omitted comment + §Status S5
+  headline) plus the clean gates (param-rotation guard, 5-way
+  parity, Rule 4 / 13 sites).
 - [`PERFORMANCE.md`](PERFORMANCE.md) — read **when interpreting the
   btree S2 / S3 numbers**. Records the investigation into the 5L
   anomalies (S2 174 s regression; S3 < S1): the S2 per-lineitem view

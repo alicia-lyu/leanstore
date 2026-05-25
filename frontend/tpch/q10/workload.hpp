@@ -13,9 +13,16 @@
 //   2 = intermediate pipeline view               -> query_by_view
 //   3 = MI[COL] only (col_group_walk)            -> query_by_merged
 //   4 = traditional indexes + hash join          -> query_by_hash
+//   5 = aCOL MI (pre-aggregated)                 -> query_by_aggregated
 //
-// S5 is omitted (Decision D8) — Q10 has no parameter-independent aggregate
-// to bake; orderdate window is parameterised.
+// Decision D8 (revised 2026-05-25): S5 is implemented. orders_acol_t bakes
+// per-order returned revenue (returnflag='R' SUM(extprice*(1-disc))) at load
+// time; the orderdate window stays parameterised and is evaluated at walk
+// time. Customer payload co-locates once per customer instead of being
+// duplicated per order as in the S2 preagg view. Walked by the hand-rolled
+// acol_group_walk (q10_family/acol_walk.tpp) — the dedicated walker is what
+// closes the Q3I S3>S5 anomaly. S5 is the fastest structure on both backends
+// in the 5L sweep — see RUNS.md (2026-05-25) and PERFORMANCE.md §7.
 
 #include <iomanip>
 #include <iostream>
