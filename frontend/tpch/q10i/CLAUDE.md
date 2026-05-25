@@ -18,11 +18,23 @@ cardinality / sentinel-ordering assertions all `[OK]` at SF=1.
 `lineitem_coli_t` widened with `l_returnflag` (D14).
 
 **Merged to calcite-integration (2026-05-25)**: the E1 "worktree-only"
-hold was lifted by explicit user decision. The `lineitem_coli_t`
-widening (D14) invalidated the Q3I/Q5I persisted COLI images, so those
-were reloaded as part of the merge. Linux perf validation is
-**smoke-test-first** (cheap c2 cell before any 5L), mirroring the Q10
-investigation — see `LINUX_PENDING.md` and `../q10/PERFORMANCE.md`.
+hold was lifted by explicit user decision; the `lineitem_coli_t`
+widening (D14) invalidated the Q3I/Q5I COLI images, reloaded with the
+merge.
+
+**S5 aCOLI + fair S2 view added (2026-05-25)**: the smoke test
+reproduced Q10's two btree anomalies (per-lineitem S2 strawman; S3 < S1,
+prune below the COLI co-location grain), so the Q10 fixes were ported.
+S5 (D3 overturned — per-order grain is soundly bakeable) is a 2-type
+aCOLI MI `<customer_coli_t, orders_acoli_q10i_t>` with per-order
+paid/open/late baked, lineitems+invoices dropped, walked by the
+hand-rolled `acoli_group_walk`; the fair S2-B is the per-order preagg
+view (`--q10i_view_variant=preagg`). Both parity-verified at SF=1 both
+backends (S1≡S2≡S3≡S4≡S2-preagg≡S5). **c2 iteration cell (btree, ms/q):
+S5 aCOLI 10.6 < S2-B 27.2 < S1 550 < S3 3,323 < S4 13,127 < S2-A
+16,751** — the aCOLI is the fastest structure, beating the fair view and
+raw S3 (RUNS.md; mirrors Q10's aCOL). 5L confirmation pending. See
+[`../ACOL_ACOLI_PLAYBOOK.md`](../ACOL_ACOLI_PLAYBOOK.md).
 
 ## Sibling Docs
 
@@ -224,16 +236,23 @@ no in-memory map, no `nation_set` (Q10I has no region filter). See D9.
 | S2 | Pipeline view + sequential scan | `q10i_pipeline_view_t` keyed by `(custkey, orderkey, linenumber)`; `i_status` FD-attached at view-load time; wide customer cols FD-attached | Sequential view scan → per-order SUM (D10) → orderdate filter → per-customer SUM (4-way partition by i_status) → NATION INL → TopN(20) | none (predicate-hoisted) |
 | S3 | COLI MI (4-table merged index) | `COLIPipeline` — `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t, invoice_coli_t>` | Sequential group-walk: invoice prefix → `invoice_buf` (Rule 10 Pattern B); per-order date filter; per-lineitem `i_status` lookup → 4 partial aggregates; incremental top-20 emit at on_group_end | none |
 | S4 | Hash join baseline | Base tables only | C HashBuild → date-filtered O probe → C⋈O; HashBuild on C⋈O.o_orderkey → returnflag-filtered L probe; HashJoin C⋈O⋈L ⋈ INVOICE on `l_invoicekey = i_invoicekey`; per-customer HashAggregate of 4 partial sums; NATION INL at emit; TopN(20) | none |
+| S5 | aCOLI MI (pre-aggregated, drop-children) | `MergedAdapter<customer_coli_t, orders_acoli_q10i_t>` — full customer + one `orders_acoli_q10i_t` per order with returned revenue > 0 (no lineitems/invoices) | Hand-rolled `acoli_group_walk` (`next_raw` + tag switch, no `std::variant`); per-order baked `{paid,open,late}` read directly, orderdate filter live, per-customer SUM, NATION INL, TopN(20) | `l_returnflag='R'` + the `i_status` P/O/L partition (spec constants) |
 
-**S5 deliberately omitted** (D3). Q10I has no parameter-independent
-aggregate to bake: every per-row contribution flows through
-`l_extendedprice * (1 - l_discount)` gated by the parameterised
-`o_orderdate` window. Per-customer per-status pre-totals over the
-customer's full history don't compose with a query-time window filter
-(can't subtract out-of-window contributions from a baked aggregate).
-Paper axis = S1–S4 only. **Differs from Q3I**: Q3I has an
-implemented-but-deferred S5 (aCOLI baking `pre_open_due`); Q10I just
-doesn't ship one.
+**S5 (D3, revised 2026-05-25 — overturns the original "omitted").** The
+original D3 only considered the **per-customer** grain, where baking is indeed
+unsound (the parameterised `o_orderdate` window sits *between* the customer and
+order grain — you can't subtract out-of-window orders from a baked customer
+total). But the **per-order** grain *is* sound (ACOL_ACOLI_PLAYBOOK §2 grain
+corollary): `l_returnflag='R'` and the `i_status` P/O/L partition are TPC-H spec
+constants, and `o_orderdate` applies at order grain, *above* the per-order
+aggregate. So S5 bakes per-order `{paid,open,late}` returned revenue and applies
+the date window at query time. Following Q10's aCOL (the playbook's "S5 done
+right"): **drop the lineitems *and* invoices** (both consumed into the buckets)
+and **hand-roll the walker** — Q3I's generic-scan aCOLI is the cautionary tale.
+The fair S2 view (`q10i_pipeline_view_preagg_t`, per-order, `--q10i_view_variant=
+preagg`) shares the same load-time bucketing and is the comparison baseline for
+S5 (playbook §6). See [`../ACOL_ACOLI_PLAYBOOK.md`](../ACOL_ACOLI_PLAYBOOK.md)
+and [`../q10/PERFORMANCE.md`](../q10/PERFORMANCE.md).
 
 ---
 

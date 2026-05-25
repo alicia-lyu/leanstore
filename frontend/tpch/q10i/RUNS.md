@@ -17,6 +17,25 @@ file unless their numbers are scattered across other docs.
 
 ## Runs
 
+### 2026-05-25 — S5 aCOLI + fair S2 view: c2 iteration-cell A/B (btree)
+- **Commit**: `7d376515` (`calcite-integration`), host `node0` (Linux)
+- **Logs**: `build/q10i_btree/150-in-0.1/structureN.log` (+ `structure2_{lineitem,preagg}.log`),
+  `build/q10i_btree/TPut.csv` (scale=150). Parity gate green first at SF=1 both
+  backends (S1≡S2≡S3≡S4≡S2-preagg≡S5).
+- **Config**: iteration cell SF=150 dram=0.1, isolated, `tx_seconds=15`. Standalone
+  q10i load (own image dir). A/B: `--q10i_view_variant=lineitem|preagg` (S2);
+  S5 = `q10i_btree_5` (aCOLI MI).
+- **ms/query** — **S5 aCOLI 10.6** < S2-B preagg 27.2 < S1 550 < S3 3,323 < S4
+  13,127 < S2-A 16,751. R MiB/q: S5 0.013, S2-B 0.11, S1 14.8, S3 94.7, S2-A 513.
+  S5 worker util 95.7% / 0 evictions; aCOLI get_size 502 MiB.
+- **Claim check**: **validates the fair-MI thesis for Q10I, mirroring Q10's aCOL.**
+  The aCOLI (merged index allowed to pre-aggregate per-order paid/open/late, drop
+  lineitems+invoices, hand-rolled walk) is the **fastest structure** — beats the
+  *fair* per-order preagg view (~2.6×; no per-order customer-col duplication) and
+  raw S3 (~313×; no lineitem/invoice bulk). The per-lineitem S2-A was a strawman
+  (S2-B is ~616× faster). 5L confirmation next. See
+  [`../ACOL_ACOLI_PLAYBOOK.md`](../ACOL_ACOLI_PLAYBOOK.md) §7 / [`CLAUDE.md`](CLAUDE.md).
+
 ### 2026-05-25 — first Linux smoke test (btree c2, anomaly diagnosis)
 - **Commit**: `1077fe8e` (`calcite-integration`, post-merge), host `node0`
 - **TPut.csv**: `build/q10i_btree/150-in-0.1/` + `build/q10i_btree/TPut.csv`
