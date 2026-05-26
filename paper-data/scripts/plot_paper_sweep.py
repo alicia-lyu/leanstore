@@ -753,18 +753,25 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     # whitespace that tight_layout sometimes does with sharey=False.
     fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 1.82),
                              sharey=False, constrained_layout=True)
-    # Compute a shared y-ceiling from the actual tallest bar across all
-    # four panels (in seconds, +5% headroom) so no bar gets clipped and
-    # the four panels share an identical y-axis. Without this, the
-    # per-panel n_overflow=1 cap clips the tallest bar in each panel and
-    # leaves an over-cap numeric annotation in its place — which makes
-    # the row hard to read.
-    selected = ms_df[(ms_df["binary"].isin(binaries))
-                     & (ms_df["cell"] == PAPER_HEADLINE_CELL)
-                     & (ms_df["bg"] == PAPER_HEADLINE_BG)]
-    s_vals = selected["ms_median"].dropna() / 1000.0
-    s_vals = s_vals[s_vals > 0]
-    cap_override = float(s_vals.max()) * 1.05 if not s_vals.empty else None
+    # Compute a shared y-ceiling so all four panels clip at the same
+    # height. Per-panel logic clips the top n_overflow bars (default 1):
+    # drop each panel's top-n_overflow heights, then take the row-wide
+    # max of the remainder (+15% headroom). This preserves the
+    # intentional outlier-overflow behaviour while ensuring every panel
+    # uses an identical cap.
+    panel_overflow = 1
+    panel_caps: List[float] = []
+    for binary in binaries:
+        panel_sub = ms_df[(ms_df["binary"] == binary)
+                          & (ms_df["cell"] == PAPER_HEADLINE_CELL)
+                          & (ms_df["bg"] == PAPER_HEADLINE_BG)]
+        heights = sorted((float(v) / 1000.0 for v in panel_sub["ms_median"]
+                          if v == v and v > 0), reverse=True)
+        if not heights:
+            continue
+        idx = min(panel_overflow, len(heights) - 1)
+        panel_caps.append(heights[idx])
+    cap_override = max(panel_caps) * 1.15 if panel_caps else None
     has_any = False
     legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
     for j, (binary, q) in enumerate(zip(binaries, PAPER_TPCH_QUERIES)):
