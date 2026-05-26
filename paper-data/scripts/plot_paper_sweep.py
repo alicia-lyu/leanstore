@@ -44,23 +44,21 @@ import yaml
 # ---------------------------------------------------------------------------
 
 STYLE = {
+    # Okabe-Ito / Wong palette (Nature Methods 2011). Pairwise
+    # distinguishable under deuteranopia, protanopia, and tritanopia,
+    # and ordered so adjacent legend slots have high lightness contrast
+    # — usable in monochrome print and photocopies. Partial-agg
+    # variants reuse their parent's color and are distinguished by
+    # hatching (see _struct_style); the 22 / 33 entries are kept here
+    # only as documentation of the variant→parent mapping.
     "structure_colors": {
-        1: "#c0392b",  # S1 base merge join — muted red
-        2: "#2980b9",  # S2 materialized view (naive) — blue
-        # Q10-only partial-aggregate Mat-View variant. Same blue
-        # family, lightened, so the legend reads as a Mat-View variant
-        # rather than a new approach. The Merged-Idx partial-agg
-        # variant (to be added) will follow the same convention on the
-        # green family.
-        22: "#7fb3d5",
-        3: "#27ae60",  # S3 merged index — green (headline)
-        # Q10/Q10i partial-aggregate Merged-Idx variant (aCOL / aCOLI MI
-        # with baked-in partial agg at load time). Same green family,
-        # lightened, so the legend reads as a Merged-Idx variant rather
-        # than a new approach — paired with id 22 on the Mat-View side.
-        33: "#7fcaa0",
-        4: "#e67e22",  # S4 hash join — orange
-        5: "#8e44ad",  # S5 aCOLI — purple (deferred from paper sweep)
+        1: "#D55E00",  # S1 Base-Merge       — vermillion (warm)
+        2: "#0072B2",  # S2 Mat-View         — blue (cool)
+        22: "#0072B2", # S2 partial-agg variant inherits S2 + hatch
+        3: "#009E73",  # S3 Merged-Idx       — bluish green (HEADLINE)
+        33: "#009E73", # S3 partial-agg variant inherits S3 + hatch
+        4: "#E69F00",  # S4 Base-Hash        — orange / amber
+        5: "#CC79A7",  # S5 aCOLI            — reddish purple (deferred)
     },
     "structure_markers": {1: "o", 2: "s", 3: "D", 4: "^", 5: "v"},
     "backend_linestyles": {"lsm": "-", "btree": "--"},

@@ -28,7 +28,7 @@ METRICS = [
     ("sst_read_us_per_tx", r"$\mathrm{sst\_read}$",    "diagnostics.csv"),
     ("cpu_cycles_per_tx",  r"$\mathrm{cpu\_cycles}$",  "diagnostics.csv"),
 ]
-METRIC_COLORS = ["#444444", "#4C72B0", "#C44E52"]
+METRIC_COLORS = ["#444444", "#0072B2", "#D55E00"]  # Okabe-Ito (Wong)
 
 QUERIES = [
     ("q3",  r"$\mathtt{q3}$"),
@@ -41,11 +41,12 @@ QUERIES = [
 QUERY_FAMILY = {"q3": "tpch", "q5": "tpch", "q3i": "tpchi", "q5i": "tpchi"}
 FAMILY_MARKER = {"tpch": "o", "tpchi": "D"}
 FAMILY_LABEL = {"tpch": "TPC-H (q3, q5)", "tpchi": "TPC-Hi (q3i, q5i)"}
+# Okabe-Ito palette — colorblind-safe (Wong, Nature Methods 2011).
 QUERY_COLOR = {
-    "q3":  "#4C72B0",
-    "q5":  "#55A868",
-    "q3i": "#C44E52",
-    "q5i": "#8172B2",
+    "q3":  "#0072B2",  # blue
+    "q5":  "#009E73",  # bluish green
+    "q3i": "#D55E00",  # vermillion
+    "q5i": "#CC79A7",  # reddish purple
 }
 
 
@@ -152,7 +153,7 @@ def render_correlations() -> None:
 
             # Shade "S3 better than S2" half (latency ratio < 1).
             lim_lo, lim_hi = 0.7, 2.1
-            ax.axhspan(lim_lo, 1.0, facecolor="#27ae60", alpha=0.10, zorder=0)
+            ax.axhspan(lim_lo, 1.0, facecolor="#009E73", alpha=0.10, zorder=0)
             ax.text(lim_hi - 0.04, lim_lo + 0.04, "S3 better",
                     ha="right", va="bottom", fontsize=7, color="#1e7e3c",
                     style="italic", zorder=1)
@@ -277,7 +278,7 @@ def render_tpchi_absolute() -> None:
                 lo = 0.0
 
                 if pt is not None:
-                    ax.scatter([pt[0]], [pt[1]], s=70, color="#27ae60",
+                    ax.scatter([pt[0]], [pt[1]], s=70, color="#009E73",
                                marker="o", edgecolor="white",
                                linewidth=0.6, zorder=3)
 
@@ -286,7 +287,7 @@ def render_tpchi_absolute() -> None:
                         linewidth=0.7, zorder=1)
                 # Shade "S3 better" half (below diagonal).
                 ax.fill_between([lo, hi], [lo, lo], [lo, hi],
-                                color="#27ae60", alpha=0.07, zorder=0)
+                                color="#009E73", alpha=0.07, zorder=0)
                 ax.text(hi - (hi - lo) * 0.04, lo + (hi - lo) * 0.04,
                         "S3 better", ha="right", va="bottom",
                         fontsize=7, color="#1e7e3c", style="italic")
@@ -306,7 +307,7 @@ def render_tpchi_absolute() -> None:
 
     # Shared legend.
     handles = [
-        plt.Line2D([0], [0], marker="o", color="#27ae60", linestyle="",
+        plt.Line2D([0], [0], marker="o", color="#009E73", linestyle="",
                    markersize=8, label="rep (S2 → S3)",
                    markeredgecolor="white"),
         plt.Line2D([0], [0], linestyle="--", color="#999",
@@ -343,8 +344,8 @@ def render_tpchi_s2_vs_s3() -> None:
         ("cpu_cycles_per_tx",  "cpu_cycles",           "diagnostics.csv", 1e9, "Gcyc/tx"),
     ]
     disk_style = {  # disk: (color, label)
-        "ssd": ("#e67e22", "SSD"),
-        "hdd": ("#8e44ad", "HDD"),
+        "ssd": ("#E69F00", "SSD"),  # Wong amber
+        "hdd": ("#CC79A7", "HDD"),  # Wong reddish purple
     }
 
     fig, axes = plt.subplots(2, 3, figsize=(7.5, 5.2))
@@ -388,7 +389,7 @@ def render_tpchi_s2_vs_s3() -> None:
 
             # Shade "S3 better" half (below the diagonal).
             ax.fill_between([lo, hi], [lo, lo], [lo, hi],
-                            color="#27ae60", alpha=0.07, zorder=0)
+                            color="#009E73", alpha=0.07, zorder=0)
             ax.text(hi - (hi - lo) * 0.04, lo + (hi - lo) * 0.04,
                     "S3 better", ha="right", va="bottom",
                     fontsize=7, color="#1e7e3c", style="italic")
