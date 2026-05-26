@@ -84,6 +84,7 @@ int main(int argc, char** argv)
                     tpch::lineitem_col_t>  merged_col;
    B::Adapter<tpch::orders_coli_t>        split_orders;
    B::Adapter<tpch::lineitem_col_t>       split_lineitem;
+   B::Adapter<tpch::col_shared_view_t>    shared_view;  // S6
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -100,6 +101,7 @@ int main(int argc, char** argv)
                                        tpch::lineitem_col_t>(db, "q5_merged_col");
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q5_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "q5_split_lineitem");
+      shared_view    = B::Adapter<tpch::col_shared_view_t>(db, "q5_shared_view");
    });
 
    LeanStoreLogger logger(db);
@@ -108,7 +110,7 @@ int main(int argc, char** argv)
    tpch::q5::Q5Workload<B> q5(tpch, customer, orders, lineitem,
                                supplier, nation, region,
                                pipeline_view, merged_col,
-                               split_orders, split_lineitem);
+                               split_orders, split_lineitem, shared_view);
 
    // Load base tables and all secondaries.
    std::cout << "=== Loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
@@ -124,13 +126,14 @@ int main(int argc, char** argv)
       q5.col_pipeline().populate_split();
       tpch::q5::populate_q5_view<B>(customer, nation, orders, lineitem, pipeline_view);
       q5.col_pipeline().populate_merged();
+      tpch::populate_col_shared_view<B>(merged_col, shared_view);  // S6
       leanstore::cr::Worker::my().commitTX();
    });
 
    // ------------------------------------------------------------------
    // Run all four paths.
    std::cout << "=== Running queries ===\n";
-   std::vector<tpch::q5::q5_agg_row_t> r_base, r_view, r_merged, r_hash;
+   std::vector<tpch::q5::q5_agg_row_t> r_base, r_view, r_merged, r_hash, r_shared;
 
    auto time_us = [](auto&& fn) {
       auto t0 = std::chrono::high_resolution_clock::now();
@@ -139,13 +142,14 @@ int main(int argc, char** argv)
       return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
    };
 
-   long us_base, us_view, us_merged, us_hash;
+   long us_base, us_view, us_merged, us_hash, us_shared;
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX();
-      us_base   = time_us([&] { q5.query_by_base  (r_base);   });
-      us_view   = time_us([&] { q5.query_by_view  (r_view);   });
-      us_merged = time_us([&] { q5.query_by_merged(r_merged); });
-      us_hash   = time_us([&] { q5.query_by_hash  (r_hash);   });
+      us_base   = time_us([&] { q5.query_by_base       (r_base);   });
+      us_view   = time_us([&] { q5.query_by_view       (r_view);   });
+      us_merged = time_us([&] { q5.query_by_merged     (r_merged); });
+      us_hash   = time_us([&] { q5.query_by_hash       (r_hash);   });
+      us_shared = time_us([&] { q5.query_by_shared_view(r_shared); });
       leanstore::cr::Worker::my().commitTX();
    });
 
@@ -154,16 +158,18 @@ int main(int argc, char** argv)
                 << std::right << std::setw(10) << us << " us  ("
                 << std::fixed << std::setprecision(3) << (us / 1000.0) << " ms)\n";
    };
-   print_timing("query_by_base",   us_base);
-   print_timing("query_by_view",   us_view);
-   print_timing("query_by_merged", us_merged);
-   print_timing("query_by_hash",   us_hash);
+   print_timing("query_by_base",        us_base);
+   print_timing("query_by_view",        us_view);
+   print_timing("query_by_merged",      us_merged);
+   print_timing("query_by_hash",        us_hash);
+   print_timing("query_by_shared_view", us_shared);
 
    // ------------------------------------------------------------------
    uint64_t d_base   = digest_rows(r_base);
    uint64_t d_view   = digest_rows(r_view);
    uint64_t d_merged = digest_rows(r_merged);
    uint64_t d_hash   = digest_rows(r_hash);
+   uint64_t d_shared = digest_rows(r_shared);
 
    std::cout << "\n=== Results ===\n";
    auto print_digest = [](const char* name, size_t n, uint64_t d) {
@@ -175,6 +181,7 @@ int main(int argc, char** argv)
    print_digest("S2 (view)",   r_view.size(),   d_view);
    print_digest("S3 (merged)", r_merged.size(), d_merged);
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
+   print_digest("S6 (shared)", r_shared.size(), d_shared);
 
    std::cout << "\n=== Parity check ===\n";
    uint64_t ref = d_merged;
@@ -196,8 +203,10 @@ int main(int argc, char** argv)
    parity_line("S2 view  ", d_view,   (long)r_view.size());
    parity_line("S3 merged", d_merged, (long)r_merged.size());
    parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
+   parity_line("S6 shared", d_shared, (long)r_shared.size());
 
-   bool pre_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref);
+   bool pre_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref)
+              && (d_shared == ref);
    if (!pre_ok) {
       std::cout << "\n[FAIL] pre-update parity broken — stopping before RF1/RF2.\n";
       return 1;

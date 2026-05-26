@@ -200,29 +200,23 @@ long Q10Workload<Backend>::query_by_base(std::vector<q10_agg_row_t>& out)
    return static_cast<long>(out.size());
 }
 
-template <typename Backend>
-long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
+// S2/S6 shared per-lineitem (variant-A) scan core with the D4 anomaly chain:
+//
+//   view scan → returnflag filter → SUM-per-orderkey
+//   → Filter[orderdate ∈ window] → SUM-per-c_custkey → NATION INL → TopN
+//
+// Templated on the scanner type so it runs over BOTH the per-query
+// q10_pipeline_view_t adapter (S2) and the COL-family shared col_shared_view_t
+// adapter (S6) — the union row is a column superset, so the body reads its
+// subset (l_returnflag, o_orderdate, l_extendedprice, l_discount, the 6 FD
+// customer cols, c_nationkey) unchanged. NATION is resolved post-pipeline via
+// per-customer INL (D6) for both — q10 never stores n_name, so S6 needs no
+// special handling here. Anti-pattern #30 bound: |per-orderkey map| ≤ |ORDERS|.
+template <typename Scanner, typename NationAdapter>
+static long q10_run_view_scan_lineitem(Scanner& scanner, const Params& params,
+                                       NationAdapter& nation, Q10Stats* stats,
+                                       std::vector<q10_agg_row_t>& out)
 {
-   // S2 A/B dispatch (q10/PERFORMANCE.md). Variant B (per-order pre-aggregated
-   // view) is the perf-investigation fix for the btree S2 regression; variant
-   // A (this body) is the original per-lineitem view + D4 anomaly chain.
-   if (FLAGS_q10_view_variant == "preagg") {
-      return query_by_view_preagg(out);
-   }
-
-   // S2 variant A: pipeline-view scan with the D4 anomaly chain.
-   //
-   //   view scan → returnflag filter → SUM-per-orderkey
-   //   → Filter[orderdate ∈ window] → SUM-per-c_custkey
-   //   → NATION INL → TopN
-   //
-   // Phase 0 D4 locked the per-orderkey rollup as a documented S2-only
-   // deviation: the orderdate window is parameterised, hoisted out of
-   // the view payload, and applies at *order* granularity. The
-   // per-orderkey map snapshots the FD customer payload from the first
-   // lineitem of each new order; the rolled-up revenue is offered to
-   // the per-customer aggregator only for orders that pass the date
-   // filter. Anti-pattern #30 bound: |per-orderkey map| ≤ |ORDERS|.
    out.clear();
 
    Q10QuerySink sink(stats);
@@ -239,8 +233,7 @@ long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
    };
    std::unordered_map<Integer, PerOrderState> per_orderkey;
 
-   auto sc = pipeline_view.getScanner();
-   while (auto kv = sc->next()) {
+   while (auto kv = scanner.next()) {
       const auto& k = kv->first;
       const auto& v = kv->second;
       if (stats) stats->view_rows_scanned++;
@@ -282,6 +275,30 @@ long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
    q10_finalize_aggregator(agg, nation, nation_cache, sink, stats);
    sink.finalize(out);
    return static_cast<long>(out.size());
+}
+
+template <typename Backend>
+long Q10Workload<Backend>::query_by_view(std::vector<q10_agg_row_t>& out)
+{
+   // S2 A/B dispatch (q10/PERFORMANCE.md). Variant B (per-order pre-aggregated
+   // view) is the perf-investigation fix for the btree S2 regression; variant
+   // A (the shared core) is the original per-lineitem view + D4 anomaly chain.
+   if (FLAGS_q10_view_variant == "preagg") {
+      return query_by_view_preagg(out);
+   }
+   auto sc = pipeline_view.getScanner();
+   return q10_run_view_scan_lineitem(*sc, params, nation, stats, out);
+}
+
+template <typename Backend>
+long Q10Workload<Backend>::query_by_shared_view(std::vector<q10_agg_row_t>& out)
+{
+   // S6: the per-lineitem variant-A body over the COL-family shared view
+   // (col_shared_view_t). The shared union view is per-lineitem grain, so the
+   // preagg variant B (q10_pipeline_view_preagg_t) is out of scope here; no
+   // --q10_view_variant dispatch.
+   auto sc = shared_view.getScanner();
+   return q10_run_view_scan_lineitem(*sc, params, nation, stats, out);
 }
 
 template <typename Backend>

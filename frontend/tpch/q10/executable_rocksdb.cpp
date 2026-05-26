@@ -65,6 +65,9 @@ int main(int argc, char** argv)
    // S5: aCOL MI — per-order pre-aggregated COL merged index (no lineitems).
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>  acol(rocks_db);
 
+   // S6: COL-family shared materialised view (union schema; q10's own copy).
+   B::Adapter<tpch::col_shared_view_t>  shared_view(rocks_db);
+
    rocks_db.open();
 
    RocksDBLogger logger(rocks_db);
@@ -72,7 +75,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
                                   q10_view, q10_view_preagg, merged_col,
-                                  split_orders, split_lineitem, acol);
+                                  split_orders, split_lineitem, acol, shared_view);
 
    if (!FLAGS_recover) {
       q10.load();
@@ -121,6 +124,14 @@ int main(int argc, char** argv)
          tpch::q10::AggregatedQ10<B> w{q10};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
              rocks_db, std::move(w), tpch, "mi_acol_preagg");
+         helper.run();
+         q10_txc = helper.tx_count();
+         break;
+      }
+      case 6: {
+         tpch::q10::SharedViewQ10<B> w{q10};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
+             rocks_db, std::move(w), tpch, "shared_view");
          helper.run();
          q10_txc = helper.tx_count();
          break;

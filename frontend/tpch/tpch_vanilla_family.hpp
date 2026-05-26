@@ -105,6 +105,14 @@ struct VanillaWrappers<Backend, 4> {
                    tpch::q5::Q5Workload<Backend>& q5_w)
        : q3{q3_w}, q5{q5_w} {}
 };
+template <typename Backend>
+struct VanillaWrappers<Backend, 6> {
+   tpch::q3::SharedViewQ3<Backend> q3;
+   tpch::q5::SharedViewQ5<Backend> q5;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>& q3_w,
+                   tpch::q5::Q5Workload<Backend>& q5_w)
+       : q3{q3_w}, q5{q5_w} {}
+};
 }  // namespace detail::vanilla
 
 template <typename Backend, int Structure>
@@ -212,6 +220,7 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps(
       case 2: steps = register_vanilla_bg_steps_at<Backend, 2>(db_traits, q3_workload, q5_workload); break;
       case 3: steps = register_vanilla_bg_steps_at<Backend, 3>(db_traits, q3_workload, q5_workload); break;
       case 4: steps = register_vanilla_bg_steps_at<Backend, 4>(db_traits, q3_workload, q5_workload); break;
+      case 6: steps = register_vanilla_bg_steps_at<Backend, 6>(db_traits, q3_workload, q5_workload); break;
       default: throw std::runtime_error("register_vanilla_bg_steps: invalid storage_structure");
    }
    if (include_point_lookups) {

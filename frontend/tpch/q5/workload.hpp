@@ -159,6 +159,11 @@ class Q5Workload
    // Structure 2: intermediate pipeline view (per-lineitem rows, unfiltered).
    typename Backend::template Adapter<q5_pipeline_view_t>& pipeline_view;
 
+   // Structure 6: COL-family SHARED view (col_shared_view_t). Same key/grain
+   // as pipeline_view; carries c_nationkey (not n_name) — query_by_shared_view
+   // resolves n_name post-pipeline via q5_resolve_n_name, like S1/S3/S4.
+   typename Backend::template Adapter<col_shared_view_t>& shared_view;
+
   public:
    Params   params;
    Q5Stats* stats = nullptr;
@@ -179,7 +184,8 @@ class Q5Workload
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_col_t>& merged_col,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
-       typename Backend::template Adapter<lineitem_col_t>& split_lineitem);
+       typename Backend::template Adapter<lineitem_col_t>& split_lineitem,
+       typename Backend::template Adapter<col_shared_view_t>& shared_view);
 
    // ------------------------------------------------------------------
    // Param cycling: Phase 0.5 always uses defaults.
@@ -195,10 +201,11 @@ class Q5Workload
    // no LIMIT — cardinality bounded by |nation_set|).
    // ------------------------------------------------------------------
 
-   long query_by_base  (std::vector<q5_agg_row_t>& out);  // structure 1
-   long query_by_view  (std::vector<q5_agg_row_t>& out);  // structure 2
-   long query_by_merged(std::vector<q5_agg_row_t>& out);  // structure 3
-   long query_by_hash  (std::vector<q5_agg_row_t>& out);  // structure 4
+   long query_by_base       (std::vector<q5_agg_row_t>& out);  // structure 1
+   long query_by_view       (std::vector<q5_agg_row_t>& out);  // structure 2
+   long query_by_merged     (std::vector<q5_agg_row_t>& out);  // structure 3
+   long query_by_hash       (std::vector<q5_agg_row_t>& out);  // structure 4
+   long query_by_shared_view(std::vector<q5_agg_row_t>& out);  // structure 6
 
    // ------------------------------------------------------------------
    // RF1/RF2 maintenance (refresh_sales experiment). Mirrors Q3Workload

@@ -151,6 +151,10 @@ class Q10Workload
    // it per order. Walked by the hand-rolled acol_group_walk.
    typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol;
 
+   // Structure 6: COL-family SHARED view (col_shared_view_t). Per-lineitem
+   // (variant-A) grain; query_by_shared_view reuses the S2 variant-A body.
+   typename Backend::template Adapter<col_shared_view_t>& shared_view;
+
   public:
    Params    params;
    Q10Stats* stats = nullptr;
@@ -171,7 +175,8 @@ class Q10Workload
                                                 lineitem_col_t>& merged_col,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
        typename Backend::template Adapter<lineitem_col_t>& split_lineitem,
-       typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol);
+       typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol,
+       typename Backend::template Adapter<col_shared_view_t>& shared_view);
 
    // Param cycling: Phase 1 commit 1 always uses defaults.
    // Commit 3 populates the 24-entry PARAM_TABLE (every valid month start in
@@ -187,6 +192,7 @@ class Q10Workload
    long query_by_merged    (std::vector<q10_agg_row_t>& out);  // structure 3
    long query_by_hash      (std::vector<q10_agg_row_t>& out);  // structure 4
    long query_by_aggregated(std::vector<q10_agg_row_t>& out);  // structure 5 (aCOL MI)
+   long query_by_shared_view(std::vector<q10_agg_row_t>& out); // structure 6 (shared view)
 
   private:
    // S2 variant B — per-order pre-aggregated view scan. Selected by

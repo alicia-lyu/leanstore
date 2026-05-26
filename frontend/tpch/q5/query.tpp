@@ -25,6 +25,7 @@
 #include <limits>
 #include <ostream>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -493,54 +494,38 @@ long Q5Workload<Backend>::query_by_base(std::vector<q5_agg_row_t>& out)
    return static_cast<long>(out.size());
 }
 
-template <typename Backend>
-long Q5Workload<Backend>::query_by_view(std::vector<q5_agg_row_t>& out)
+// S2/S6 shared scan core. Templated on the scanner type (so it runs over BOTH
+// the per-query q5_pipeline_view_t adapter and the COL-family shared
+// col_shared_view_t adapter) and on an n_name resolver `n_name_of(v) ->
+// std::string`. Every parameterised filter is applied live:
+//   1. c_nationkey ∈ nation_set     — customer gate (per-custkey seek-skip)
+//   2. o_orderdate window           — inline date-range arithmetic
+//   3. composite-key supplier probe — supplier_nation_set (inside q5_admit)
+// No per-orderkey flush — the per-n_name aggregate spans all orders.
+template <typename Scanner, typename NNameFn>
+static void q5_run_view_scan(Scanner& scanner, const Q5SideTables& sides,
+                             const Params& params, Q5Stats* stats,
+                             NNameRevenueAggregator& agg, NNameFn&& n_name_of)
 {
-   // S2: sequential scan over q5_pipeline_view_t (per-lineitem rows).
-   //
-   // The view is loaded unfiltered (predicate hoisting — no filter baked in
-   // at load time so the view is reusable across all REGION / DATE param sets).
-   // n_name is FD-attached at load time (1:1 with c_nationkey, not parameterised)
-   // and read directly from v.n_name — no per-query NATION lookup needed.
-   // Every parameterised filter is applied live here:
-   //   1. c_nationkey ∈ nation_set     — customer gate (replaces mktsegment)
-   //   2. o_orderdate window           — inline date-range arithmetic
-   //   3. composite-key supplier probe — supplier_nation_set lookup
-   //
-   // No per-orderkey flush is needed: the per-n_name aggregate spans all
-   // orders; accumulate all qualifying lineitems, then call agg.emit() once.
-   out.clear();
-
-   Q5SideTables sides;
-   build_q5_side_tables<Backend>(region, nation, supplier, params, sides);
-
-   NNameRevenueAggregator agg;
-
-   // Per-custkey seek-skip mirrors Q3 S2 (q3/query.tpp:365–386) and S3's
-   // COLGroupWalk SkipGroup.  Within a custkey group, c_nationkey is
-   // FD-attached and identical for every row; we evaluate the nation_set
-   // gate once at the custkey transition and seek past the entire custkey
-   // range on a miss instead of streaming every row through a per-row
-   // hashmap probe.  This closes the access-pattern gap to S3 (apples-to-
-   // apples physical-seek parity, not just filter pushdown).
+   // Per-custkey seek-skip mirrors Q3 S2 and S3's COLGroupWalk SkipGroup.
+   // c_nationkey is FD-attached and identical within a custkey group, so the
+   // nation_set gate fires once per custkey transition; on a miss we seek past
+   // the whole custkey range (apples-to-apples physical-seek parity with S3).
    Integer cur_custkey    = -1;
    bool    cur_custkey_ok = false;
 
-   auto sc = pipeline_view.getScanner();
-   while (auto kv = sc->next()) {
+   while (auto kv = scanner.next()) {
       const auto& k = kv->first;
       const auto& v = kv->second;
       if (stats) stats->lineitems_scanned++;
 
       if (k.custkey != cur_custkey) {
-         // Custkey transition — re-evaluate nation_set membership.  On a
-         // miss, physical-seek past the entire custkey range to mirror
-         // S3's SkipGroup.
          cur_custkey = k.custkey;
          if (sides.nation_set.count(v.c_nationkey) == 0) {
             if (stats) stats->view_groups_skipped++;
-            q5_pipeline_view_t::Key next_key{cur_custkey + 1, 0, 0};
-            sc->seek(next_key);
+            using ViewKey = std::remove_cvref_t<decltype(kv->first)>;
+            ViewKey next_key{cur_custkey + 1, 0, 0};
+            scanner.seek(next_key);
             cur_custkey    = -1;  // re-arm on next row
             cur_custkey_ok = false;
             continue;
@@ -550,23 +535,61 @@ long Q5Workload<Backend>::query_by_view(std::vector<q5_agg_row_t>& out)
       }
       if (!cur_custkey_ok) continue;
 
-      // Orderdate window.  Inlined here (not delegated to q5_predicate_orders)
-      // because that predicate takes orders_t and the view row is
-      // q5_pipeline_view_t — same pattern as Q3's S2 inline orderdate check.
+      // Orderdate window. Inlined (the q5_predicate_orders predicate takes
+      // orders_t; the view row is a view record) — same pattern as Q3 S2.
       if (v.o_orderdate < params.orderdate_lo
           || v.o_orderdate >= params.orderdate_lo + 365) {
          continue;
       }
 
-      // Composite-key SUPPLIER probe + accumulate via shared helper.
-      // v.n_name is FD-attached at load time — no runtime NATION lookup.
-      // Convert Varchar<25> → std::string for the aggregator key (the helper
-      // takes const std::string& because S1/S3/S4 source n_name from
-      // q5_resolve_n_name's std::string cache).
-      std::string n_name_str(v.n_name.data, v.n_name.length);
+      // Composite-key SUPPLIER probe + accumulate via the shared helper.
+      // The aggregator key is n_name (resolved per the supplied resolver).
+      std::string n_name_str = n_name_of(v);
       q5_admit_lineitem(v, v.c_nationkey, n_name_str, sides, agg, stats);
    }
+}
 
+template <typename Backend>
+long Q5Workload<Backend>::query_by_view(std::vector<q5_agg_row_t>& out)
+{
+   // S2: scan the per-query q5_pipeline_view_t. n_name is FD-attached on the
+   // view row (read directly from v.n_name — no runtime NATION lookup).
+   out.clear();
+   Q5SideTables sides;
+   build_q5_side_tables<Backend>(region, nation, supplier, params, sides);
+   NNameRevenueAggregator agg;
+   auto sc = pipeline_view.getScanner();
+   q5_run_view_scan(*sc, sides, params, stats, agg,
+                    [](const auto& v) {
+                       return std::string(v.n_name.data, v.n_name.length);
+                    });
+   agg.emit(out);
+   if (stats) {
+      stats->aggregator_rows_out = static_cast<long>(out.size());
+      stats->agg_buckets         = static_cast<long>(out.size());
+   }
+   std::sort(out.begin(), out.end(), q5_sort_cmp);
+   return static_cast<long>(out.size());
+}
+
+template <typename Backend>
+long Q5Workload<Backend>::query_by_shared_view(std::vector<q5_agg_row_t>& out)
+{
+   // S6: identical S2 scan body over the COL-family shared view
+   // (col_shared_view_t). The shared view carries c_nationkey but NOT n_name
+   // (no out-of-chain NATION column), so n_name is resolved post-pipeline from
+   // c_nationkey via q5_resolve_n_name — the SAME NATION handling as S1/S3/S4.
+   out.clear();
+   Q5SideTables sides;
+   build_q5_side_tables<Backend>(region, nation, supplier, params, sides);
+   NNameRevenueAggregator agg;
+   std::unordered_map<Integer, std::string> nationkey_to_name;  // ~5 entries
+   auto sc = shared_view.getScanner();
+   q5_run_view_scan(*sc, sides, params, stats, agg,
+                    [&](const auto& v) -> std::string {
+                       return q5_resolve_n_name(v.c_nationkey, nation,
+                                                nationkey_to_name);
+                    });
    agg.emit(out);
    if (stats) {
       stats->aggregator_rows_out = static_cast<long>(out.size());

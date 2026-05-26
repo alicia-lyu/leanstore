@@ -29,4 +29,8 @@ using MergedQ5 = ::tpch::MergedStructure<Q5Workload<Backend>, q5_agg_row_t>;
 template <typename Backend>
 using HashQ5   = ::tpch::HashStructure  <Q5Workload<Backend>, q5_agg_row_t>;
 
+// S6: the COL-family shared materialised view (col_shared_view_t).
+template <typename Backend>
+using SharedViewQ5 = ::tpch::SharedViewStructure<Q5Workload<Backend>, q5_agg_row_t>;
+
 }  // namespace tpch::q5

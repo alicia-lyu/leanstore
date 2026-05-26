@@ -135,6 +135,7 @@ int main(int argc, char** argv)
                     tpch::lineitem_col_t>  merged_col;
    B::Adapter<tpch::orders_coli_t>        split_orders;
    B::Adapter<tpch::lineitem_col_t>       split_lineitem;
+   B::Adapter<tpch::col_shared_view_t>    shared_view;  // S6 (unused by refresh)
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -152,16 +153,19 @@ int main(int argc, char** argv)
                                        tpch::lineitem_col_t>(db, "col_merged");
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "col_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "col_split_lineitem");
+      shared_view    = B::Adapter<tpch::col_shared_view_t>(db, "col_shared_view");
    });
 
    LeanStoreLogger logger(db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, logger);
    tpch::q3::Q3Workload<B> q3(tpch, customer, orders, lineitem,
-                               q3_view, merged_col, split_orders, split_lineitem);
+                               q3_view, merged_col, split_orders, split_lineitem,
+                               shared_view);
    tpch::q5::Q5Workload<B> q5(tpch, customer, orders, lineitem,
                                supplier, nation, region,
-                               q5_view, merged_col, split_orders, split_lineitem);
+                               q5_view, merged_col, split_orders, split_lineitem,
+                               shared_view);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {

@@ -65,4 +65,17 @@ struct AggregatedStructure {
    void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
 };
 
+// SharedViewStructure: S6 — the single COL-family shared materialised view
+// (col_shared_view_t), whose schema is the column-union of the per-query S2
+// views. query_by_shared_view runs each query's existing S2 scan body over the
+// shared (wider) adapter. See frontend/tpch/tpch_family/shared_view_loader.hpp.
+template <typename Workload, typename AggRow>
+struct SharedViewStructure {
+   Workload& w;
+   explicit SharedViewStructure(Workload& w) : w(w) {}
+   long query(std::vector<AggRow>& out) { return w.query_by_shared_view(out); }
+   double get_size() const { return w.get_size(); }
+   void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
+};
+
 }  // namespace tpch

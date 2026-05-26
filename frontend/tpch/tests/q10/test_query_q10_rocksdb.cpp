@@ -179,6 +179,9 @@ int main(int argc, char** argv)
    // S5: aCOL MI (per-order pre-aggregated, no lineitems).
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>  acol(rocks_db);
 
+   // S6: COL-family shared materialised view (union schema).
+   B::Adapter<tpch::col_shared_view_t>  shared_view(rocks_db);
+
    // Defensive wipe: if --ssd_path holds a prior DB, remove it before opening.
    {
       namespace fs = std::filesystem;
@@ -198,7 +201,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
                                   pipeline_view, pipeline_view_preagg, merged_col,
-                                  split_orders, split_lineitem, acol);
+                                  split_orders, split_lineitem, acol, shared_view);
 
    std::cout << "=== Loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
    q10.load();
@@ -504,7 +507,33 @@ int main(int argc, char** argv)
                 << " (S3 mi_visited=" << iter0.s3_stats.mi_records_visited << ")\n";
    }
 
-   if (stats_ok && iter0.ok && iter1.ok && preagg_ok && skip_phys_ok && acol_ok) return 0;
+   // S6 (COL-family shared union view) A/B parity. query_by_shared_view runs
+   // the S2 variant-A body over the wider col_shared_view_t; it must match the
+   // S3 reference at both param iters. n_name is resolved post-pipeline (D6),
+   // same as every other path — the shared view stores no NATION column.
+   std::cout << "\n=== S6 (shared COL union view) ===\n";
+   std::cout << "[info] shared_view size=" << std::fixed << std::setprecision(3)
+             << shared_view.size() << " MiB  (S2 view=" << pipeline_view.size()
+             << " MiB, S3 merged_col=" << merged_col.size() << " MiB)\n";
+   bool shared_view_ok = true;
+   for (long iter : {0L, 1L}) {
+      q10.set_params_for_iter(iter);
+      std::vector<tpch::q10::q10_agg_row_t> r_shared;
+      tpch::q10::Q10Stats ss{};
+      q10.stats = &ss; q10.query_by_shared_view(r_shared); q10.stats = nullptr;
+      const auto& r_ref = (iter == 0) ? iter0.r_merged : iter1.r_merged;
+      uint64_t d_shared = digest_rows(r_shared);
+      uint64_t d_ref    = digest_rows(r_ref);
+      bool ok = (d_shared == d_ref) && (r_shared.size() == r_ref.size());
+      shared_view_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                << "S6-shared vs S3 [iter=" << iter << "] digest=0x"
+                << std::hex << d_shared << std::dec << " rows=" << r_shared.size()
+                << "\n";
+   }
+
+   if (stats_ok && iter0.ok && iter1.ok && preagg_ok && skip_phys_ok && acol_ok
+       && shared_view_ok) return 0;
    if (!stats_ok)  std::cout << "[FAIL] cardinality / sentinel check failed\n";
    if (!iter0.ok)  std::cout << "[FAIL] iter=0 parity / S3 sanity failed\n";
    if (!iter1.ok)  std::cout << "[FAIL] iter=1 parity / S3 sanity failed — "
@@ -513,5 +542,6 @@ int main(int argc, char** argv)
    if (!preagg_ok)    std::cout << "[FAIL] S2-preagg (variant B) parity vs S3 failed\n";
    if (!skip_phys_ok) std::cout << "[FAIL] S3-physical (SkipOrder seek) parity vs S3-logical failed\n";
    if (!acol_ok)      std::cout << "[FAIL] S5-acol (aCOL MI) parity vs S3 failed\n";
+   if (!shared_view_ok) std::cout << "[FAIL] S6-shared (COL union view) parity vs S3 failed\n";
    return 1;
 }

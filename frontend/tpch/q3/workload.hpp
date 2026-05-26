@@ -81,6 +81,11 @@ class Q3Workload
    // Structure 2: intermediate pipeline view (per-lineitem rows, unfiltered).
    typename Backend::template Adapter<q3_pipeline_view_t>& pipeline_view;
 
+   // Structure 6: the COL-family SHARED view (col_shared_view_t), union schema
+   // serving q3/q5/q10. Same custkey/orderkey/linenumber key + per-lineitem
+   // grain as pipeline_view, so query_by_shared_view reuses the S2 scan body.
+   typename Backend::template Adapter<col_shared_view_t>& shared_view;
+
   public:
    Params params;
    Stats* stats = nullptr;
@@ -98,7 +103,8 @@ class Q3Workload
        typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                                 lineitem_col_t>& merged_col,
        typename Backend::template Adapter<orders_coli_t>&   split_orders,
-       typename Backend::template Adapter<lineitem_col_t>& split_lineitem);
+       typename Backend::template Adapter<lineitem_col_t>& split_lineitem,
+       typename Backend::template Adapter<col_shared_view_t>& shared_view);
 
    // ------------------------------------------------------------------
    // Param cycling: rotate through the shared Q3-family substitution-
@@ -113,10 +119,11 @@ class Q3Workload
    // Returns the number of result rows (at most 10, LIMIT 10 by revenue).
    // ------------------------------------------------------------------
 
-   long query_by_base  (std::vector<q3_agg_row_t>& out);  // structure 1
-   long query_by_view  (std::vector<q3_agg_row_t>& out);  // structure 2
-   long query_by_merged(std::vector<q3_agg_row_t>& out);  // structure 3
-   long query_by_hash  (std::vector<q3_agg_row_t>& out);  // structure 4
+   long query_by_base       (std::vector<q3_agg_row_t>& out);  // structure 1
+   long query_by_view       (std::vector<q3_agg_row_t>& out);  // structure 2
+   long query_by_merged     (std::vector<q3_agg_row_t>& out);  // structure 3
+   long query_by_hash       (std::vector<q3_agg_row_t>& out);  // structure 4
+   long query_by_shared_view(std::vector<q3_agg_row_t>& out);  // structure 6
 
    // ------------------------------------------------------------------
    // Loading / sizing
