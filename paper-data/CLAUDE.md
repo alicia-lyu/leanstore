@@ -100,13 +100,18 @@ references plots via **relative symlinks** into `paper-data/`. Refreshing a
 snapshot's `figures/paper/*.pdf` therefore updates the paper build with no
 copy step. Current links (paper-side → paper-data source):
 
-- `refresh_5L_pair_latency.pdf` → `2026-05-24-refresh-5L-ssd/figures/paper/refresh_5L_pair_latency_ssd.pdf`
-- `q10.pdf` → `2026-05-24-a-ssd/figures/paper/paper_q10_ssd.pdf`
-- `tpch_lsm_headline_hdd.pdf` → `2026-05-18-b/figures/paper/paper_tpch_lsm_headline_hdd.pdf`
-- `cpu_utilization.pdf` → `2026-05-24-a-ssd/figures/paper/cpu_utilization.pdf`
-- `diag_ssd_lsm_sst_path_ssd.pdf` → `2026-05-24-a-ssd/figures/diagnostics/diag_ssd_lsm_sst_path_ssd.pdf`
 - `tpch_btree_headline.pdf` → `2026-05-24-a-ssd/figures/paper/paper_tpch_btree_headline_ssd.pdf`
 - `tpch_lsm_headline.pdf` → `2026-05-24-a-ssd/figures/paper/paper_tpch_lsm_headline_ssd.pdf`
+- `q10.pdf` → `2026-05-24-a-ssd/figures/paper/paper_q10_ssd.pdf`
+- `refresh_5L_pair_latency.pdf` → `2026-05-24-refresh-5L-ssd/figures/paper/refresh_5L_pair_latency_ssd.pdf`
+- `refresh_lsm_vs_btree_5L_5H.pdf` → `2026-05-24-refresh-5L-ssd/figures/paper/refresh_lsm_vs_btree_5L_5H_ssd.pdf`
+
+The following figures are *referenced by `experiments_revised.tex` but
+not currently linked* in the paper `figures/` directory — add a symlink
+after their next regeneration:
+
+- `tpch_lsm_headline_hdd.pdf` → `2026-05-18-b/figures/paper/paper_tpch_lsm_headline_hdd.pdf` (or fresh HDD snapshot when available)
+- `diag_ssd_lsm_sst_path_ssd.pdf` → `2026-05-24-a-ssd/figures/diagnostics/diag_ssd_lsm_sst_path_ssd.pdf`
 
 When re-pointing a paper figure to a new snapshot tag, recreate the symlink
 with a relative path (so the paper repo stays portable) and verify with
