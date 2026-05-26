@@ -74,6 +74,22 @@ STYLE = {
     "legend_fontsize": 7,
 }
 
+# Variants share their parent's color and are distinguished by hatching
+# (set as a class invariant — every drawing or legend path that handles
+# a "raw" structure id should go through _struct_style below).
+VARIANT_PARENT = {22: 2, 33: 3}
+VARIANT_HATCH = "////"
+
+
+def _struct_style(struct: int) -> Tuple[str, Optional[str]]:
+    """Return (color, hatch) for a structure id. Partial-agg variants
+    inherit their parent's canonical color and add a hatch pattern."""
+    parent = VARIANT_PARENT.get(struct, struct)
+    color = STYLE["structure_colors"].get(parent, "#777777")
+    hatch = VARIANT_HATCH if struct in VARIANT_PARENT else None
+    return color, hatch
+
+
 STRUCTURE_LABELS = {
     1: "S1 base merge-join",
     2: "S2 pipeline view",
@@ -564,25 +580,27 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
         # printed value sits just above the border so the reader can
         # still read the true number.
         draw_h = min(h, ylim_top) if ylim_top is not None else h
+        color, hatch = _struct_style(struct)
+        bar_kwargs = dict(color=color, linewidth=0)
+        if hatch is not None:
+            # Hatch needs a visible edge to render; match the fill color
+            # so the bar still reads as a solid block of that color.
+            bar_kwargs.update(hatch=hatch, edgecolor=color, linewidth=0.5)
         if log_y and log_bottom is not None:
             # bar() expects (bottom, height) on a log axis to avoid
             # drawing from 0 (which is -inf in log space and confuses
             # the layout engine into producing a 100k-pixel figure).
             ax.bar([x], [draw_h - log_bottom], width=bar_w,
-                   bottom=log_bottom,
-                   color=STYLE["structure_colors"][struct],
-                   linewidth=0)
+                   bottom=log_bottom, **bar_kwargs)
         else:
             ax.bar([x], [draw_h], width=bar_w,
-                   color=STYLE["structure_colors"][struct],
-                   linewidth=0, clip_on=False)
+                   clip_on=False, **bar_kwargs)
         if ylim_top is not None and h > ylim_top:
             ax.annotate(f"{h:.0f}", xy=(x, 1.0),
                         xycoords=("data", "axes fraction"),
                         xytext=(0, 2), textcoords="offset points",
                         ha="center", va="bottom", fontsize=10,
-                        color=STYLE["structure_colors"][struct],
-                        annotation_clip=False)
+                        color=color, annotation_clip=False)
         elif ylim_top is not None and h > 0 and h < ylim_top * short_thresh:
             # Sub-second bars next to multi-tens-of-seconds bars: show
             # the value (one decimal for h<10s, integer otherwise) just
@@ -591,8 +609,7 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
             ax.annotate(fmt, xy=(x, draw_h),
                         xytext=(0, 2), textcoords="offset points",
                         ha="center", va="bottom", fontsize=8,
-                        color=STYLE["structure_colors"][struct],
-                        annotation_clip=False)
+                        color=color, annotation_clip=False)
         # Error bars suppressed: 3 reps is too few for a meaningful
         # IQR — bars report the rep-median only.
         drew = True
@@ -646,10 +663,15 @@ def _add_two_row_legend(fig, legend_structs: Sequence[int],
     """
     main = [s for s in legend_structs if s in PAPER_LEGEND_ORDER]
     variants = [s for s in legend_structs if s not in PAPER_LEGEND_ORDER]
-    main_handles = [plt.Rectangle((0, 0), 1, 1,
-                                  color=STYLE["structure_colors"][s],
-                                  label=PAPER_STRUCTURE_LABELS[s])
-                    for s in main]
+    def _swatch(s: int) -> plt.Rectangle:
+        color, hatch = _struct_style(s)
+        kwargs = dict(facecolor=color, edgecolor=color,
+                      label=PAPER_STRUCTURE_LABELS[s])
+        if hatch is not None:
+            kwargs.update(hatch=hatch, linewidth=0.5)
+        return plt.Rectangle((0, 0), 1, 1, **kwargs)
+
+    main_handles = [_swatch(s) for s in main]
     bbox_for_main = bbox_main if variants else (
         bbox_main_no_variants if bbox_main_no_variants is not None
         else bbox_variants)
@@ -659,10 +681,7 @@ def _add_two_row_legend(fig, legend_structs: Sequence[int],
                frameon=False, columnspacing=1.5, handletextpad=0.4)
     if not variants:
         return
-    variant_handles = [plt.Rectangle((0, 0), 1, 1,
-                                     color=STYLE["structure_colors"][s],
-                                     label=PAPER_STRUCTURE_LABELS[s])
-                       for s in variants]
+    variant_handles = [_swatch(s) for s in variants]
     # Second legend attaches directly to the figure (fig.legend would
     # overwrite the first), so use add_artist with a manually-built
     # Legend bound to the figure's transform.
