@@ -58,18 +58,20 @@ BACKENDS: List[Tuple[str, str]] = [("btree", r"\textsc{btree}"),
 # Refresh-experiment labels (S4 here = "base only", no secondaries),
 # matching plot_refresh_sales.py's REFRESH_LABELS for consistency.
 STRUCTURE_LABELS_TEX: Dict[int, str] = {
-    1: r"\textsc{Split-Idx}",
+    1: r"\textsc{Base-Merge}",
     2: r"\textsc{Mat-View}",
     3: r"\textsc{Merged-Idx}",
 }
 
 CELL_LABEL: Dict[str, str] = {
-    "5L": r"5L (1.0\,GiB)",
-    "5H": r"5H (0.4\,GiB)",
+    "5L":  r"1.0\,GiB memory budget",
+    "5H":  r"0.4\,GiB memory budget",
+    "5HH": r"0.1\,GiB memory budget",
 }
 
-DEFAULT_TAG_5L = "2026-05-24-refresh-5L-ssd"
-DEFAULT_TAG_5H = "2026-05-24-refresh-5H-ssd"
+DEFAULT_TAG_5L  = "2026-05-25-refresh-5L-bg2-ssd"
+DEFAULT_TAG_5H  = "2026-05-25-refresh-5H-bg2-ssd"
+DEFAULT_TAG_5HH = "2026-05-25-refresh-5HH-bg2-ssd"
 
 
 def _load_summary(tag_root: Path, expected_filename: str) -> pd.DataFrame:
@@ -99,38 +101,44 @@ def _load_manifest(tag_root: Path) -> Dict[str, str]:
 
 
 def _lookup(df: pd.DataFrame, backend: str, structure: int) -> float:
+    """Return per-pair latency in µs (1e6 / pair_tps)."""
     row = df[(df["backend"] == backend) & (df["structure"] == structure)]
     if row.empty:
         return float("nan")
-    val = float(row[METRIC_COL].iloc[0])
-    return val if np.isfinite(val) and val > 0 else float("nan")
+    tps = float(row[METRIC_COL].iloc[0])
+    if not np.isfinite(tps) or tps <= 0:
+        return float("nan")
+    return 1e6 / tps
 
 
 def _panel(ax, df_5L: pd.DataFrame, df_5H: pd.DataFrame,
-           backend: str, backend_label: str, show_ylabel: bool) -> None:
-    bar_w = 0.36
+           df_5HH: pd.DataFrame, backend: str, backend_label: str,
+           show_ylabel: bool) -> None:
+    bar_w = 0.26
     xs = np.arange(len(STRUCTURES), dtype=float)
 
     for i, struct in enumerate(STRUCTURES):
         color = STYLE["structure_colors"].get(struct, "#777777")
-        v_5L = _lookup(df_5L, backend, struct)
-        v_5H = _lookup(df_5H, backend, struct)
-        # 5L: solid filled bar (left of cluster center).
+        v_5L  = _lookup(df_5L,  backend, struct)
+        v_5H  = _lookup(df_5H,  backend, struct)
+        v_5HH = _lookup(df_5HH, backend, struct)
+        # 5L (most memory) → solid; 5H → "////"; 5HH (least memory) → "xx".
         if np.isfinite(v_5L):
-            ax.bar(xs[i] - bar_w / 2, v_5L, width=bar_w,
+            ax.bar(xs[i] - bar_w, v_5L, width=bar_w,
                    color=color, linewidth=0, zorder=2)
-        # 5H: hatched bar of the same colour (right of cluster center),
-        # darker edge to keep the hatch readable on a coloured fill.
         if np.isfinite(v_5H):
-            ax.bar(xs[i] + bar_w / 2, v_5H, width=bar_w,
+            ax.bar(xs[i], v_5H, width=bar_w,
                    facecolor=color, edgecolor="#222",
                    linewidth=0.6, hatch="////", zorder=2)
+        if np.isfinite(v_5HH):
+            ax.bar(xs[i] + bar_w, v_5HH, width=bar_w,
+                   facecolor=color, edgecolor="#222",
+                   linewidth=0.6, hatch="xx", zorder=2)
 
     ax.set_title(backend_label, fontsize=10)
     ax.set_xticks(xs)
     ax.set_xticklabels([STRUCTURE_LABELS_TEX[s] for s in STRUCTURES],
-                       fontsize=8, rotation=20, ha="right",
-                       rotation_mode="anchor")
+                       fontsize=8)
     ax.set_xlim(-0.5, len(STRUCTURES) - 0.5)
     ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
     ax.yaxis.set_major_formatter(
@@ -140,7 +148,7 @@ def _panel(ax, df_5L: pd.DataFrame, df_5H: pd.DataFrame,
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
     if show_ylabel:
-        ax.set_ylabel(r"RF pairs / s", fontsize=9)
+        ax.set_ylabel(r"$\mu$s / RF pair", fontsize=9)
 
 
 def _figure_legend(fig) -> None:
@@ -157,13 +165,15 @@ def _figure_legend(fig) -> None:
                        label=CELL_LABEL["5L"]),
         mpatches.Patch(facecolor="#888", edgecolor="#222", linewidth=0.6,
                        hatch="////", label=CELL_LABEL["5H"]),
+        mpatches.Patch(facecolor="#888", edgecolor="#222", linewidth=0.6,
+                       hatch="xx", label=CELL_LABEL["5HH"]),
     ]
     fig.legend(handles=struct_handles, loc="upper center",
                bbox_to_anchor=(0.5, 1.04), ncol=len(STRUCTURES),
                fontsize=9, frameon=False,
                columnspacing=1.6, handletextpad=0.5)
     fig.legend(handles=cell_handles, loc="upper center",
-               bbox_to_anchor=(0.5, 0.97), ncol=2,
+               bbox_to_anchor=(0.5, 0.97), ncol=3,
                fontsize=8, frameon=False,
                columnspacing=1.6, handletextpad=0.5)
 
@@ -183,8 +193,9 @@ def _footer_text(tag_5L: str, tag_5H: str,
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--tag-5L", default=DEFAULT_TAG_5L)
-    p.add_argument("--tag-5H", default=DEFAULT_TAG_5H)
+    p.add_argument("--tag-5L",  default=DEFAULT_TAG_5L)
+    p.add_argument("--tag-5H",  default=DEFAULT_TAG_5H)
+    p.add_argument("--tag-5HH", default=DEFAULT_TAG_5HH)
     p.add_argument("--root", type=Path,
                    default=Path.cwd() / "paper-data",
                    help="paper-data/ root holding both tags "
@@ -192,19 +203,31 @@ def main() -> int:
     p.add_argument("--out-tag", default=None,
                    help="snapshot tag whose figures/paper/ dir hosts the "
                         "output (default: --tag-5L)")
-    p.add_argument("--basename", default="refresh_lsm_vs_btree_5L_5H_ssd")
+    p.add_argument("--basename",
+                   default="refresh_lsm_vs_btree_5L_5H_5HH_bg2_ssd")
+    p.add_argument("--csv-5L",
+                   default="refresh_sales_5L_bg2_throughput.csv",
+                   help="filename under <tag-5L>/summary/")
+    p.add_argument("--csv-5H",
+                   default="refresh_sales_5H_bg2_throughput.csv",
+                   help="filename under <tag-5H>/summary/")
+    p.add_argument("--csv-5HH",
+                   default="refresh_sales_5HH_bg2_throughput.csv",
+                   help="filename under <tag-5HH>/summary/")
     p.add_argument("--formats", nargs="+", default=["pdf", "png"],
                    choices=["pdf", "png", "svg"])
     args = p.parse_args()
 
-    root_5L = args.root / args.tag_5L
-    root_5H = args.root / args.tag_5H
-    df_5L = _load_summary(root_5L, "refresh_sales_5L_throughput.csv")
-    df_5H = _load_summary(root_5H, "refresh_sales_5H_throughput.csv")
+    root_5L  = args.root / args.tag_5L
+    root_5H  = args.root / args.tag_5H
+    root_5HH = args.root / args.tag_5HH
+    df_5L  = _load_summary(root_5L,  args.csv_5L)
+    df_5H  = _load_summary(root_5H,  args.csv_5H)
+    df_5HH = _load_summary(root_5HH, args.csv_5HH)
 
     fig, axes = plt.subplots(1, 2, figsize=(6.6, 2.1), sharey=True)
     for ax, (backend, label) in zip(axes, BACKENDS):
-        _panel(ax, df_5L, df_5H, backend, label,
+        _panel(ax, df_5L, df_5H, df_5HH, backend, label,
                show_ylabel=(ax is axes[0]))
 
     # Sync linear y so the 5H/5L drop is visually honest across panels.
@@ -221,7 +244,13 @@ def main() -> int:
     saved: List[Path] = []
     for fmt in args.formats:
         dest = out_dir / f"{args.basename}.{fmt}"
-        fig.savefig(dest, bbox_inches="tight")
+        # Raster formats need an explicit dpi; matplotlib's default 100
+        # leaves PNGs visibly blocky next to the 6.6"-wide PDF when the
+        # paper review pipeline previews them. Vector formats ignore dpi.
+        save_kwargs = {"bbox_inches": "tight"}
+        if fmt in ("png", "jpg", "jpeg"):
+            save_kwargs["dpi"] = 300
+        fig.savefig(dest, **save_kwargs)
         saved.append(dest)
     plt.close(fig)
 
