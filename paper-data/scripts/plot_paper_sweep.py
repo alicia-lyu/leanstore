@@ -581,16 +581,8 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
                         ha="center", va="bottom", fontsize=8,
                         color=STYLE["structure_colors"][struct],
                         annotation_clip=False)
-        else:
-            # Error bar = inter-quartile range over the reps. Drawn only
-            # for in-frame, non-sliver bars; an over-cap bar shows its
-            # true value as the printed annotation above instead.
-            yerr_lo = max(0.0, h - lo)
-            yerr_hi = max(0.0, hi - h)
-            if yerr_lo > 0 or yerr_hi > 0:
-                ax.errorbar([x], [h], yerr=[[yerr_lo], [yerr_hi]],
-                            fmt="none", ecolor="#333333", elinewidth=0.8,
-                            capsize=2, clip_on=False, zorder=5)
+        # Error bars suppressed: 3 reps is too few for a meaningful
+        # IQR — bars report the rep-median only.
         drew = True
     ax.set_xlabel(panel_title, fontsize=14)
     if show_ylabel:
@@ -602,7 +594,7 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
         # tight cap. Log scale lets every bar register at the cost
         # of compressing the upper end.
         ax.set_yscale("log")
-        positive = [h for _, h, _ in plotted if h > 0]
+        positive = [h for _, h, _, _, _ in plotted if h > 0]
         if positive:
             lo = log_bottom if log_bottom is not None else min(positive) * 0.5
             hi = max(positive) * 1.8
@@ -763,6 +755,19 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     if not has_any:
         plt.close(fig)
         return None
+    # Share y-limits across all panels so bar heights are directly
+    # comparable. Tick marks stay on every panel; tick *labels* only
+    # render on the leftmost panel since the scale is shared and
+    # repeating them would just eat horizontal space. (Mirrors the
+    # treatment in fig_paper_q10 below.)
+    los = [ax.get_ylim()[0] for ax in axes if ax.get_ylim()[1] > 0]
+    his = [ax.get_ylim()[1] for ax in axes if ax.get_ylim()[1] > 0]
+    if los and his:
+        shared_lo, shared_hi = min(los), max(his)
+        for ax in axes:
+            ax.set_ylim(shared_lo, shared_hi)
+    for j, ax in enumerate(axes):
+        ax.tick_params(axis="y", labelleft=(j == 0))
     if include_legend:
         # Legend sits well above the panel top so cut-off bar value
         # annotations (drawn at axes-fraction y=1.0) don't collide
@@ -1436,7 +1441,7 @@ def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
 FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     # Paper-mode builders (typeset-ready, bg=2 only, S1-S4 only).
     "paper_tpch_btree":      lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
-    "paper_tpch_lsm":        lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=True),
+    "paper_tpch_lsm":        lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
     "paper_tpch_btree_memory": lambda d: fig_paper_memory_pressure(d, "btree", include_legend=True),
     "paper_tpch_lsm_memory":   lambda d: fig_paper_memory_pressure(d, "lsm",   include_legend=False),
     "paper_q10":             fig_paper_q10,
