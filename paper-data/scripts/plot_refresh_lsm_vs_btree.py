@@ -52,8 +52,8 @@ from plot_paper_sweep import STYLE
 
 METRIC_COL = "pair_tps_tail30"
 STRUCTURES: List[int] = [1, 2, 3]
-BACKENDS: List[Tuple[str, str]] = [("btree", r"\textsc{btree}"),
-                                    ("lsm",   r"\textsc{lsm}")]
+BACKENDS: List[Tuple[str, str]] = [("btree", "B-trees"),
+                                    ("lsm",   "LSM-trees")]
 
 # Refresh-experiment labels (S4 here = "base only", no secondaries),
 # matching plot_refresh_sales.py's REFRESH_LABELS for consistency.
