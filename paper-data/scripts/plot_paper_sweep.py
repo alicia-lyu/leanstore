@@ -476,7 +476,8 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
                      title: Optional[str] = None,
                      n_overflow: int = 1,
                      log_y: bool = False,
-                     log_bottom: Optional[float] = None) -> bool:
+                     log_bottom: Optional[float] = None,
+                     cap_override: Optional[float] = None) -> bool:
     """One compact bar panel of the paper TPC-H headline row. bg=2,
     one cell, one bar per structure in ``structures`` (defaults to
     ``PAPER_LEGEND_ORDER``). ms → seconds; linear y with a per-panel
@@ -523,7 +524,12 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
     # uses ``n_overflow=2`` because Mat-View *and* Base-Hash are both
     # ~100s while the headline aCOL/aCOLI bar is sub-second, so a
     # 2nd-tallest cap would still squash everything visible.
-    if plotted:
+    if cap_override is not None:
+        # Caller forces a shared ceiling across a row of panels (used by
+        # fig_paper_tpch_row so every bar — including would-be outliers —
+        # fits inside the axes instead of being clipped + annotated).
+        cap = cap_override
+    elif plotted:
         finite = sorted((h for _, h, _, _, _ in plotted if h > 0), reverse=True)
         idx = min(n_overflow, max(len(finite) - 1, 0))
         if finite:
@@ -533,7 +539,13 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
     else:
         cap = None
     # On log scale every bar fits naturally — no need to cap / overflow.
-    ylim_top = None if log_y else (cap * 1.08 if cap is not None else None)
+    # With cap_override the caller already added headroom; don't pad again.
+    if log_y or cap is None:
+        ylim_top = None
+    elif cap_override is not None:
+        ylim_top = cap
+    else:
+        ylim_top = cap * 1.08
     # Log axis needs a positive bar bottom; pick one decade below the
     # smallest positive bar so even sub-second bars render visibly.
     # Caller can pass an explicit ``log_bottom`` so a row of panels
@@ -741,6 +753,18 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     # whitespace that tight_layout sometimes does with sharey=False.
     fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 1.82),
                              sharey=False, constrained_layout=True)
+    # Compute a shared y-ceiling from the actual tallest bar across all
+    # four panels (in seconds, +5% headroom) so no bar gets clipped and
+    # the four panels share an identical y-axis. Without this, the
+    # per-panel n_overflow=1 cap clips the tallest bar in each panel and
+    # leaves an over-cap numeric annotation in its place — which makes
+    # the row hard to read.
+    selected = ms_df[(ms_df["binary"].isin(binaries))
+                     & (ms_df["cell"] == PAPER_HEADLINE_CELL)
+                     & (ms_df["bg"] == PAPER_HEADLINE_BG)]
+    s_vals = selected["ms_median"].dropna() / 1000.0
+    s_vals = s_vals[s_vals > 0]
+    cap_override = float(s_vals.max()) * 1.05 if not s_vals.empty else None
     has_any = False
     legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
     for j, (binary, q) in enumerate(zip(binaries, PAPER_TPCH_QUERIES)):
@@ -750,22 +774,14 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
                 legend_structs.append(s)
         drew = _paper_bar_panel(axes[j], ms_df, binary, PAPER_HEADLINE_CELL,
                                 show_ylabel=(j == 0),
-                                structures=panel_structs)
+                                structures=panel_structs,
+                                cap_override=cap_override)
         has_any = has_any or drew
     if not has_any:
         plt.close(fig)
         return None
-    # Share y-limits across all panels so bar heights are directly
-    # comparable. Tick marks stay on every panel; tick *labels* only
-    # render on the leftmost panel since the scale is shared and
-    # repeating them would just eat horizontal space. (Mirrors the
-    # treatment in fig_paper_q10 below.)
-    los = [ax.get_ylim()[0] for ax in axes if ax.get_ylim()[1] > 0]
-    his = [ax.get_ylim()[1] for ax in axes if ax.get_ylim()[1] > 0]
-    if los and his:
-        shared_lo, shared_hi = min(los), max(his)
-        for ax in axes:
-            ax.set_ylim(shared_lo, shared_hi)
+    # cap_override already enforces shared y-limits; just hide tick
+    # labels on non-leftmost panels (ticks themselves stay).
     for j, ax in enumerate(axes):
         ax.tick_params(axis="y", labelleft=(j == 0))
     if include_legend:
