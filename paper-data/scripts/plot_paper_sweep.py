@@ -393,8 +393,12 @@ Q10I_QUERY = "q10i"
 # merge their rows in from these tags and keep only the canonical
 # method per structure (the per-order pre-aggregated view matches the
 # §5 narrative; the COL[I] walker is the standard MI path).
-Q10_SIBLING_TAG  = "2026-05-25-q10"
-Q10I_SIBLING_TAG = "2026-05-25-q10i"
+# Genuine bg=2, 3-rep Q10/Q10I re-run (2026-05-26). Replaces the earlier
+# hand-ported bg=0 single-rep tags (2026-05-25-q10/q10i); both queries live in
+# this one combined tag now. The headline.csv carries genuine bg=2, so the
+# splice no longer relabels bg (see _augment_with_sibling).
+Q10_SIBLING_TAG  = "q10-q10i-bg2-5L-20260526-040738"
+Q10I_SIBLING_TAG = "q10-q10i-bg2-5L-20260526-040738"
 # Method → synthetic structure id. The naive per-lineitem view keeps
 # the canonical S2 (Mat-View) slot; the partial-aggregate variant goes
 # to id 22 so it draws as its own bar next to the naive Mat-View. S5
@@ -723,10 +727,11 @@ def _augment_with_sibling(head: pd.DataFrame, data: SweepData,
         return head
     rows = rows.copy()
     rows["structure"] = rows["method"].map(Q10_METHOD_TO_STRUCT).astype(int)
-    # Sibling sweep ran one rep at bg=0 (isolated), parent sweeps run
-    # at bg=2 (contention cohort) — relabel to the headline bg so the
-    # row is picked up by _paper_bar_panel's filter.
-    rows["bg"] = PAPER_HEADLINE_BG
+    # The sibling tag now carries GENUINE bg=2, 3-rep data (the q10/q10i
+    # re-run under the paper protocol), so no bg relabel is needed — the
+    # rows already match _paper_bar_panel's bg==PAPER_HEADLINE_BG filter.
+    # (Historically this spliced bg=0 single-rep data and forced bg=2 here;
+    # that relabel was removed once the genuine bg=2 run landed.)
     rows["family"] = family
     common = [c for c in head.columns if c in rows.columns]
     return pd.concat([head, rows[common]], ignore_index=True)

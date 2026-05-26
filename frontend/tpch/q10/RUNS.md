@@ -17,6 +17,27 @@ need consolidating.
 
 ## Runs
 
+### 2026-05-26 12:26 UTC — bg=2, 3-rep 5L rerun (both backends)
+- **Commit**: `9483d7c9` (`calcite-integration`), host `c220g2-011011` (Linux)
+- **TPut.csv**: per-structure logs under
+  `paper-data/q10-q10i-bg2-5L-20260526-040738/raw/q10_{btree,lsm}/`; medians
+  ported to that tag's `summary/headline.csv` (feeds `paper_q10`).
+- **Config**: 5L (c0) DRAM=1.0, SF=1550 btree / 3850 lsm, **bg=2**
+  (second worker re-runs the query + uniform-random point-lookup stream — the
+  no-cohort-fallback fix, commit `9483d7c9`), `param_seed=0`, 3 reps. Replaces
+  the 2026-05-25 hand-ported bg=0 single-rep sibling; `q10.pdf` no longer
+  relabels bg.
+- **ms/query (median of 3)** — **btree**: aCOL S5 **180** ≪ S2-B 18,062 ≈ S1
+  19,811 < S3 36,469 ≪ S4 131,297 < S2-A **187,198**. **lsm**: S5 1,427 < S2-B
+  1,786 < S3 9,497 < S1 17,911 ≈ S2-A 19,365 ≪ S4 86,197.
+- **Claim check**: supports the Q10 framing under the *stated* protocol —
+  naive Mat-View (S2-A) and Base-Hash are huge; Merged-Idx (S3) loses its edge
+  to the split Base-Merge (S1) on btree (~1.8×, filter-hierarchy effect); the
+  partial-agg variants (Mat-View-preagg, aCOL) restore the ordering. bg-TX
+  counts behave correctly: 40k–64k for fast structures (point-lookup stream),
+  ~2 for the 20–180 s structures (one query fills the 15 s window — same as the
+  q3/q5 headline cohort at 5L).
+
 ### 2026-05-25 — S5 aCOL 5L confirmation (both backends)
 - **Commit**: `fd771c13` (binary; tree at `5d1fc153`), host `node0` (Linux)
 - **Logs**: `build/q10_{btree,lsm}/{1550,3850}-in-1.0/structure5_acol.log`

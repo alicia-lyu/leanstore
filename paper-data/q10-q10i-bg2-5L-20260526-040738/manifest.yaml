@@ -1,0 +1,37 @@
+tag: q10-q10i-bg2-5L-20260526-040738
+commit_sha: 9483d7c9
+host: c220g2-011011.wisc.cloudlab.us
+started_at: 2026-05-26T04:07:38Z
+finished_at: 2026-05-26T12:26:19Z
+cells: c0
+families: vanilla, tpchi
+reps: 3
+runs_ok: 72
+runs_err: 0
+disk: ssd
+note: >
+  Q10 + Q10I re-run under the paper's stated bg=2 protocol (two worker
+  threads issuing the measured query + a uniform-random point-lookup stream)
+  and 3 repetitions — replacing the earlier hand-ported bg=0, single-rep
+  sibling tags (2026-05-25-q10/q10i). Driven by experiments/run_q10_q10i_bg2.sh
+  (q10/q10i are standalone images, so it drives their make targets directly
+  rather than the q3/q5 family loader). param_seed=0 (default validation
+  parameter, consistent with the main sweep).
+
+  bg=2 fidelity (commit 9483d7c9): q10/q10i register no family bg cohort, so
+  the executable-helper fallback was fixed to time-balance the re-run
+  foreground query against a genuine point-lookup stream when
+  --bg_point_lookups is set. Verified: fast structures (S5 ~180 ms, lsm S2-B
+  / S3) show 40k-64k bg TXs in the 15 s window (point-lookup stream flying);
+  slow structures (S1/S4, btree S3, 20-180 s) show ~2 bg TXs because one
+  foreground query fills the window — identical to how the q3/q5 headline
+  cohort behaves at the 5L beyond-memory point.
+
+  6 methods per (query, backend) → mapped to figure structures via
+  Q10_METHOD_TO_STRUCT: base_merge_join(S1), pipeline_view(S2-A naive),
+  pipeline_view_preagg(S2-B id22), mi_col_walk/mi_coli_walk(S3),
+  base_hash_join(S4), mi_acol_preagg/mi_acoli_preagg(S5 aCOL id33).
+  Hand-ported into headline.csv from the per-structure run logs (raw/ holds
+  the captured structure logs); NOT analyzer-generated (q10/q10i carry A/B
+  method variants the standard analyzer doesn't model). Feeds fig_paper_q10
+  with no bg relabel — bg is genuinely 2.

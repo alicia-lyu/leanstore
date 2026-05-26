@@ -17,6 +17,25 @@ file unless their numbers are scattered across other docs.
 
 ## Runs
 
+### 2026-05-26 12:26 UTC — bg=2, 3-rep 5L rerun (both backends)
+- **Commit**: `9483d7c9` (`calcite-integration`), host `c220g2-011011` (Linux)
+- **TPut.csv**: per-structure logs under
+  `paper-data/q10-q10i-bg2-5L-20260526-040738/raw/q10i_{btree,lsm}/`; medians
+  ported to that tag's `summary/headline.csv` (feeds `paper_q10`).
+- **Config**: 5L (c0) DRAM=1.0, SF=1550 btree / 3850 lsm, **bg=2** (second
+  worker re-runs the query + uniform-random point-lookup stream — the
+  no-cohort-fallback fix, commit `9483d7c9`), `param_seed=0`, 3 reps. Replaces
+  the 2026-05-25 hand-ported bg=0 single-rep sibling.
+- **ms/query (median of 3)** — **btree**: aCOLI S5 **190.7** ≪ S2-B 20,908 < S1
+  25,353 < S3 47,674 ≪ S4 142,000 < S2-A **180,394**. **lsm**: S5 1,573 < S2-B
+  2,194 < S2-A 16,829 < S3 16,092 < S1 27,162 ≪ S4 98,922.
+- **Claim check**: supports the Q10I framing under the *stated* protocol —
+  naive Mat-View (S2-A) and Base-Hash are huge; Merged-Idx (S3) trails the
+  split Base-Merge (S1) on btree; the partial-agg variants (Mat-View-preagg,
+  aCOLI) restore the ordering and are the fastest structures. Consistent with
+  the bg=0 supplemental (slightly higher from contention). Feeds `paper_q10`
+  with genuine bg=2 (no relabel).
+
 ### 2026-05-25 — S5 aCOLI 5L confirmation (both backends)
 - **Commit**: `aeb16049` (`calcite-integration`), host `node0` (Linux)
 - **Logs**: `build/q10i_{btree,lsm}/{1550,3850}-in-1.0/structureN_{baseA,preagg}.log`;

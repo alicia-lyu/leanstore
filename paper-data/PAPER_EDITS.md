@@ -174,10 +174,15 @@ Honest caveats to add (none change a number):
 1. **"Only inversion = Q3I" / the LSM inversions** — the current LaTeX no longer
    says "only inversion"; Edit 1 discloses all three LSM inversions (q3 1.29×,
    q3i 1.34×, q5i 1.83×) with the mechanism. B-tree preserves the advantage.
-2. **Q10 figure conditions** — being re-run under the stated bg=2, 3-rep protocol
-   (the 2026-05-25 supplemental was bg=0, single-rep, hand-ported; the figure
-   script's bg relabel is removed once the genuine data lands). See
-   `SWEEP_LOG.md` audit-response entry.
+2. **Q10 figure conditions** — **resolved**: Q10/Q10i re-measured under the
+   stated protocol (genuine bg=2, 3 reps, `param_seed=0`; tag
+   `q10-q10i-bg2-5L-20260526-040738`). The figure-script bg relabel is removed —
+   `paper_q10` now reads real bg=2 data. (A latent bug surfaced and was fixed:
+   q10/q10i register no bg cohort, so their bg=2 had fallen back to same-query
+   contention with no point-lookup stream; the helper fallback now drives a
+   genuine point-lookup stream — commit `9483d7c9`.) The numbers match the bg=0
+   supplemental within contention noise; the Q10 story is unchanged. See
+   `SWEEP_LOG.md` audit-response entry + `frontend/tpch/q10{,i}/RUNS.md`.
 3. **Partial-agg shown only where it wins** — Edit 2 **withdrawn (2026-05-25)**:
    the paper no longer discusses S5 for Q3i/Q5i at all (see the Edit 2 banner).
    The Q3i/Q5i aCOLI S5 code stays in tree as an archived reference only; the
