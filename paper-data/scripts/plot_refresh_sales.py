@@ -15,6 +15,7 @@ extra series; the legend / bar-width math adapts to either 4 or 5 series.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -61,6 +62,12 @@ BACKENDS = ["btree"]
 # which is the TPC-H-faithful unit; the SF=1 rf_throughput file falls
 # back to RF1-only because its RF2 reservoir drains early.
 CSV_SCHEMAS = {
+    "refresh_sales_5L_bg2_throughput.csv": {
+        "tps_col": "pair_tps_tail30",
+        "unit": r"$\mu$s / RF pair",
+        "scale": 1e6,
+        "basename": "refresh_5L_pair_latency_bg2",
+    },
     "refresh_sales_5L_throughput.csv": {
         "tps_col": "pair_tps_tail30",
         "unit": r"$\mu$s / RF pair",
@@ -168,7 +175,7 @@ REFRESH_LABELS = {
     # trivial no-secondary ceiling; it is acknowledged in prose (~3.3x
     # faster on btree) rather than plotted here.
 }
-DBTOASTER_LABEL_TEX = r"\textsc{DBToaster}"
+DBTOASTER_LABEL_TEX = r"\textsc{DB-Toaster}"
 REFRESH_OMIT = {4}
 
 
@@ -242,8 +249,16 @@ def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
 
     ax.set_title(budget_label, fontsize=9)
     ax.set_xticks(np.arange(len(panel_xlabels)))
-    ax.set_xticklabels(panel_xlabels, fontsize=8, rotation=30,
-                       ha="right", rotation_mode="anchor")
+    # Two-line labels via LaTeX \shortstack so horizontal labels fit
+    # without overlapping. Splits on the first hyphen inside \textsc{}.
+    def _two_line(lbl: str) -> str:
+        m = re.match(r"\\textsc\{([^-}]+)-([^}]+)\}$", lbl)
+        if not m:
+            return lbl
+        head, tail = m.group(1), m.group(2)
+        return r"\shortstack{\textsc{" + head + r"-}\\\textsc{" + tail + r"}}"
+    panel_xlabels = [_two_line(l) for l in panel_xlabels]
+    ax.set_xticklabels(panel_xlabels, fontsize=8)
     ax.set_xlim(-0.5, len(panel_xlabels) - 0.5)
     if use_log:
         # Ticks at 1×, 2×, 5× of each decade with plain decimal labels —
@@ -373,7 +388,9 @@ def _render_figure(ls_by_budget: Dict[float, pd.DataFrame],
     """Build the 1×(memory budgets) refresh figure for one backend and
     write it. The B-tree figure includes the DBToaster comparison; the
     LSM figure does not (DBToaster is a separate engine, shown once)."""
-    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=(5.6, 1.4),
+    # LSM gets a wider canvas to fit horizontal x-tick labels without crowding.
+    figsize = (7.2, 1.6) if backend == "lsm" else (5.6, 1.4)
+    fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=figsize,
                              sharey=False)
     for j, (budget, label) in enumerate(MEMORY_BUDGETS):
         budget_df = ls_by_budget.get(budget, pd.DataFrame())
@@ -381,14 +398,18 @@ def _render_figure(ls_by_budget: Dict[float, pd.DataFrame],
                budget_gib=budget, budget_label=label,
                y_unit=y_unit, show_ylabel=(j == 0),
                backend=backend, include_dbtoaster=include_dbtoaster)
-    # Floor each panel's y-axis so bar height matches the labelled value.
+    # Floor each panel's y-axis so bar height matches the labelled value,
+    # and add upper headroom so the tallest finite bar doesn't touch the
+    # top spine (OOM bars are intentionally drawn to the top inside
+    # _annotate_oom and re-pin the y-limit themselves, so this headroom
+    # doesn't leave a gap above them).
     for ax in axes:
         ymin, ymax = ax.get_ylim()
         if ax.get_yscale() == "log" and ymin > 0:
             floor = 10 ** np.floor(np.log10(ymin))
-            ax.set_ylim(floor, ymax)
+            ax.set_ylim(floor, ymax * 1.30)
         elif ax.get_yscale() == "linear":
-            ax.set_ylim(0, ymax)
+            ax.set_ylim(0, ymax * 1.08)
     for ax in axes:
         _annotate_oom(ax)
     out_dir.mkdir(parents=True, exist_ok=True)
