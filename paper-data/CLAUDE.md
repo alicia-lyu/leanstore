@@ -103,8 +103,8 @@ copy step. Current links (paper-side → paper-data source):
 - `tpch_btree_headline.pdf` → `2026-05-24-a-ssd/figures/paper/paper_tpch_btree_headline_ssd.pdf`
 - `tpch_lsm_headline.pdf` → `2026-05-24-a-ssd/figures/paper/paper_tpch_lsm_headline_ssd.pdf`
 - `q10.pdf` → `2026-05-24-a-ssd/figures/paper/paper_q10_ssd.pdf`
-- `refresh_5L_pair_latency.pdf` → `2026-05-24-refresh-5L-ssd/figures/paper/refresh_5L_pair_latency_ssd.pdf`
-- `refresh_lsm_vs_btree_5L_5H.pdf` → `2026-05-24-refresh-5L-ssd/figures/paper/refresh_lsm_vs_btree_5L_5H_ssd.pdf`
+- `refresh_5L_pair_latency.pdf` → `2026-05-25-refresh-5L-bg2-ssd/figures/paper/refresh_5L_pair_latency_bg2_ssd.pdf`
+- `refresh_lsm_vs_btree_5L_5H.pdf` → `2026-05-25-refresh-5L-bg2-ssd/figures/paper/refresh_lsm_vs_btree_5L_5H_5HH_bg2_ssd.pdf` (3-cell view with 5HH; the paper-side filename is kept for historical continuity)
 
 The following figures are *referenced by `experiments_revised.tex` but
 not currently linked* in the paper `figures/` directory — add a symlink
