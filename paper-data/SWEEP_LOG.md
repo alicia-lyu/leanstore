@@ -34,12 +34,21 @@ fabrication found; the fixes are scope/presentation. Landed (code/doc):
   unchanged. Not exercised for this submission (time); single-param point
   disclosed in `PAPER_EDITS.md`.
 
-**In progress — Q10/Q10i bg=2 3-rep rerun.** The paper setup commits all
-measured queries to bg=2 + 3 reps, but the 2026-05-25-q10/q10i tags are bg=0,
-single-rep, hand-ported (the figure script relabeled bg=0→2). Rerunning under
-the paper harness (q10/q10i added to `analyze_paper_sweep.py` + `sweep.yaml`),
-`param_seed=0`, c0 5L, both backends — then dropping the bg relabel and
-regenerating `q10.pdf` from genuine bg=2 data. ~80 h; checkpoints pushed.
+**Done — Q10/Q10i bg=2 3-rep rerun** (tag `q10-q10i-bg2-5L-20260526-040738`,
+~8 h, both backends, `param_seed=0`). The paper setup commits all measured
+queries to bg=2 + 3 reps, but the 2026-05-25-q10/q10i tags were bg=0,
+single-rep, hand-ported (the figure relabeled bg=0→2). Re-measured at genuine
+bg=2, 3 reps. **bg-cohort fix (commit `9483d7c9`):** q10/q10i register no
+family cohort, so their bg=2 had silently fallen back to same-query contention
+with *no* point-lookup stream (bg=1-like) — caught and fixed in
+`tpch_executable_helper.hpp` (the fallback now time-balances a genuine
+point-lookup stream against the re-run query). `Q10_SIBLING_TAG`/`Q10I_SIBLING_TAG`
+now point at the bg=2 tag and the `_augment_with_sibling` bg relabel is removed;
+`paper_q10` regenerated from genuine bg=2 data (also fixed a merge-introduced
+3-tuple unpack in `_paper_bar_panel`'s log-y path). Story unchanged: naive
+Mat-View + Base-Hash huge, S3 loses its edge on btree (~1.8× S1), partial-agg
+variants (S2-preagg, aCOL/aCOLI) restore the ordering. The bg=0 hand-ported
+tags are superseded for the figure (kept as historical).
 
 ## Done: tags `2026-05-25-refresh-{5L,5H,5HH}-bg2-ssd` — refresh_sales bg=2 HTAP contention (SSD)
 
