@@ -590,7 +590,7 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
         if hatch is not None:
             # Hatch needs a visible edge to render; use a contrasting
             # darker edge so the hatch lines read on top of the fill.
-            bar_kwargs.update(hatch=hatch, edgecolor="white", linewidth=0.6)
+            bar_kwargs.update(hatch=hatch, edgecolor="white", linewidth=0)
         if log_y and log_bottom is not None:
             # bar() expects (bottom, height) on a log axis to avoid
             # drawing from 0 (which is -inf in log space and confuses
@@ -673,7 +673,7 @@ def _add_two_row_legend(fig, legend_structs: Sequence[int],
         kwargs = dict(facecolor=color, edgecolor=color,
                       label=PAPER_STRUCTURE_LABELS[s])
         if hatch is not None:
-            kwargs.update(hatch=hatch, edgecolor="white", linewidth=0.6)
+            kwargs.update(hatch=hatch, edgecolor="white", linewidth=0)
         return plt.Rectangle((0, 0), 1, 1, **kwargs)
 
     main_handles = [_swatch(s) for s in main]
