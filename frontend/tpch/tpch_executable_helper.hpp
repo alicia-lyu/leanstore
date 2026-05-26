@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 #include "../shared/db_traits.hpp"
 #include "tpch_flags.hpp"
@@ -78,6 +79,38 @@ struct TpchExecutableHelper {
    // Used by per-query executables to compute per-query stage averages.
    long tx_count() const { return last_count; }
 
+   // One heterogeneous point-lookup over the base TPC-H tables, on BG_WORKER.
+   // Used by the bg=2 fallback path (binaries that register no family cohort,
+   // e.g. q10 / q10i) so their bg=2 includes the same uniform-random
+   // point-lookup stream as the family cohort, not just same-query
+   // contention. Mirrors register_vanilla_bg_steps' point-lookup step;
+   // tolerates not-found via tryLookup (PK ranges are sparse).
+   void bg_point_lookup()
+   {
+      const Integer pick = urand(0, 7);
+      db_traits->run_tx([&]() {
+         switch (pick) {
+            case 0: { part_t::Key k{tpch.getPartID()}; tpch.part.tryLookup(k, [](const part_t&) {}); break; }
+            case 1: { supplier_t::Key k{tpch.getSupplierID()}; tpch.supplier.tryLookup(k, [](const supplier_t&) {}); break; }
+            case 2: { partsupp_t::Key k{tpch.getPartID(), tpch.getSupplierID()}; tpch.partsupp.tryLookup(k, [](const partsupp_t&) {}); break; }
+            case 3: { customerh_t::Key k{tpch.getCustomerID()}; tpch.customer.tryLookup(k, [](const customerh_t&) {}); break; }
+            case 4: { orders_t::Key k{tpch.getOrderID()}; tpch.orders.tryLookup(k, [](const orders_t&) {}); break; }
+            case 5: {
+               if constexpr (std::is_same_v<LineitemRecord, lineitem_t>) {
+                  lineitem_t::Key k{tpch.getOrderID(), urand(1, 7)};
+                  tpch.lineitem.tryLookup(k, [](const LineitemRecord&) {});
+               } else {  // non-base lineitem variant: lookup orders instead
+                  orders_t::Key k{tpch.getOrderID()};
+                  tpch.orders.tryLookup(k, [](const orders_t&) {});
+               }
+               break;
+            }
+            case 6: { nation_t::Key k{tpch.getNationID()}; tpch.nation.tryLookup(k, [](const nation_t&) {}); break; }
+            case 7: default: { region_t::Key k{tpch.getRegionID()}; tpch.region.tryLookup(k, [](const region_t&) {}); break; }
+         }
+      }, BG_WORKER);
+   }
+
    void tput_tx(const std::string& tx_name)
    {
       tpch.logger.reset();
@@ -89,7 +122,12 @@ struct TpchExecutableHelper {
                 << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
       if (FLAGS_bg_query_thread) {
          std::cout << "  (--bg_query_thread=true: bg cohort: "
-                   << bg_query_steps.size() << " steps)" << std::endl;
+                   << bg_query_steps.size() << " steps";
+         if (bg_query_steps.empty()) {
+            std::cout << " -> fallback: re-run foreground query"
+                      << (FLAGS_bg_point_lookups ? " + point-lookup stream" : "");
+         }
+         std::cout << ")" << std::endl;
       }
 
       std::atomic<bool> keep_running = true;
@@ -128,6 +166,9 @@ struct TpchExecutableHelper {
             // Cumulative elapsed seconds per registered step. Pick the step
             // with the smallest cumulative time each iteration.
             std::vector<double> bg_step_elapsed(bg_query_steps.size(), 0.0);
+            // Fallback time-balance accumulators (foreground-query vs the
+            // point-lookup stream) for binaries with no registered cohort.
+            double fb_query_elapsed = 0.0, fb_pl_elapsed = 0.0;
             while (keep_running.load()) {
                jumpmuTry()
                {
@@ -143,9 +184,23 @@ struct TpchExecutableHelper {
                      auto step_end = std::chrono::steady_clock::now();
                      bg_step_elapsed[pick] +=
                          std::chrono::duration<double>(step_end - step_start).count();
+                  } else if (FLAGS_bg_point_lookups && fb_pl_elapsed <= fb_query_elapsed) {
+                     // Fallback (no registered cohort, e.g. q10/q10i) with
+                     // bg=2: time-balance a point-lookup stream 1:1 (wall
+                     // clock) against the re-run foreground query, mirroring
+                     // the registry's smallest-cumulative-elapsed pick. Makes
+                     // bg=2 mean "second query worker + point-lookup noise"
+                     // even without a family cohort.
+                     auto t0 = std::chrono::steady_clock::now();
+                     bg_point_lookup();
+                     fb_pl_elapsed += std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - t0).count();
                   } else {
                      bg_out.clear();
+                     auto t0 = std::chrono::steady_clock::now();
                      db_traits->run_tx([&]() { wrapper.query(bg_out); }, BG_WORKER);
+                     fb_query_elapsed += std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - t0).count();
                   }
                   bg_count++;
                }

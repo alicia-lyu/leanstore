@@ -64,13 +64,16 @@ capture() {
 run_q10() {
     local be=$1 rep=$2; local sf=${SF[q10_${be}]}
     log "q10_${be} rep${rep} sf=${sf}: reload + S1-S4 (variant=lineitem)"
-    make "q10_${be}" scale="$sf" dram="$DRAM" q10_stats=true $BG_FLAGS >>"$LOGFILE" 2>&1
+    # q10_stats omitted: under bg=2 the bg worker shares the workload and
+    # would race the shared Q10Stats counters (q10_stats flag doc warning);
+    # throughput is what we need here.
+    make "q10_${be}" scale="$sf" dram="$DRAM" $BG_FLAGS >>"$LOGFILE" 2>&1
     capture q10 "$be" "$sf" "$rep" "_baseA" 1 2 3 4
     log "q10_${be} rep${rep}: S2-B (preagg view)"
-    make "q10_${be}_2" scale="$sf" dram="$DRAM" q10_stats=true q10_view_variant=preagg $BG_FLAGS >>"$LOGFILE" 2>&1
+    make "q10_${be}_2" scale="$sf" dram="$DRAM" q10_view_variant=preagg $BG_FLAGS >>"$LOGFILE" 2>&1
     capture q10 "$be" "$sf" "$rep" "_preagg" 2
     log "q10_${be} rep${rep}: S5 (aCOL)"
-    make "q10_${be}_5" scale="$sf" dram="$DRAM" q10_stats=true $BG_FLAGS >>"$LOGFILE" 2>&1
+    make "q10_${be}_5" scale="$sf" dram="$DRAM" $BG_FLAGS >>"$LOGFILE" 2>&1
     capture q10 "$be" "$sf" "$rep" "_acol" 5
 }
 
