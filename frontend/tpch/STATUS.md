@@ -42,3 +42,19 @@ Full investigation worklist and per-hypothesis evidence: [`q3i/PERFORMANCE.md`](
   (bg=2, 3 reps), rerun via the paper harness once q10/q10i are added to
   `analyze_paper_sweep.py` + `sweep.yaml`. Tracked in the audit-response
   plan and `paper-data/SWEEP_LOG.md`.
+- **Q3I S2 view-loader: drop the per-custkey customer-column map**
+  (sibling-view audit, 2026-05-26). `populate_q3i_view` (`q3i/load.tpp`)
+  pre-builds `mktseg_map` (custkey → `c_mktsegment`) and `open_due_map`
+  (custkey → open-due aggregate), then merges **base** orders×lineitem
+  (orderkey-ordered, so customer is not co-located and a local snapshot
+  can't work). Siblings q5i/q10i instead reuse the COLI group-walk
+  (custkey-ordered) with a **local customer snapshot** + scalar
+  `CustomerOpenDueAccumulator` and need no maps — the canonical Pattern-B
+  idiom. Refactor q3i's loader to walk `coli.merged_adapter()` the same
+  way to eliminate both maps. Correctness-neutral (load-time only); parity
+  must stay identical via `test_query_q3i_lsm`. **Caveat:** the COLI-walk
+  loader requires the COLI MI to be populated, so verify the
+  `--load_only_structure=2` isolated-load path before copying q5i's guard
+  verbatim (q5i's `populate_secondaries` runs the view at `only==2` but
+  gates `populate_merged()` on `only==3`, so its own isolated S2 load looks
+  like it would walk an unpopulated MI — confirm/fix rather than inherit).
