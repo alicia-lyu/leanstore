@@ -140,12 +140,13 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps_at(
    return steps;
 }
 
-// bg=2 cohort helper: append a heterogeneous point-lookup step that picks a
-// random base table and random PK from the loaded vanilla TPC-H set (8
-// tables) and calls adapter.lookup1. Tolerates not-found via tryLookup
-// (LeanStore lookup1 throws on miss; TPC-H PK ranges are sparse, e.g.
-// orderkey populates only 8/32 sequential slots, so random PKs miss often).
-// Routed through DBTraits::run_tx on BG_WORKER as one TX per call.
+// Heterogeneous point-lookup closure over the 8 vanilla TPC-H base tables.
+// Intended for `helper.set_bg_lookup_step(...)` so it runs on the dedicated
+// BG_LOOKUP_WORKER (decoupled from the cohort rotation on BG_WORKER).
+// Tolerates not-found via tryLookup (LeanStore lookup1 throws on miss;
+// TPC-H PK ranges are sparse, e.g. orderkey populates only 8/32 sequential
+// slots, so random PKs miss often). Identical to the helper's built-in
+// bg_point_lookup() — kept as a free function for explicit setter use.
 template <typename Backend>
 inline BgStepFn make_tpch_point_lookup_step(
     DBTraits& db_traits,
@@ -198,21 +199,23 @@ inline BgStepFn make_tpch_point_lookup_step(
                break;
             }
          }
-      }, BG_WORKER);
+      }, BG_LOOKUP_WORKER);
    };
 }
 
 // Convenience entry point that switches on FLAGS_storage_structure at runtime.
-// If include_point_lookups is true (bg=2), append the heterogeneous
-// point-lookup step to the cohort returned for that structure.
+// Returns the cohort step vector only — point-lookups are owned by the
+// helper's dedicated BG_LOOKUP_WORKER thread (see TpchExecutableHelper).
+// The `include_point_lookups` parameter is kept for source-compat with
+// existing callers but is now unused: pass any value.
 template <typename Backend>
 inline std::vector<BgStepFn> register_vanilla_bg_steps(
     DBTraits& db_traits,
-    TPCHWorkload<Backend::template Adapter>& tpch,
+    TPCHWorkload<Backend::template Adapter>& /*tpch*/,
     tpch::q3::Q3Workload<Backend>& q3_workload,
     tpch::q5::Q5Workload<Backend>& q5_workload,
     int structure,
-    bool include_point_lookups)
+    bool /*include_point_lookups*/)
 {
    std::vector<BgStepFn> steps;
    switch (structure) {
@@ -222,9 +225,6 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps(
       case 4: steps = register_vanilla_bg_steps_at<Backend, 4>(db_traits, q3_workload, q5_workload); break;
       case 6: steps = register_vanilla_bg_steps_at<Backend, 6>(db_traits, q3_workload, q5_workload); break;
       default: throw std::runtime_error("register_vanilla_bg_steps: invalid storage_structure");
-   }
-   if (include_point_lookups) {
-      steps.push_back(make_tpch_point_lookup_step<Backend>(db_traits, tpch));
    }
    return steps;
 }

@@ -13,8 +13,9 @@
 DECLARE_int32(warmup_seconds);
 DECLARE_int32(tx_seconds);
 
-static constexpr u64 BG_WORKER = 0;
-static constexpr u64 MAIN_WORKER = 1;
+static constexpr u64 BG_WORKER        = 0;  // cohort rotation (or foreground re-run fallback)
+static constexpr u64 MAIN_WORKER      = 1;  // foreground query
+static constexpr u64 BG_LOOKUP_WORKER = 2;  // dedicated point-lookup stream (bg=2)
 
 struct DBTraits {
    virtual void run_tx(std::function<void()> cb, u64 worker_id = MAIN_WORKER) = 0;
