@@ -33,6 +33,12 @@ using HashQ10   = ::tpch::HashStructure  <Q10Workload<Backend>, q10_agg_row_t>;
 template <typename Backend>
 using AggregatedQ10 = ::tpch::AggregatedStructure<Q10Workload<Backend>, q10_agg_row_t>;
 
+// S7: per-order preagg view variant (q10_pipeline_view_preagg_t). Always
+// takes the preagg arm; the legacy --q10_view_variant flag continues to
+// drive ViewQ10 (S2). Cohort at S=7 uses {ViewQ3, ViewQ5, PreaggViewQ10}.
+template <typename Backend>
+using PreaggViewQ10 = ::tpch::PreaggViewStructure<Q10Workload<Backend>, q10_agg_row_t>;
+
 // S6: the COL-family shared materialised view (col_shared_view_t).
 template <typename Backend>
 using SharedViewQ10 = ::tpch::SharedViewStructure<Q10Workload<Backend>, q10_agg_row_t>;

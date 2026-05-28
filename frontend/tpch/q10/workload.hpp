@@ -189,17 +189,11 @@ class Q10Workload
    // Returns the number of result rows (≤ 20 — TPC-H Q10 has LIMIT 20).
    long query_by_base      (std::vector<q10_agg_row_t>& out);  // structure 1
    long query_by_view      (std::vector<q10_agg_row_t>& out);  // structure 2 (A/B dispatch)
+   long query_by_view_preagg(std::vector<q10_agg_row_t>& out); // structure 7 (per-order preagg view)
    long query_by_merged    (std::vector<q10_agg_row_t>& out);  // structure 3
    long query_by_hash      (std::vector<q10_agg_row_t>& out);  // structure 4
    long query_by_aggregated(std::vector<q10_agg_row_t>& out);  // structure 5 (aCOL MI)
    long query_by_shared_view(std::vector<q10_agg_row_t>& out); // structure 6 (shared view)
-
-  private:
-   // S2 variant B — per-order pre-aggregated view scan. Selected by
-   // query_by_view when --q10_view_variant=preagg.
-   long query_by_view_preagg(std::vector<q10_agg_row_t>& out);
-
-  public:
 
    void   load();
    double get_size() const;

@@ -388,38 +388,11 @@ long Q10IWorkload<Backend>::query_by_base(std::vector<q10i_agg_row_t>& out)
 template <typename Backend>
 long Q10IWorkload<Backend>::query_by_view(std::vector<q10i_agg_row_t>& out)
 {
-   // S2 A/B dispatch. Variant B (per-order pre-aggregated view) is the *fair*
-   // S2 baseline; variant A (this body, below) is the per-lineitem view.
+   // S2 A/B dispatch. Variant B (per-order pre-aggregated view) is also
+   // reachable directly via --storage_structure=7 (S7) through
+   // query_by_view_preagg() below; this dispatch keeps the legacy flag.
    if (FLAGS_q10i_view_variant == "preagg") {
-      out.clear();
-      std::unordered_map<Integer, q10i_detail::CustBucket> by_cust;
-      const Timestamp date_lo = params.date_lo;
-      const Timestamp date_hi = params.date_lo + 90;
-      // Each row IS one order with paid/open/late baked: date-filter the order,
-      // add the three pre-summed buckets to its customer. No returnflag filter,
-      // no per-orderkey rollup (the D4 anomaly is gone).
-      auto sc = pipeline_view_preagg.getScanner();
-      while (auto kv = sc->next()) {
-         if (stats) stats->view_rows_scanned++;
-         const auto& v = kv->second;
-         if (v.o_orderdate < date_lo || v.o_orderdate >= date_hi) continue;
-         auto& b = by_cust[kv->first.custkey];
-         if (!b.cust_loaded) {
-            b.c_name      = v.c_name;      b.c_address = v.c_address;
-            b.c_nationkey = v.c_nationkey; b.c_phone   = v.c_phone;
-            b.c_acctbal   = v.c_acctbal;   b.c_comment = v.c_comment;
-            b.cust_loaded = true;
-         }
-         b.paid    += v.paid_returns;
-         b.open    += v.open_returns;
-         b.late    += v.late_returns;
-         b.revenue += v.paid_returns + v.open_returns + v.late_returns;
-      }
-      TopNSink<q10i_agg_row_t, decltype(&q10::q10_agg_row_t::cmp)>
-          sink(20, &q10::q10_agg_row_t::cmp);
-      q10i_detail::drain_to_sink(by_cust, nation, sink);
-      sink.drain_sorted(out);
-      return static_cast<long>(out.size());
+      return query_by_view_preagg(out);
    }
 
    // S2 variant A: per-lineitem view (the original D-chain).
@@ -450,6 +423,43 @@ long Q10IWorkload<Backend>::query_by_view(std::vector<q10i_agg_row_t>& out)
       q10i_detail::route_revenue(b, rev, v.i_status.data[0]);
    }
 
+   TopNSink<q10i_agg_row_t, decltype(&q10::q10_agg_row_t::cmp)>
+       sink(20, &q10::q10_agg_row_t::cmp);
+   q10i_detail::drain_to_sink(by_cust, nation, sink);
+   sink.drain_sorted(out);
+   return static_cast<long>(out.size());
+}
+
+// ---------------------------------------------------------------------------
+// S7: per-order preagg view scan. Each row IS one order with paid/open/late
+// baked; date-filter the order and add the three pre-summed buckets to its
+// customer. No returnflag filter, no per-orderkey rollup (D4 anomaly gone).
+// Reachable directly via --storage_structure=7 and indirectly via
+// query_by_view when --q10i_view_variant=preagg.
+template <typename Backend>
+long Q10IWorkload<Backend>::query_by_view_preagg(std::vector<q10i_agg_row_t>& out)
+{
+   out.clear();
+   std::unordered_map<Integer, q10i_detail::CustBucket> by_cust;
+   const Timestamp date_lo = params.date_lo;
+   const Timestamp date_hi = params.date_lo + 90;
+   auto sc = pipeline_view_preagg.getScanner();
+   while (auto kv = sc->next()) {
+      if (stats) stats->view_rows_scanned++;
+      const auto& v = kv->second;
+      if (v.o_orderdate < date_lo || v.o_orderdate >= date_hi) continue;
+      auto& b = by_cust[kv->first.custkey];
+      if (!b.cust_loaded) {
+         b.c_name      = v.c_name;      b.c_address = v.c_address;
+         b.c_nationkey = v.c_nationkey; b.c_phone   = v.c_phone;
+         b.c_acctbal   = v.c_acctbal;   b.c_comment = v.c_comment;
+         b.cust_loaded = true;
+      }
+      b.paid    += v.paid_returns;
+      b.open    += v.open_returns;
+      b.late    += v.late_returns;
+      b.revenue += v.paid_returns + v.open_returns + v.late_returns;
+   }
    TopNSink<q10i_agg_row_t, decltype(&q10::q10_agg_row_t::cmp)>
        sink(20, &q10::q10_agg_row_t::cmp);
    q10i_detail::drain_to_sink(by_cust, nation, sink);

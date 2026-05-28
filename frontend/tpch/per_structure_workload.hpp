@@ -65,6 +65,21 @@ struct AggregatedStructure {
    void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
 };
 
+// PreaggViewStructure: S7 — per-order pre-aggregated view variant. Parallel
+// in shape to AggregatedStructure: the foreground query runs against a view
+// that bakes a parameter-independent aggregate at load time. Forwards to
+// query_by_view_preagg, which must be public on the workload (factored out
+// of the flag-driven query_by_view path so S7 always takes the preagg arm
+// regardless of --q{N}_view_variant).
+template <typename Workload, typename AggRow>
+struct PreaggViewStructure {
+   Workload& w;
+   explicit PreaggViewStructure(Workload& w) : w(w) {}
+   long query(std::vector<AggRow>& out) { return w.query_by_view_preagg(out); }
+   double get_size() const { return w.get_size(); }
+   void set_params_for_iter(long iter) { w.set_params_for_iter(iter); }
+};
+
 // SharedViewStructure: S6 — the single COL-family shared materialised view
 // (col_shared_view_t), whose schema is the column-union of the per-query S2
 // views. query_by_shared_view runs each query's existing S2 scan body over the

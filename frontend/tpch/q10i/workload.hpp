@@ -130,6 +130,7 @@ class Q10IWorkload
    // Returns the number of result rows (≤ 20 — Q10I has LIMIT 20).
    long query_by_base      (std::vector<q10i_agg_row_t>& out);  // structure 1
    long query_by_view      (std::vector<q10i_agg_row_t>& out);  // structure 2 (A/B dispatch)
+   long query_by_view_preagg(std::vector<q10i_agg_row_t>& out); // structure 7 (per-order preagg view)
    long query_by_merged    (std::vector<q10i_agg_row_t>& out);  // structure 3
    long query_by_hash      (std::vector<q10i_agg_row_t>& out);  // structure 4
    long query_by_aggregated(std::vector<q10i_agg_row_t>& out);  // structure 5 (aCOLI)
