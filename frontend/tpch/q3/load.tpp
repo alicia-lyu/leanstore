@@ -15,6 +15,7 @@
 
 #include "../q3_family/view_loaders.hpp"
 #include "../tpch_family/shared_view_loader.hpp"
+#include "../tpch_family/size_audit.hpp"
 
 DECLARE_int32(storage_structure);
 
@@ -143,16 +144,22 @@ void Q3Workload<Backend>::load()
 template <typename Backend>
 double Q3Workload<Backend>::get_size() const
 {
-   // Include base + active secondary so all four structures are comparable.
+   // Per-adapter sum across what THIS binary sees. S2 image holds COL MI
+   // (load_vanilla_family runs populate_merged before view loaders walk it)
+   // plus sibling Q5/Q10 views and Q10 preagg invisible to Q3; sanity log
+   // catches the residual gap.
    double base = customer.size() + orders.size() + lineitem.size();
+   double sum;
    switch (FLAGS_storage_structure) {
-      case 1: return base + col.get_split_size();
-      case 2: return base + pipeline_view.size();
-      case 3: return base + col.get_merged_size();
-      case 4: return base;
-      case 6: return base + shared_view.size();
+      case 1: sum = base + col.get_split_size(); break;
+      case 2: sum = base + col.get_merged_size() + pipeline_view.size(); break;
+      case 3: sum = base + col.get_merged_size(); break;
+      case 4: sum = base; break;
+      case 6: sum = base + shared_view.size(); break;
       default: throw std::runtime_error("invalid --storage_structure");
    }
+   log_size_audit("q3", sum);
+   return sum;
 }
 
 }  // namespace tpch::q3

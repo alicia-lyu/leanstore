@@ -12,6 +12,7 @@
 // included here only at the Q5I .tpp boundary, not from the visitor.
 #include "../q5/workload.hpp"
 #include "../q5/side_tables.hpp"
+#include "../tpch_family/size_audit.hpp"
 #include "visitor.hpp"
 
 DECLARE_int32(storage_structure);
@@ -116,15 +117,21 @@ void Q5IWorkload<Backend>::populate_q5i_view()
 template <typename Backend>
 double Q5IWorkload<Backend>::get_size() const
 {
+   // Per-adapter sum across what THIS binary sees. S2 image holds COLI MI
+   // plus sibling Q3I/Q10I views and Q10I preagg invisible to Q5I;
+   // sanity log surfaces the residual gap.
    double base = customer.size() + orders.size()
                + lineitem.size() + invoice.size();
+   double sum;
    switch (FLAGS_storage_structure) {
-      case 1: return base + coli.get_split_size();
-      case 2: return base + pipeline_view.size();
-      case 3: return base + coli.get_merged_size();
-      case 4: return base;
+      case 1: sum = base + coli.get_split_size(); break;
+      case 2: sum = base + coli.get_merged_size() + pipeline_view.size(); break;
+      case 3: sum = base + coli.get_merged_size(); break;
+      case 4: sum = base; break;
       default: throw std::runtime_error("invalid --storage_structure");
    }
+   log_size_audit("q5i", sum);
+   return sum;
 }
 
 }  // namespace tpch::q5i

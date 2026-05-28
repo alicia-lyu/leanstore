@@ -8,6 +8,7 @@
 #include <unordered_map>
 
 #include "../tpch_family/walk_action.hpp"
+#include "../tpch_family/size_audit.hpp"
 #include "../tpchi_family/coli_pipeline.hpp"
 
 DECLARE_int32(storage_structure);
@@ -313,23 +314,36 @@ void Q10IWorkload<Backend>::populate_q10i_acoli()
 template <typename Backend>
 double Q10IWorkload<Backend>::get_size() const
 {
+   // Per-adapter sum across what THIS binary sees. Per-Sx image-sharing
+   // (S5↔S3, S7↔S2) plus the view loader's transient `populate_merged()`
+   // mean each Sx image carries co-resident structures beyond what one
+   // switch case naïvely names. Cases below include every co-resident
+   // structure Q10I has a handle for.
    double base = customer.size() + orders.size() + lineitem.size()
                + invoice.size() + nation.size();
+   double sum;
    switch (FLAGS_storage_structure) {
-      case 1: return base + coli.get_split_size();
-      // S2 reports the active view variant (A/B).
-      case 2: return base + (FLAGS_q10i_view_variant == "preagg"
-                                 ? pipeline_view_preagg.size()
-                                 : pipeline_view.size());
-      case 3: return base + coli.get_merged_size();
-      case 4: return base;
-      case 5: return base + acoli_q10i.size();
-      // S7 shares the S2 image (naive + preagg both populated by load_tpchi_family
-      // at sx=2); foreground reads preagg, bg cohort Q3I/Q5I/Q10I read naive. Report
-      // the full image footprint = naive + preagg.
-      case 7: return base + pipeline_view.size() + pipeline_view_preagg.size();
+      case 1: sum = base + coli.get_split_size(); break;
+      // S2 image: base + COLI MI + own naive + own preagg + sibling Q3I/Q5I
+      // views (sibling views invisible — see size_audit).
+      case 2: sum = base + coli.get_merged_size()
+                    + pipeline_view.size() + pipeline_view_preagg.size();
+              break;
+      // S3 image: base + COLI MI + Q10I aCOLI (S5 shared image).
+      case 3: sum = base + coli.get_merged_size() + acoli_q10i.size(); break;
+      case 4: sum = base; break;
+      // S5 shares the S3 image; report both COLI MI and aCOLI.
+      case 5: sum = base + coli.get_merged_size() + acoli_q10i.size(); break;
+      // S7 shares the S2 image. Foreground reads preagg; include COLI MI +
+      // preagg; EXCLUDE the naive q10i view (dead weight at S7 — user
+      // directive). Sibling Q3I/Q5I views are also in the image but
+      // invisible to this binary (sanity log catches).
+      case 7: sum = base + coli.get_merged_size() + pipeline_view_preagg.size();
+              break;
       default: throw std::runtime_error("invalid --storage_structure");
    }
+   log_size_audit("q10i", sum);
+   return sum;
 }
 
 }  // namespace tpch::q10i

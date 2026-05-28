@@ -8,6 +8,7 @@
 
 #include "../q10_family/view_loaders.hpp"
 #include "../tpch_family/shared_view_loader.hpp"
+#include "../tpch_family/size_audit.hpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_string(q10_view_variant);
@@ -95,27 +96,39 @@ void Q10Workload<Backend>::load()
 template <typename Backend>
 double Q10Workload<Backend>::get_size() const
 {
-   // Include base + active secondary so all four structures are comparable.
-   // NATION is in the base set (used by every storage structure for the
-   // per-customer INL lookup at emit, Decision D6).
+   // Per-adapter sum across what THIS binary sees. Per-Sx image-sharing
+   // (S5↔S3, S7↔S2) plus the view loader's transient `populate_merged()`
+   // mean the image carries co-resident structures beyond what one switch
+   // case naïvely names. Cases below include every co-resident structure
+   // Q10 has a handle for. NATION is in the base set (D6).
    double base = customer.size() + orders.size() + lineitem.size()
                + nation.size();
+   double sum;
    switch (FLAGS_storage_structure) {
-      case 1: return base + col.get_split_size();
-      // S2 reports the size of the active view variant (A/B).
-      case 2: return base + (FLAGS_q10_view_variant == "preagg"
-                                 ? pipeline_view_preagg.size()
-                                 : pipeline_view.size());
-      case 3: return base + col.get_merged_size();
-      case 4: return base;
-      case 5: return base + acol.size();
-      case 6: return base + shared_view.size();
-      // S7 shares the S2 image (naive + preagg both populated by load_vanilla_family
-      // at sx=2); foreground reads preagg, bg cohort Q3/Q5/Q10 read naive. Report
-      // the full image footprint = naive + preagg.
-      case 7: return base + pipeline_view.size() + pipeline_view_preagg.size();
+      case 1: sum = base + col.get_split_size(); break;
+      // S2 image: base + COL MI + own naive + own preagg + sibling Q3/Q5 views
+      // (sibling views invisible — see size_audit). FLAGS_q10_view_variant
+      // toggles which arm the FOREGROUND query reads; the image carries both.
+      case 2: sum = base + col.get_merged_size()
+                    + pipeline_view.size() + pipeline_view_preagg.size();
+              break;
+      // S3 image: base + COL MI + Q10 aCOL (S5 shared image).
+      case 3: sum = base + col.get_merged_size() + acol.size(); break;
+      case 4: sum = base; break;
+      // S5 shares the S3 image; report both COL MI and aCOL (S5's COL MI is
+      // walked by bg cohort Q3/Q5; aCOL is the foreground structure).
+      case 5: sum = base + col.get_merged_size() + acol.size(); break;
+      case 6: sum = base + shared_view.size(); break;
+      // S7 shares the S2 image. Foreground Q10 reads preagg; bg cohort Q3/Q5
+      // read their views. Include COL MI + preagg; EXCLUDE the naive q10
+      // view (dead weight at S7 — user directive). Sibling Q3/Q5 views are
+      // also in the image but invisible to this binary (sanity log catches).
+      case 7: sum = base + col.get_merged_size() + pipeline_view_preagg.size();
+              break;
       default: throw std::runtime_error("invalid --storage_structure");
    }
+   log_size_audit("q10", sum);
+   return sum;
 }
 
 }  // namespace tpch::q10
