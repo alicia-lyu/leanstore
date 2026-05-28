@@ -48,21 +48,22 @@ def get_build_vars(build_dir: Path):
 # tag rather than the per-query exec name. Q12 stays self-contained (different
 # pipeline — OL — and excluded from the paper-ready experiments).
 TPCH_FAMILY = {
-    # Vanilla COL family
+    # Vanilla COL family — Q3 / Q5 / Q10 all load via load_vanilla_family and
+    # recover from the same per-Sx image (post-2026-05-28 cohort refactor).
     "q3_lsm":    "tpch_lsm",
     "q5_lsm":    "tpch_lsm",
+    "q10_lsm":   "tpch_lsm",
     "q3_btree":  "tpch_btree",
     "q5_btree":  "tpch_btree",
-    # Invoice-extended COLI family. NOTE: q10i is intentionally NOT a member —
-    # its executable loads independently (q10i.load(); see
-    # q10i/executable_*.cpp "Not plugged into the Q3I+Q5I family cohort") and
-    # load_tpchi_family(tpch, q3i, q5i) does not populate q10i's view. Mapping
-    # it here would make `make q10i_*` recover from a q3i/q5i image lacking the
-    # q10i pipeline view (degenerate S2). q10i keeps its own image dir + loader.
-    "q3i_lsm":   "tpchi_lsm",
-    "q5i_lsm":   "tpchi_lsm",
-    "q3i_btree": "tpchi_btree",
-    "q5i_btree": "tpchi_btree",
+    "q10_btree": "tpch_btree",
+    # Invoice-extended COLI family — Q3I / Q5I / Q10I all load via
+    # load_tpchi_family (post-2026-05-28; q10i was previously standalone).
+    "q3i_lsm":    "tpchi_lsm",
+    "q5i_lsm":    "tpchi_lsm",
+    "q10i_lsm":   "tpchi_lsm",
+    "q3i_btree":  "tpchi_btree",
+    "q5i_btree":  "tpchi_btree",
+    "q10i_btree": "tpchi_btree",
 }
 
 def image_basename(exec_fname: str) -> str:
@@ -370,23 +371,47 @@ class Experiment:
         if Path(build_dirs[0]).resolve() == self.build_dir.resolve():
             return # only generate image once (all builds use the same image)
         self.makefile_subsection("Generate image file/dir")
+
+        if uses_per_sx_layout(self.exec_fname):
+            # Per-Sx layout: one image dir/file per Sx, with S5/S7 sharing
+            # S3/S2 (no separate image emitted for the shared cases).
+            seen_paths = set()
+            for sx in STRUCTURE_OPTIONS[self.exec_fname]:
+                img = per_sx_image_path(self.exec_fname, sx)
+                if str(img) in seen_paths:
+                    continue  # S5 reuses S3; S7 reuses S2; emit each unique path once
+                seen_paths.add(str(img))
+                create_image_cmd, copy_image_cmd = get_image_command("lsm" in self.exec_fname, img)
+                print(f"{img}:")
+                self.console_print_subsection(f"Creating per-Sx image {img}")
+                print(f"\t{create_image_cmd}")
+                print()
+                if "lsm" not in self.exec_fname:
+                    # btree per-Sx image_temp copy. Depends on the per-Sx
+                    # BUILD-mode recover file produced by the canonical loader.
+                    build_recover = per_sx_recover_file(self.exec_fname, Path("build"), sx)
+                    print(f"{img}_temp: {build_recover} {img} FORCE")
+                    self.console_print_subsection(f"Copying per-Sx image {img} → {img}_temp")
+                    print(f"\t{copy_image_cmd}")
+                    print()
+            return
+
+        # Legacy monolithic-image path (geo, q12).
         create_image_cmd, copy_image_cmd = get_image_command("lsm" in self.exec_fname, self.image_path)
-        
-        # rule to create image file/dir
         print(f"{self.image_path}:")
         self.console_print_subsection(f"Creating image file/dir {self.image_path}")
         print(f"\t{create_image_cmd}")
         print()
-
-        # rule to copy image file to a temporary "test field". image_temp must
-        # depend on the BUILD-mode recover-file (production binary writes it),
-        # not self.recover_file (which is build-debug here because generate_image
-        # only runs from the build-debug Experiment iteration). Depending on
-        # build-debug pulled in the lldb-driven debug load recipe, which fails
-        # with exit 127 on hosts that don't have lldb installed.
         if "lsm" not in self.exec_fname:
+            # rule to copy image file to a temporary "test field". image_temp
+            # must depend on the BUILD-mode recover-file (production binary
+            # writes it), not self.recover_file (which is build-debug here
+            # because generate_image only runs from the build-debug Experiment
+            # iteration). Depending on build-debug pulled in the lldb-driven
+            # debug load recipe, which fails with exit 127 on hosts that
+            # don't have lldb installed.
             build_recover_file = data_disk / image_basename(self.exec_fname) / "build" / f"{SCALE_ENV}.json"
-            print(f"{self.image_path}_temp: {build_recover_file} {self.image_path} FORCE") # force duplicate; check recover target before image_path target
+            print(f"{self.image_path}_temp: {build_recover_file} {self.image_path} FORCE")
             self.console_print_subsection(f"Copying image file {self.image_path} to {self.image_path}_temp")
             print(f"\t{copy_image_cmd}")
             print()
@@ -419,6 +444,75 @@ class Experiment:
         self.makefile_subsection("Generate recovery file")
         loading_files = get_loading_files(self.exec_fname)
         loading_files_str = " ".join(loading_files)
+
+        if uses_per_sx_layout(self.exec_fname):
+            # Per-Sx layout: emit one persist target per Sx loader. S5 and S7
+            # don't have their own persist targets — they recover from the S3
+            # and S2 images respectively (sx_is_loader returns False for them).
+            for sx in STRUCTURE_OPTIONS[self.exec_fname]:
+                if not sx_is_loader(sx):
+                    continue
+                self._emit_per_sx_recover_recipe(sx, loading_files_str)
+            return
+
+        # Legacy monolithic path (geo, q12).
+        self._emit_monolithic_recover_recipe(loading_files_str)
+
+    def _emit_per_sx_recover_recipe(self, sx: int, loading_files_str: str) -> None:
+        img = per_sx_image_path(self.exec_fname, sx)
+        rec = per_sx_recover_file(self.exec_fname, self.build_dir, sx)
+        runtime = self.build_dir / self.exec_fname / f"{SCALE_ENV}-in-S{sx}-load"
+        print(f"{rec}: {LOADING_META_FILE} {loading_files_str} | {img} # order-only dependency")
+        self.console_print_subsection(f"Persisting S{sx} data → {rec}")
+        print(f"\tmkdir -p {rec.parent}")
+        print(f"\tmkdir -p {runtime}")
+        if "debug" in str(self.build_dir):
+            prefix = "lldb -b -o run -o bt -- "
+            suffix = ''
+        elif IS_MACOS:
+            prefix = f'script -q {runtime}/load.log '
+            suffix = ''
+        else:
+            prefix = 'script -q -c "'
+            suffix = f'" {runtime}/load.log'
+        # Per-Sx persist: pass --storage_structure=<sx> so load_*_family
+        # dispatches per-Sx (only populates secondaries Sx needs).
+        load_class_flags = self.class_flags.copy()
+        load_class_flags["csv_path"] = str(runtime)
+        rem_flags = self.remaining_flags(
+                recover_file="./leanstore.json",
+                persist_file=rec,
+                trunc=True,
+                ssd_path=img,
+                scale=SCALE_ENV,
+                dram_gib="$(load_dram)"
+            )
+        print("\t${MAKE}", img)
+        print(
+            f"\t{prefix}{self.exec_path}",
+            kv_to_str(load_class_flags),
+            kv_to_str(rem_flags),
+            f"--storage_structure={sx}",
+            f"2>{runtime}/stderr.txt",
+            suffix,
+            sep=" "
+        )
+        # Copy per-Sx recover file to the other build dirs (so q3_lsm-built
+        # and q3_lsm-debug-built can each recover from the same canonical load).
+        for b in build_dirs:
+            b = Path(b)
+            if b.resolve() == self.build_dir.resolve():
+                continue
+            dest = per_sx_recover_file(self.exec_fname, b, sx)
+            print(f"\tmkdir -p {dest.parent}")
+            print(f"\tcp -f {rec} {dest}")
+        print("\techo \"-------------------Image S" + str(sx) + " size-------------------\";",
+              f"du -sh {img} | awk '{{print $1}}'")
+        print("\techo \"-------------------Data disk size-------------------\";",
+              f"du -sh {data_disk} | awk '{{print $1}}'")
+        print()
+
+    def _emit_monolithic_recover_recipe(self, loading_files_str: str) -> None:
         # rule to load database and create recovery file
         print(f"{self.recover_file}: {LOADING_META_FILE} {loading_files_str} | {self.image_path} # order-only dependency")
         self.console_print_subsection(f"Persisting data to {self.recover_file}")
@@ -433,8 +527,8 @@ class Experiment:
             prefix = 'script -q -c "'
             suffix = f'" {self.runtime_dir}/load.log'
         rem_flags = self.remaining_flags(
-                recover_file="./leanstore.json", # do not recover
-                persist_file=self.recover_file, # do persist
+                recover_file="./leanstore.json",
+                persist_file=self.recover_file,
                 trunc=True,
                 ssd_path=self.image_path,
                 scale=SCALE_ENV,
@@ -443,14 +537,13 @@ class Experiment:
         print("\t${MAKE}", self.image_path)
         print("\t${MAKE}", self.runtime_dir)
         print(
-            f"\t{prefix}{self.exec_path}", 
+            f"\t{prefix}{self.exec_path}",
             kv_to_str(self.class_flags),
             kv_to_str(rem_flags),
             f"2>{self.runtime_dir}/stderr.txt",
             suffix,
             sep=" "
         )
-        # copy recovery file to all other possible locations
         for b in build_dirs:
             b = Path(b)
             if b.resolve() == self.build_dir.resolve():
@@ -462,31 +555,52 @@ class Experiment:
         print("\techo \"-------------------Data disk size-------------------\";", f"du -sh {data_disk} | awk '{{print $1}}'")
         print()
         
-    def experiment_flags(self) -> tuple[dict[str, str], str]:
-        
+    def experiment_flags(self, structure: int = -1) -> tuple[dict[str, str], str, str]:
+        """Returns (rem_flags, image_dep, recover_dep) for the given Sx.
+
+        For per-Sx layout, the image/recover paths are Sx-specific (with
+        S5/S7 redirecting to S3/S2 via per_sx_image_path/per_sx_recover_file).
+        For legacy monolithic layout, structure is ignored and we return the
+        single image+recover paths.
+        """
+        if uses_per_sx_layout(self.exec_fname) and structure > 0:
+            img = per_sx_image_path(self.exec_fname, structure)
+            rec = per_sx_recover_file(self.exec_fname, self.build_dir, structure)
+            image_dep = str(img) if "lsm" in self.exec_fname else f"{img}_temp"
+            rem_flags = self.remaining_flags(
+                recover_file=rec,
+                persist_file="./leanstore.json",
+                trunc=False,
+                ssd_path=image_dep,
+                scale=SCALE_ENV,
+                dram_gib="$(dram)"
+            )
+            return rem_flags, image_dep, str(rec)
+
+        # Legacy monolithic path (geo, q12, or per-Sx with structure=0).
         image_dep = self.image_path if "lsm" in self.exec_fname else f"{self.image_path}_temp"
         rem_flags = self.remaining_flags(
-            recover_file=self.recover_file, # do recover
-            persist_file="./leanstore.json", # do not persist
+            recover_file=self.recover_file,
+            persist_file="./leanstore.json",
             trunc=False,
-            ssd_path=image_dep, # duplicate image
+            ssd_path=image_dep,
             scale=SCALE_ENV,
             dram_gib="$(dram)"
         )
-        return rem_flags, image_dep
-        
+        return rem_flags, str(image_dep), str(self.recover_file)
+
     def run_experiment(self) -> None:
         self.makefile_subsection("Run experiment")
         separate_runs = [f"{self.exec_fname}_{str(i)}" for i in STRUCTURE_OPTIONS[self.exec_fname]]
         separate_runs_str = " ".join(separate_runs)
-        rem_flags, image_dep = self.experiment_flags()
-        
+
         # rule to run the experiment
         print(f"{self.exec_fname}: {separate_runs_str}")
-        # rules for separate runs
+        # rules for separate runs (each Sx gets its own image+recover deps).
         for structure in [0] + STRUCTURE_OPTIONS[self.exec_fname]:
             exp_w_structure.append(f"{self.exec_fname}_{structure}")
-            print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {self.recover_file} {image_dep}")
+            rem_flags, image_dep, recover_dep = self.experiment_flags(structure)
+            print(f"{self.exec_fname}_{structure}: check_perf_event_paranoid {self.exec_path} {recover_dep} {image_dep}")
             print(f"\tmkdir -p {self.runtime_dir}")
             print(f"\ttouch {self.runtime_dir}/structure{structure}.log")
             # Diagnostic flags: opt-in via Makefile vars `micro_perf=true cfstats=true`.
@@ -541,19 +655,16 @@ class Experiment:
         print(f"#{self.sep} Debug experiment {self.sep}")
         separate_runs = [f"{self.exec_fname}_lldb_{str(i)}" for i in STRUCTURE_OPTIONS[self.exec_fname]]
         separate_runs_str = " ".join(separate_runs)
-        rem_flags, img_dep = self.experiment_flags()
-        # replace dram with 1 in vscode flags
-        # vscode_flags = self.class_flags.copy() + rem_flags.copy()
-        vscode_flags: dict[str, str] = self.class_flags.copy()
-        vscode_flags.update(rem_flags.copy())
-        for k, v in vscode_flags.items():
-            vscode_flags[k] = str(v).replace("$(dram)", "0.1").replace("$(scale)", "15").replace("$(tentative_skip_bytes)", "0").replace("$(bgw_pct)", "0").replace("$(bg_query_thread)", "false").replace("$(bg_point_lookups)", "false").replace("$(geo_bg_thread)", "false") # for debugging, use no bgw to prevent keyInCurrentBoundaries = false error
-        
         # rule to run the experiment in LLDB
         print(f"{self.exec_fname}_lldb: {separate_runs_str}")
-        # rules for separate runs
+        # rules for separate runs (per-Sx image+recover deps).
         for structure in [0] + STRUCTURE_OPTIONS[self.exec_fname]:
-            print(f"{self.exec_fname}_lldb_{structure}: {self.exec_path} {self.recover_file} check_perf_event_paranoid {img_dep}")
+            rem_flags, img_dep, recover_dep = self.experiment_flags(structure)
+            vscode_flags: dict[str, str] = self.class_flags.copy()
+            vscode_flags.update(rem_flags.copy())
+            for k, v in vscode_flags.items():
+                vscode_flags[k] = str(v).replace("$(dram)", "0.1").replace("$(scale)", "15").replace("$(tentative_skip_bytes)", "0").replace("$(bgw_pct)", "0").replace("$(bg_query_thread)", "false").replace("$(bg_point_lookups)", "false").replace("$(geo_bg_thread)", "false")
+            print(f"{self.exec_fname}_lldb_{structure}: {self.exec_path} {recover_dep} check_perf_event_paranoid {img_dep}")
             print(f"\trm stderr.txt && touch stderr.txt") # reset stderr.txt
             print(f"\tmkdir -p {self.runtime_dir}")
             print(
@@ -581,10 +692,32 @@ class Experiment:
     def reload(self):
         midfix = "_lldb" if "debug" in str(self.build_dir) else ""
         print(f"{self.exec_fname}{midfix}_reload:")
-        # print(f"\trm -f {self.recover_file}")
         for b in build_dirs:
             print(f"\trm -f {data_disk / b / self.exec_fname / f'{SCALE_ENV}.json'}")
-        print(f"\t$(MAKE) {self.recover_file}")
+        if uses_per_sx_layout(self.exec_fname):
+            # Delete all per-Sx recover files for this binary, then trigger
+            # a fresh load via the canonical loader (q3 for vanilla, q3i for
+            # tpchi). S5/S7 share images with S3/S2, so only loader-Sx are
+            # rebuilt.
+            for sx in STRUCTURE_OPTIONS[self.exec_fname]:
+                if not sx_is_loader(sx):
+                    continue
+                rec = per_sx_recover_file(self.exec_fname, self.build_dir, sx)
+                print(f"\trm -f {rec}")
+            # Make each Sx's recover file (canonical loader's recipe handles
+            # the actual binary invocation with --storage_structure=<sx>).
+            for sx in STRUCTURE_OPTIONS[self.exec_fname]:
+                if not sx_is_loader(sx):
+                    continue
+                # Use the canonical loader's recover-file path (since only
+                # the loader emits the recipe).
+                loader = TPCH_FAMILY_LOADER.get(image_basename(self.exec_fname))
+                if loader is None:
+                    continue
+                loader_rec = per_sx_recover_file(loader, self.build_dir, sx)
+                print(f"\t$(MAKE) {loader_rec}")
+        else:
+            print(f"\t$(MAKE) {self.recover_file}")
         print()
 
 # Files whose mtime change must invalidate every persisted recovery
@@ -639,18 +772,25 @@ STRUCTURE_OPTIONS = {
     "geo_lsm": [1, 2, 3, 4],
     "q12_btree": [1, 2, 3, 4],
     "q12_lsm": [1, 2, 3, 4],
-    "q3i_btree": [1, 2, 3, 4, 5],
-    "q3i_lsm": [1, 2, 3, 4, 5],
-    "q3_btree": [1, 2, 3, 4, 6],
-    "q3_lsm": [1, 2, 3, 4, 6],
-    "q5_btree": [1, 2, 3, 4, 6],
-    "q5_lsm": [1, 2, 3, 4, 6],
+    # Q3/Q5/Q3I/Q5I reject Sx=5 and Sx=7 at startup (post-2026-05-28; those
+    # are Q10/Q10I-only foreground variants). Emitting them as Make targets
+    # would create immediately-failing runs; drop from STRUCTURE_OPTIONS.
+    "q3_btree":  [1, 2, 3, 4, 6],
+    "q3_lsm":    [1, 2, 3, 4, 6],
+    "q5_btree":  [1, 2, 3, 4, 6],
+    "q5_lsm":    [1, 2, 3, 4, 6],
+    "q3i_btree": [1, 2, 3, 4],
+    "q3i_lsm":   [1, 2, 3, 4],
     "q5i_btree": [1, 2, 3, 4],
-    "q5i_lsm": [1, 2, 3, 4],
-    "q10_btree": [1, 2, 3, 4, 5, 6],
-    "q10_lsm": [1, 2, 3, 4, 5, 6],
-    "q10i_btree": [1, 2, 3, 4, 5],
-    "q10i_lsm": [1, 2, 3, 4, 5],
+    "q5i_lsm":   [1, 2, 3, 4],
+    # Q10/Q10I own S5 (aCOL/aCOLI MI) and S7 (per-order preagg view) as
+    # native foreground variants. S5 binary recovers from the S3 image
+    # (which holds COL/COLI MI + Q10/Q10I aCOL/aCOLI co-resident); S7
+    # binary recovers from the S2 image (naive views + preagg view).
+    "q10_btree":  [1, 2, 3, 4, 5, 6, 7],
+    "q10_lsm":    [1, 2, 3, 4, 5, 6, 7],
+    "q10i_btree": [1, 2, 3, 4, 5, 7],
+    "q10i_lsm":   [1, 2, 3, 4, 5, 7],
 }
 
 def main() -> None:
