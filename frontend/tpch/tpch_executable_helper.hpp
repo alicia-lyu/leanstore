@@ -38,10 +38,18 @@ struct TpchExecutableHelper {
    long last_count = 0;  // TX count from the most recent tput_tx() call
 
    // Optional registry of background-query steps. When --bg_query_thread=true,
-   // the bg thread cycles through these in round-robin instead of re-running
-   // the foreground query. Set via set_bg_query_steps() before run().
+   // the cohort thread (BG_WORKER) cycles through these in round-robin
+   // instead of re-running the foreground query. Set via
+   // set_bg_query_steps() before run().
    std::vector<BgStepFn> bg_query_steps;
    void set_bg_query_steps(std::vector<BgStepFn> steps) { bg_query_steps = std::move(steps); }
+
+   // Optional override for the point-lookup step run on BG_LOOKUP_WORKER.
+   // If unset, the helper's built-in bg_point_lookup() runs (8 vanilla TPC-H
+   // tables). TPCHi binaries set a 9-table variant including invoice via
+   // make_tpchi_point_lookup_step() to keep the contention surface honest.
+   BgStepFn bg_lookup_step;
+   void set_bg_lookup_step(BgStepFn step) { bg_lookup_step = std::move(step); }
 
    TpchExecutableHelper(RocksDB& rocks_db, PerStructureWrapper wrapper,
                         TPCHWorkload<AdapterType, LineitemRecord>& tpch, std::string name)
@@ -79,12 +87,11 @@ struct TpchExecutableHelper {
    // Used by per-query executables to compute per-query stage averages.
    long tx_count() const { return last_count; }
 
-   // One heterogeneous point-lookup over the base TPC-H tables, on BG_WORKER.
-   // Used by the bg=2 fallback path (binaries that register no family cohort,
-   // e.g. q10 / q10i) so their bg=2 includes the same uniform-random
-   // point-lookup stream as the family cohort, not just same-query
-   // contention. Mirrors register_vanilla_bg_steps' point-lookup step;
-   // tolerates not-found via tryLookup (PK ranges are sparse).
+   // Default point-lookup step run on BG_LOOKUP_WORKER when no override is
+   // set via set_bg_lookup_step(). Heterogeneous over 8 vanilla TPC-H base
+   // tables (TPCHi binaries override to add invoice via
+   // make_tpchi_point_lookup_step). Tolerates not-found via tryLookup
+   // (PK ranges are sparse).
    void bg_point_lookup()
    {
       const Integer pick = urand(0, 7);
@@ -108,7 +115,7 @@ struct TpchExecutableHelper {
             case 6: { nation_t::Key k{tpch.getNationID()}; tpch.nation.tryLookup(k, [](const nation_t&) {}); break; }
             case 7: default: { region_t::Key k{tpch.getRegionID()}; tpch.region.tryLookup(k, [](const region_t&) {}); break; }
          }
-      }, BG_WORKER);
+      }, BG_LOOKUP_WORKER);
    }
 
    void tput_tx(const std::string& tx_name)
@@ -116,59 +123,62 @@ struct TpchExecutableHelper {
       tpch.logger.reset();
       auto start = std::chrono::high_resolution_clock::now();
       std::atomic<int> count = 0;
-      std::atomic<long> bg_count = 0;
+      std::atomic<long> bg_cohort_count = 0;
+      std::atomic<long> bg_lookup_count = 0;
 
       std::cout << "Running " << tx_name << " on " << structure_name
                 << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
       if (FLAGS_bg_query_thread) {
-         std::cout << "  (--bg_query_thread=true: bg cohort: "
+         std::cout << "  (--bg_query_thread=true: cohort thread = "
                    << bg_query_steps.size() << " steps";
          if (bg_query_steps.empty()) {
-            std::cout << " -> fallback: re-run foreground query"
-                      << (FLAGS_bg_point_lookups ? " + point-lookup stream" : "");
+            std::cout << " -> fallback: re-run foreground on BG_WORKER";
          }
-         std::cout << ")" << std::endl;
+         std::cout << "; lookup thread = "
+                   << (FLAGS_bg_point_lookups ? "on (BG_LOOKUP_WORKER)" : "off")
+                   << ")" << std::endl;
       }
 
       std::atomic<bool> keep_running = true;
-      std::atomic<bool> bg_running = false;
       std::thread([&] {
          std::this_thread::sleep_for(std::chrono::seconds(FLAGS_tx_seconds));
          keep_running = false;
       }).detach();
 
-      // --bg_query_thread: spawn a single read-only background worker for
-      // the duration of the foreground TX window. The thread reads whatever
-      // Params each query has most recently set; bg never mutates params
-      // (avoids the params-race; the foreground is the source of truth).
-      // This is a contention test, not a parity check — bg results are
-      // discarded.
+      // --bg_query_thread: spawn two dedicated read-only background workers
+      // for the duration of the foreground TX window:
       //
-      // Routing:
-      //   - If bg_query_steps is non-empty (family-loader case), the thread
-      //     dispatches steps by time-balance fairness: always pick the step
-      //     with the smallest cumulative elapsed seconds. When there is only
-      //     one step, this collapses to "always pick index 0". When there
-      //     are multiple steps with similar per-call cost (e.g. Q3 vs Q5 at
-      //     SF=380) the visit ratio is ~1:1; when step costs differ widely
-      //     (e.g. heavy family-query step vs cheap point-lookup step), the
-      //     cheaper step runs more often to keep wall-clock allocation
-      //     balanced 1:1:...:1.
-      //   - Otherwise (single-binary fallback), the thread re-runs the
-      //     foreground query back-to-back on BG_WORKER.
-      std::thread bg_thread;
+      //   Thread A (cohort, BG_WORKER):
+      //     - If bg_query_steps is non-empty (family-loader case): rotate
+      //       cohort steps by smallest-cumulative-elapsed fairness. When
+      //       step costs differ widely (e.g. Q3 vs Q5 at SF=380) the
+      //       cheaper step still runs more often to keep wall-clock
+      //       allocation balanced 1:1:...:1. No point-lookup interleaving
+      //       — those run on Thread B.
+      //     - Otherwise: re-run the foreground query back-to-back on
+      //       BG_WORKER (single-binary fallback for q10/q10i/q12).
+      //
+      //   Thread B (lookup, BG_LOOKUP_WORKER):
+      //     - Active when --bg_point_lookups=true.
+      //     - Runs bg_lookup_step in a tight loop if set, else falls back to
+      //       the built-in bg_point_lookup() (8 vanilla tables). TPCHi
+      //       binaries override via set_bg_lookup_step() to include invoice.
+      //     - Decoupled from Thread A so a heavy structure (S2/S4, btree S1)
+      //       no longer un-rotates bg_txs to ~2: the lookup stream keeps
+      //       firing while the cohort/foreground re-run takes its time.
+      //
+      // Both threads read whatever Params each query has most recently set;
+      // bg never mutates params (avoids the params-race; foreground is the
+      // source of truth). Results are discarded — this is a contention
+      // test, not a parity check.
+      std::thread bg_cohort_thread;
+      std::thread bg_lookup_thread;
       if (FLAGS_bg_query_thread) {
-         bg_thread = std::thread([&]() {
-            bg_running = true;
+         bg_cohort_thread = std::thread([&]() {
             std::vector<AggRow> bg_out;
             bg_out.reserve(8);
             const bool use_registry = !bg_query_steps.empty();
-            // Cumulative elapsed seconds per registered step. Pick the step
-            // with the smallest cumulative time each iteration.
             std::vector<double> bg_step_elapsed(bg_query_steps.size(), 0.0);
-            // Fallback time-balance accumulators (foreground-query vs the
-            // point-lookup stream) for binaries with no registered cohort.
-            double fb_query_elapsed = 0.0, fb_pl_elapsed = 0.0;
             while (keep_running.load()) {
                jumpmuTry()
                {
@@ -184,36 +194,40 @@ struct TpchExecutableHelper {
                      auto step_end = std::chrono::steady_clock::now();
                      bg_step_elapsed[pick] +=
                          std::chrono::duration<double>(step_end - step_start).count();
-                  } else if (FLAGS_bg_point_lookups && fb_pl_elapsed <= fb_query_elapsed) {
-                     // Fallback (no registered cohort, e.g. q10/q10i) with
-                     // bg=2: time-balance a point-lookup stream 1:1 (wall
-                     // clock) against the re-run foreground query, mirroring
-                     // the registry's smallest-cumulative-elapsed pick. Makes
-                     // bg=2 mean "second query worker + point-lookup noise"
-                     // even without a family cohort.
-                     auto t0 = std::chrono::steady_clock::now();
-                     bg_point_lookup();
-                     fb_pl_elapsed += std::chrono::duration<double>(
-                         std::chrono::steady_clock::now() - t0).count();
                   } else {
                      bg_out.clear();
-                     auto t0 = std::chrono::steady_clock::now();
                      db_traits->run_tx([&]() { wrapper.query(bg_out); }, BG_WORKER);
-                     fb_query_elapsed += std::chrono::duration<double>(
-                         std::chrono::steady_clock::now() - t0).count();
                   }
-                  bg_count++;
+                  bg_cohort_count++;
                }
                jumpmuCatchNoPrint()
                {
                   db_traits->rollback_tx(BG_WORKER);
-                  // Quiet failure — the bg thread is just contention; we
-                  // log the total at the end and move on.
                }
             }
             db_traits->cleanup_thread(BG_WORKER);
-            bg_running = false;
          });
+
+         if (FLAGS_bg_point_lookups) {
+            bg_lookup_thread = std::thread([&]() {
+               while (keep_running.load()) {
+                  jumpmuTry()
+                  {
+                     if (bg_lookup_step) {
+                        bg_lookup_step();
+                     } else {
+                        bg_point_lookup();
+                     }
+                     bg_lookup_count++;
+                  }
+                  jumpmuCatchNoPrint()
+                  {
+                     db_traits->rollback_tx(BG_LOOKUP_WORKER);
+                  }
+               }
+               db_traits->cleanup_thread(BG_LOOKUP_WORKER);
+            });
+         }
       }
 
       std::vector<AggRow> out;
@@ -243,15 +257,23 @@ struct TpchExecutableHelper {
          }
       }
 
-      if (bg_thread.joinable()) {
-         bg_thread.join();
+      if (bg_cohort_thread.joinable()) {
+         bg_cohort_thread.join();
+      }
+      if (bg_lookup_thread.joinable()) {
+         bg_lookup_thread.join();
       }
 
       std::cout << "#" << count.load() << " " << tx_name << " for "
                 << structure_name << " performed." << std::endl;
       if (FLAGS_bg_query_thread) {
-         std::cout << "  bg_query_thread: " << bg_count.load()
-                   << " background TXs completed during the same window." << std::endl;
+         std::cout << "  bg_cohort_thread (BG_WORKER): " << bg_cohort_count.load()
+                   << " TXs"
+                   << "  |  bg_lookup_thread (BG_LOOKUP_WORKER): "
+                   << bg_lookup_count.load() << " TXs"
+                   << "  |  total: "
+                   << (bg_cohort_count.load() + bg_lookup_count.load())
+                   << std::endl;
       }
 
       auto end = std::chrono::high_resolution_clock::now();

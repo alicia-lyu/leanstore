@@ -200,18 +200,26 @@ inline BgStepFn make_tpchi_point_lookup_step(
                break;
             }
          }
-      }, BG_WORKER);
+      }, BG_LOOKUP_WORKER);
    };
 }
 
+// Returns the cohort step vector only — point-lookups are owned by the
+// helper's dedicated BG_LOOKUP_WORKER thread. TPCHi callers should
+// additionally call `helper.set_bg_lookup_step(
+// make_tpchi_point_lookup_step<B>(db_traits, tpch))` to include the
+// invoice table in the lookup distribution; otherwise the helper falls
+// back to its built-in 8-table vanilla lookup. The
+// `include_point_lookups` parameter is kept for source-compat but is
+// now unused.
 template <typename Backend>
 inline std::vector<BgStepFn> register_tpchi_bg_steps(
     DBTraits& db_traits,
-    TPCHIWorkload<Backend::template Adapter>& tpch,
+    TPCHIWorkload<Backend::template Adapter>& /*tpch*/,
     tpch::q3i::Q3IWorkload<Backend>& q3i_workload,
     tpch::q5i::Q5IWorkload<Backend>& q5i_workload,
     int structure,
-    bool include_point_lookups)
+    bool /*include_point_lookups*/)
 {
    std::vector<BgStepFn> steps;
    switch (structure) {
@@ -221,9 +229,6 @@ inline std::vector<BgStepFn> register_tpchi_bg_steps(
       case 4: steps = register_tpchi_bg_steps_at<Backend, 4>(db_traits, q3i_workload, q5i_workload); break;
       case 5: steps = register_tpchi_bg_steps_at<Backend, 5>(db_traits, q3i_workload, q5i_workload); break;
       default: throw std::runtime_error("register_tpchi_bg_steps: invalid storage_structure");
-   }
-   if (include_point_lookups) {
-      steps.push_back(make_tpchi_point_lookup_step<Backend>(db_traits, tpch));
    }
    return steps;
 }
