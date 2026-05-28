@@ -36,6 +36,8 @@
 #include "../q3/workload.hpp"
 #include "../q5/per_structure_workload.hpp"
 #include "../q5/workload.hpp"
+#include "../q10/per_structure_workload.hpp"
+#include "../q10/workload.hpp"
 
 DEFINE_int32(tentative_skip_bytes, 12288, "Tentative skip bytes for smart skipping");
 DEFINE_int32(update_size,     1, "RF1+RF2 batch size (orders per refresh op)");
@@ -129,6 +131,17 @@ int main(int argc, char** argv)
    gflags::SetUsageMessage("refresh_sales — TPC-H RF1/RF2 update experiment (RocksDB)");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
 
+   // refresh_sales maintenance is wired for S1/S2/S3/S4 only. Q10 owns the
+   // native S5/S7 read variants in the vanilla family cohort; they have no
+   // RF1/RF2 maintenance path here.
+   if (FLAGS_storage_structure == 5 || FLAGS_storage_structure == 7) {
+      std::cerr << "refresh_sales_lsm does not support --storage_structure="
+                << FLAGS_storage_structure
+                << " (refresh_sales has no S5/S7 maintenance; the Q10 native S5/S7"
+                << " variants are read-only)." << std::endl;
+      return 1;
+   }
+
    RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
    using B = tpch::RocksDBBackend;
 
@@ -143,14 +156,19 @@ int main(int argc, char** argv)
 
    B::Adapter<tpch::q3::q3_pipeline_view_t> q3_view(rocks_db);
    B::Adapter<tpch::q5::q5_pipeline_view_t> q5_view(rocks_db);
+   B::Adapter<tpch::q10::q10_pipeline_view_t>        q10_view(rocks_db);
+   B::Adapter<tpch::q10::q10_pipeline_view_preagg_t> q10_view_preagg(rocks_db);
 
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_col_t>  merged_col(rocks_db);
    B::Adapter<tpch::orders_coli_t>        split_orders(rocks_db);
    B::Adapter<tpch::lineitem_col_t>       split_lineitem(rocks_db);
 
+   // Q10 S5 aCOL MI — declared to keep the family CF set identical.
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t> q10_acol(rocks_db);
+
    // S6 shared view adapter — not exercised by refresh_sales (RF1/RF2 touch
-   // S1/S2/S3/S4 only), but the Q3/Q5 ctors require it.
+   // S1/S2/S3/S4 only), but the Q3/Q5/Q10 ctors require it.
    B::Adapter<tpch::col_shared_view_t>    shared_view(rocks_db);
 
    rocks_db.open();
@@ -165,9 +183,13 @@ int main(int argc, char** argv)
                                supplier, nation, region,
                                q5_view, merged_col, split_orders, split_lineitem,
                                shared_view);
+   tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
+                                  q10_view, q10_view_preagg,
+                                  merged_col, split_orders, split_lineitem,
+                                  q10_acol, shared_view);
 
    if (!FLAGS_recover) {
-      tpch::load_vanilla_family<B>(tpch, q3, q5);
+      tpch::load_vanilla_family<B>(tpch, q3, q5, q10);
       return 0;
    }
    tpch.recover_last_ids();
@@ -232,7 +254,7 @@ int main(int argc, char** argv)
    std::atomic<long> bg_lookup_count = 0;
    std::vector<tpch::BgCatalogFn> bg_catalog =
        FLAGS_bg_query_thread
-           ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5,
+           ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5, q10,
                                                  FLAGS_storage_structure,
                                                  FLAGS_bg_point_lookups)
            : std::vector<tpch::BgCatalogFn>{};

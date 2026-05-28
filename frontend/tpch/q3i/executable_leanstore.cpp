@@ -24,6 +24,8 @@
 #include "../tpchi_family/coli_pipeline.hpp"
 #include "../q5i/per_structure_workload.hpp"
 #include "../q5i/workload.hpp"
+#include "../q10i/per_structure_workload.hpp"
+#include "../q10i/workload.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -33,6 +35,15 @@ int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Q3I workload — LeanStore backend");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+   // Q3I has no native S5/S7 path — those are Q10I-only foreground variants
+   // in the TPCHi family cohort. Reject early with a clear message.
+   if (FLAGS_storage_structure == 5 || FLAGS_storage_structure == 7) {
+      std::cerr << "q3i_btree does not support --storage_structure="
+                << FLAGS_storage_structure
+                << " (Q3I has no native S5/S7). Use q10i_btree." << std::endl;
+      return 1;
+   }
 
    leanstore::LeanStore db;
    using B = tpch::LeanStoreBackend;
@@ -48,9 +59,11 @@ int main(int argc, char** argv)
    B::Adapter<region_t>    region;
    B::Adapter<invoice_t>   invoice;
 
-   // Per-query views (family cohort: Q3I + Q5I).
-   B::Adapter<tpch::q3i::q3i_pipeline_view_t> q3i_view;
-   B::Adapter<tpch::q5i::q5i_pipeline_view_t> q5i_view;
+   // Per-query views (family cohort: Q3I + Q5I + Q10I).
+   B::Adapter<tpch::q3i::q3i_pipeline_view_t>           q3i_view;
+   B::Adapter<tpch::q5i::q5i_pipeline_view_t>           q5i_view;
+   B::Adapter<tpch::q10i::q10i_pipeline_view_t>         q10i_view;
+   B::Adapter<tpch::q10i::q10i_pipeline_view_preagg_t>  q10i_view_preagg;
 
    // Shared COLI pipeline.
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
@@ -59,9 +72,12 @@ int main(int argc, char** argv)
    B::Adapter<tpch::lineitem_coli_t> split_lineitem;
    B::Adapter<tpch::invoice_coli_t>  split_invoice;
 
-   // S5 aCOLI MI (Q3I-only at S5; declared to keep CF set identical with q5i_btree).
+   // S5 aCOLI MI (Q3I-only at S5; declared to keep CF set identical).
    B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
                     tpch::lineitem_acoli_t> acoli;
+
+   // Q10I S5 aCOLI 2-type MI.
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acoli_q10i_t> acoli_q10i;
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -76,6 +92,8 @@ int main(int argc, char** argv)
       invoice           = B::Adapter<invoice_t>(db, "invoice");
       q3i_view          = B::Adapter<tpch::q3i::q3i_pipeline_view_t>(db, "q3i_pipeline_view");
       q5i_view          = B::Adapter<tpch::q5i::q5i_pipeline_view_t>(db, "q5i_pipeline_view");
+      q10i_view         = B::Adapter<tpch::q10i::q10i_pipeline_view_t>(db, "q10i_pipeline_view");
+      q10i_view_preagg  = B::Adapter<tpch::q10i::q10i_pipeline_view_preagg_t>(db, "q10i_pipeline_view_preagg");
       // Family-shared COLI pipeline names (q3i_* / q5i_* prefixes dropped).
       merged_coli       = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                                            tpch::lineitem_coli_t, tpch::invoice_coli_t>(db, "coli_merged");
@@ -84,6 +102,7 @@ int main(int argc, char** argv)
       split_invoice  = B::Adapter<tpch::invoice_coli_t>(db, "coli_split_invoice");
       acoli          = B::MergedAdapter<tpch::customer_acoli_t, tpch::orders_acoli_t,
                                         tpch::lineitem_acoli_t>(db, "coli_acoli");
+      acoli_q10i     = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acoli_q10i_t>(db, "q10i_acoli_merged");
    });
 
    LeanStoreLogger logger(db);
@@ -96,11 +115,15 @@ int main(int argc, char** argv)
                                    supplier, nation, region,
                                    q5i_view, merged_coli,
                                    split_orders, split_lineitem, split_invoice, acoli);
+   tpch::q10i::Q10IWorkload<B> q10i(tpch, customer, orders, lineitem, invoice,
+                                     nation, q10i_view, merged_coli,
+                                     split_orders, split_lineitem, split_invoice,
+                                     acoli, q10i_view_preagg, acoli_q10i);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
          leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpch::load_tpchi_family<B>(tpch, q3i, q5i);
+         tpch::load_tpchi_family<B>(tpch, q3i, q5i, q10i);
          leanstore::cr::Worker::my().commitTX();
       });
       return 0;
@@ -113,7 +136,7 @@ int main(int argc, char** argv)
 
    LeanStoreTraits db_traits(crm);
    auto bg_catalog = FLAGS_bg_query_thread
-                       ? tpch::register_tpchi_bg_catalog<B>(db_traits, tpch, q3i, q5i,
+                       ? tpch::register_tpchi_bg_catalog<B>(db_traits, tpch, q3i, q5i, q10i,
                                                           FLAGS_storage_structure,
                                                           FLAGS_bg_point_lookups)
                        : std::vector<tpch::BgCatalogFn>{};

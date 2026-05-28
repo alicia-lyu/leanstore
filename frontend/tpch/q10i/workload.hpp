@@ -101,8 +101,13 @@ class Q10IWorkload
    // Pattern B view loaders — exposed so test harnesses can drive them after
    // populate_merged() without going through load().
    void populate_q10i_view();         // S2 variant A (per-lineitem)
-   void populate_q10i_view_preagg();  // S2 variant B (per-order, paid/open/late)
+   void populate_q10i_view_preagg();  // S2 variant B (per-order, paid/open/late) — aka S7
    void populate_q10i_acoli();        // S5 aCOLI MI (customer scan + per-order aggs)
+
+   // Family-loader entry points (parallel to Q10::populate_view_only /
+   // populate_acol_only). Caller must have run coli.populate_merged() already.
+   void populate_view_only()   { populate_q10i_view(); populate_q10i_view_preagg(); }
+   void populate_acoli_only()  { populate_q10i_acoli(); }
 
    Q10IWorkload(
        TPCHIWorkload<Backend::template Adapter>& tpch,

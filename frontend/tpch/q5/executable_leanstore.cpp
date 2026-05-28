@@ -23,6 +23,8 @@
 
 #include "../q3/per_structure_workload.hpp"
 #include "../q3/workload.hpp"
+#include "../q10/per_structure_workload.hpp"
+#include "../q10/workload.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -32,6 +34,15 @@ int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Q5 workload — LeanStore backend (vanilla family)");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+   // Q5 has no native S5/S7 path — those are Q10-only foreground variants
+   // in the vanilla family cohort. Reject early with a clear message.
+   if (FLAGS_storage_structure == 5 || FLAGS_storage_structure == 7) {
+      std::cerr << "q5_btree does not support --storage_structure="
+                << FLAGS_storage_structure
+                << " (Q5 has no native S5/S7). Use q10_btree." << std::endl;
+      return 1;
+   }
 
    leanstore::LeanStore db;
    using B = tpch::LeanStoreBackend;
@@ -47,11 +58,14 @@ int main(int argc, char** argv)
 
    B::Adapter<tpch::q3::q3_pipeline_view_t> q3_view;
    B::Adapter<tpch::q5::q5_pipeline_view_t> q5_view;
+   B::Adapter<tpch::q10::q10_pipeline_view_t>        q10_view;
+   B::Adapter<tpch::q10::q10_pipeline_view_preagg_t> q10_view_preagg;
 
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                     tpch::lineitem_col_t>  merged_col;
    B::Adapter<tpch::orders_coli_t>        split_orders;
    B::Adapter<tpch::lineitem_col_t>       split_lineitem;
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t> q10_acol;
    B::Adapter<tpch::col_shared_view_t>    shared_view;  // S6 (family-shared)
 
    auto& crm = db.getCRManager();
@@ -66,10 +80,13 @@ int main(int argc, char** argv)
       region        = B::Adapter<region_t>(db, "region");
       q3_view       = B::Adapter<tpch::q3::q3_pipeline_view_t>(db, "q3_pipeline_view");
       q5_view       = B::Adapter<tpch::q5::q5_pipeline_view_t>(db, "q5_pipeline_view");
+      q10_view      = B::Adapter<tpch::q10::q10_pipeline_view_t>(db, "q10_pipeline_view");
+      q10_view_preagg = B::Adapter<tpch::q10::q10_pipeline_view_preagg_t>(db, "q10_pipeline_view_preagg");
       merged_col    = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
                                        tpch::lineitem_col_t>(db, "col_merged");
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "col_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "col_split_lineitem");
+      q10_acol       = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>(db, "q10_acol");
       shared_view    = B::Adapter<tpch::col_shared_view_t>(db, "col_shared_view");
    });
 
@@ -83,11 +100,15 @@ int main(int argc, char** argv)
                                supplier, nation, region,
                                q5_view, merged_col,
                                split_orders, split_lineitem, shared_view);
+   tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
+                                  q10_view, q10_view_preagg,
+                                  merged_col, split_orders, split_lineitem,
+                                  q10_acol, shared_view);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
          leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpch::load_vanilla_family<B>(tpch, q3, q5);
+         tpch::load_vanilla_family<B>(tpch, q3, q5, q10);
          leanstore::cr::Worker::my().commitTX();
       });
       return 0;
@@ -98,7 +119,7 @@ int main(int argc, char** argv)
 
    using AggRow = tpch::q5::q5_agg_row_t;
    auto bg_catalog = FLAGS_bg_query_thread
-                       ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5,
+                       ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5, q10,
                                                             FLAGS_storage_structure,
                                                             FLAGS_bg_point_lookups)
                        : std::vector<tpch::BgCatalogFn>{};

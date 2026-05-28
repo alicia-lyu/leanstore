@@ -1,28 +1,37 @@
 #pragma once
 
-// Family helper for the vanilla TPC-H cohort {Q3, Q5}.
+// Family helper for the vanilla TPC-H cohort {Q3, Q5, Q10}.
 //
-// Both queries share the same COL pipeline (3-table merged index
+// All three queries share the COL pipeline (3-table merged index
 // `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_col_t>` + custkey-
-// sorted split secondaries). The two per-query views are query-specific
-// (`q3_pipeline_view_t` and `q5_pipeline_view_t`). Q12 is intentionally
-// excluded because it uses a different pipeline (OL merged index over
-// `orders_t` + `lineitem_t`) and would force the family image to carry
-// unrelated secondaries.
+// sorted split secondaries). The three per-query views are query-specific
+// (`q3_pipeline_view_t`, `q5_pipeline_view_t`, `q10_pipeline_view_t`); Q10
+// additionally has a per-order preagg view (`q10_pipeline_view_preagg_t`,
+// the "S7" path) and an aCOL MI (`MergedAdapter<customer_coli_t,
+// orders_acol_t>`, the "S5" path). Q12 is intentionally excluded because
+// it uses a different pipeline (OL merged index over `orders_t` +
+// `lineitem_t`) and would force the family image to carry unrelated
+// secondaries.
 //
 // Two responsibilities:
 //   1. load_vanilla_family(): one tpch.load() followed by every family
-//      member's populate_secondaries(). Lets a per-query binary mount the
-//      same .json image as any other family member.
-//   2. register_vanilla_bg_catalog(): build the type-erased BgCatalogFn vector
-//      that TpchExecutableHelper consumes when --bg_query_thread=true.
-//      Each step is a single TX of one family query at the supplied
-//      foreground --storage_structure, routed through DBTraits on
-//      BG_WORKER. The bg thread round-robins these steps for the full TX
-//      window.
+//      member's secondaries. Lets a per-query binary mount the same .json
+//      image as any other family member.
+//   2. register_vanilla_bg_catalog(): build the type-erased BgCatalogFn
+//      vector that TpchExecutableHelper consumes when
+//      --bg_query_thread=true. Each entry is a single TX of one family
+//      query at the supplied foreground --storage_structure, routed
+//      through DBTraits on a dedicated CRM worker.
+//
+// S5 / S7 cohort fallback shape: only Q10 has a native S5 (aCOL MI) or S7
+// (per-order preagg view). At those Sx the cohort still rotates all three
+// queries — Q3/Q5 fall back to a sibling path that's present in the same
+// recovered image:
+//   S5 cohort = {Q3@S3 (COL MI), Q5@S3 (COL MI),  Q10@S5 (aCOL)}
+//   S7 cohort = {Q3@S2 (view),   Q5@S2 (view),    Q10@S7 (preagg view)}
 //
 // The family member workload classes are passed in by reference — they
-// must outlive the registered steps. Adapter ownership stays in the
+// must outlive the registered cohort. Adapter ownership stays in the
 // executable's main() (LeanStore CRM lifecycle constraints).
 
 #include <functional>
@@ -39,110 +48,151 @@
 #include "q3/workload.hpp"
 #include "q5/per_structure_workload.hpp"
 #include "q5/workload.hpp"
+#include "q10/per_structure_workload.hpp"
+#include "q10/workload.hpp"
 
 namespace tpch
 {
 
 template <typename Backend>
 inline void load_vanilla_family(TPCHWorkload<Backend::template Adapter>& tpch,
-                                tpch::q3::Q3Workload<Backend>& q3,
-                                tpch::q5::Q5Workload<Backend>& q5)
+                                tpch::q3::Q3Workload<Backend>&  q3,
+                                tpch::q5::Q5Workload<Backend>&  q5,
+                                tpch::q10::Q10Workload<Backend>& q10)
 {
    tpch.load();
    // q3 owns the family-shared col.populate_{split,merged} via its full
    // populate_secondaries() and additionally populates its own pipeline
-   // view. q5 only populates its own view here so the family-shared
-   // adapters (merged_col, split_orders, split_lineitem — which both
-   // workloads hold references to) aren't written twice. LeanStore
+   // view. q5 / q10 only populate their own views (plus q10's S5 aCOL) so
+   // the family-shared adapters (merged_col, split_orders, split_lineitem
+   // — referenced by all three workloads) aren't written twice. LeanStore
    // B-tree returns OP_RESULT::DUPLICATE on the second insert; RocksDB
    // silently overwrites and hid this bug.
    q3.populate_secondaries();
    q5.populate_view_only();
+   q10.populate_view_only();   // S2 naive view + S7 preagg view
+   q10.populate_acol_only();   // S5 aCOL MI
+   // Q10's S6 col_shared_view is intentionally not populated here — it
+   // stays in q10's standalone image (LINUX_PENDING.md: "Q10 S6 view →
+   // family-image migration" remains open).
 }
 
-// Per-structure wrapper holders. Owned by the BgCatalogFn closures (each step
-// pins one wrapper instance) so the wrappers outlive the bg thread. The
-// vanilla family has two members; the foreground binary picks which
-// structure they all run at.
+// Per-structure wrapper holders. Owned by the BgCatalogFn closures (each
+// catalog entry pins one wrapper instance) so the wrappers outlive their
+// bg thread. The vanilla family has three members; the foreground binary
+// picks which structure they all run at.
 namespace detail::vanilla
 {
-// One slot per (query, structure). Each slot is constructed lazily when
-// register_vanilla_bg_catalog() is called for that structure. Lives in a
-// shared_ptr so the closure can capture by value without slicing or
-// moving the wrapper.
 template <typename Backend, int Structure>
 struct VanillaWrappers;
 
 template <typename Backend>
 struct VanillaWrappers<Backend, 1> {
-   tpch::q3::BaseQ3<Backend> q3;
-   tpch::q5::BaseQ5<Backend> q5;
-   VanillaWrappers(tpch::q3::Q3Workload<Backend>& q3_w,
-                   tpch::q5::Q5Workload<Backend>& q5_w)
-       : q3{q3_w}, q5{q5_w} {}
+   tpch::q3::BaseQ3<Backend>   q3;
+   tpch::q5::BaseQ5<Backend>   q5;
+   tpch::q10::BaseQ10<Backend> q10;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
+                   tpch::q5::Q5Workload<Backend>&  q5_w,
+                   tpch::q10::Q10Workload<Backend>& q10_w)
+       : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
 };
 template <typename Backend>
 struct VanillaWrappers<Backend, 2> {
-   tpch::q3::ViewQ3<Backend> q3;
-   tpch::q5::ViewQ5<Backend> q5;
-   VanillaWrappers(tpch::q3::Q3Workload<Backend>& q3_w,
-                   tpch::q5::Q5Workload<Backend>& q5_w)
-       : q3{q3_w}, q5{q5_w} {}
+   tpch::q3::ViewQ3<Backend>   q3;
+   tpch::q5::ViewQ5<Backend>   q5;
+   tpch::q10::ViewQ10<Backend> q10;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
+                   tpch::q5::Q5Workload<Backend>&  q5_w,
+                   tpch::q10::Q10Workload<Backend>& q10_w)
+       : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
 };
 template <typename Backend>
 struct VanillaWrappers<Backend, 3> {
-   tpch::q3::MergedQ3<Backend> q3;
-   tpch::q5::MergedQ5<Backend> q5;
-   VanillaWrappers(tpch::q3::Q3Workload<Backend>& q3_w,
-                   tpch::q5::Q5Workload<Backend>& q5_w)
-       : q3{q3_w}, q5{q5_w} {}
+   tpch::q3::MergedQ3<Backend>   q3;
+   tpch::q5::MergedQ5<Backend>   q5;
+   tpch::q10::MergedQ10<Backend> q10;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
+                   tpch::q5::Q5Workload<Backend>&  q5_w,
+                   tpch::q10::Q10Workload<Backend>& q10_w)
+       : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
 };
 template <typename Backend>
 struct VanillaWrappers<Backend, 4> {
-   tpch::q3::HashQ3<Backend> q3;
-   tpch::q5::HashQ5<Backend> q5;
-   VanillaWrappers(tpch::q3::Q3Workload<Backend>& q3_w,
-                   tpch::q5::Q5Workload<Backend>& q5_w)
-       : q3{q3_w}, q5{q5_w} {}
+   tpch::q3::HashQ3<Backend>   q3;
+   tpch::q5::HashQ5<Backend>   q5;
+   tpch::q10::HashQ10<Backend> q10;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
+                   tpch::q5::Q5Workload<Backend>&  q5_w,
+                   tpch::q10::Q10Workload<Backend>& q10_w)
+       : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
+};
+// S=5: heterogeneous — Q3/Q5 fall back to S3 (COL MI), Q10 runs S5 aCOL.
+// The image at S5 is shared with S3 (per Linux disk-layout convention).
+template <typename Backend>
+struct VanillaWrappers<Backend, 5> {
+   tpch::q3::MergedQ3<Backend>         q3;
+   tpch::q5::MergedQ5<Backend>         q5;
+   tpch::q10::AggregatedQ10<Backend>   q10;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
+                   tpch::q5::Q5Workload<Backend>&  q5_w,
+                   tpch::q10::Q10Workload<Backend>& q10_w)
+       : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
 };
 template <typename Backend>
 struct VanillaWrappers<Backend, 6> {
-   tpch::q3::SharedViewQ3<Backend> q3;
-   tpch::q5::SharedViewQ5<Backend> q5;
-   VanillaWrappers(tpch::q3::Q3Workload<Backend>& q3_w,
-                   tpch::q5::Q5Workload<Backend>& q5_w)
-       : q3{q3_w}, q5{q5_w} {}
+   tpch::q3::SharedViewQ3<Backend>   q3;
+   tpch::q5::SharedViewQ5<Backend>   q5;
+   tpch::q10::SharedViewQ10<Backend> q10;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
+                   tpch::q5::Q5Workload<Backend>&  q5_w,
+                   tpch::q10::Q10Workload<Backend>& q10_w)
+       : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
+};
+// S=7: heterogeneous — Q3/Q5 fall back to S2 (naive view), Q10 runs S7
+// preagg view. Image at S7 shares the S2 image.
+template <typename Backend>
+struct VanillaWrappers<Backend, 7> {
+   tpch::q3::ViewQ3<Backend>          q3;
+   tpch::q5::ViewQ5<Backend>          q5;
+   tpch::q10::PreaggViewQ10<Backend>  q10;
+   VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
+                   tpch::q5::Q5Workload<Backend>&  q5_w,
+                   tpch::q10::Q10Workload<Backend>& q10_w)
+       : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
 };
 }  // namespace detail::vanilla
 
 template <typename Backend, int Structure>
 inline std::vector<BgCatalogFn> register_vanilla_bg_catalog_at(
     DBTraits& db_traits,
-    tpch::q3::Q3Workload<Backend>& q3_workload,
-    tpch::q5::Q5Workload<Backend>& q5_workload)
+    tpch::q3::Q3Workload<Backend>&  q3_workload,
+    tpch::q5::Q5Workload<Backend>&  q5_workload,
+    tpch::q10::Q10Workload<Backend>& q10_workload)
 {
    using namespace detail::vanilla;
    auto wrappers = std::make_shared<VanillaWrappers<Backend, Structure>>(
-       q3_workload, q5_workload);
+       q3_workload, q5_workload, q10_workload);
 
-   std::vector<BgCatalogFn> steps;
-   steps.reserve(2);
-   // Q3 step: run one TX of Q3 at Structure on the supplied worker_id.
-   steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
+   std::vector<BgCatalogFn> catalog;
+   catalog.reserve(3);
+   catalog.emplace_back([wrappers, &db_traits](u64 worker_id) {
       std::vector<tpch::q3::q3_agg_row_t> out;
       db_traits.run_tx([&]() { wrappers->q3.query(out); }, worker_id);
    });
-   // Q5 step: run one TX of Q5 at Structure on the supplied worker_id.
-   steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
+   catalog.emplace_back([wrappers, &db_traits](u64 worker_id) {
       std::vector<tpch::q5::q5_agg_row_t> out;
       db_traits.run_tx([&]() { wrappers->q5.query(out); }, worker_id);
    });
-   return steps;
+   catalog.emplace_back([wrappers, &db_traits](u64 worker_id) {
+      std::vector<tpch::q10::q10_agg_row_t> out;
+      db_traits.run_tx([&]() { wrappers->q10.query(out); }, worker_id);
+   });
+   return catalog;
 }
 
 // Heterogeneous point-lookup closure over the 8 vanilla TPC-H base tables.
 // Intended for `helper.set_bg_lookup_step(...)` so it runs on the dedicated
-// BG_LOOKUP_WORKER (decoupled from the cohort rotation on BG_WORKER).
+// BG_LOOKUP_WORKER (decoupled from the cohort on BG_WORKER + ...).
 // Tolerates not-found via tryLookup (LeanStore lookup1 throws on miss;
 // TPC-H PK ranges are sparse, e.g. orderkey populates only 8/32 sequential
 // slots, so random PKs miss often). Identical to the helper's built-in
@@ -204,7 +254,7 @@ inline BgCatalogFn make_tpch_point_lookup_step(
 }
 
 // Convenience entry point that switches on FLAGS_storage_structure at runtime.
-// Returns the cohort step vector only — point-lookups are owned by the
+// Returns the cohort catalog vector only — point-lookups are owned by the
 // helper's dedicated BG_LOOKUP_WORKER thread (see TpchExecutableHelper).
 // The `include_point_lookups` parameter is kept for source-compat with
 // existing callers but is now unused: pass any value.
@@ -212,21 +262,24 @@ template <typename Backend>
 inline std::vector<BgCatalogFn> register_vanilla_bg_catalog(
     DBTraits& db_traits,
     TPCHWorkload<Backend::template Adapter>& /*tpch*/,
-    tpch::q3::Q3Workload<Backend>& q3_workload,
-    tpch::q5::Q5Workload<Backend>& q5_workload,
+    tpch::q3::Q3Workload<Backend>&  q3_workload,
+    tpch::q5::Q5Workload<Backend>&  q5_workload,
+    tpch::q10::Q10Workload<Backend>& q10_workload,
     int structure,
     bool /*include_point_lookups*/)
 {
-   std::vector<BgCatalogFn> steps;
+   std::vector<BgCatalogFn> catalog;
    switch (structure) {
-      case 1: steps = register_vanilla_bg_catalog_at<Backend, 1>(db_traits, q3_workload, q5_workload); break;
-      case 2: steps = register_vanilla_bg_catalog_at<Backend, 2>(db_traits, q3_workload, q5_workload); break;
-      case 3: steps = register_vanilla_bg_catalog_at<Backend, 3>(db_traits, q3_workload, q5_workload); break;
-      case 4: steps = register_vanilla_bg_catalog_at<Backend, 4>(db_traits, q3_workload, q5_workload); break;
-      case 6: steps = register_vanilla_bg_catalog_at<Backend, 6>(db_traits, q3_workload, q5_workload); break;
+      case 1: catalog = register_vanilla_bg_catalog_at<Backend, 1>(db_traits, q3_workload, q5_workload, q10_workload); break;
+      case 2: catalog = register_vanilla_bg_catalog_at<Backend, 2>(db_traits, q3_workload, q5_workload, q10_workload); break;
+      case 3: catalog = register_vanilla_bg_catalog_at<Backend, 3>(db_traits, q3_workload, q5_workload, q10_workload); break;
+      case 4: catalog = register_vanilla_bg_catalog_at<Backend, 4>(db_traits, q3_workload, q5_workload, q10_workload); break;
+      case 5: catalog = register_vanilla_bg_catalog_at<Backend, 5>(db_traits, q3_workload, q5_workload, q10_workload); break;
+      case 6: catalog = register_vanilla_bg_catalog_at<Backend, 6>(db_traits, q3_workload, q5_workload, q10_workload); break;
+      case 7: catalog = register_vanilla_bg_catalog_at<Backend, 7>(db_traits, q3_workload, q5_workload, q10_workload); break;
       default: throw std::runtime_error("register_vanilla_bg_catalog: invalid storage_structure");
    }
-   return steps;
+   return catalog;
 }
 
 }  // namespace tpch

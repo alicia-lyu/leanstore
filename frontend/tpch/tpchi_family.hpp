@@ -1,16 +1,19 @@
 #pragma once
 
-// Family helper for the TPCHi invoice-extended cohort {Q3I, Q5I}.
+// Family helper for the TPCHi invoice-extended cohort {Q3I, Q5I, Q10I}.
 //
-// Both queries share the COLI pipeline (4-table merged index
+// All three queries share the COLI pipeline (4-table merged index
 // `MergedAdapter<customer_coli_t, orders_coli_t, lineitem_coli_t,
-// invoice_coli_t>` + custkey-sorted split secondaries + aCOLI MI for S5)
-// and the TPCHIWorkload base loader. The two per-query views are
-// query-specific (`q3i_pipeline_view_t` and `q5i_pipeline_view_t`). Q10I is
-// design-doc only at the time of this header; once it lands it should be
-// added here.
+// invoice_coli_t>` + custkey-sorted split secondaries) and the
+// TPCHIWorkload base loader. The three per-query views are query-specific
+// (`q3i_pipeline_view_t`, `q5i_pipeline_view_t`, `q10i_pipeline_view_t`).
+// Q10I additionally has a per-order preagg view
+// (`q10i_pipeline_view_preagg_t` — the "S7" path) and a 2-type aCOLI MI
+// (`MergedAdapter<customer_coli_t, orders_acoli_q10i_t>` — the "S5" path).
 //
-// Mirrors tpch_vanilla_family.hpp; see that header for the full rationale.
+// Mirrors tpch_vanilla_family.hpp; see that header for the full rationale,
+// including the S5/S7 heterogeneous cohort layout (Q3I/Q5I fall back to
+// S3/S2 respectively; Q10I runs its native S5/S7).
 
 #include <functional>
 #include <iostream>
@@ -26,24 +29,23 @@
 #include "q3i/workload.hpp"
 #include "q5i/per_structure_workload.hpp"
 #include "q5i/workload.hpp"
+#include "q10i/per_structure_workload.hpp"
+#include "q10i/workload.hpp"
 
 namespace tpch
 {
 
 template <typename Backend>
 inline void load_tpchi_family(TPCHIWorkload<Backend::template Adapter>& tpch,
-                              tpch::q3i::Q3IWorkload<Backend>& q3i,
-                              tpch::q5i::Q5IWorkload<Backend>& q5i)
+                              tpch::q3i::Q3IWorkload<Backend>&   q3i,
+                              tpch::q5i::Q5IWorkload<Backend>&   q5i,
+                              tpch::q10i::Q10IWorkload<Backend>& q10i)
 {
    tpch.load();
-   // q3i owns the family-shared coli.populate_{split,merged,aggregated} via
-   // its full populate_secondaries() and additionally populates its own
-   // pipeline view. q5i only populates its own view so the family-shared
-   // adapters (held by reference inside both q3i.coli and q5i.coli) aren't
-   // written twice. LeanStore B-tree returns OP_RESULT::DUPLICATE on the
-   // second insert; RocksDB silently overwrites and hid this bug.
-   q3i.populate_secondaries();
-   q5i.populate_view_only();
+   q3i.populate_secondaries();   // shared coli.populate_{split,merged} + Q3I view
+   q5i.populate_view_only();     // Q5I view only
+   q10i.populate_view_only();    // S2 naive view + S7 preagg view
+   q10i.populate_acoli_only();   // S5 aCOLI MI
 }
 
 namespace detail::tpchi
@@ -55,68 +57,94 @@ template <typename Backend>
 struct TPCHiWrappers<Backend, 1> {
    tpch::q3i::BaseQ3I<Backend>   q3i;
    tpch::q5i::BaseQ5I<Backend>   q5i;
-   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>& q3i_w,
-                 tpch::q5i::Q5IWorkload<Backend>& q5i_w)
-       : q3i{q3i_w}, q5i{q5i_w} {}
+   tpch::q10i::BaseQ10I<Backend> q10i;
+   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>&   q3i_w,
+                 tpch::q5i::Q5IWorkload<Backend>&   q5i_w,
+                 tpch::q10i::Q10IWorkload<Backend>& q10i_w)
+       : q3i{q3i_w}, q5i{q5i_w}, q10i{q10i_w} {}
 };
 template <typename Backend>
 struct TPCHiWrappers<Backend, 2> {
    tpch::q3i::ViewQ3I<Backend>   q3i;
    tpch::q5i::ViewQ5I<Backend>   q5i;
-   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>& q3i_w,
-                 tpch::q5i::Q5IWorkload<Backend>& q5i_w)
-       : q3i{q3i_w}, q5i{q5i_w} {}
+   tpch::q10i::ViewQ10I<Backend> q10i;
+   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>&   q3i_w,
+                 tpch::q5i::Q5IWorkload<Backend>&   q5i_w,
+                 tpch::q10i::Q10IWorkload<Backend>& q10i_w)
+       : q3i{q3i_w}, q5i{q5i_w}, q10i{q10i_w} {}
 };
 template <typename Backend>
 struct TPCHiWrappers<Backend, 3> {
-   tpch::q3i::MergedQ3I<Backend> q3i;
-   tpch::q5i::MergedQ5I<Backend> q5i;
-   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>& q3i_w,
-                 tpch::q5i::Q5IWorkload<Backend>& q5i_w)
-       : q3i{q3i_w}, q5i{q5i_w} {}
+   tpch::q3i::MergedQ3I<Backend>   q3i;
+   tpch::q5i::MergedQ5I<Backend>   q5i;
+   tpch::q10i::MergedQ10I<Backend> q10i;
+   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>&   q3i_w,
+                 tpch::q5i::Q5IWorkload<Backend>&   q5i_w,
+                 tpch::q10i::Q10IWorkload<Backend>& q10i_w)
+       : q3i{q3i_w}, q5i{q5i_w}, q10i{q10i_w} {}
 };
 template <typename Backend>
 struct TPCHiWrappers<Backend, 4> {
    tpch::q3i::HashQ3I<Backend>   q3i;
    tpch::q5i::HashQ5I<Backend>   q5i;
-   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>& q3i_w,
-                 tpch::q5i::Q5IWorkload<Backend>& q5i_w)
-       : q3i{q3i_w}, q5i{q5i_w} {}
+   tpch::q10i::HashQ10I<Backend> q10i;
+   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>&   q3i_w,
+                 tpch::q5i::Q5IWorkload<Backend>&   q5i_w,
+                 tpch::q10i::Q10IWorkload<Backend>& q10i_w)
+       : q3i{q3i_w}, q5i{q5i_w}, q10i{q10i_w} {}
 };
-// S5 is Q3I-only (Q5I has no aCOLI variant — see q5i/CLAUDE.md §S5 deferred).
-// When foreground=S5 the bg cohort drops Q5I and includes Q3I only.
+// S=5: heterogeneous — Q3I/Q5I fall back to S3 (COLI MI), Q10I runs S5
+// aCOLI. The image at S5 is shared with S3.
 template <typename Backend>
 struct TPCHiWrappers<Backend, 5> {
-   tpch::q3i::AggregatedQ3I<Backend> q3i;
-   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>& q3i_w,
-                 tpch::q5i::Q5IWorkload<Backend>& /*q5i_w*/)
-       : q3i{q3i_w} {}
+   tpch::q3i::MergedQ3I<Backend>        q3i;
+   tpch::q5i::MergedQ5I<Backend>        q5i;
+   tpch::q10i::AggregatedQ10I<Backend>  q10i;
+   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>&   q3i_w,
+                 tpch::q5i::Q5IWorkload<Backend>&   q5i_w,
+                 tpch::q10i::Q10IWorkload<Backend>& q10i_w)
+       : q3i{q3i_w}, q5i{q5i_w}, q10i{q10i_w} {}
+};
+// S=7: heterogeneous — Q3I/Q5I fall back to S2 (naive view), Q10I runs S7
+// preagg view. Image at S7 shares the S2 image.
+template <typename Backend>
+struct TPCHiWrappers<Backend, 7> {
+   tpch::q3i::ViewQ3I<Backend>          q3i;
+   tpch::q5i::ViewQ5I<Backend>          q5i;
+   tpch::q10i::PreaggViewQ10I<Backend>  q10i;
+   TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>&   q3i_w,
+                 tpch::q5i::Q5IWorkload<Backend>&   q5i_w,
+                 tpch::q10i::Q10IWorkload<Backend>& q10i_w)
+       : q3i{q3i_w}, q5i{q5i_w}, q10i{q10i_w} {}
 };
 }  // namespace detail::tpchi
 
 template <typename Backend, int Structure>
 inline std::vector<BgCatalogFn> register_tpchi_bg_catalog_at(
     DBTraits& db_traits,
-    tpch::q3i::Q3IWorkload<Backend>& q3i_workload,
-    tpch::q5i::Q5IWorkload<Backend>& q5i_workload)
+    tpch::q3i::Q3IWorkload<Backend>&   q3i_workload,
+    tpch::q5i::Q5IWorkload<Backend>&   q5i_workload,
+    tpch::q10i::Q10IWorkload<Backend>& q10i_workload)
 {
    using namespace detail::tpchi;
    auto wrappers = std::make_shared<TPCHiWrappers<Backend, Structure>>(
-       q3i_workload, q5i_workload);
+       q3i_workload, q5i_workload, q10i_workload);
 
-   std::vector<BgCatalogFn> steps;
-   steps.reserve(2);
-   steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
+   std::vector<BgCatalogFn> catalog;
+   catalog.reserve(3);
+   catalog.emplace_back([wrappers, &db_traits](u64 worker_id) {
       std::vector<tpch::q3i::q3i_agg_row_t> out;
       db_traits.run_tx([&]() { wrappers->q3i.query(out); }, worker_id);
    });
-   if constexpr (Structure != 5) {
-      steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
-         std::vector<tpch::q5i::q5i_agg_row_t> out;
-         db_traits.run_tx([&]() { wrappers->q5i.query(out); }, worker_id);
-      });
-   }
-   return steps;
+   catalog.emplace_back([wrappers, &db_traits](u64 worker_id) {
+      std::vector<tpch::q5i::q5i_agg_row_t> out;
+      db_traits.run_tx([&]() { wrappers->q5i.query(out); }, worker_id);
+   });
+   catalog.emplace_back([wrappers, &db_traits](u64 worker_id) {
+      std::vector<tpch::q10i::q10i_agg_row_t> out;
+      db_traits.run_tx([&]() { wrappers->q10i.query(out); }, worker_id);
+   });
+   return catalog;
 }
 
 // Sample a random invoicekey from the loaded invoice range. Lives here
@@ -125,12 +153,6 @@ inline std::vector<BgCatalogFn> register_tpchi_bg_catalog_at(
 // tpchi_*/build/<sf>.json and forces a fresh multi-minute reload.
 // tpchi_family.hpp is bg-cohort-only, so changes here don't invalidate
 // load images.
-//
-// Per loadInvoiceAndLinkLineitem(), invoicekeys are dense
-// [1 .. 2 * |orders|] (~2 invoices per order). `last_order_id` is the
-// sparse last orderkey, which slightly over-estimates the upper bound
-// — the sparse mapping multiplies by 32/8. For a contention workload
-// that's fine: occasional misses are tolerated by tryLookup.
 template <template <typename> class AdapterType>
 inline Integer tpchi_random_invoicekey(TPCHIWorkload<AdapterType>& tpch)
 {
@@ -139,17 +161,13 @@ inline Integer tpchi_random_invoicekey(TPCHIWorkload<AdapterType>& tpch)
 
 // bg=2 cohort helper for the invoice-extended family. Same shape as
 // make_tpch_point_lookup_step in tpch_vanilla_family.hpp, with the
-// 9-table TPCHi base set (vanilla 8 + invoice). The lineitem adapter
-// here is typed on lineitem_i_t (FK-bearing variant); the cohort still
-// works on PK ((l_orderkey, l_linenumber)) which is unchanged from
-// lineitem_t.
+// 9-table TPCHi base set (vanilla 8 + invoice).
 template <typename Backend>
 inline BgCatalogFn make_tpchi_point_lookup_step(
     DBTraits& db_traits,
     TPCHIWorkload<Backend::template Adapter>& tpch)
 {
    return [&db_traits, &tpch](u64 worker_id) {
-      // 9 invoice-extended base tables; pick one uniformly per call.
       const Integer pick = urand(0, 8);
       db_traits.run_tx([&]() {
          switch (pick) {
@@ -204,33 +222,27 @@ inline BgCatalogFn make_tpchi_point_lookup_step(
    };
 }
 
-// Returns the cohort step vector only — point-lookups are owned by the
-// helper's dedicated BG_LOOKUP_WORKER thread. TPCHi callers should
-// additionally call `helper.set_bg_lookup_step(
-// make_tpchi_point_lookup_step<B>(db_traits, tpch))` to include the
-// invoice table in the lookup distribution; otherwise the helper falls
-// back to its built-in 8-table vanilla lookup. The
-// `include_point_lookups` parameter is kept for source-compat but is
-// now unused.
 template <typename Backend>
 inline std::vector<BgCatalogFn> register_tpchi_bg_catalog(
     DBTraits& db_traits,
     TPCHIWorkload<Backend::template Adapter>& /*tpch*/,
-    tpch::q3i::Q3IWorkload<Backend>& q3i_workload,
-    tpch::q5i::Q5IWorkload<Backend>& q5i_workload,
+    tpch::q3i::Q3IWorkload<Backend>&   q3i_workload,
+    tpch::q5i::Q5IWorkload<Backend>&   q5i_workload,
+    tpch::q10i::Q10IWorkload<Backend>& q10i_workload,
     int structure,
     bool /*include_point_lookups*/)
 {
-   std::vector<BgCatalogFn> steps;
+   std::vector<BgCatalogFn> catalog;
    switch (structure) {
-      case 1: steps = register_tpchi_bg_catalog_at<Backend, 1>(db_traits, q3i_workload, q5i_workload); break;
-      case 2: steps = register_tpchi_bg_catalog_at<Backend, 2>(db_traits, q3i_workload, q5i_workload); break;
-      case 3: steps = register_tpchi_bg_catalog_at<Backend, 3>(db_traits, q3i_workload, q5i_workload); break;
-      case 4: steps = register_tpchi_bg_catalog_at<Backend, 4>(db_traits, q3i_workload, q5i_workload); break;
-      case 5: steps = register_tpchi_bg_catalog_at<Backend, 5>(db_traits, q3i_workload, q5i_workload); break;
+      case 1: catalog = register_tpchi_bg_catalog_at<Backend, 1>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
+      case 2: catalog = register_tpchi_bg_catalog_at<Backend, 2>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
+      case 3: catalog = register_tpchi_bg_catalog_at<Backend, 3>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
+      case 4: catalog = register_tpchi_bg_catalog_at<Backend, 4>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
+      case 5: catalog = register_tpchi_bg_catalog_at<Backend, 5>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
+      case 7: catalog = register_tpchi_bg_catalog_at<Backend, 7>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
       default: throw std::runtime_error("register_tpchi_bg_catalog: invalid storage_structure");
    }
-   return steps;
+   return catalog;
 }
 
 }  // namespace tpch

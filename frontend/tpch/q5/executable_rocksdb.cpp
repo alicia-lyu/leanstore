@@ -21,6 +21,8 @@
 
 #include "../q3/per_structure_workload.hpp"
 #include "../q3/workload.hpp"
+#include "../q10/per_structure_workload.hpp"
+#include "../q10/workload.hpp"
 #include "per_structure_workload.hpp"
 #include "workload.hpp"
 
@@ -32,6 +34,15 @@ int main(int argc, char** argv)
 {
    gflags::SetUsageMessage("Q5 workload — RocksDB backend (vanilla family)");
    gflags::ParseCommandLineFlags(&argc, &argv, true);
+
+   // Q5 has no native S5/S7 path — those are Q10-only foreground variants
+   // in the vanilla family cohort. Reject early with a clear message.
+   if (FLAGS_storage_structure == 5 || FLAGS_storage_structure == 7) {
+      std::cerr << "q5_lsm does not support --storage_structure="
+                << FLAGS_storage_structure
+                << " (Q5 has no native S5/S7). Use q10_lsm." << std::endl;
+      return 1;
+   }
 
    RocksDB rocks_db(RocksDB::DB_TYPE::TransactionDB);
    using B = tpch::RocksDBBackend;
@@ -46,9 +57,11 @@ int main(int argc, char** argv)
    B::Adapter<nation_t>    nation(rocks_db);
    B::Adapter<region_t>    region(rocks_db);
 
-   // Per-query views (Q3 and Q5).
+   // Per-query views (Q3, Q5, Q10 — vanilla family cohort).
    B::Adapter<tpch::q3::q3_pipeline_view_t> q3_view(rocks_db);
    B::Adapter<tpch::q5::q5_pipeline_view_t> q5_view(rocks_db);
+   B::Adapter<tpch::q10::q10_pipeline_view_t>        q10_view(rocks_db);
+   B::Adapter<tpch::q10::q10_pipeline_view_preagg_t> q10_view_preagg(rocks_db);
 
    // Shared COL pipeline.
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_coli_t,
@@ -56,7 +69,10 @@ int main(int argc, char** argv)
    B::Adapter<tpch::orders_coli_t>        split_orders(rocks_db);
    B::Adapter<tpch::lineitem_col_t>       split_lineitem(rocks_db);
 
-   // S6: COL-family shared materialised view — ONE table shared by Q3 and Q5.
+   // Q10 S5 aCOL MI (orders_acol_t + customer_coli_t).
+   B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t> q10_acol(rocks_db);
+
+   // S6: COL-family shared materialised view — ONE table shared by Q3/Q5/Q10.
    B::Adapter<tpch::col_shared_view_t>    shared_view(rocks_db);
 
    rocks_db.open();
@@ -71,9 +87,13 @@ int main(int argc, char** argv)
                                supplier, nation, region,
                                q5_view, merged_col,
                                split_orders, split_lineitem, shared_view);
+   tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
+                                  q10_view, q10_view_preagg,
+                                  merged_col, split_orders, split_lineitem,
+                                  q10_acol, shared_view);
 
    if (!FLAGS_recover) {
-      tpch::load_vanilla_family<B>(tpch, q3, q5);
+      tpch::load_vanilla_family<B>(tpch, q3, q5, q10);
       return 0;
    }
    tpch.recover_last_ids();
@@ -82,7 +102,7 @@ int main(int argc, char** argv)
 
    using AggRow = tpch::q5::q5_agg_row_t;
    auto bg_catalog = FLAGS_bg_query_thread
-                       ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5,
+                       ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5, q10,
                                                             FLAGS_storage_structure,
                                                             FLAGS_bg_point_lookups)
                        : std::vector<tpch::BgCatalogFn>{};

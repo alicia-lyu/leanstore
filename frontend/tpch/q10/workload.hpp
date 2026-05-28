@@ -197,6 +197,16 @@ class Q10Workload
 
    void   load();
    double get_size() const;
+
+   // Per-Sx populate helpers used by load_vanilla_family() to load only the
+   // structures relevant to a given --storage_structure. Both assume the COL
+   // MI has been populated via col.populate_merged() already (the family
+   // loader sequences this).
+   void populate_view_only();   // S2 naive view + S7 preagg view
+   void populate_acol_only();   // S5 aCOL MI
+
+   // Expose Q10's per-query views for refresh maintenance / family loader.
+   // (col_pipeline() already exposed above.)
 };
 
 }  // namespace tpch::q10

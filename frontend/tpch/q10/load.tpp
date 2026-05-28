@@ -52,25 +52,39 @@ Q10Workload<Backend>::Q10Workload(
 // the S3 Q10GroupWalkVisitor in ViewLoad mode with parameterised filters
 // dropped and a forwarding sink into pipeline_view. Same walker code
 // drives both — view-vs-walker drift is structurally impossible.
+// S2 variant A (per-lineitem) + variant B (per-order pre-agg, aka S7). Both
+// loaders consume the COL MI; caller must have run col.populate_merged()
+// already. One image carries both A/B so --q10_view_variant selects the arm
+// at query time for S2; S7 always reads the preagg variant.
+template <typename Backend>
+void Q10Workload<Backend>::populate_view_only()
+{
+   populate_q10_view<Backend>(col.merged_adapter(), pipeline_view,
+                               nation, stats);
+   populate_q10_view_preagg<Backend>(col.merged_adapter(), pipeline_view_preagg,
+                                      nation, stats);
+}
+
+// S5: aCOL MI (customer_coli_t + orders_acol_t). Built from the COL MI
+// (same per-order returned-revenue accumulation as the preagg view) plus
+// a customer base scan for the full customer records. Caller must have run
+// col.populate_merged() already.
+template <typename Backend>
+void Q10Workload<Backend>::populate_acol_only()
+{
+   populate_q10_acol<Backend>(col.merged_adapter(), customer, acol,
+                              nation, stats);
+}
+
 template <typename Backend>
 void Q10Workload<Backend>::load()
 {
    tpch.load();
    col.populate_split();    // S1: custkey-sorted split indexes
    col.populate_merged();   // S3: COL merged index
-   // S2 variant A (per-lineitem) + variant B (per-order pre-agg). Both run
-   // after populate_merged — both loaders consume the col MI. One image
-   // carries both so --q10_view_variant selects the A/B arm at query time.
-   populate_q10_view<Backend>(col.merged_adapter(), pipeline_view,
-                               nation, stats);
-   populate_q10_view_preagg<Backend>(col.merged_adapter(), pipeline_view_preagg,
-                                      nation, stats);
+   populate_view_only();    // S2 (naive) + S7 (preagg)
    // S4: base tables only — nothing to populate.
-   // S5: aCOL MI (customer_coli_t + orders_acol_t). Built from the COL MI
-   // (same per-order returned-revenue accumulation as the preagg view) plus a
-   // customer base scan for the full customer records.
-   populate_q10_acol<Backend>(col.merged_adapter(), customer, acol,
-                              nation, stats);
+   populate_acol_only();    // S5
    // S6: COL-family shared union view (per-lineitem; same grain as the S2
    // variant-A view). Walks the COL MI just built. q10 keeps a byte-identical
    // copy in its standalone image (the union view is family-shared in concept;
