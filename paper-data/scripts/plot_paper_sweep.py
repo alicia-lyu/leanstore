@@ -545,14 +545,11 @@ Q10_METHOD_TO_STRUCT = {
 # so the two Mat-View bars sit together and the two Merged-Idx bars
 # sit together at the right.
 PAPER_PANEL_STRUCTURES = {
-    # q3/q5 gain S6 (shared COL view), slotted between the per-query Mat-View
-    # (2) and Merged-Idx (3) — the "shared view vs shared MI" adjacency.
-    "q3":   [4, 1, 2, 6, 3],
-    "q5":   [4, 1, 2, 6, 3],
-    # q10 also gains S6, grouped with the Mat-View cluster (naive 2, partial-
-    # agg 22, shared 6) ahead of the Merged-Idx cluster (3, 33). q10i has no
-    # S6 (TPCHi out of scope for the shared view).
-    "q10":  [4, 1, 2, 22, 6, 3, 33],
+    # Q10/Q10i layout: pair each canonical with its partial-agg variant
+    # so the two Mat-View bars sit together and the two Merged-Idx bars
+    # sit together at the right. S6 (Mat-View shared) is deliberately
+    # excluded from the paper figures.
+    "q10":  [4, 1, 2, 22, 3, 33],
     "q10i": [4, 1, 2, 22, 3, 33],
 }
 PAPER_HEADLINE_BG = 2                              # paper's contention cohort

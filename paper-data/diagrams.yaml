@@ -53,7 +53,7 @@ diagrams:
     builder: refresh_lsm_vs_btree
   refresh_sales:
     sources:
-      - 2026-05-23-refresh-sf1
-      - 2026-05-24-refresh-prewarm9    # optional 9 GiB sibling
+      - 2026-05-25-refresh-5L-bg2-ssd  # primary: 5L bg2, c0 = 1 GiB DRAM
+      - 2026-05-24-refresh-prewarm9    # optional 9 GiB DRAM sibling
       - 2026-05-24-dbtoaster           # optional DBToaster overlay
     builder: refresh_sales
