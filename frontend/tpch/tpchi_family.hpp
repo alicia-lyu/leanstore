@@ -95,7 +95,7 @@ struct TPCHiWrappers<Backend, 5> {
 }  // namespace detail::tpchi
 
 template <typename Backend, int Structure>
-inline std::vector<BgStepFn> register_tpchi_bg_steps_at(
+inline std::vector<BgCatalogFn> register_tpchi_bg_catalog_at(
     DBTraits& db_traits,
     tpch::q3i::Q3IWorkload<Backend>& q3i_workload,
     tpch::q5i::Q5IWorkload<Backend>& q5i_workload)
@@ -104,7 +104,7 @@ inline std::vector<BgStepFn> register_tpchi_bg_steps_at(
    auto wrappers = std::make_shared<TPCHiWrappers<Backend, Structure>>(
        q3i_workload, q5i_workload);
 
-   std::vector<BgStepFn> steps;
+   std::vector<BgCatalogFn> steps;
    steps.reserve(2);
    steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
       std::vector<tpch::q3i::q3i_agg_row_t> out;
@@ -144,7 +144,7 @@ inline Integer tpchi_random_invoicekey(TPCHIWorkload<AdapterType>& tpch)
 // works on PK ((l_orderkey, l_linenumber)) which is unchanged from
 // lineitem_t.
 template <typename Backend>
-inline BgStepFn make_tpchi_point_lookup_step(
+inline BgCatalogFn make_tpchi_point_lookup_step(
     DBTraits& db_traits,
     TPCHIWorkload<Backend::template Adapter>& tpch)
 {
@@ -213,7 +213,7 @@ inline BgStepFn make_tpchi_point_lookup_step(
 // `include_point_lookups` parameter is kept for source-compat but is
 // now unused.
 template <typename Backend>
-inline std::vector<BgStepFn> register_tpchi_bg_steps(
+inline std::vector<BgCatalogFn> register_tpchi_bg_catalog(
     DBTraits& db_traits,
     TPCHIWorkload<Backend::template Adapter>& /*tpch*/,
     tpch::q3i::Q3IWorkload<Backend>& q3i_workload,
@@ -221,14 +221,14 @@ inline std::vector<BgStepFn> register_tpchi_bg_steps(
     int structure,
     bool /*include_point_lookups*/)
 {
-   std::vector<BgStepFn> steps;
+   std::vector<BgCatalogFn> steps;
    switch (structure) {
-      case 1: steps = register_tpchi_bg_steps_at<Backend, 1>(db_traits, q3i_workload, q5i_workload); break;
-      case 2: steps = register_tpchi_bg_steps_at<Backend, 2>(db_traits, q3i_workload, q5i_workload); break;
-      case 3: steps = register_tpchi_bg_steps_at<Backend, 3>(db_traits, q3i_workload, q5i_workload); break;
-      case 4: steps = register_tpchi_bg_steps_at<Backend, 4>(db_traits, q3i_workload, q5i_workload); break;
-      case 5: steps = register_tpchi_bg_steps_at<Backend, 5>(db_traits, q3i_workload, q5i_workload); break;
-      default: throw std::runtime_error("register_tpchi_bg_steps: invalid storage_structure");
+      case 1: steps = register_tpchi_bg_catalog_at<Backend, 1>(db_traits, q3i_workload, q5i_workload); break;
+      case 2: steps = register_tpchi_bg_catalog_at<Backend, 2>(db_traits, q3i_workload, q5i_workload); break;
+      case 3: steps = register_tpchi_bg_catalog_at<Backend, 3>(db_traits, q3i_workload, q5i_workload); break;
+      case 4: steps = register_tpchi_bg_catalog_at<Backend, 4>(db_traits, q3i_workload, q5i_workload); break;
+      case 5: steps = register_tpchi_bg_catalog_at<Backend, 5>(db_traits, q3i_workload, q5i_workload); break;
+      default: throw std::runtime_error("register_tpchi_bg_catalog: invalid storage_structure");
    }
    return steps;
 }

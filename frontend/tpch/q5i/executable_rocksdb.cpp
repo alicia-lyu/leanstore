@@ -84,22 +84,22 @@ int main(int argc, char** argv)
    tpch.recover_last_ids();
 
    RocksDBTraits db_traits(rocks_db);
-   auto bg_steps = FLAGS_bg_query_thread
-                       ? tpch::register_tpchi_bg_steps<B>(db_traits, tpch, q3i, q5i,
+   auto bg_catalog = FLAGS_bg_query_thread
+                       ? tpch::register_tpchi_bg_catalog<B>(db_traits, tpch, q3i, q5i,
                                                           FLAGS_storage_structure,
                                                           FLAGS_bg_point_lookups)
-                       : std::vector<tpch::BgStepFn>{};
-   tpch::BgStepFn bg_lookup_step =
+                       : std::vector<tpch::BgCatalogFn>{};
+   tpch::BgCatalogFn bg_lookup_step =
        (FLAGS_bg_query_thread && FLAGS_bg_point_lookups)
            ? tpch::make_tpchi_point_lookup_step<B>(db_traits, tpch)
-           : tpch::BgStepFn{};
+           : tpch::BgCatalogFn{};
 
    using AggRow = tpch::q5i::q5i_agg_row_t;
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q5i::BaseQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_merge_join");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;
@@ -107,7 +107,7 @@ int main(int argc, char** argv)
       case 2: {
          tpch::q5i::ViewQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "pipeline_view");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;
@@ -115,7 +115,7 @@ int main(int argc, char** argv)
       case 3: {
          tpch::q5i::MergedQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "mi_coli_walk");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;
@@ -123,7 +123,7 @@ int main(int argc, char** argv)
       case 4: {
          tpch::q5i::HashQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_hash_join");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;

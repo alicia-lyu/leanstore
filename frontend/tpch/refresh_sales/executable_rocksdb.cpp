@@ -230,20 +230,20 @@ int main(int argc, char** argv)
    std::atomic<bool> keep_running = true;
    std::atomic<long> bg_cohort_count = 0;
    std::atomic<long> bg_lookup_count = 0;
-   std::vector<tpch::BgStepFn> bg_steps =
+   std::vector<tpch::BgCatalogFn> bg_catalog =
        FLAGS_bg_query_thread
-           ? tpch::register_vanilla_bg_steps<B>(db_traits, tpch, q3, q5,
+           ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5,
                                                  FLAGS_storage_structure,
                                                  FLAGS_bg_point_lookups)
-           : std::vector<tpch::BgStepFn>{};
-   tpch::BgStepFn bg_lookup_step =
+           : std::vector<tpch::BgCatalogFn>{};
+   tpch::BgCatalogFn bg_lookup_step =
        (FLAGS_bg_query_thread && FLAGS_bg_point_lookups)
            ? tpch::make_tpch_point_lookup_step<B>(db_traits, tpch)
-           : tpch::BgStepFn{};
+           : tpch::BgCatalogFn{};
    std::vector<std::thread> bg_cohort_threads;
    std::thread bg_lookup_thread;
    if (FLAGS_bg_query_thread) {
-      const size_t cohort_size = bg_steps.size();
+      const size_t cohort_size = bg_catalog.size();
       const u64 needed_max_id = cohort_size == 0
           ? std::max<u64>(MAIN_WORKER, FLAGS_bg_point_lookups ? BG_LOOKUP_WORKER : 0)
           : std::max<u64>(
@@ -266,7 +266,7 @@ int main(int argc, char** argv)
             while (keep_running.load()) {
                jumpmuTry()
                {
-                  bg_steps[i](wid);
+                  bg_catalog[i](wid);
                   bg_cohort_count++;
                }
                jumpmuCatchNoPrint() { db_traits.rollback_tx(wid); }

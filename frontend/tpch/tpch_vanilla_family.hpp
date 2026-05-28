@@ -14,7 +14,7 @@
 //   1. load_vanilla_family(): one tpch.load() followed by every family
 //      member's populate_secondaries(). Lets a per-query binary mount the
 //      same .json image as any other family member.
-//   2. register_vanilla_bg_steps(): build the type-erased BgStepFn vector
+//   2. register_vanilla_bg_catalog(): build the type-erased BgCatalogFn vector
 //      that TpchExecutableHelper consumes when --bg_query_thread=true.
 //      Each step is a single TX of one family query at the supplied
 //      foreground --storage_structure, routed through DBTraits on
@@ -60,14 +60,14 @@ inline void load_vanilla_family(TPCHWorkload<Backend::template Adapter>& tpch,
    q5.populate_view_only();
 }
 
-// Per-structure wrapper holders. Owned by the BgStepFn closures (each step
+// Per-structure wrapper holders. Owned by the BgCatalogFn closures (each step
 // pins one wrapper instance) so the wrappers outlive the bg thread. The
 // vanilla family has two members; the foreground binary picks which
 // structure they all run at.
 namespace detail::vanilla
 {
 // One slot per (query, structure). Each slot is constructed lazily when
-// register_vanilla_bg_steps() is called for that structure. Lives in a
+// register_vanilla_bg_catalog() is called for that structure. Lives in a
 // shared_ptr so the closure can capture by value without slicing or
 // moving the wrapper.
 template <typename Backend, int Structure>
@@ -116,7 +116,7 @@ struct VanillaWrappers<Backend, 6> {
 }  // namespace detail::vanilla
 
 template <typename Backend, int Structure>
-inline std::vector<BgStepFn> register_vanilla_bg_steps_at(
+inline std::vector<BgCatalogFn> register_vanilla_bg_catalog_at(
     DBTraits& db_traits,
     tpch::q3::Q3Workload<Backend>& q3_workload,
     tpch::q5::Q5Workload<Backend>& q5_workload)
@@ -125,7 +125,7 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps_at(
    auto wrappers = std::make_shared<VanillaWrappers<Backend, Structure>>(
        q3_workload, q5_workload);
 
-   std::vector<BgStepFn> steps;
+   std::vector<BgCatalogFn> steps;
    steps.reserve(2);
    // Q3 step: run one TX of Q3 at Structure on the supplied worker_id.
    steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
@@ -148,7 +148,7 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps_at(
 // slots, so random PKs miss often). Identical to the helper's built-in
 // bg_point_lookup() — kept as a free function for explicit setter use.
 template <typename Backend>
-inline BgStepFn make_tpch_point_lookup_step(
+inline BgCatalogFn make_tpch_point_lookup_step(
     DBTraits& db_traits,
     TPCHWorkload<Backend::template Adapter>& tpch)
 {
@@ -209,7 +209,7 @@ inline BgStepFn make_tpch_point_lookup_step(
 // The `include_point_lookups` parameter is kept for source-compat with
 // existing callers but is now unused: pass any value.
 template <typename Backend>
-inline std::vector<BgStepFn> register_vanilla_bg_steps(
+inline std::vector<BgCatalogFn> register_vanilla_bg_catalog(
     DBTraits& db_traits,
     TPCHWorkload<Backend::template Adapter>& /*tpch*/,
     tpch::q3::Q3Workload<Backend>& q3_workload,
@@ -217,14 +217,14 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps(
     int structure,
     bool /*include_point_lookups*/)
 {
-   std::vector<BgStepFn> steps;
+   std::vector<BgCatalogFn> steps;
    switch (structure) {
-      case 1: steps = register_vanilla_bg_steps_at<Backend, 1>(db_traits, q3_workload, q5_workload); break;
-      case 2: steps = register_vanilla_bg_steps_at<Backend, 2>(db_traits, q3_workload, q5_workload); break;
-      case 3: steps = register_vanilla_bg_steps_at<Backend, 3>(db_traits, q3_workload, q5_workload); break;
-      case 4: steps = register_vanilla_bg_steps_at<Backend, 4>(db_traits, q3_workload, q5_workload); break;
-      case 6: steps = register_vanilla_bg_steps_at<Backend, 6>(db_traits, q3_workload, q5_workload); break;
-      default: throw std::runtime_error("register_vanilla_bg_steps: invalid storage_structure");
+      case 1: steps = register_vanilla_bg_catalog_at<Backend, 1>(db_traits, q3_workload, q5_workload); break;
+      case 2: steps = register_vanilla_bg_catalog_at<Backend, 2>(db_traits, q3_workload, q5_workload); break;
+      case 3: steps = register_vanilla_bg_catalog_at<Backend, 3>(db_traits, q3_workload, q5_workload); break;
+      case 4: steps = register_vanilla_bg_catalog_at<Backend, 4>(db_traits, q3_workload, q5_workload); break;
+      case 6: steps = register_vanilla_bg_catalog_at<Backend, 6>(db_traits, q3_workload, q5_workload); break;
+      default: throw std::runtime_error("register_vanilla_bg_catalog: invalid storage_structure");
    }
    return steps;
 }

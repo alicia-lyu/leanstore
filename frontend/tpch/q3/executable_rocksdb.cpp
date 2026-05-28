@@ -88,45 +88,45 @@ int main(int argc, char** argv)
    RocksDBTraits db_traits(rocks_db);
 
    using AggRow = tpch::q3::q3_agg_row_t;
-   auto bg_steps = FLAGS_bg_query_thread
-                       ? tpch::register_vanilla_bg_steps<B>(db_traits, tpch, q3, q5,
+   auto bg_catalog = FLAGS_bg_query_thread
+                       ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5,
                                                             FLAGS_storage_structure,
                                                             FLAGS_bg_point_lookups)
-                       : std::vector<tpch::BgStepFn>{};
+                       : std::vector<tpch::BgCatalogFn>{};
 
    switch (FLAGS_storage_structure) {
       case 1: {
          tpch::q3::BaseQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_merge_join");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.run();
          break;
       }
       case 2: {
          tpch::q3::ViewQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "pipeline_view");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.run();
          break;
       }
       case 3: {
          tpch::q3::MergedQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "mi_col_walk");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.run();
          break;
       }
       case 4: {
          tpch::q3::HashQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_hash_join");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.run();
          break;
       }
       case 6: {
          tpch::q3::SharedViewQ3<B> w{q3};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "shared_view");
-         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_query_catalog(std::move(bg_catalog));
          helper.run();
          break;
       }

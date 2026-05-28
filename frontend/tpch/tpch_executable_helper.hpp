@@ -29,7 +29,7 @@ namespace tpch
 // BG_WORKER slot. The closure must route the TX through DBTraits on the
 // passed worker_id, manage its own out-vector, and swallow per-TX
 // jumpmu rollbacks (see register_*_bg_steps in family-loader headers).
-using BgStepFn = std::function<void(u64 worker_id)>;
+using BgCatalogFn = std::function<void(u64 worker_id)>;
 
 // Worker-id allocation for the N-step parallel cohort dispatch.
 // Layout (preserving existing constants — see ../shared/db_traits.hpp):
@@ -62,16 +62,16 @@ struct TpchExecutableHelper {
    // Optional registry of background-query steps. When --bg_query_thread=true,
    // the cohort thread (BG_WORKER) cycles through these in round-robin
    // instead of re-running the foreground query. Set via
-   // set_bg_query_steps() before run().
-   std::vector<BgStepFn> bg_query_steps;
-   void set_bg_query_steps(std::vector<BgStepFn> steps) { bg_query_steps = std::move(steps); }
+   // set_bg_query_catalog() before run().
+   std::vector<BgCatalogFn> bg_query_catalog;
+   void set_bg_query_catalog(std::vector<BgCatalogFn> steps) { bg_query_catalog = std::move(steps); }
 
    // Optional override for the point-lookup step run on BG_LOOKUP_WORKER.
    // If unset, the helper's built-in bg_point_lookup() runs (8 vanilla TPC-H
    // tables). TPCHi binaries set a 9-table variant including invoice via
    // make_tpchi_point_lookup_step() to keep the contention surface honest.
-   BgStepFn bg_lookup_step;
-   void set_bg_lookup_step(BgStepFn step) { bg_lookup_step = std::move(step); }
+   BgCatalogFn bg_lookup_step;
+   void set_bg_lookup_step(BgCatalogFn step) { bg_lookup_step = std::move(step); }
 
    TpchExecutableHelper(RocksDB& rocks_db, PerStructureWrapper wrapper,
                         TPCHWorkload<AdapterType, LineitemRecord>& tpch, std::string name)
@@ -151,7 +151,7 @@ struct TpchExecutableHelper {
       std::cout << "Running " << tx_name << " on " << structure_name
                 << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
       if (FLAGS_bg_query_thread) {
-         const size_t cohort_size = bg_query_steps.size();
+         const size_t cohort_size = bg_query_catalog.size();
          // CRM worker budget: foreground (MAIN_WORKER) + lookup
          // (BG_LOOKUP_WORKER, optional) + N cohort threads.
          const u64 max_id = std::max<u64>(
@@ -186,16 +186,16 @@ struct TpchExecutableHelper {
 
       // --bg_query_thread: spawn N+1 dedicated read-only background workers
       // for the duration of the foreground TX window — N parallel cohort
-      // threads (one per query in bg_query_steps) plus one point-lookup
+      // threads (one per query in bg_query_catalog) plus one point-lookup
       // thread. No time-balance fairness needed: each cohort query has its
       // own CRM worker, so a heavy structure (S2/S4, btree S1) only slows
       // its own thread without un-rotating the others to ~2.
       //
       //   Cohort threads (i=0..N-1): worker_id = cohort_worker_id(i)
-      //     - Each runs bg_query_steps[i] in a tight loop.
+      //     - Each runs bg_query_catalog[i] in a tight loop.
       //     - i=0 uses BG_WORKER (=0); i>=1 uses i+2 to avoid collision
       //       with MAIN_WORKER (=1) and BG_LOOKUP_WORKER (=2).
-      //     - If bg_query_steps is empty: fall back to single re-run-fg
+      //     - If bg_query_catalog is empty: fall back to single re-run-fg
       //       thread on BG_WORKER (q10/q10i/q12 with no family cohort).
       //
       //   Lookup thread (BG_LOOKUP_WORKER, optional):
@@ -211,7 +211,7 @@ struct TpchExecutableHelper {
       std::vector<std::thread> bg_cohort_threads;
       std::thread bg_lookup_thread;
       if (FLAGS_bg_query_thread) {
-         const size_t cohort_size = bg_query_steps.size();
+         const size_t cohort_size = bg_query_catalog.size();
          if (cohort_size == 0) {
             // No registered cohort: single thread re-runs foreground on BG_WORKER.
             bg_cohort_threads.emplace_back([&]() {
@@ -240,7 +240,7 @@ struct TpchExecutableHelper {
                   while (keep_running.load()) {
                      jumpmuTry()
                      {
-                        bg_query_steps[i](wid);
+                        bg_query_catalog[i](wid);
                         bg_cohort_count++;
                      }
                      jumpmuCatchNoPrint()
