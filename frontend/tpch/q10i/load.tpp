@@ -324,6 +324,10 @@ double Q10IWorkload<Backend>::get_size() const
       case 3: return base + coli.get_merged_size();
       case 4: return base;
       case 5: return base + acoli_q10i.size();
+      // S7 shares the S2 image (naive + preagg both populated by load_tpchi_family
+      // at sx=2); foreground reads preagg, bg cohort Q3I/Q5I/Q10I read naive. Report
+      // the full image footprint = naive + preagg.
+      case 7: return base + pipeline_view.size() + pipeline_view_preagg.size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }

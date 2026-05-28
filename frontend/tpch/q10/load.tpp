@@ -110,6 +110,10 @@ double Q10Workload<Backend>::get_size() const
       case 4: return base;
       case 5: return base + acol.size();
       case 6: return base + shared_view.size();
+      // S7 shares the S2 image (naive + preagg both populated by load_vanilla_family
+      // at sx=2); foreground reads preagg, bg cohort Q3/Q5/Q10 read naive. Report
+      // the full image footprint = naive + preagg.
+      case 7: return base + pipeline_view.size() + pipeline_view_preagg.size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }
