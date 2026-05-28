@@ -30,6 +30,11 @@ EXEC_NAMES          := basic_join basic_group basic_group_variant
 
 # Experiment flags
 dram                	:= 0.1
+# Buffer pool size for loading (--dram_gib at persist time). Loads benefit
+# from a large pool to avoid page eviction during populate. Default 8 GiB
+# matches the historical hardcoded value; bump per Linux node to fill RAM.
+# See LINUX_SETUP.md for per-host recommendations.
+load_dram               := 8
 scale 			    	:= 15
 tentative_skip_bytes	:= 0 # do no tentative skip bytes
 bgw_pct 		  		:= 0 # background write percentage (TPC-H per-query binaries only; pinned to 0 by upstream race)

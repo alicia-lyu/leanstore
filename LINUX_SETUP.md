@@ -237,6 +237,36 @@ macOS.
 For a Debug build use `mkdir -p build-debug && cd build-debug && cmake
 -DCMAKE_BUILD_TYPE=Debug ..` and the same `make` command.
 
+## Step 4b — Pick a `load_dram` value for this host
+
+Loads benefit from a buffer pool large enough to hold the working set
+(views + MIs) entirely in RAM. The Makefile default is `load_dram := 8`
+(GiB). Override per host via `make ... load_dram=N`:
+
+```bash
+# Check available RAM (use the second column "free", in GiB):
+free -g
+
+# Recommended: 40–60% of free RAM, leaving headroom for OS / compaction.
+# At SF=3850 lsm + SF=1550 btree the family images run ~10–25 GiB on
+# disk; a 40 GiB pool keeps the full set hot during load.
+make q3_lsm scale=3850 load_dram=40
+make q3i_btree scale=1550 load_dram=40
+```
+
+Recommended `load_dram` per machine (update when a new node comes
+online):
+
+| Host class | RAM | load_dram |
+|------------|-----|-----------|
+| 16 GiB workstation | 16 | 8 (default) |
+| 32 GiB CloudLab small | 32 | 16 |
+| 192 GiB CloudLab large (this repo's default) | 192 | 80–100 |
+
+Runtime experiments stay on `--dram_gib=$(dram)` for the cell-pressure
+sweep (typically 0.1 / 0.4 / 1.0). The `load_dram` knob only affects
+the persist step.
+
 ## Step 5 — Smoke-test parity
 
 Each invocation needs a distinct `--ssd_path` (LeanStore writes to a

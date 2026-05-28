@@ -238,7 +238,7 @@ class Experiment:
                 trunc=True,
                 ssd_path=iso_image_str,
                 scale=SCALE_ENV,
-                dram_gib=8,
+                dram_gib="$(load_dram)",
             )
             if IS_MACOS:
                 prefix = f"script -q {iso_runtime}/load.log "
@@ -400,7 +400,7 @@ class Experiment:
                 trunc=True,
                 ssd_path=self.image_path,
                 scale=SCALE_ENV,
-                dram_gib=8
+                dram_gib="$(load_dram)"
             )
         print("\t${MAKE}", self.image_path)
         print("\t${MAKE}", self.runtime_dir)
@@ -566,6 +566,14 @@ LOADING_META_FILES = [
     "./frontend/tpch/tpch_family/ol_pipeline.tpp",
     "./frontend/tpch/tpch_family/col_pipeline.tpp",
     "./frontend/tpch/tpchi_family/coli_pipeline.tpp",
+    # Family-loader headers — control load_*_family() which populates Q10/Q10I
+    # alongside Q3/Q5 (Q3I/Q5I) into the family image.
+    "./frontend/tpch/tpch_vanilla_family.hpp",
+    "./frontend/tpch/tpchi_family.hpp",
+    # Q10/Q10I load helpers — populate_view_only / populate_acol_only /
+    # populate_acoli_only are called by load_*_family.
+    "./frontend/tpch/q10/load.tpp",
+    "./frontend/tpch/q10i/load.tpp",
 ]
 LOADING_META_FILE = " ".join(LOADING_META_FILES)
 
