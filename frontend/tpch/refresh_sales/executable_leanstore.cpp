@@ -232,30 +232,38 @@ int main(int argc, char** argv)
 
    tpch::RefreshState<B::Adapter> refresh(tpch);
 
-   // bg=2 contention cohort (optional). A concurrent read-only worker on
-   // BG_WORKER cycles the Q3/Q5 family queries (+ random base-table point
-   // lookups when --bg_point_lookups) at the same --storage_structure,
-   // mirroring the read binaries' TpchExecutableHelper bg loop. The foreground
-   // RF loop runs on MAIN_WORKER so the two CRM workers never contend for the
-   // same per-worker slot (CRMG.hpp: one mutex/cv/job per worker). bg results
-   // are discarded — this is a contention axis, not a parity check.
+   // bg=2 contention cohort (optional). Two dedicated CRM workers, mirroring
+   // the read binaries' TpchExecutableHelper:
+   //   Thread A (cohort, BG_WORKER): cycle Q3/Q5 family queries at the same
+   //     --storage_structure with smallest-cumulative-elapsed fairness.
+   //   Thread B (lookup, BG_LOOKUP_WORKER): heterogeneous base-table point
+   //     lookups when --bg_point_lookups; decoupled from Thread A so a heavy
+   //     structure (S4 all cells, btree S1 5H/5HH) no longer un-rotates
+   //     bg_txs to ~2.
+   // The foreground RF loop runs on MAIN_WORKER so all three workers occupy
+   // distinct per-worker slots (CRMG.hpp: one mutex/cv/job per worker).
+   // bg results are discarded — this is a contention axis, not a parity check.
    LeanStoreTraits db_traits(crm);
    std::atomic<bool> keep_running = true;
-   std::atomic<long> bg_count = 0;
+   std::atomic<long> bg_cohort_count = 0;
+   std::atomic<long> bg_lookup_count = 0;
    std::vector<tpch::BgStepFn> bg_steps =
        FLAGS_bg_query_thread
            ? tpch::register_vanilla_bg_steps<B>(db_traits, tpch, q3, q5,
                                                  FLAGS_storage_structure,
                                                  FLAGS_bg_point_lookups)
            : std::vector<tpch::BgStepFn>{};
-   std::thread bg_thread;
+   tpch::BgStepFn bg_lookup_step =
+       (FLAGS_bg_query_thread && FLAGS_bg_point_lookups)
+           ? tpch::make_tpch_point_lookup_step<B>(db_traits, tpch)
+           : tpch::BgStepFn{};
+   std::thread bg_cohort_thread;
+   std::thread bg_lookup_thread;
    if (FLAGS_bg_query_thread) {
-      std::cout << "  (--bg_query_thread=true: bg cohort of " << bg_steps.size()
-                << " steps on BG_WORKER, point_lookups="
-                << FLAGS_bg_point_lookups << ")\n";
-      bg_thread = std::thread([&]() {
-         // Time-balanced step pick: always run the step with the smallest
-         // cumulative elapsed time, so heterogeneous step costs stay ~1:1.
+      std::cout << "  (--bg_query_thread=true: cohort thread = " << bg_steps.size()
+                << " steps on BG_WORKER; lookup thread = "
+                << (FLAGS_bg_point_lookups ? "on (BG_LOOKUP_WORKER)" : "off") << ")\n";
+      bg_cohort_thread = std::thread([&]() {
          std::vector<double> step_elapsed(bg_steps.size(), 0.0);
          while (keep_running.load()) {
             jumpmuTry()
@@ -267,12 +275,25 @@ int main(int argc, char** argv)
                bg_steps[pick]();
                step_elapsed[pick] += std::chrono::duration<double>(
                                          std::chrono::steady_clock::now() - s).count();
-               bg_count++;
+               bg_cohort_count++;
             }
             jumpmuCatchNoPrint() { db_traits.rollback_tx(BG_WORKER); }
          }
          db_traits.cleanup_thread(BG_WORKER);
       });
+      if (FLAGS_bg_point_lookups) {
+         bg_lookup_thread = std::thread([&]() {
+            while (keep_running.load()) {
+               jumpmuTry()
+               {
+                  bg_lookup_step();
+                  bg_lookup_count++;
+               }
+               jumpmuCatchNoPrint() { db_traits.rollback_tx(BG_LOOKUP_WORKER); }
+            }
+            db_traits.cleanup_thread(BG_LOOKUP_WORKER);
+         });
+      }
    }
 
    // With bg on, the foreground takes MAIN_WORKER so BG_WORKER (0) is free for
@@ -323,16 +344,19 @@ int main(int argc, char** argv)
       }
    });
 
-   // Foreground deadline reached — stop and join the bg cohort.
+   // Foreground deadline reached — stop and join both bg threads.
    keep_running = false;
-   if (bg_thread.joinable()) bg_thread.join();
+   if (bg_cohort_thread.joinable()) bg_cohort_thread.join();
+   if (bg_lookup_thread.joinable()) bg_lookup_thread.join();
 
    std::cout << "refresh_sales done — total RF1=" << total_rf1
              << " RF2=" << total_rf2
              << " over " << FLAGS_refresh_seconds << "s"
              << " (storage_structure=" << FLAGS_storage_structure << ")";
-   if (FLAGS_bg_query_thread)
-      std::cout << " | bg_query_thread: " << bg_count.load() << " bg TXs";
+   if (FLAGS_bg_query_thread) {
+      std::cout << " | bg_cohort_thread: " << bg_cohort_count.load()
+                << " TXs | bg_lookup_thread: " << bg_lookup_count.load() << " TXs";
+   }
    std::cout << "\n";
    return 0;
 }
