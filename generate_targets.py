@@ -108,6 +108,44 @@ def get_exec_vars(build_dir: Path, exec_fname: str) -> tuple[Path, Path, Path, P
         image_path,
         recover_file
     )
+
+# Per-Sx image layout (TPC-H family binaries only — geo / q12 keep their
+# monolithic per-binary image dirs). Each Sx has its own image directory; S5
+# shares the S3 image (S3 holds COL/COLI MI + Q10/Q10I aCOL/aCOLI), and S7
+# shares the S2 image (S2 holds Q*/Q*I naive views + Q10/Q10I preagg view).
+# S6 (shared view) keeps its own image — currently deferred from the
+# cohort sweep but emitted for completeness.
+def sx_image_suffix(sx: int) -> str:
+    if sx == 5:
+        return "S3"
+    if sx == 7:
+        return "S2"
+    return f"S{sx}"
+
+def per_sx_image_path(exec_fname: str, sx: int) -> Path:
+    image_base = image_basename(exec_fname)
+    suffix = sx_image_suffix(sx)
+    if "lsm" in exec_fname:
+        return data_disk / f"{image_base}_{suffix}" / f"{SCALE_ENV}"
+    return data_disk / f"{image_base}_{suffix}" / f"{SCALE_ENV}.image"
+
+def per_sx_recover_file(exec_fname: str, build_dir: Path, sx: int) -> Path:
+    image_base = image_basename(exec_fname)
+    suffix = sx_image_suffix(sx)
+    return data_disk / f"{image_base}_{suffix}" / build_dir / f"{SCALE_ENV}.json"
+
+# Which Sx values trigger a fresh load (vs. recovering from a shared image
+# loaded at the "primary" Sx). S5 and S7 don't load — they recover from the
+# S3 and S2 images respectively. Skipping the load avoids double-writing
+# the same secondaries to the same image directory.
+def sx_is_loader(sx: int) -> bool:
+    return sx not in (5, 7)
+
+# Per-binary: which Sx values use per-Sx image layout vs. the legacy
+# monolithic image. TPC-H family binaries adopt per-Sx; geo / q12 keep
+# the legacy single-image layout (their query paths don't share storage).
+def uses_per_sx_layout(exec_fname: str) -> bool:
+    return exec_fname.startswith(("q3_", "q5_", "q10_", "q3i_", "q5i_", "q10i_"))
     
 def get_image_command(lsm: bool, image_path: Path) -> tuple[str, str]:
     """Returns the command to create an image file/dir."""

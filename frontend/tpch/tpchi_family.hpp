@@ -35,17 +35,36 @@
 namespace tpch
 {
 
+// Per-Sx load dispatch for the TPCHi family. Mirrors the vanilla side
+// (see tpch_vanilla_family.hpp). Q3I's `populate_secondaries()` already
+// has its own per-Sx dispatch via FLAGS_load_only_structure; here we
+// route through it explicitly so the family loader controls the gating.
 template <typename Backend>
-inline void load_tpchi_family(TPCHIWorkload<Backend::template Adapter>& tpch,
+inline void load_tpchi_family(int storage_structure,
+                              TPCHIWorkload<Backend::template Adapter>& tpch,
                               tpch::q3i::Q3IWorkload<Backend>&   q3i,
                               tpch::q5i::Q5IWorkload<Backend>&   q5i,
                               tpch::q10i::Q10IWorkload<Backend>& q10i)
 {
    tpch.load();
-   q3i.populate_secondaries();   // shared coli.populate_{split,merged} + Q3I view
-   q5i.populate_view_only();     // Q5I view only
-   q10i.populate_view_only();    // S2 naive view + S7 preagg view
-   q10i.populate_acoli_only();   // S5 aCOLI MI
+   const int sx = (storage_structure == 5) ? 3
+                : (storage_structure == 7) ? 2
+                : storage_structure;
+   const bool all = (sx < 0);
+   if (all || sx == 1) {
+      q3i.coli_pipeline().populate_split();
+   }
+   if (all || sx == 2) {
+      q3i.coli_pipeline().populate_merged();
+      q3i.populate_view_only();
+      q5i.populate_view_only();
+      q10i.populate_view_only();   // S2 (naive) + S7 (preagg)
+   }
+   if (all || sx == 3) {
+      q3i.coli_pipeline().populate_merged();  // S3 COLI MI
+      q10i.populate_acoli_only();             // S5 aCOLI MI (co-resident)
+   }
+   // S4: base tables only.
 }
 
 namespace detail::tpchi

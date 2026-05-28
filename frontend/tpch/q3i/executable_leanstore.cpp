@@ -123,7 +123,7 @@ int main(int argc, char** argv)
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
          leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
-         tpch::load_tpchi_family<B>(tpch, q3i, q5i, q10i);
+         tpch::load_tpchi_family<B>(FLAGS_storage_structure, tpch, q3i, q5i, q10i);
          leanstore::cr::Worker::my().commitTX();
       });
       return 0;

@@ -93,7 +93,7 @@ int main(int argc, char** argv)
                                   q10_acol, shared_view);
 
    if (!FLAGS_recover) {
-      tpch::load_vanilla_family<B>(tpch, q3, q5, q10);
+      tpch::load_vanilla_family<B>(FLAGS_storage_structure, tpch, q3, q5, q10);
       return 0;
    }
    tpch.recover_last_ids();

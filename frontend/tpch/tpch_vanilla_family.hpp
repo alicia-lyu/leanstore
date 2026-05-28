@@ -54,27 +54,60 @@
 namespace tpch
 {
 
+// Per-Sx load dispatch for the vanilla family.
+//
+// Each Sx has its own image directory (tpch_<backend>_S<N>/$(scale)), so
+// loading only the structures for that Sx avoids growing every image to
+// the full Cartesian footprint. S5 and S7 share images with S3 and S2
+// respectively, so loading at S=3 covers both the S3 binary and the
+// S=5 binary (Q10's aCOL co-resident with the COL MI); same for S=2/S=7.
+//
+// storage_structure values:
+//   1 → S1 split secondaries only
+//   2 → S2 views (Q3/Q5/Q10 naive + Q10 preagg) — same image serves S=7
+//   3 → S3 COL MI + Q10 S5 aCOL — same image serves S=5
+//   4 → base tables only (hash join needs no extra secondary)
+//   5 → equivalent to 3 (S5 image == S3 image; loader still routes here)
+//   6 → S6 col_shared_view (NOT yet wired into per-Sx; deferred — Q10's
+//        S6 still in its standalone image)
+//   7 → equivalent to 2 (S7 image == S2 image)
+//   <0 → load everything (legacy monolithic image fallback)
 template <typename Backend>
-inline void load_vanilla_family(TPCHWorkload<Backend::template Adapter>& tpch,
+inline void load_vanilla_family(int storage_structure,
+                                TPCHWorkload<Backend::template Adapter>& tpch,
                                 tpch::q3::Q3Workload<Backend>&  q3,
                                 tpch::q5::Q5Workload<Backend>&  q5,
                                 tpch::q10::Q10Workload<Backend>& q10)
 {
    tpch.load();
-   // q3 owns the family-shared col.populate_{split,merged} via its full
-   // populate_secondaries() and additionally populates its own pipeline
-   // view. q5 / q10 only populate their own views (plus q10's S5 aCOL) so
-   // the family-shared adapters (merged_col, split_orders, split_lineitem
-   // — referenced by all three workloads) aren't written twice. LeanStore
-   // B-tree returns OP_RESULT::DUPLICATE on the second insert; RocksDB
-   // silently overwrites and hid this bug.
-   q3.populate_secondaries();
-   q5.populate_view_only();
-   q10.populate_view_only();   // S2 naive view + S7 preagg view
-   q10.populate_acol_only();   // S5 aCOL MI
-   // Q10's S6 col_shared_view is intentionally not populated here — it
-   // stays in q10's standalone image (LINUX_PENDING.md: "Q10 S6 view →
-   // family-image migration" remains open).
+   // Normalize S5 → S3, S7 → S2 (image-sharing).
+   const int sx = (storage_structure == 5) ? 3
+                : (storage_structure == 7) ? 2
+                : storage_structure;
+   const bool all = (sx < 0);
+   if (all || sx == 1) {
+      // S1 split secondaries (col.populate_split is shared; q3 owns it).
+      q3.col_pipeline().populate_split();
+   }
+   if (all || sx == 2) {
+      // S2 views — Q3/Q5/Q10 naive + Q10 preagg. The view loaders all
+      // walk the COL MI, so populate_merged must run first within the
+      // same image. (At S=2 we don't want the MI in the final image;
+      // however, the MI is consumed transiently by the loaders. For
+      // RocksDB we let the merged-col data sit in the image
+      // unused; for LeanStore it's the same. The disk cost is small
+      // relative to the views themselves.)
+      q3.col_pipeline().populate_merged();
+      q3.populate_view_only();
+      q5.populate_view_only();
+      q10.populate_view_only();
+   }
+   if (all || sx == 3) {
+      q3.col_pipeline().populate_merged();   // S3 COL MI
+      q10.populate_acol_only();              // S5 aCOL MI (co-resident)
+   }
+   // S4: base tables only — nothing extra.
+   // S6: deferred — Q10's col_shared_view stays in q10's standalone image.
 }
 
 // Per-structure wrapper holders. Owned by the BgCatalogFn closures (each

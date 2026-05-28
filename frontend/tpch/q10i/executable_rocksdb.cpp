@@ -95,7 +95,7 @@ int main(int argc, char** argv)
                                      acoli, q10i_view_preagg, acoli_q10i);
 
    if (!FLAGS_recover) {
-      tpch::load_tpchi_family<B>(tpch, q3i, q5i, q10i);
+      tpch::load_tpchi_family<B>(FLAGS_storage_structure, tpch, q3i, q5i, q10i);
       return 0;
    }
    tpch.recover_last_ids();
