@@ -9,6 +9,22 @@ actionable.
 
 ## Active
 
+- **q10_btree_7 / q10i_btree_7 rerun + size-accounting continuity
+  (2026-05-28, post-c9406c44)** — the 5L btree sweep had two aborts
+  at sx=7 (Q10/Q10I `get_size()` missing case 7); the case-7 fix
+  landed as 9697ab5f. The follow-up size_audit refactor (c9406c44)
+  then broadened every Sx's per-adapter sum (S2/S3/S5/S7 now include
+  co-resident MIs / preagg) and added a `size_audit` console line
+  per (query, sx). Returned value is still the per-adapter sum, but
+  for several Sx that sum now differs from the pre-c9406c44 value.
+  Re-running q10_btree_7 / q10i_btree_7 now writes new-accounting
+  rows into a sweep whose other 26 rows have old-accounting size
+  columns. Decision needed: (a) accept the 2-row inconsistency
+  (size column is auxiliary), (b) re-run the entire 5L btree sweep
+  with the new code for column-wise consistency. Defer until user
+  picks. Also pending: q10i_btree_2 `std::out_of_range` — pre-existing
+  abort in S2 image path; wants its own diagnostic worktree.
+
 - **5L bg=2 sweep: `--param_seed=1,2` reps pending (2026-05-28)** —
   the first paper-sweep run after the family-image refactor (commits
   354dc7c4 → 1e8bd47f) covers btrees only at the 5L cell with
