@@ -7,28 +7,31 @@ figures (PDF + PNG sibling) under `paper-data/<tag>/figures/`.
 ## Run
 
 ```bash
-# Default mode = paper-figures: 3 typeset-ready figures under
-# figures/paper/ (1×4 TPC-H btree row, 1×4 TPC-H lsm row, 2×3
-# condensed geo grid). This is what the experiments/run_paper_sweep.sh
-# runner invokes; the no-flag form is fine.
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b --mode paper-figures
+# Build all paper diagrams declared in diagrams.yaml → paper-data/diagrams/
+python3 scripts/plot_paper_sweep.py --all
 
-# Diagnostics-explore mode: 6-panel metric grids + diagnostics_paper.csv
-# (scratch outputs under figures/diagnostics/; pick 1-2 panels for the paper)
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b --mode diagnostics-explore
-
-# Subset (overrides --mode)
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b \
-    --figures paper_tpch_btree,paper_tpch_lsm
+# Build specific diagram(s) by YAML name
+python3 scripts/plot_paper_sweep.py --diagram paper_tpch_btree_headline
+python3 scripts/plot_paper_sweep.py \
+    --diagram paper_tpch_btree_headline,paper_q10
 
 # Alternate format
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b --format svg
+python3 scripts/plot_paper_sweep.py --all --format png
 
-# Different root (rarely needed)
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b \
-    --root /tmp/some-other-paper-data/2026-05-18-b
+# Per-sweep diagnostics (outputs under <tag>/figures/diagnostics/)
+python3 scripts/plot_paper_sweep.py --diag-tag 2026-05-24-a-ssd
+
+# Specific diag figures only
+python3 scripts/plot_paper_sweep.py --diag-tag 2026-05-24-a-ssd \
+    --diag-figures diag_ssd_lsm_sst_path,diag_btree_llc_miss
+
+# Refresh figures (also read from diagrams.yaml)
+python3 scripts/plot_refresh_lsm_vs_btree.py --diagram refresh_lsm_vs_btree
+python3 scripts/plot_refresh_sales.py --diagram refresh_sales
 ```
+
+To re-point a paper figure at a new sweep tag, edit `diagrams.yaml`
+and rerun `--diagram <name>` — no code edits or symlink changes needed.
 
 ## Legacy builders (archived)
 
@@ -115,22 +118,36 @@ as scaffolding that's ready for data, not a live signal.
 
 ## Adding a new figure
 
-Three steps:
+Four steps:
 
 1. Write a builder `fig_<name>(data: SweepData) -> Optional[Path]`
    that composes the existing plot primitives (`line_with_iqr`,
    `grouped_bar`, `heatmap`) and returns the output path (or `None`
-   if there's nothing to plot).
-2. Register it in the `FIGURE_BUILDERS` dict at the bottom of
-   `plot_paper_sweep.py`.
-3. Add a row to the catalog table above.
+   if there's nothing to plot). The builder receives a `SweepData`
+   whose `headline` frame is the concatenation of all YAML sources.
+2. Register it in the `BUILDERS` dict in `plot_paper_sweep.py` under
+   the builder name that will appear in `diagrams.yaml`.
+3. Add an entry to `paper-data/diagrams.yaml`:
+   ```yaml
+   my_new_figure:
+     sources: [2026-05-24-a-ssd]
+     builder: my_builder_name
+   ```
+4. Add a row to the catalog table above.
 
 All styling lives in the `STYLE` dict at the top of the module —
 don't hardcode colors/markers in the builder.
 
-## Pre-baked into the runner
+## Runner integration
 
-`experiments/run_paper_sweep.sh` invokes the plotter after the
-analyzer finishes. A clean sweep run produces both
-`paper-data/<tag>/summary/` and `paper-data/<tag>/figures/`
-without a second command.
+`experiments/run_paper_sweep.sh` invokes the analyzer and the
+per-sweep diagnostics plotter (`--diag-tag`) after a sweep finishes.
+It does **not** rebuild paper diagrams automatically — that is a
+deliberate, post-hoc step. After a sweep, edit `diagrams.yaml` to
+point the relevant entry at the new tag, then run:
+
+```bash
+python3 scripts/plot_paper_sweep.py --diagram <name>
+# or rebuild everything:
+python3 scripts/plot_paper_sweep.py --all
+```

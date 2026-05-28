@@ -12,11 +12,19 @@ engine that produces these snapshots lives in the parent repo; see
 ```
 paper-data/
 ├── SWEEP_LOG.md         # rolling status doc — read this first to see what's running
+├── diagrams.yaml        # one entry per paper diagram → source tag(s) + builder name
+├── diagrams/            # gitignored, regenerable — shared output dir for all paper figures
+│   ├── paper_tpch_btree_headline.{pdf,png}
+│   ├── paper_tpch_lsm_headline.{pdf,png}
+│   └── ...              # one file per diagrams.yaml entry
 ├── scripts/             # analyzer + plotter (Python 3, stdlib + matplotlib/pandas/numpy/pyyaml)
 │   ├── analyze_paper_sweep.py
 │   ├── plot_paper_sweep.py
-│   ├── analyze_sweep.py    # older, pre-paper analyzer; kept for ad-hoc use
-│   └── PLOTTING.md         # figure catalog + add-a-figure recipe
+│   ├── plot_refresh_lsm_vs_btree.py
+│   ├── plot_refresh_sales.py
+│   ├── _diagram_metadata.py   # shared YAML helper (load_metadata, sources_for, output_path)
+│   ├── analyze_sweep.py       # older, pre-paper analyzer; kept for ad-hoc use
+│   └── PLOTTING.md            # figure catalog + add-a-figure recipe
 └── <tag>/               # one directory per sweep run, tag = YYYY-MM-DD-{a,b,...}
     ├── manifest.yaml    # tag, commit, host, cells, families, reps, runs_ok/err
     ├── raw/             # gitignored, large — per-rep snapshots
@@ -31,14 +39,8 @@ paper-data/
     │   ├── diagnostics.csv   # same key + attribution columns (LLC, BM, P99, rocksdb counters)
     │   ├── inversions.csv    # rows where S3 ms > S2 ms by > threshold
     │   └── stats.csv         # 1 row per (binary,cell,structure,bg) — median + IQR
-    └── figures/         # gitignored, regenerable — PDF + PNG siblings
+    └── figures/         # gitignored, regenerable — per-sweep diagnostic PDFs
 ```
-
-**Note**: `paper-data/scripts/` was recently moved here from
-`../scripts/`. The directory shows as untracked (`?? scripts/`) in
-`git status` until staged. `experiments/run_paper_sweep.sh` in the
-parent repo still references the old path — search before relocating
-permanently.
 
 ## Regenerating summaries and figures
 
@@ -46,18 +48,35 @@ permanently.
 # Analyzer: walks <tag>/raw/ → writes <tag>/summary/*.csv
 python3 scripts/analyze_paper_sweep.py --tag 2026-05-18-b --root 2026-05-18-b
 
-# Plotter: reads <tag>/summary/*.csv → writes <tag>/figures/*.{pdf,png}
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b --figures headline_tpch_vs_secondary,inversions
-python3 scripts/plot_paper_sweep.py --tag 2026-05-18-b --format png
+# Paper plotter: reads diagrams.yaml → writes paper-data/diagrams/*.{pdf,png}
+python3 scripts/plot_paper_sweep.py --all
+python3 scripts/plot_paper_sweep.py --diagram paper_tpch_btree_headline
+python3 scripts/plot_paper_sweep.py --diagram paper_tpch_btree_headline,paper_q10
+
+# Diagnostics plotter (per-sweep): writes <tag>/figures/diagnostics/
+python3 scripts/plot_paper_sweep.py --diag-tag 2026-05-24-a-ssd
+
+# Refresh plotters
+python3 scripts/plot_refresh_lsm_vs_btree.py --diagram refresh_lsm_vs_btree
+python3 scripts/plot_refresh_sales.py --diagram refresh_sales
 ```
 
 The plotter and analyzer never error on missing data — incomplete cells
 render as "no data" panels or gaps in lines. Safe to run mid-sweep.
 
-`experiments/run_paper_sweep.sh` (parent repo) invokes the analyzer
-*and* plotter automatically after a sweep finishes, so a clean sweep
-produces both `summary/` and `figures/` without a second command.
+Paper diagrams are never rebuilt automatically from a sweep — they are a
+deliberate, post-hoc step. A sweep creates `<tag>/summary/` CSVs and
+its own per-tag diagnostics; paper figures are rebuilt by editing
+`diagrams.yaml` to point at the new tag and running the plotter:
+
+```bash
+$EDITOR paper-data/diagrams.yaml   # update sources: entry
+python3 scripts/plot_paper_sweep.py --diagram <name>
+```
+
+`experiments/run_paper_sweep.sh` (parent repo) invokes the analyzer and
+the diagnostics plotter (`--diag-tag`) after a sweep; it never rebuilds
+paper diagrams automatically — that decoupling is intentional.
 
 ## Sweep-matrix conventions
 
@@ -80,43 +99,48 @@ Detail in `scripts/PLOTTING.md`. The non-obvious bits:
 
 - **Primary axis is ms/query**, log scale, lower-is-better. TX/s lives on the right twin axis. Aggregation is done in ms-space (median + IQR) directly from `headline.csv` via `aggregate_ms_per_query()` — *not* by inverting stats.csv's `tx_per_s` aggregates (1000/x is non-linear and would distort IQR).
 - All colors/markers/labels live in the `STYLE` dict at the top of `plot_paper_sweep.py`. Don't hardcode in builders.
-- Adding a figure = write `fig_<name>(data: SweepData) -> Optional[Path]`, register in `FIGURE_BUILDERS`, add a row to `PLOTTING.md`'s catalog table. Return `None` when there's nothing to plot (renders as "no data" rather than erroring).
-- Every figure carries a footer with `tag`, `commit`, `host`, and the cell list (read from `manifest.yaml`).
+- Adding a figure: write a builder, register it in `BUILDERS`, add a YAML entry in `diagrams.yaml`, add a catalog row in `PLOTTING.md`. See `scripts/PLOTTING.md §Adding a new figure` for the full recipe.
+- The footer joins all source tags with `+`; the primary tag's manifest supplies commit/host. Footer is omitted from paper-mode figures (typesetter doesn't want it).
 
 ## What's tracked vs gitignored
 
-- **Tracked**: `summary/*.csv`, `manifest.yaml`, `SWEEP_LOG.md`, `scripts/`.
-- **Gitignored** (large / regenerable): `<tag>/raw/`, `<tag>/figures/`.
+- **Tracked**: `summary/*.csv`, `manifest.yaml`, `SWEEP_LOG.md`, `scripts/`, `diagrams.yaml`.
+- **Gitignored** (large / regenerable): `<tag>/raw/`, `<tag>/figures/`, `diagrams/`.
 
 When pulling on a fresh machine, summaries + manifest are present but
-`raw/` and `figures/` are not. Regenerate figures with the plotter from
-the checked-in summaries; raw cannot be reconstructed without re-running
-the sweep.
+`raw/`, `figures/`, and `diagrams/` are not. Regenerate paper figures
+with `python3 scripts/plot_paper_sweep.py --all`; raw cannot be
+reconstructed without re-running the sweep.
 
 ## Linked figures in the paper repo
 
 The paper source tree (`../../merged_index_interesting_orderings/figures/`)
-references plots via **relative symlinks** into `paper-data/`. Refreshing a
-snapshot's `figures/paper/*.pdf` therefore updates the paper build with no
-copy step. Current links (paper-side → paper-data source):
+references plots via **relative symlinks** into `paper-data/`. All paper
+figures now live under the stable `paper-data/diagrams/` directory — the
+output stem is the diagram name from `diagrams.yaml`. Re-pointing a
+diagram to a new tag only requires editing `diagrams.yaml` and rerunning
+the plotter; no symlink changes are needed.
 
-- `tpch_btree_headline.pdf` → `2026-05-24-a-ssd/figures/paper/paper_tpch_btree_headline_ssd.pdf`
-- `tpch_lsm_headline.pdf` → `2026-05-24-a-ssd/figures/paper/paper_tpch_lsm_headline_ssd.pdf`
-- `q10.pdf` → `2026-05-24-a-ssd/figures/paper/paper_q10_ssd.pdf`
-- `refresh_5L_pair_latency.pdf` → `2026-05-25-refresh-5L-bg2-ssd/figures/paper/refresh_5L_pair_latency_bg2_ssd.pdf`
-- `refresh_lsm_vs_btree_5L_5H.pdf` → `2026-05-25-refresh-5L-bg2-ssd/figures/paper/refresh_lsm_vs_btree_5L_5H_5HH_bg2_ssd.pdf` (3-cell view with 5HH; the paper-side filename is kept for historical continuity)
+Current links (paper-side → paper-data source):
+
+- `tpch_btree_headline.pdf` → `diagrams/paper_tpch_btree_headline.pdf`
+- `tpch_lsm_headline.pdf` → `diagrams/paper_tpch_lsm_headline.pdf`
+- `q10.pdf` → `diagrams/paper_q10.pdf`
+- `refresh_5L_pair_latency.pdf` → `diagrams/refresh_5L_pair_latency.pdf`
+- `refresh_lsm_vs_btree_5L_5H.pdf` → `diagrams/refresh_lsm_vs_btree.pdf`
 
 The following figures are *referenced by `experiments_revised.tex` but
-not currently linked* in the paper `figures/` directory — add a symlink
-after their next regeneration:
+not currently linked* in the paper `figures/` directory — add symlinks
+after first regeneration with `--all`:
 
-- `tpch_lsm_headline_hdd.pdf` → `2026-05-18-b/figures/paper/paper_tpch_lsm_headline_hdd.pdf` (or fresh HDD snapshot when available)
-- `diag_ssd_lsm_sst_path_ssd.pdf` → `2026-05-24-a-ssd/figures/diagnostics/diag_ssd_lsm_sst_path_ssd.pdf`
+- `tpch_lsm_headline_hdd.pdf` → `diagrams/paper_tpch_lsm_headline_hdd.pdf`
+- `paper_tpch_vanilla.pdf` → `diagrams/paper_tpch_vanilla.pdf`
+- `diag_ssd_lsm_sst_path.pdf` → regenerate via `--diag-tag 2026-05-24-a-ssd`, then link from `2026-05-24-a-ssd/figures/diagnostics/diag_ssd_lsm_sst_path_ssd.pdf`
 
-When re-pointing a paper figure to a new snapshot tag, recreate the symlink
-with a relative path (so the paper repo stays portable) and verify with
-`ls -la` on the paper side. The `figures/` dir is gitignored on this side
-but the symlinks themselves are tracked in the paper repo.
+When creating or updating a symlink, use a relative path so the paper
+repo stays portable. Verify with `ls -la` on the paper side. The
+`diagrams/` dir is gitignored here but the symlinks in the paper repo
+are tracked there.
 
 ## SWEEP_LOG.md
 
