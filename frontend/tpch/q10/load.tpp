@@ -120,11 +120,12 @@ double Q10Workload<Backend>::get_size() const
       case 5: sum = base + col.get_merged_size() + acol.size(); break;
       case 6: sum = base + shared_view.size(); break;
       // S7 shares the S2 image. Foreground Q10 reads preagg; bg cohort Q3/Q5
-      // read their views. Include COL MI + preagg; EXCLUDE the naive q10
-      // view (dead weight at S7 — user directive). Sibling Q3/Q5 views are
-      // also in the image but invisible to this binary (sanity log catches).
-      case 7: sum = base + col.get_merged_size() + pipeline_view_preagg.size();
-              break;
+      // read their views. Count only the preagg (Q10's working set). The
+      // COL MI is co-resident from S2 loader but not consumed at S7 query
+      // time — user directive 2026-05-28: S7 size should NOT include COL MI.
+      // Sibling Q3/Q5 views are also in the image but invisible to this
+      // binary (sanity log catches the residual gap).
+      case 7: sum = base + pipeline_view_preagg.size(); break;
       default: throw std::runtime_error("invalid --storage_structure");
    }
    log_size_audit("q10", sum);

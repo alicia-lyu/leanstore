@@ -334,12 +334,13 @@ double Q10IWorkload<Backend>::get_size() const
       case 4: sum = base; break;
       // S5 shares the S3 image; report both COLI MI and aCOLI.
       case 5: sum = base + coli.get_merged_size() + acoli_q10i.size(); break;
-      // S7 shares the S2 image. Foreground reads preagg; include COLI MI +
-      // preagg; EXCLUDE the naive q10i view (dead weight at S7 — user
-      // directive). Sibling Q3I/Q5I views are also in the image but
-      // invisible to this binary (sanity log catches).
-      case 7: sum = base + coli.get_merged_size() + pipeline_view_preagg.size();
-              break;
+      // S7 shares the S2 image. Foreground reads preagg; bg cohort Q3I/Q5I
+      // read their views. Count only the preagg. The COLI MI is co-resident
+      // from S2 loader but not consumed at S7 query time — user directive
+      // 2026-05-28: S7 size should NOT include COLI MI. Sibling Q3I/Q5I
+      // views are also in the image but invisible to this binary (sanity
+      // log catches the residual gap).
+      case 7: sum = base + pipeline_view_preagg.size(); break;
       default: throw std::runtime_error("invalid --storage_structure");
    }
    log_size_audit("q10i", sum);
