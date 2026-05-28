@@ -35,6 +35,7 @@
 #include "../../tpch_workload.hpp"
 #include "../../q5/workload.hpp"
 #include "../../tpch_family/refresh.hpp"
+#include "../../tpch_family/shared_view_loader.hpp"
 
 #define TPCH_DEFINE_FLAGS
 #include "../../tpch_flags.hpp"
@@ -96,6 +97,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::orders_coli_t>        split_orders(rocks_db);
    B::Adapter<tpch::lineitem_col_t>       split_lineitem(rocks_db);
 
+   // S6: COL-family shared materialised view (union schema).
+   B::Adapter<tpch::col_shared_view_t>    shared_view(rocks_db);
+
    // Defensive wipe: stale RocksDB state across re-runs corrupts cardinality.
    {
       namespace fs = std::filesystem;
@@ -117,7 +121,7 @@ int main(int argc, char** argv)
    tpch::q5::Q5Workload<B> q5(tpch, customer, orders, lineitem,
                                supplier, nation, region,
                                pipeline_view, merged_col,
-                               split_orders, split_lineitem);
+                               split_orders, split_lineitem, shared_view);
 
    // Load base tables ONCE — all four paths must see the same data.
    std::cout << "=== Loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
@@ -132,11 +136,13 @@ int main(int argc, char** argv)
        customer, nation, orders, lineitem, pipeline_view);
    q5.col_pipeline().populate_merged();  // S3: COL merged index
    // S4: base tables only — nothing to populate.
+   tpch::populate_col_shared_view<B>(    // S6: COL-family shared union view
+       merged_col, shared_view);
 
    // ------------------------------------------------------------------
    // Run all four paths.
    std::cout << "=== Running queries ===\n";
-   std::vector<tpch::q5::q5_agg_row_t> r_base, r_view, r_merged, r_hash;
+   std::vector<tpch::q5::q5_agg_row_t> r_base, r_view, r_merged, r_hash, r_shared;
 
    auto time_us = [](auto&& fn) {
       auto t0 = std::chrono::high_resolution_clock::now();
@@ -145,20 +151,22 @@ int main(int argc, char** argv)
       return std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
    };
 
-   long us_base   = time_us([&] { q5.query_by_base  (r_base);   });
-   long us_view   = time_us([&] { q5.query_by_view  (r_view);   });
-   long us_merged = time_us([&] { q5.query_by_merged(r_merged); });
-   long us_hash   = time_us([&] { q5.query_by_hash  (r_hash);   });
+   long us_base   = time_us([&] { q5.query_by_base       (r_base);   });
+   long us_view   = time_us([&] { q5.query_by_view       (r_view);   });
+   long us_merged = time_us([&] { q5.query_by_merged     (r_merged); });
+   long us_hash   = time_us([&] { q5.query_by_hash       (r_hash);   });
+   long us_shared = time_us([&] { q5.query_by_shared_view(r_shared); });
 
    auto print_timing = [](const char* name, long us) {
       std::cout << "[time] " << std::left << std::setw(20) << name
                 << std::right << std::setw(10) << us << " us  ("
                 << std::fixed << std::setprecision(3) << (us / 1000.0) << " ms)\n";
    };
-   print_timing("query_by_base",   us_base);
-   print_timing("query_by_view",   us_view);
-   print_timing("query_by_merged", us_merged);
-   print_timing("query_by_hash",   us_hash);
+   print_timing("query_by_base",        us_base);
+   print_timing("query_by_view",        us_view);
+   print_timing("query_by_merged",      us_merged);
+   print_timing("query_by_hash",        us_hash);
+   print_timing("query_by_shared_view", us_shared);
 
    // ------------------------------------------------------------------
    // Compute digests.
@@ -166,6 +174,7 @@ int main(int argc, char** argv)
    uint64_t d_view   = digest_rows(r_view);
    uint64_t d_merged = digest_rows(r_merged);
    uint64_t d_hash   = digest_rows(r_hash);
+   uint64_t d_shared = digest_rows(r_shared);
 
    std::cout << "\n=== Results ===\n";
    auto print_digest = [](const char* name, size_t n, uint64_t d) {
@@ -177,6 +186,7 @@ int main(int argc, char** argv)
    print_digest("S2 (view)",   r_view.size(),   d_view);
    print_digest("S3 (merged)", r_merged.size(), d_merged);
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
+   print_digest("S6 (shared)", r_shared.size(), d_shared);
 
    // ------------------------------------------------------------------
    // Parity check — strict 4-way parity (Phase 4 complete).
@@ -201,6 +211,7 @@ int main(int argc, char** argv)
    strict_line("S2 view  ", d_view,   r_view.size());
    strict_line("S3 merged", d_merged, r_merged.size());
    strict_line("S4 hash  ", d_hash,   r_hash.size());
+   strict_line("S6 shared", d_shared, r_shared.size());
 
    if (!all_ok) {
       std::cout << "\n[FAIL] pre-update parity broken — stopping before RF1/RF2.\n";

@@ -33,4 +33,8 @@ using HashQ10   = ::tpch::HashStructure  <Q10Workload<Backend>, q10_agg_row_t>;
 template <typename Backend>
 using AggregatedQ10 = ::tpch::AggregatedStructure<Q10Workload<Backend>, q10_agg_row_t>;
 
+// S6: the COL-family shared materialised view (col_shared_view_t).
+template <typename Backend>
+using SharedViewQ10 = ::tpch::SharedViewStructure<Q10Workload<Backend>, q10_agg_row_t>;
+
 }  // namespace tpch::q10

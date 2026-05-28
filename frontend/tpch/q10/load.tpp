@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "../q10_family/view_loaders.hpp"
+#include "../tpch_family/shared_view_loader.hpp"
 
 DECLARE_int32(storage_structure);
 DECLARE_string(q10_view_variant);
@@ -27,7 +28,8 @@ Q10Workload<Backend>::Q10Workload(
                                              lineitem_col_t>& merged_col,
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
     typename Backend::template Adapter<lineitem_col_t>& split_lineitem,
-    typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol)
+    typename Backend::template MergedAdapter<customer_coli_t, orders_acol_t>& acol,
+    typename Backend::template Adapter<col_shared_view_t>& shared_view)
     : tpch(tpch),
       customer(customer),
       orders(orders),
@@ -37,6 +39,7 @@ Q10Workload<Backend>::Q10Workload(
       pipeline_view(pipeline_view),
       pipeline_view_preagg(pipeline_view_preagg),
       acol(acol),
+      shared_view(shared_view),
       params(Params::defaults())
 {
 }
@@ -68,6 +71,11 @@ void Q10Workload<Backend>::load()
    // customer base scan for the full customer records.
    populate_q10_acol<Backend>(col.merged_adapter(), customer, acol,
                               nation, stats);
+   // S6: COL-family shared union view (per-lineitem; same grain as the S2
+   // variant-A view). Walks the COL MI just built. q10 keeps a byte-identical
+   // copy in its standalone image (the union view is family-shared in concept;
+   // its footprint is counted once — see paper-data/scripts/space_table.py).
+   tpch::populate_col_shared_view<Backend>(col.merged_adapter(), shared_view);
 }
 
 template <typename Backend>
@@ -87,6 +95,7 @@ double Q10Workload<Backend>::get_size() const
       case 3: return base + col.get_merged_size();
       case 4: return base;
       case 5: return base + acol.size();
+      case 6: return base + shared_view.size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }

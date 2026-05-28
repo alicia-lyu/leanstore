@@ -28,4 +28,8 @@ using MergedQ3 = ::tpch::MergedStructure<Q3Workload<Backend>, q3_agg_row_t>;
 template <typename Backend>
 using HashQ3   = ::tpch::HashStructure  <Q3Workload<Backend>, q3_agg_row_t>;
 
+// S6: the COL-family shared materialised view (col_shared_view_t).
+template <typename Backend>
+using SharedViewQ3 = ::tpch::SharedViewStructure<Q3Workload<Backend>, q3_agg_row_t>;
+
 }  // namespace tpch::q3

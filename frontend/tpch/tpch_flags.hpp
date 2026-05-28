@@ -24,7 +24,9 @@
 
 TPCH_FLAG_INT(tpch_scale_factor, 1, "TPC-H scale factor");
 TPCH_FLAG_INT(storage_structure, 1,
-              "1=base merge-join, 2=pipeline view, 3=MI[0] premerged, 4=base hash-join");
+              "1=base merge-join, 2=pipeline view, 3=MI[0] premerged, 4=base hash-join, "
+              "5=aCOLI/aCOL pre-aggregated MI (q3i/q10/q10i), "
+              "6=shared COL materialised view (q3/q5/q10)");
 TPCH_FLAG_INT(tx_seconds, 15, "Seconds to run each transaction type");
 TPCH_FLAG_INT(warmup_seconds, 0, "Warmup seconds");
 TPCH_FLAG_INT(param_seed, 0,

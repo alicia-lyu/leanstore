@@ -149,16 +149,22 @@ int main(int argc, char** argv)
    B::Adapter<tpch::orders_coli_t>        split_orders(rocks_db);
    B::Adapter<tpch::lineitem_col_t>       split_lineitem(rocks_db);
 
+   // S6 shared view adapter — not exercised by refresh_sales (RF1/RF2 touch
+   // S1/S2/S3/S4 only), but the Q3/Q5 ctors require it.
+   B::Adapter<tpch::col_shared_view_t>    shared_view(rocks_db);
+
    rocks_db.open();
 
    RocksDBLogger logger(rocks_db);
    TPCHWorkload<B::Adapter> tpch(part, supplier, partsupp, customer,
                                   orders, lineitem, nation, region, logger);
    tpch::q3::Q3Workload<B> q3(tpch, customer, orders, lineitem,
-                               q3_view, merged_col, split_orders, split_lineitem);
+                               q3_view, merged_col, split_orders, split_lineitem,
+                               shared_view);
    tpch::q5::Q5Workload<B> q5(tpch, customer, orders, lineitem,
                                supplier, nation, region,
-                               q5_view, merged_col, split_orders, split_lineitem);
+                               q5_view, merged_col, split_orders, split_lineitem,
+                               shared_view);
 
    if (!FLAGS_recover) {
       tpch::load_vanilla_family<B>(tpch, q3, q5);

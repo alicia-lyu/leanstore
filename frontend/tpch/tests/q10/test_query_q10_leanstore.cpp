@@ -89,6 +89,7 @@ int main(int argc, char** argv)
    B::Adapter<tpch::orders_coli_t>        split_orders;
    B::Adapter<tpch::lineitem_col_t>       split_lineitem;
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>  acol;  // S5 aCOL MI
+   B::Adapter<tpch::col_shared_view_t>    shared_view;  // S6
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -107,6 +108,7 @@ int main(int argc, char** argv)
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "col_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "col_split_lineitem");
       acol           = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>(db, "acol_merged");
+      shared_view    = B::Adapter<tpch::col_shared_view_t>(db, "col_shared_view");
    });
 
    LeanStoreLogger logger(db);
@@ -114,7 +116,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
                                   pipeline_view, pipeline_view_preagg, merged_col,
-                                  split_orders, split_lineitem, acol);
+                                  split_orders, split_lineitem, acol, shared_view);
 
    std::cout << "=== Loading SF=" << FLAGS_tpch_scale_factor << " ===\n";
    crm.scheduleJobSync(0, [&]() {
@@ -290,6 +292,28 @@ int main(int argc, char** argv)
                 << " mi_visited=" << sa.mi_records_visited << "\n";
    }
 
+   // S6 (COL-family shared union view) parity vs S3 at both param iters.
+   std::cout << "\n=== S6 (shared COL union view) ===\n";
+   bool shared_view_ok = true;
+   for (long iter : {0L, 1L}) {
+      std::vector<tpch::q10::q10_agg_row_t> r_shared;
+      tpch::q10::Q10Stats ss{};
+      crm.scheduleJobSync(0, [&]() {
+         leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::OLAP);
+         q10.set_params_for_iter(iter);
+         q10.stats = &ss; q10.query_by_shared_view(r_shared); q10.stats = nullptr;
+         leanstore::cr::Worker::my().commitTX();
+      });
+      uint64_t d_shared = digest_rows(r_shared);
+      uint64_t d_ref    = (iter == 0) ? iter0.d_merged : iter1.d_merged;
+      bool ok = (d_shared == d_ref);
+      shared_view_ok &= ok;
+      std::cout << (ok ? "[OK]   " : "[FAIL] ")
+                << "S6-shared vs S3 [iter=" << iter << "] digest=0x"
+                << std::hex << d_shared << std::dec << " rows=" << r_shared.size()
+                << "\n";
+   }
+
    if (!iter0.ok) std::cout << "[FAIL] iter=0 parity / S3 sanity failed\n";
    if (!iter1.ok) std::cout << "[FAIL] iter=1 parity / S3 sanity failed — "
                                 "suggests a param-bake regression (some path "
@@ -297,7 +321,9 @@ int main(int argc, char** argv)
    if (!preagg_ok)    std::cout << "[FAIL] S2-preagg (variant B) parity vs S3 failed\n";
    if (!skip_phys_ok) std::cout << "[FAIL] S3-physical (SkipOrder seek) parity vs S3-logical failed\n";
    if (!acol_ok)      std::cout << "[FAIL] S5-acol (aCOL MI) parity vs S3 failed\n";
-   return (iter0.ok && iter1.ok && preagg_ok && skip_phys_ok && acol_ok) ? 0 : 1;
+   if (!shared_view_ok) std::cout << "[FAIL] S6-shared (COL union view) parity vs S3 failed\n";
+   return (iter0.ok && iter1.ok && preagg_ok && skip_phys_ok && acol_ok
+           && shared_view_ok) ? 0 : 1;
 }
 
 #endif  // ROCKSDB_ONLY

@@ -247,6 +247,78 @@ struct orders_acol_t {
    }
 };
 
+// ---------------------------------------------------------------------------
+// col_shared_view_t — the S6 shared materialised view (id=80).
+//
+// A SINGLE per-lineitem view whose payload is the column-UNION of the three
+// per-query S2 views (q3/q5/q10), so one stored table serves all three vanilla
+// COL-family queries instead of one narrow view each. Key + grain are identical
+// to q3/q5/q10_pipeline_view_t: (custkey, orderkey, linenumber), one row per
+// lineitem — so each query's existing query_by_view scan loop reads its own
+// subset of these columns unchanged.
+//
+// Unlike lineitem_col_t / orders_acol_t above, this is a PLAIN standalone view
+// record (single adapter, not a MergedAdapter member), so it uses
+// ADD_KEY_TRAITS / ADD_RECORD_TRAITS primary-key folding (mirroring
+// q3_pipeline_view_t), not tagged_path.
+//
+// No-out-of-chain-column invariant: carries ONLY COL columns
+// (customer/orders/lineitem). NATION's n_name is deliberately NOT stored — q5's
+// S6 path resolves it post-pipeline from c_nationkey via the same NATION PK
+// lookup S1/S3/S4 use, so every storage option shares identical post-pipeline
+// processing. (q5's narrow S2 is the lone view that bakes n_name; S6 does not.)
+//
+// id=80 is a fresh record id (highest existing is 73), so this type shifts no
+// existing field offsets and leaves every S1–S5 digest untouched. All payload
+// columns are POD Varchar<N>/numeric — never std::string (memcpy record_traits
+// require standard-layout types).
+
+struct col_shared_view_t {
+   static constexpr int id = 80;
+
+   struct Key {
+      static constexpr int id = 80;
+      Integer custkey;     // primary sort — groups custkey partitions
+      Integer orderkey;    // secondary sort — unique within a custkey group
+      Integer linenumber;  // tertiary sort — unique within an order
+      ADD_KEY_TRAITS(&Key::custkey, &Key::orderkey, &Key::linenumber)
+      auto operator<=>(const Key&) const = default;
+   };
+
+   // Lineitem fields (unaggregated; revenue/filters computed at query time).
+   Numeric    l_extendedprice;
+   Numeric    l_discount;
+   Timestamp  l_shipdate;    // q3 ship-date filter
+   Integer    l_suppkey;     // q5 SUPPLIER composite-probe join key
+   Varchar<1> l_returnflag;  // q10 return filter
+
+   // FD-attached ORDERS columns.
+   Timestamp  o_orderdate;     // q3/q5/q10 date filters (live)
+   Integer    o_shippriority;  // q3 output column
+
+   // FD-attached CUSTOMER columns (COL only — c_nationkey, NOT n_name).
+   Varchar<10>  c_mktsegment;  // q3 segment filter
+   Integer      c_nationkey;   // q5 nation gate + q5/q10 post-pipeline NATION key
+   Varchar<25>  c_name;        // q10 output
+   Varchar<40>  c_address;     // q10 output
+   Varchar<15>  c_phone;       // q10 output
+   Numeric      c_acctbal;     // q10 output
+   Varchar<117> c_comment;     // q10 output
+
+   ADD_RECORD_TRAITS(col_shared_view_t)
+
+   void print(std::ostream& os) const
+   {
+      os << "col_shared_view(extprice=" << l_extendedprice
+         << ",disc=" << l_discount
+         << ",suppkey=" << l_suppkey
+         << ",returnflag=" << l_returnflag
+         << ",mktseg=" << c_mktsegment
+         << ",nationkey=" << c_nationkey << ")";
+   }
+   // operator<< is provided by ADD_RECORD_TRAITS (calls print()).
+};
+
 }  // namespace tpch
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -315,21 +316,25 @@ long Q3Workload<Backend>::query_by_base(std::vector<q3_agg_row_t>& out)
    return static_cast<long>(out.size());
 }
 
-template <typename Backend>
-long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
+// S2/S6 shared scan core. Templated on the scanner type so it runs over BOTH
+// the per-query q3_pipeline_view_t adapter (S2) and the COL-family shared
+// col_shared_view_t adapter (S6) — the union row is a superset of the columns
+// this body reads (c_mktsegment, o_orderdate, o_shippriority, l_shipdate,
+// l_extendedprice, l_discount), so it is transparent to the wider record.
+//
+// Scan order is (custkey, orderkey, linenumber).  Mktsegment is evaluated once
+// per custkey transition (FD-attached, constant within a custkey group); on a
+// miss we seek past the entire custkey range — mirror of S3's COLGroupWalk
+// SkipGroup at on_customer.  Orderdate is evaluated once per orderkey
+// transition; l_shipdate is applied per-lineitem inside the accumulator.  At
+// each orderkey boundary we emit the agg row if revenue > 0.
+//
+// OPERATORS.md §4 / §6: all parameterised filters applied live at query time;
+// none baked into the view at load time.
+template <typename Scanner>
+static long q3_run_view_scan(Scanner& scanner, const Params& params,
+                             Stats* stats, std::vector<q3_agg_row_t>& out)
 {
-   // S2: sequential scan over q3_pipeline_view_t (per-lineitem rows).
-   //
-   // Scan order is (custkey, orderkey, linenumber).  Mktsegment is evaluated
-   // once per custkey transition (FD-attached, constant within a custkey
-   // group); on a miss we seek past the entire custkey range — mirror of
-   // S3's COLGroupWalk SkipGroup behaviour at on_customer.  Orderdate is
-   // evaluated once per orderkey transition (constant within an order);
-   // l_shipdate is applied per-lineitem inside the accumulator.  At each
-   // orderkey boundary we emit the agg row if revenue > 0.
-   //
-   // OPERATORS.md §4 / §6: all parameterised filters applied live at query
-   // time; none baked into the view at load time.
    out.clear();
 
    auto cmp = [](const q3_agg_row_t& a, const q3_agg_row_t& b) {
@@ -356,10 +361,9 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
       rev.reset();
    };
 
-   auto vs = pipeline_view.getScanner();
-   while (auto kv = vs->next()) {
-      const q3_pipeline_view_t::Key& k   = kv->first;
-      const q3_pipeline_view_t&      row = kv->second;
+   while (auto kv = scanner.next()) {
+      const auto& k   = kv->first;
+      const auto& row = kv->second;
       if (stats) stats->lineitems_scanned++;
 
       if (k.custkey != cur_custkey) {
@@ -377,8 +381,11 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
          if (sm != psm) {
             if (stats) stats->view_groups_skipped++;
             // Seek to (cur_custkey + 1, 0, 0) — start of next custkey group.
-            q3_pipeline_view_t::Key next_key{cur_custkey + 1, 0, 0};
-            vs->seek(next_key);
+            // Key type follows the scanner's record (q3 view or shared view);
+            // both have the identical (custkey, orderkey, linenumber) layout.
+            using ViewKey = std::remove_cvref_t<decltype(kv->first)>;
+            ViewKey next_key{cur_custkey + 1, 0, 0};
+            scanner.seek(next_key);
             cur_custkey = -1;  // re-arm on next row
             continue;
          }
@@ -415,6 +422,24 @@ long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
 
    sink.drain_sorted(out);
    return static_cast<long>(out.size());
+}
+
+template <typename Backend>
+long Q3Workload<Backend>::query_by_view(std::vector<q3_agg_row_t>& out)
+{
+   // S2: sequential scan over the per-query q3_pipeline_view_t (per-lineitem).
+   auto vs = pipeline_view.getScanner();
+   return q3_run_view_scan(*vs, params, stats, out);
+}
+
+template <typename Backend>
+long Q3Workload<Backend>::query_by_shared_view(std::vector<q3_agg_row_t>& out)
+{
+   // S6: identical S2 scan body over the COL-family shared union view
+   // (col_shared_view_t). The wider row is a column superset of the q3 view,
+   // so q3_run_view_scan reads its subset unchanged.
+   auto vs = shared_view.getScanner();
+   return q3_run_view_scan(*vs, params, stats, out);
 }
 
 template <typename Backend>

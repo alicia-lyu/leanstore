@@ -66,6 +66,7 @@ int main(int argc, char** argv)
                     tpch::lineitem_col_t>  merged_col;
    B::Adapter<tpch::orders_coli_t>        split_orders;
    B::Adapter<tpch::lineitem_col_t>       split_lineitem;
+   B::Adapter<tpch::col_shared_view_t>    shared_view;  // S6
 
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
@@ -82,6 +83,7 @@ int main(int argc, char** argv)
                                        tpch::lineitem_col_t>(db, "q3_merged_col");
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "q3_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "q3_split_lineitem");
+      shared_view    = B::Adapter<tpch::col_shared_view_t>(db, "q3_shared_view");
    });
 
    LeanStoreLogger logger(db);
@@ -90,7 +92,7 @@ int main(int argc, char** argv)
 
    tpch::q3::Q3Workload<B> q3(tpch, customer, orders, lineitem,
                                pipeline_view, merged_col,
-                               split_orders, split_lineitem);
+                               split_orders, split_lineitem, shared_view);
 
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX(leanstore::TX_MODE::INSTANTLY_VISIBLE_BULK_INSERT);
@@ -98,18 +100,20 @@ int main(int argc, char** argv)
       q3.col_pipeline().populate_split();
       tpch::q3::populate_q3_view<B>(customer, orders, lineitem, pipeline_view);
       q3.col_pipeline().populate_merged();
+      tpch::populate_col_shared_view<B>(merged_col, shared_view);  // S6
       leanstore::cr::Worker::my().commitTX();
    });
 
-   std::vector<tpch::q3::q3_agg_row_t> r_base, r_view, r_merged, r_hash;
-   tpch::q3::Stats st_base, st_view, st_merged, st_hash;
+   std::vector<tpch::q3::q3_agg_row_t> r_base, r_view, r_merged, r_hash, r_shared;
+   tpch::q3::Stats st_base, st_view, st_merged, st_hash, st_shared;
 
    crm.scheduleJobSync(0, [&]() {
       leanstore::cr::Worker::my().startTX();
-      q3.stats = &st_base;   q3.query_by_base  (r_base);
-      q3.stats = &st_view;   q3.query_by_view  (r_view);
-      q3.stats = &st_merged; q3.query_by_merged(r_merged);
-      q3.stats = &st_hash;   q3.query_by_hash  (r_hash);
+      q3.stats = &st_base;   q3.query_by_base       (r_base);
+      q3.stats = &st_view;   q3.query_by_view       (r_view);
+      q3.stats = &st_merged; q3.query_by_merged     (r_merged);
+      q3.stats = &st_hash;   q3.query_by_hash       (r_hash);
+      q3.stats = &st_shared; q3.query_by_shared_view(r_shared);
       q3.stats = nullptr;
       leanstore::cr::Worker::my().commitTX();
    });
@@ -118,6 +122,7 @@ int main(int argc, char** argv)
    uint64_t d_view   = digest_rows(r_view);
    uint64_t d_merged = digest_rows(r_merged);
    uint64_t d_hash   = digest_rows(r_hash);
+   uint64_t d_shared = digest_rows(r_shared);
 
    std::cout << "\n=== Results ===\n";
    auto print_digest = [](const char* name, size_t n, uint64_t d) {
@@ -129,6 +134,7 @@ int main(int argc, char** argv)
    print_digest("S2 (view)",   r_view.size(),   d_view);
    print_digest("S3 (merged)", r_merged.size(), d_merged);
    print_digest("S4 (hash)",   r_hash.size(),   d_hash);
+   print_digest("S6 (shared)", r_shared.size(), d_shared);
 
    std::cout << "\n=== Parity check ===\n";
    uint64_t ref = d_merged;  // S3 is the canonical oracle.
@@ -150,6 +156,7 @@ int main(int argc, char** argv)
    parity_line("S2 view  ", d_view,   (long)r_view.size());
    parity_line("S3 merged", d_merged, (long)r_merged.size());
    parity_line("S4 hash  ", d_hash,   (long)r_hash.size());
+   parity_line("S6 shared", d_shared, (long)r_shared.size());
 
    // Skip-seek counters across all four paths.  S1 has two physical streams
    // (orders + lineitem), so s1_groups_skipped can be up to ~2× the
@@ -173,7 +180,8 @@ int main(int argc, char** argv)
       std::cout << "\n[FAIL] S3 returned 0 rows — query_by_merged body broken.\n";
       return 1;
    }
-   bool pre_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref);
+   bool pre_ok = (d_base == ref) && (d_view == ref) && (d_hash == ref)
+              && (d_shared == ref);
    if (!pre_ok) {
       std::cout << "\n[FAIL] pre-update parity broken — stopping before RF1/RF2.\n";
       return 1;

@@ -58,6 +58,9 @@ int main(int argc, char** argv)
    // S5: aCOL MI — per-order pre-aggregated COL merged index (no lineitems).
    B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>  acol;
 
+   // S6: COL-family shared materialised view (q10's own copy).
+   B::Adapter<tpch::col_shared_view_t>  shared_view;
+
    auto& crm = db.getCRManager();
    crm.scheduleJobSync(0, [&]() {
       part           = B::Adapter<part_t>(db, "part");
@@ -75,6 +78,7 @@ int main(int argc, char** argv)
       split_orders   = B::Adapter<tpch::orders_coli_t>(db, "col_split_orders");
       split_lineitem = B::Adapter<tpch::lineitem_col_t>(db, "col_split_lineitem");
       acol           = B::MergedAdapter<tpch::customer_coli_t, tpch::orders_acol_t>(db, "acol_merged");
+      shared_view    = B::Adapter<tpch::col_shared_view_t>(db, "col_shared_view");
    });
 
    LeanStoreLogger logger(db);
@@ -82,7 +86,7 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, logger);
    tpch::q10::Q10Workload<B> q10(tpch, customer, orders, lineitem, nation,
                                   q10_view, q10_view_preagg, merged_col,
-                                  split_orders, split_lineitem, acol);
+                                  split_orders, split_lineitem, acol, shared_view);
 
    if (!FLAGS_recover) {
       crm.scheduleJobSync(0, [&]() {
@@ -135,6 +139,14 @@ int main(int argc, char** argv)
          tpch::q10::AggregatedQ10<B> w{q10};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
              crm, std::move(w), tpch, "mi_acol_preagg");
+         helper.run();
+         q10_txc = helper.tx_count();
+         break;
+      }
+      case 6: {
+         tpch::q10::SharedViewQ10<B> w{q10};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(
+             crm, std::move(w), tpch, "shared_view");
          helper.run();
          q10_txc = helper.tx_count();
          break;

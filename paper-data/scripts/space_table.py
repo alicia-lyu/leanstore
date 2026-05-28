@@ -13,6 +13,12 @@ Method (the one used in the paper / re-derived in the audit):
     total is the single shared structure on top of the base. Mat-View is
     **not** shared — it stores one view per query, so its total sums the
     per-query view secondaries.
+  * S6 ("Mat-View-Shared", vanilla only): one COL union view shared across the
+    family (size(S6) - size(S4)), counted ONCE like the MI — printed alongside
+    the per-query Mat-View sum so the "could a view be shared too?" question is
+    answered with a measured number (the union row is wide, so S6 may exceed
+    any single per-query view and approach the sum). NaN-skipped where the S6
+    sweep hasn't run / for the invoice family.
 
 Families (each lives in its own image):
   * vanilla  = {q3, q5}   sharing MI_B  (COL MI)
@@ -93,6 +99,24 @@ def main() -> int:
                   + "]")
             print(f"  Merged-Idx (base + shared MI)  {_gib(merged_idx):5.2f} GiB  "
                   f"[shared MI {_gib(mi_sec):.2f}]")
+            # S6: ONE shared COL union view, counted once (like the MI / split
+            # secondary), vs the per-query Mat-View sum. Only the vanilla family
+            # has S6 (TPCHi out of scope), so this is NaN-skipped elsewhere and
+            # before the S6 sweep lands. The shared view's size is measured from
+            # the representative query (q3+q5 share one physical table).
+            shared_sec = size(rep, backend, 6) - base
+            if shared_sec == shared_sec:  # not NaN ⇒ S6 measured for this family
+                mat_view_shared = base + shared_sec
+                print(f"  Mat-View-Shared (base + 1 shared view) "
+                      f"{_gib(mat_view_shared):5.2f} GiB  [shared view {_gib(shared_sec):.2f}]")
+                dv = shared_sec - views_total
+                print(f"    S6 shared view vs Σ per-query views: "
+                      f"{_gib(shared_sec):.2f} vs {_gib(views_total):.2f}  → S6 "
+                      f"{abs(_gib(dv)):.2f} GiB {'larger' if dv > 0 else 'smaller'}")
+                dm = shared_sec - mi_sec
+                print(f"    S6 shared view vs shared MI:         "
+                      f"{_gib(shared_sec):.2f} vs {_gib(mi_sec):.2f}  → S6 "
+                      f"{abs(_gib(dm)):.2f} GiB {'larger' if dm > 0 else 'smaller'}")
             # Per-query MI-vs-view comparison (the LSM per-query inversion).
             for q, v in view_secs.items():
                 delta = mi_sec - v

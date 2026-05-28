@@ -56,6 +56,9 @@ int main(int argc, char** argv)
    B::Adapter<tpch::orders_coli_t>        split_orders(rocks_db);
    B::Adapter<tpch::lineitem_col_t>       split_lineitem(rocks_db);
 
+   // S6: COL-family shared materialised view — ONE table shared by Q3 and Q5.
+   B::Adapter<tpch::col_shared_view_t>    shared_view(rocks_db);
+
    rocks_db.open();
 
    RocksDBLogger logger(rocks_db);
@@ -63,11 +66,11 @@ int main(int argc, char** argv)
                                   orders, lineitem, nation, region, logger);
    tpch::q3::Q3Workload<B> q3(tpch, customer, orders, lineitem,
                                q3_view, merged_col,
-                               split_orders, split_lineitem);
+                               split_orders, split_lineitem, shared_view);
    tpch::q5::Q5Workload<B> q5(tpch, customer, orders, lineitem,
                                supplier, nation, region,
                                q5_view, merged_col,
-                               split_orders, split_lineitem);
+                               split_orders, split_lineitem, shared_view);
 
    if (!FLAGS_recover) {
       tpch::load_vanilla_family<B>(tpch, q3, q5);
@@ -109,6 +112,13 @@ int main(int argc, char** argv)
       case 4: {
          tpch::q5::HashQ5<B> w{q5};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "base_hash_join");
+         helper.set_bg_query_steps(std::move(bg_steps));
+         helper.run();
+         break;
+      }
+      case 6: {
+         tpch::q5::SharedViewQ5<B> w{q5};
+         tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter> helper(rocks_db, std::move(w), tpch, "shared_view");
          helper.set_bg_query_steps(std::move(bg_steps));
          helper.run();
          break;

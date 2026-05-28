@@ -59,8 +59,13 @@ STYLE = {
         33: "#009E73", # S3 partial-agg variant inherits S3 + hatch
         4: "#E69F00",  # S4 Base-Hash        — orange / amber
         5: "#CC79A7",  # S5 aCOLI            — reddish purple (deferred)
+        # S6 shared COL materialised view — darker variant of the
+        # Mat-View family so it reads as a third Mat-View flavour
+        # (one shared view vs the per-query views) while remaining
+        # distinguishable from the CB-friendly S2 blue.
+        6: "#003E5C",
     },
-    "structure_markers": {1: "o", 2: "s", 3: "D", 4: "^", 5: "v"},
+    "structure_markers": {1: "o", 2: "s", 3: "D", 4: "^", 5: "v", 6: "P"},
     "backend_linestyles": {"lsm": "-", "btree": "--"},
     "bg_linestyles": {0: "-", 1: "--"},
     "figsize_single": (6.5, 4.0),
@@ -94,6 +99,7 @@ STRUCTURE_LABELS = {
     3: "S3 merged index",
     4: "S4 base hash-join",
     5: "S5 aCOLI MI",
+    6: "S6 shared view",
 }
 
 # Labels matching tab:exp-baselines in the paper (monospace).
@@ -113,6 +119,9 @@ PAPER_STRUCTURE_LABELS = {
     33: r"\textsc{Merged-Idx} (partial agg)",
     4: r"\textsc{Base-Hash}",
     5: r"\textsc{aCOLI}",
+    # S6 shared COL view — one materialised view (union schema) shared across
+    # q3/q5/q10, vs the per-query \textsc{Mat-View} (S2).
+    6: r"\textsc{Mat-View} (shared)",
 }
 
 def _query_title(binary: str) -> str:
@@ -414,6 +423,7 @@ Q10_METHOD_TO_STRUCT = {
     "mi_acol_preagg":       33,
     "mi_acoli_preagg":      33,
     "base_hash_join":       4,
+    "shared_view":          6,   # S6 shared COL union view (q10; q3/q5 too)
 }
 # Per-query bar order for the headline panels. Defaults to
 # PAPER_LEGEND_ORDER (4 bars) when the query is not listed.
@@ -421,7 +431,14 @@ Q10_METHOD_TO_STRUCT = {
 # so the two Mat-View bars sit together and the two Merged-Idx bars
 # sit together at the right.
 PAPER_PANEL_STRUCTURES = {
-    "q10":  [4, 1, 2, 22, 3, 33],
+    # q3/q5 gain S6 (shared COL view), slotted between the per-query Mat-View
+    # (2) and Merged-Idx (3) — the "shared view vs shared MI" adjacency.
+    "q3":   [4, 1, 2, 6, 3],
+    "q5":   [4, 1, 2, 6, 3],
+    # q10 also gains S6, grouped with the Mat-View cluster (naive 2, partial-
+    # agg 22, shared 6) ahead of the Merged-Idx cluster (3, 33). q10i has no
+    # S6 (TPCHi out of scope for the shared view).
+    "q10":  [4, 1, 2, 22, 6, 3, 33],
     "q10i": [4, 1, 2, 22, 3, 33],
 }
 PAPER_HEADLINE_BG = 2                              # paper's contention cohort

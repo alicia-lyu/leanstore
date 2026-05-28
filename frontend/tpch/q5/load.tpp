@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "../q3_family/view_loaders.hpp"
+#include "../tpch_family/shared_view_loader.hpp"
 
 DECLARE_int32(storage_structure);
 
@@ -127,7 +128,8 @@ Q5Workload<Backend>::Q5Workload(
     typename Backend::template MergedAdapter<customer_coli_t, orders_coli_t,
                                              lineitem_col_t>& merged_col,
     typename Backend::template Adapter<orders_coli_t>&   split_orders,
-    typename Backend::template Adapter<lineitem_col_t>& split_lineitem)
+    typename Backend::template Adapter<lineitem_col_t>& split_lineitem,
+    typename Backend::template Adapter<col_shared_view_t>& shared_view)
     : tpch(tpch),
       customer(customer),
       orders(orders),
@@ -137,6 +139,7 @@ Q5Workload<Backend>::Q5Workload(
       region(region),
       col(customer, orders, lineitem, merged_col, split_orders, split_lineitem),
       pipeline_view(pipeline_view),
+      shared_view(shared_view),
       params(Params::defaults())
 {
 }
@@ -151,6 +154,10 @@ void Q5Workload<Backend>::populate_secondaries()
    populate_q5_view<Backend>(customer, nation, orders, lineitem, pipeline_view);  // S2
    col.populate_merged();   // S3: COL merged index
    // S4: base tables only — nothing to populate.
+   // S6: COL-family shared union view (standalone load only; in the vanilla
+   // family q3 is the canonical loader and writes it — q5 uses
+   // populate_view_only() there, which skips this so it's written once).
+   populate_col_shared_view<Backend>(col.merged_adapter(), shared_view);
 }
 
 template <typename Backend>
@@ -177,6 +184,7 @@ double Q5Workload<Backend>::get_size() const
       case 2: return base + pipeline_view.size();
       case 3: return base + col.get_merged_size();
       case 4: return base;
+      case 6: return base + shared_view.size();
       default: throw std::runtime_error("invalid --storage_structure");
    }
 }
