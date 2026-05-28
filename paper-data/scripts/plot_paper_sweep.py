@@ -934,6 +934,77 @@ def fig_paper_q10(data: SweepData) -> Optional[Path]:
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
+def fig_paper_tpch_vanilla(data: SweepData) -> Optional[Path]:
+    """2×3 grid of TPC-H vanilla-only headline results: rows = (B-tree,
+    LSM-tree), columns = (Q3, Q5, Q10). No Qxi variants. Q3/Q5 come
+    from the main headline frame; Q10 is spliced from its sibling tag
+    via ``_augment_with_q10``. Log y-axis throughout so Q10's giant
+    Mat-View / Base-Hash bars don't squash Q3/Q5's headline numbers.
+    """
+    queries = ["q3", "q5", "q10"]
+    backends = ["btree", "lsm"]
+    head_main = data.headline[data.headline["family"].eq("vanilla")
+                              & data.headline["tx"].eq("query")]
+    empty = pd.DataFrame(columns=data.headline.columns)
+    head_q10_parts: List[pd.DataFrame] = []
+    for b in backends:
+        p = _augment_with_q10(empty, data, b)
+        if not p.empty:
+            head_q10_parts.append(p)
+    head = pd.concat([head_main] + head_q10_parts, ignore_index=True) \
+        if head_q10_parts else head_main
+    if head.empty:
+        return None
+    ms_df = aggregate_ms_per_query(
+        head, group_cols=["binary", "cell", "structure", "bg"])
+
+    n_rows, n_cols = len(backends), len(queries)
+    fig, axes = plt.subplots(n_rows, n_cols,
+                             figsize=(2.1 * n_cols, 1.96 * n_rows),
+                             sharey=False, constrained_layout=True)
+    # Q3/Q5: linear y; Q10: log y (its Mat-View / Base-Hash bars are
+    # 100-1000× the partial-agg headline). Each panel keeps its own
+    # tick labels so the linear/log scales remain readable.
+    log_y_for = {"q3": False, "q5": False, "q10": True}
+    drew_any = False
+    legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
+    for r, backend in enumerate(backends):
+        for c, q in enumerate(queries):
+            panel_structs = PAPER_PANEL_STRUCTURES.get(q, PAPER_LEGEND_ORDER)
+            for s in panel_structs:
+                if s not in legend_structs:
+                    legend_structs.append(s)
+            binary = f"{q}_{backend}"
+            backend_label = "B-tree" if backend == "btree" else "LSM-tree"
+            title = f"{q.upper()} ({backend_label})"
+            drew = _paper_bar_panel(axes[r, c], ms_df, binary,
+                                    PAPER_HEADLINE_CELL,
+                                    show_ylabel=(c == 0),
+                                    structures=panel_structs,
+                                    title=title,
+                                    n_overflow=1,
+                                    log_y=log_y_for[q])
+            drew_any = drew_any or drew
+    if not drew_any:
+        plt.close(fig)
+        return None
+
+    # Don't share y-limits across panels — Q3/Q5 are linear (seconds in
+    # the tens) and Q10 is log (sub-second to ~hundreds). Show tick
+    # labels on every panel so each scale reads independently.
+    for r in range(n_rows):
+        for c in range(n_cols):
+            axes[r, c].tick_params(axis="y", labelleft=True)
+
+    _add_two_row_legend(fig, legend_structs, fontsize=13,
+                        bbox_main=(0.5, 1.20),
+                        bbox_variants=(0.5, 1.10))
+
+    name = data.paper_name("paper_tpch_vanilla")
+    dest = data.figures_root / "paper" / name
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
 def _memory_pressure_panel(ax, ms_df: pd.DataFrame, binary: str,
                            cells: Sequence[str], show_ylabel: bool) -> bool:
     """One panel of the memory-pressure / scale figure. Line plot across
@@ -1510,6 +1581,7 @@ FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     "paper_tpch_btree_memory": lambda d: fig_paper_memory_pressure(d, "btree", include_legend=True),
     "paper_tpch_lsm_memory":   lambda d: fig_paper_memory_pressure(d, "lsm",   include_legend=False),
     "paper_q10":             fig_paper_q10,
+    "paper_tpch_vanilla":    fig_paper_tpch_vanilla,
     "paper_geo_condensed":   fig_paper_geo_condensed,
     # Diagnostics exploration — per-query 1×4 rows. btree gets the
     # full LeanStore counter family; lsm gets RocksDB SST timing
@@ -1538,6 +1610,7 @@ MODE_FIGURES: Dict[str, List[str]] = {
                             "paper_tpch_btree_memory",
                             "paper_tpch_lsm_memory",
                             "paper_q10",
+                            "paper_tpch_vanilla",
                             "paper_geo_condensed"],
     "diagnostics-explore": DIAG_EXPLORE_FIGS,
     "ssd-diagnostics":     ["diag_ssd_lsm_breakdown",
