@@ -51,11 +51,51 @@ the 5L sweep / regen q10.pdf" — completed by 60702452).
   substitution parameter" claim with evidence (currently a caveat in
   `paper-data/PAPER_EDITS.md` Edit 5).
 
-- **refresh_sales bg=2 `bg_txs` caveat (2026-05-27)** — commit aee6c31a.
-  Under the single time-balanced bg worker, S4 (all cells) and btree S1
-  (5H/5HH) un-rotate to 2 heavy cold scans, giving a misleadingly low
-  `bg_txs`. Noted limitation; candidate follow-up is a multi-worker bg
-  cohort for the refresh sweep.
+- **Per-query bg=2 cohort topology + un-rotation caveat (2026-05-27)**
+  — commits aee6c31a (refresh_sales bg=2 sweep), d4e06bfb
+  (refresh_sales cohort wiring), 9483d7c9 (q10/q10i no-cohort
+  fallback fix). Under the single time-balanced bg worker, any
+  structure whose foreground query is heavy enough to fill the time
+  slice on its own un-rotates to ~2 cold scans per 15 s, giving a
+  misleadingly low `bg_txs`. Per-query topology and where the
+  un-rotation bites:
+
+  - **Q3, Q5** — vanilla family cohort, 2-step (Q3 then Q5 at the
+    selected structure) plus heterogeneous base-table point-lookup
+    step (`register_vanilla_bg_steps_at` in
+    `frontend/tpch/tpch_vanilla_family.hpp:118`). S1–S4 only (no S5,
+    per PLAYBOOK soundness rule). Cleanly rotates at 5L; un-rotation
+    status at 5H/5HH not yet characterised on Linux.
+  - **Q3I, Q5I** — invoice-extended family cohort, 2-step (Q3I +
+    Q5I) at S1–S4; the `Structure==5` specialisation drops Q5I so
+    the cohort is Q3I-only there (Q5I has no aCOLI variant — see
+    `frontend/tpch/tpchi_family.hpp:86–113`). Bg=2 rotation
+    behaviour at 5L/5H/5HH on Linux pending.
+  - **Q10, Q10I** — no family cohort registered; the no-cohort
+    fallback runs a heterogeneous base-table point-lookup stream on
+    BG_WORKER and re-runs the foreground query on MAIN_WORKER (1:1
+    wall-clock, fix 9483d7c9). At 5L: fast structures (S1/S3/S5)
+    see ~40k–64k `bg_txs` from the point-lookup stream; slow
+    structures (S2, S4) see `bg_txs` ≈ 2 because one query fills
+    the 15 s window. Same shape as refresh_sales S4 / btree S1.
+  - **Q12** — same no-cohort fallback path as Q10/Q10I (no
+    `register_*_bg_steps` call from
+    `frontend/tpch/q12/executable_rocksdb.cpp`). Bg=2 perf not yet
+    collected on Linux; expect the same heavy-structure un-rotation
+    when any structure runs >7.5 s per call.
+  - **refresh_sales** — RF1/RF2 update workload with a concurrent
+    read-only worker reusing the vanilla Q3+Q5 cohort
+    (`register_vanilla_bg_steps<B>(... q3, q5, structure,
+    FLAGS_bg_point_lookups)`, commit d4e06bfb). S4 (all cells) and
+    btree S1 (5H/5HH) un-rotate to 2 heavy cold scans — the
+    original entry's anchor case.
+
+  Pending: (1) re-run the existing images with a multi-worker bg
+  cohort (≥ N=cohort-size workers, no time-balance) to lift
+  `bg_txs` at the un-rotation cases; (2) once Linux perf data lands
+  for Q3/Q5/Q3I/Q5I at 5H/5HH, fold any new un-rotation observations
+  back into this list. Candidate follow-up applies across the whole
+  list, not just refresh_sales.
 
 *(All Q5I bring-up items closed 2026-05-17 — see
 [`LINUX_HISTORY.md`](LINUX_HISTORY.md). Q5 first Linux perf sweep
