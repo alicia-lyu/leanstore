@@ -35,6 +35,10 @@ dram                	:= 0.1
 # matches the historical hardcoded value; bump per Linux node to fill RAM.
 # See LINUX_SETUP.md for per-host recommendations.
 load_dram               := 8
+# CRM worker count. Default 2 covers single-foreground workloads. bg=2 with
+# the 3-query cohort needs >=5 (MAIN + BG_LOOKUP_WORKER + 3 cohort workers);
+# bump on the make command line: `make ... bg_query_thread=true worker_threads=5`.
+worker_threads          ?= 2
 scale 			    	:= 15
 tentative_skip_bytes	:= 0 # do no tentative skip bytes
 bgw_pct 		  		:= 0 # background write percentage (TPC-H per-query binaries only; pinned to 0 by upstream race)

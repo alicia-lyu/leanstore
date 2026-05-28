@@ -9,6 +9,26 @@ actionable.
 
 ## Active
 
+- **5L bg=2 sweep: `--param_seed=1,2` reps pending (2026-05-28)** —
+  the first paper-sweep run after the family-image refactor (commits
+  354dc7c4 → 1e8bd47f) covers btrees only at the 5L cell with
+  `--param_seed=0` (single rep). Reps 1 and 2 (rotated parameters
+  per `q3_family/params.hpp` PARAM_TABLE) are deferred until the
+  LSM-side recover path is fixed and per-rep parameters can run
+  on both backends symmetrically. Until then, single-rep results
+  cannot show the rep-to-rep variance the paper's headline cells
+  use to derive median + IQR; treat seed=0 as a smoke / signal
+  pass, not the publishable figure.
+
+- **LSM recover-from-image not set up properly (2026-05-28)** — the
+  16-image per-Sx reload completed successfully on disk
+  (`/mnt/ssd/tpch_{lsm,btree}_S{1..4}/$(scale)` and tpchi
+  equivalents), but the LSM run path doesn't restore from the
+  persisted image the way the btree path does; recovering forces
+  a full re-load each run, wasting hours per sweep. Diagnostic +
+  fix in a worktree branch; the btree sweep can proceed in the
+  meantime since btree recover works.
+
 - **No `latency.csv` from any binary (2026-05-23)** — **DEFERRED to
   next project (2026-05-23)**: btree binaries emit `cpu/bm/cr/dt.csv`
   but no `latency.csv`; LSM emits none of them. Analyzer no longer

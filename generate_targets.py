@@ -26,7 +26,7 @@ shared_flags: dict[str, str] = {
     "optimistic_scan": "false",
     "pp_threads": "1",
     "csv_truncate": "false",
-    "worker_threads": "2"
+    "worker_threads": "$(worker_threads)"
 }
 # defined in the Makefile
 NUMJONS_ENV: str = "$(NUMJOBS)"
