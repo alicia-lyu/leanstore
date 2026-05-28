@@ -152,18 +152,27 @@ double RocksDB::get_size(ColumnFamilyHandle* cf_handle, const std::string& name)
    if (auto it = cf_size_cache.find(cf_handle); it != cf_size_cache.end()) {
       return it->second;
    }
-   // compact so that every experiment starts with a clean slate for fair comparison
-   std::cout << "Compacting " << name << "..." << std::flush;
-   rocksdb::CompactRangeOptions cr_options;
-   cr_options.exclusive_manual_compaction = true;
-   cr_options.change_level = true;
-   cr_options.target_level = -1;  // force compaction to the bottommost level
-   cr_options.allow_write_stall = true;
-   cr_options.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
-   tx_db->CompactRange(cr_options, cf_handle, nullptr, nullptr);
-   rocksdb::WaitForCompactOptions wfc_options;
-   tx_db->WaitForCompact(wfc_options);
-   std::cout << " done." << std::endl;
+   // Compact to bottommost level only on the LOAD path so every experiment
+   // starts with a clean slate for fair size comparison. On the RECOVER
+   // path the image was already compacted at load time and no writes
+   // happen during read-only experiments, so the existing SST layout IS
+   // the fair-comparison state — skip the forced compaction. Each
+   // bottommost compaction at SF=3850 takes O(minutes) per CF and burns
+   // the entire sweep budget on shutdown work that produces identical
+   // size numbers to what the load path already wrote.
+   if (!FLAGS_recover) {
+      std::cout << "Compacting " << name << "..." << std::flush;
+      rocksdb::CompactRangeOptions cr_options;
+      cr_options.exclusive_manual_compaction = true;
+      cr_options.change_level = true;
+      cr_options.target_level = -1;  // force compaction to the bottommost level
+      cr_options.allow_write_stall = true;
+      cr_options.bottommost_level_compaction = rocksdb::BottommostLevelCompaction::kForce;
+      tx_db->CompactRange(cr_options, cf_handle, nullptr, nullptr);
+      rocksdb::WaitForCompactOptions wfc_options;
+      tx_db->WaitForCompact(wfc_options);
+      std::cout << " done." << std::endl;
+   }
 
    std::string total_sstables_size;  // kTotalSstFilesSize
    tx_db->GetProperty(cf_handle, "rocksdb.total-sst-files-size", &total_sstables_size);

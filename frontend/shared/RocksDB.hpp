@@ -115,10 +115,29 @@ struct RocksDB {
    {
       std::cout << "RocksDB::~RocksDB() ";
       if (!FLAGS_persist) {
-         std::cout << "Obsolete. Always persisting rocksdb." << std::endl;
+         // Read-only / recover-only run (--persist_file defaults to
+         // "./leanstore.json" → FLAGS_persist=false). Skip the costly
+         // Flush + WaitForCompact + close_db: at multi-GB scale factors
+         // these take *minutes* even when no writes occurred, because
+         // they materialise the memtables, sync the WAL, and pull in any
+         // pending background compactions. For the sweep harness this
+         // burned the entire compute budget on shutdown work the run
+         // didn't need. Closing via the regular DB destructor (delete
+         // tx_db) flushes WAL implicitly and respects RocksDB's normal
+         // shutdown contract — fine for read-only experiments.
+         std::cout << "Recover-only mode — skipping flush + compact." << std::endl;
+         for (ColumnFamilyHandle* cf_handle : cf_handles) {
+            Status s = tx_db->DestroyColumnFamilyHandle(cf_handle);
+            assert(s.ok());
+         }
+         delete tx_db;
+         tx_db = nullptr;
+         return;
       }
       std::cout << "Waiting for compaction and flush..." << std::endl;
-      // Flush and sync WAL
+      // Flush and sync WAL — necessary only on the persist (load) path so
+      // the on-disk image is in a clean, recoverable state for subsequent
+      // --recover runs.
       rocksdb::FlushOptions fo;
       fo.wait = true;
       Status s_flush = tx_db->Flush(fo, cf_handles);
