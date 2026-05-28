@@ -1650,6 +1650,43 @@ def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# Refresh-plotter shims
+# ---------------------------------------------------------------------------
+#
+# The refresh figures have their own data shapes and standalone plotters
+# (plot_refresh_lsm_vs_btree.py, plot_refresh_sales.py). These thin
+# wrappers let --all in this script dispatch to their main() functions
+# so every diagrams.yaml entry is reachable from a single CLI.
+
+def _refresh_shim(script_name: str, diagram_name: str) -> Optional[Path]:
+    """Invoke a refresh standalone script's main() with --diagram <name>."""
+    import importlib
+    import sys as _sys
+    old_argv = _sys.argv[:]
+    _sys.argv = [script_name, "--diagram", diagram_name]
+    try:
+        mod = importlib.import_module(script_name.replace(".py", ""))
+        mod.main()
+    except SystemExit:
+        pass
+    except Exception as e:
+        print(f"[plotter] ERROR in {script_name}: {e}", file=_sys.stderr)
+        return None
+    finally:
+        _sys.argv = old_argv
+    # Return the primary output path (stem only; _save handles suffix).
+    return output_path(diagram_name).with_suffix(".pdf")
+
+
+def _fig_refresh_lsm_vs_btree(data: SweepData) -> Optional[Path]:
+    return _refresh_shim("plot_refresh_lsm_vs_btree", data.name)
+
+
+def _fig_refresh_sales(data: SweepData) -> Optional[Path]:
+    return _refresh_shim("plot_refresh_sales", data.name)
+
+
+# ---------------------------------------------------------------------------
 # Builder registry
 # ---------------------------------------------------------------------------
 #
@@ -1671,6 +1708,10 @@ BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     "paper_q10":               fig_paper_q10,
     "paper_tpch_vanilla":      fig_paper_tpch_vanilla,
     "paper_geo_condensed":     fig_paper_geo_condensed,
+    # Refresh figures — dispatched to the standalone refresh plotters.
+    # Both builder names are used by diagrams.yaml entries.
+    "refresh_lsm_vs_btree":    _fig_refresh_lsm_vs_btree,
+    "refresh_sales":           _fig_refresh_sales,
     # Diagnostics — invoked via --diag-tag, not via YAML diagrams.
     "diag_btree_llc_miss":      fig_diag_btree_llc_miss,
     "diag_btree_bm_rounds":     fig_diag_btree_bm_rounds,

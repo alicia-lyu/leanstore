@@ -44,7 +44,7 @@ diagrams:
     builder: paper_tpch_row_lsm
   refresh_5L_pair_latency:
     sources: [2026-05-25-refresh-5L-bg2-ssd]
-    builder: refresh_pair_latency
+    builder: refresh_sales
   refresh_lsm_vs_btree:
     sources:
       - 2026-05-25-refresh-5L-bg2-ssd   # 5L
