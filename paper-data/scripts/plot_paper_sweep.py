@@ -2,13 +2,25 @@
 """Paper-data plotter for the LeanStore sweep.
 
 Consumes the four summary CSVs emitted by ``scripts/analyze_paper_sweep.py``
-under ``paper-data/<tag>/summary/`` and produces a directory of paper-ready
-figures (PDF + PNG sibling) under ``paper-data/<tag>/figures/``. See
+under ``paper-data/<tag>/summary/`` and produces paper-ready figures
+(PDF + PNG sibling) under ``paper-data/diagrams/``. See
 ``scripts/PLOTTING.md`` for the figure catalog and design notes.
+
+Each diagram is declared in ``paper-data/diagrams.yaml`` as a named entry
+pointing at one or more sweep tag dirs. The plotter reads all sources,
+concatenates their headline CSVs (tagging each row with ``_source_tag``),
+and passes the merged frame to the named builder function.
+
+CLI:
+  --diagram <name>[,<name>,...]   build specific diagram(s) by YAML name
+  --all                           build every diagram in diagrams.yaml
+  --diag-tag <tag>                build diagnostics figures for a single sweep tag
+  --format <pdf|png|svg|pgf>      primary output format (pdf also emits PNG)
 
 Schema-driven: every series, color, and label is derived from the CSV
 column values, not hardcoded against a particular sweep matrix. Adding
-a new figure is a single function added to ``FIGURE_BUILDERS``.
+a new figure is four steps: write builder, register in ``BUILDERS``,
+add YAML entry, add catalog row in PLOTTING.md.
 """
 
 from __future__ import annotations
@@ -34,6 +46,10 @@ import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import yaml
+
+from _diagram_metadata import (
+    load_metadata, sources_for, output_path, DIAGRAMS_OUTPUT_DIR,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +161,13 @@ CELL_SECONDARY_GIB = {"c0": 5.0, "c1": 2.0, "c2": 0.5, "c3": 5.0}
 
 @dataclass
 class SweepData:
-    tag: str
+    # ``name`` is the diagram name from diagrams.yaml (also the output stem).
+    # ``source_tags`` is the list of tag strings that fed this diagram.
+    # ``summary_root`` points to the primary tag's summary/ for the diag path.
+    # ``figures_root`` is always paper-data/diagrams/ for paper builders, or
+    # paper-data/<tag>/figures/ for the --diag-tag path.
+    name: str
+    source_tags: List[str]
     summary_root: Path
     figures_root: Path
     headline: pd.DataFrame
@@ -156,9 +178,15 @@ class SweepData:
     disk: Optional[str] = None  # 'hdd' / 'ssd' / None (legacy unmarked)
 
     @property
+    def tag(self) -> str:
+        """Primary source tag — used in footers and legacy callers."""
+        return self.source_tags[0] if self.source_tags else self.name
+
+    @property
     def footer(self) -> str:
         m = self.manifest
-        parts = [f"tag {self.tag}"]
+        tag_part = " + ".join(self.source_tags)
+        parts = [f"tag {tag_part}"]
         for k in ("commit_sha", "host", "cells", "families"):
             v = m.get(k)
             if v:
@@ -168,8 +196,13 @@ class SweepData:
         return "  |  ".join(parts)
 
     def paper_name(self, base: str) -> str:
-        """Suffix a paper-figure basename with disk media when known, so
-        SSD reruns don't silently overwrite the HDD baselines."""
+        """Return the diagram output stem. For paper builders the diagram
+        name from YAML is already the final filename, so ``base`` is
+        ignored and ``self.name`` is returned. For the legacy diag-tag
+        path (where ``name`` is the tag), fall back to appending the
+        disk suffix so diagnostic filenames stay stable."""
+        if self.figures_root == DIAGRAMS_OUTPUT_DIR:
+            return self.name
         return f"{base}_{self.disk}" if self.disk else base
 
 
@@ -212,47 +245,141 @@ def aggregate_ms_per_query(headline: pd.DataFrame,
     return out
 
 
-def load_sweep(tag: str, root: Path) -> SweepData:
-    summary = root / "summary"
-    figures = root / "figures"
-    figures.mkdir(parents=True, exist_ok=True)
-
-    def _read(name: str) -> pd.DataFrame:
+def _read_tag_csvs(tag_root: Path,
+                   tag: str) -> Dict[str, pd.DataFrame]:
+    """Read the four summary CSVs for one tag dir. Returns a dict keyed
+    by CSV name. Missing / empty files produce empty DataFrames."""
+    summary = tag_root / "summary"
+    result: Dict[str, pd.DataFrame] = {}
+    for name in ("headline.csv", "stats.csv", "inversions.csv",
+                 "diagnostics.csv"):
         p = summary / name
         if not p.exists() or p.stat().st_size == 0:
             print(f"[plotter] WARN: {p} missing or empty", file=sys.stderr)
-            return pd.DataFrame()
-        return pd.read_csv(p)
+            result[name] = pd.DataFrame()
+        else:
+            df = pd.read_csv(p)
+            df["_source_tag"] = tag
+            result[name] = df
+    return result
 
-    headline = _read("headline.csv")
-    stats = _read("stats.csv")
-    inversions = _read("inversions.csv")
-    diagnostics = _read("diagnostics.csv")
 
-    manifest: Dict[str, str] = {}
-    mfile = root / "manifest.yaml"
-    if mfile.exists():
-        try:
-            manifest = yaml.safe_load(mfile.read_text()) or {}
-        except yaml.YAMLError as e:
-            print(f"[plotter] WARN: couldn't parse manifest: {e}", file=sys.stderr)
+def _load_manifest(tag_root: Path, tag: str) -> Dict[str, str]:
+    mfile = tag_root / "manifest.yaml"
+    if not mfile.exists():
+        return {}
+    try:
+        return yaml.safe_load(mfile.read_text()) or {}
+    except yaml.YAMLError as e:
+        print(f"[plotter] WARN: couldn't parse manifest for {tag}: {e}",
+              file=sys.stderr)
+        return {}
 
-    # Disk-media tag (see scripts/mark_disk_media.py). Mode of the
-    # `disk` column across all summary CSVs; warn on mixed values.
-    disk: Optional[str] = None
+
+def _disk_from_dfs(*dfs: pd.DataFrame) -> Optional[str]:
     seen = set()
-    for df in (headline, stats, inversions, diagnostics):
+    for df in dfs:
         if not df.empty and "disk" in df.columns:
             seen.update(str(v) for v in df["disk"].dropna().unique())
-    if seen:
-        if len(seen) > 1:
-            print(f"[plotter] WARN: mixed disk media in {tag}: {sorted(seen)}",
-                  file=sys.stderr)
-        disk = sorted(seen)[0]
+    if not seen:
+        return None
+    if len(seen) > 1:
+        print(f"[plotter] WARN: mixed disk media across sources: {sorted(seen)}",
+              file=sys.stderr)
+    return sorted(seen)[0]
 
-    return SweepData(tag=tag, summary_root=summary, figures_root=figures,
-                     headline=headline, stats=stats, inversions=inversions,
-                     diagnostics=diagnostics, manifest=manifest, disk=disk)
+
+def load_diagram(name: str) -> SweepData:
+    """Load a named diagram from diagrams.yaml.
+
+    Reads all source tags, concatenates their summary CSVs (each row
+    tagged with ``_source_tag``), and returns a ``SweepData`` whose
+    ``figures_root`` points at ``paper-data/diagrams/``.
+
+    The primary tag's manifest supplies commit/host metadata. When
+    sources differ in commit SHA the footer shows ``commit varies``.
+    """
+    tag_paths = sources_for(name)
+    tags = [p.name for p in tag_paths]
+
+    all_headlines: List[pd.DataFrame] = []
+    all_stats: List[pd.DataFrame] = []
+    all_inversions: List[pd.DataFrame] = []
+    all_diagnostics: List[pd.DataFrame] = []
+
+    for tag, tag_root in zip(tags, tag_paths):
+        csvs = _read_tag_csvs(tag_root, tag)
+        all_headlines.append(csvs["headline.csv"])
+        all_stats.append(csvs["stats.csv"])
+        all_inversions.append(csvs["inversions.csv"])
+        all_diagnostics.append(csvs["diagnostics.csv"])
+
+    def _concat(frames: List[pd.DataFrame]) -> pd.DataFrame:
+        non_empty = [f for f in frames if not f.empty]
+        if not non_empty:
+            return pd.DataFrame()
+        return pd.concat(non_empty, ignore_index=True)
+
+    headline = _concat(all_headlines)
+    stats = _concat(all_stats)
+    inversions = _concat(all_inversions)
+    diagnostics = _concat(all_diagnostics)
+
+    # Primary tag provides the manifest; note diverging commit SHAs.
+    primary_manifest = _load_manifest(tag_paths[0], tags[0])
+    if len(tags) > 1:
+        commits = {t: _load_manifest(p, t).get("commit_sha", "")
+                   for t, p in zip(tags, tag_paths)}
+        unique_commits = set(v for v in commits.values() if v)
+        if len(unique_commits) > 1:
+            primary_manifest = dict(primary_manifest)
+            primary_manifest["commit_sha"] = "varies"
+
+    disk = _disk_from_dfs(headline, stats, inversions, diagnostics)
+
+    DIAGRAMS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    return SweepData(
+        name=name,
+        source_tags=tags,
+        summary_root=tag_paths[0] / "summary",
+        figures_root=DIAGRAMS_OUTPUT_DIR,
+        headline=headline,
+        stats=stats,
+        inversions=inversions,
+        diagnostics=diagnostics,
+        manifest=primary_manifest,
+        disk=disk,
+    )
+
+
+def load_sweep_for_diag(tag: str, root: Path) -> SweepData:
+    """Load a single sweep tag for diagnostics builders (--diag-tag path).
+
+    Unlike ``load_diagram``, this preserves the per-tag figures/ layout
+    (``figures_root = <root>/figures/``) so diagnostic outputs stay
+    co-located with the sweep they describe.
+    """
+    figures = root / "figures"
+    figures.mkdir(parents=True, exist_ok=True)
+    csvs = _read_tag_csvs(root, tag)
+    manifest = _load_manifest(root, tag)
+    headline = csvs["headline.csv"]
+    stats = csvs["stats.csv"]
+    inversions = csvs["inversions.csv"]
+    diagnostics = csvs["diagnostics.csv"]
+    disk = _disk_from_dfs(headline, stats, inversions, diagnostics)
+    return SweepData(
+        name=tag,
+        source_tags=[tag],
+        summary_root=root / "summary",
+        figures_root=figures,
+        headline=headline,
+        stats=stats,
+        inversions=inversions,
+        diagnostics=diagnostics,
+        manifest=manifest,
+        disk=disk,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -396,24 +523,11 @@ PAPER_TPCH_QUERIES = ["q3", "q5", "q3i", "q5i"]   # left-to-right panel order
 Q10_QUERY = "q10"
 Q10I_QUERY = "q10i"
 
-# Q10 / Q10I live in their own ad-hoc sibling tags (not in the standard
-# sweep matrix yet — see 2026-05-25-q10/manifest.yaml and
-# 2026-05-25-q10i/manifest.yaml). When rendering the headline row we
-# merge their rows in from these tags and keep only the canonical
-# method per structure (the per-order pre-aggregated view matches the
-# §5 narrative; the COL[I] walker is the standard MI path).
-# Genuine bg=2, 3-rep Q10/Q10I re-run (2026-05-26). Replaces the earlier
-# hand-ported bg=0 single-rep tags (2026-05-25-q10/q10i); both queries live in
-# this one combined tag now. The headline.csv carries genuine bg=2, so the
-# splice no longer relabels bg (see _augment_with_sibling).
-Q10_SIBLING_TAG  = "q10-q10i-bg2-5L-20260526-040738"
-Q10I_SIBLING_TAG = "q10-q10i-bg2-5L-20260526-040738"
-# Method → synthetic structure id. The naive per-lineitem view keeps
-# the canonical S2 (Mat-View) slot; the partial-aggregate variant goes
-# to id 22 so it draws as its own bar next to the naive Mat-View. S5
-# (`mi_acoli_preagg`) is paper-deferred and dropped here.
-# Q10I's MI walker is named `mi_coli_walk` (COLI MI) vs Q10's
-# `mi_col_walk` (COL MI); both map to S3.
+# Method → synthetic structure id for Q10/Q10I rows. The naive
+# per-lineitem view keeps the canonical S2 (Mat-View) slot; the
+# partial-aggregate variant goes to id 22. S5 (`mi_acoli_preagg`) is
+# paper-deferred and dropped. Q10I's MI walker is named `mi_coli_walk`
+# (COLI MI) vs Q10's `mi_col_walk` (COL MI); both map to S3.
 Q10_METHOD_TO_STRUCT = {
     "base_merge_join":      1,
     "pipeline_view":        2,
@@ -717,56 +831,6 @@ def _add_two_row_legend(fig, legend_structs: Sequence[int],
     fig.add_artist(second)
 
 
-def _augment_with_sibling(head: pd.DataFrame, data: SweepData,
-                          backend: str, *, sibling_tag: str,
-                          query: str, family: str) -> pd.DataFrame:
-    """Splice ad-hoc per-query rows from a sibling tag into a filtered
-    headline frame. The sibling carries multiple methods per S2/S3
-    (the A/B variants from a perf investigation); we keep only the
-    canonical method per structure (via ``Q10_METHOD_TO_STRUCT``) so
-    each panel has one bar per structure. No-op when the sibling isn't
-    reachable from this tag's root.
-
-    Q10 / Q10I currently only have SSD data, so we only splice them in
-    when the parent tag is SSD-tagged (otherwise the panel stays empty).
-    """
-    if data.disk and data.disk != "ssd":
-        return head
-    sibling = data.summary_root.parent.parent / sibling_tag \
-        / "summary" / "headline.csv"
-    if not sibling.exists():
-        return head
-    rows = pd.read_csv(sibling)
-    rows = rows[(rows["backend"] == backend) & (rows["tx"] == "query")
-                & (rows["query"] == query)
-                & (rows["method"].isin(Q10_METHOD_TO_STRUCT.keys()))]
-    if rows.empty:
-        return head
-    rows = rows.copy()
-    rows["structure"] = rows["method"].map(Q10_METHOD_TO_STRUCT).astype(int)
-    # The sibling tag now carries GENUINE bg=2, 3-rep data (the q10/q10i
-    # re-run under the paper protocol), so no bg relabel is needed — the
-    # rows already match _paper_bar_panel's bg==PAPER_HEADLINE_BG filter.
-    # (Historically this spliced bg=0 single-rep data and forced bg=2 here;
-    # that relabel was removed once the genuine bg=2 run landed.)
-    rows["family"] = family
-    common = [c for c in head.columns if c in rows.columns]
-    return pd.concat([head, rows[common]], ignore_index=True)
-
-
-def _augment_with_q10(head: pd.DataFrame, data: SweepData,
-                      backend: str) -> pd.DataFrame:
-    return _augment_with_sibling(head, data, backend,
-                                 sibling_tag=Q10_SIBLING_TAG,
-                                 query=Q10_QUERY, family="vanilla")
-
-
-def _augment_with_q10i(head: pd.DataFrame, data: SweepData,
-                       backend: str) -> pd.DataFrame:
-    return _augment_with_sibling(head, data, backend,
-                                 sibling_tag=Q10I_SIBLING_TAG,
-                                 query=Q10I_QUERY, family="tpchi")
-
 
 def fig_paper_tpch_row(data: SweepData, backend: str,
                        include_legend: bool) -> Optional[Path]:
@@ -777,6 +841,10 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     have axes line up panel-by-panel. ``include_legend=True`` attaches a
     single compact legend above the figure; the sibling figure should
     set it False so vertical space isn't duplicated.
+
+    Q10/Q10I rows come from the concatenated ``data.headline`` frame —
+    they are spliced in at load time when the diagram YAML lists the
+    Q10 sibling tag as a source, so no per-builder augmentation is needed.
     """
     assert backend in ("btree", "lsm")
     head = data.headline[data.headline["family"].isin(["vanilla", "tpchi"])
@@ -784,6 +852,14 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
                          & (data.headline["tx"] == "query")]
     if head.empty:
         return None
+    # Map method names to synthetic structure ids for Q10/Q10I rows that
+    # carry raw method strings rather than pre-assigned structure ints.
+    if "method" in head.columns:
+        mask = head["method"].isin(Q10_METHOD_TO_STRUCT)
+        if mask.any():
+            head = head.copy()
+            mapped = head.loc[mask, "method"].map(Q10_METHOD_TO_STRUCT)
+            head.loc[mask, "structure"] = mapped.astype(int)
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
     binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
@@ -846,30 +922,32 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
                             bbox_main=(0.5, 1.42),
                             bbox_variants=(0.5, 1.24),
                             bbox_main_no_variants=(0.5, 1.26))
-    name = data.paper_name(f"paper_tpch_{backend}_headline")
-    dest = data.figures_root / "paper" / name
+    dest = data.figures_root / data.paper_name(f"paper_tpch_{backend}_headline")
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
 def fig_paper_q10(data: SweepData) -> Optional[Path]:
-    """2×2 dedicated Q10/Q10I figure: rows = (Q10, Q10I); columns =
-    (B-tree, LSM-tree). Both queries carry an extra Mat-View bar
-    (naive per-lineitem vs pre-agg per-order) which makes a 5-bar
-    panel; keeping them out of the four-query headline row preserves
-    that row's regular 4-bar geometry.
+    """1×4 dedicated Q10/Q10I figure: Q10 btree | Q10 lsm | Q10i btree |
+    Q10i lsm. Both queries carry an extra Mat-View bar (naive per-lineitem
+    vs pre-agg per-order) which makes a 5-bar panel; keeping them out of
+    the four-query headline row preserves that row's regular 4-bar geometry.
+
+    Q10/Q10I rows arrive already in ``data.headline`` — the diagram YAML
+    lists the Q10 sibling tag as a source so load_diagram concatenates it.
     """
-    # Pull Q10 + Q10I rows from their respective sibling tags for both
-    # backends; the standard sweep tag doesn't carry either yet.
-    empty = pd.DataFrame(columns=data.headline.columns)
-    head_parts: List[pd.DataFrame] = []
-    for b in ("btree", "lsm"):
-        for augment in (_augment_with_q10, _augment_with_q10i):
-            p = augment(empty, data, b)
-            if not p.empty:
-                head_parts.append(p)
-    if not head_parts:
+    head = data.headline[
+        data.headline["query"].isin([Q10_QUERY, Q10I_QUERY])
+        & data.headline["tx"].eq("query")
+    ].copy()
+    # Map raw method strings to synthetic structure ids.
+    if "method" in head.columns:
+        mask = head["method"].isin(Q10_METHOD_TO_STRUCT)
+        if mask.any():
+            head.loc[mask, "structure"] = (
+                head.loc[mask, "method"].map(Q10_METHOD_TO_STRUCT).astype(int)
+            )
+    if head.empty:
         return None
-    head = pd.concat(head_parts, ignore_index=True)
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
 
@@ -929,30 +1007,29 @@ def fig_paper_q10(data: SweepData) -> Optional[Path]:
                         bbox_main=(0.5, 1.40),
                         bbox_variants=(0.5, 1.22))
 
-    name = data.paper_name("paper_q10")
-    dest = data.figures_root / "paper" / name
+    dest = data.figures_root / data.paper_name("paper_q10")
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
 def fig_paper_tpch_vanilla(data: SweepData) -> Optional[Path]:
     """2×3 grid of TPC-H vanilla-only headline results: rows = (B-tree,
-    LSM-tree), columns = (Q3, Q5, Q10). No Qxi variants. Q3/Q5 come
-    from the main headline frame; Q10 is spliced from its sibling tag
-    via ``_augment_with_q10``. Log y-axis throughout so Q10's giant
-    Mat-View / Base-Hash bars don't squash Q3/Q5's headline numbers.
+    LSM-tree), columns = (Q3, Q5, Q10). No Qxi variants. Q3/Q5/Q10 all
+    come from the concatenated ``data.headline`` frame — the diagram YAML
+    lists the Q10 sibling tag as a source so load_diagram splices it in.
+    Log y-axis throughout so Q10's giant Mat-View / Base-Hash bars don't
+    squash Q3/Q5's headline numbers.
     """
     queries = ["q3", "q5", "q10"]
     backends = ["btree", "lsm"]
-    head_main = data.headline[data.headline["family"].eq("vanilla")
-                              & data.headline["tx"].eq("query")]
-    empty = pd.DataFrame(columns=data.headline.columns)
-    head_q10_parts: List[pd.DataFrame] = []
-    for b in backends:
-        p = _augment_with_q10(empty, data, b)
-        if not p.empty:
-            head_q10_parts.append(p)
-    head = pd.concat([head_main] + head_q10_parts, ignore_index=True) \
-        if head_q10_parts else head_main
+    head = data.headline[data.headline["family"].eq("vanilla")
+                         & data.headline["tx"].eq("query")].copy()
+    # Map method → structure for Q10 rows.
+    if "method" in head.columns:
+        mask = head["method"].isin(Q10_METHOD_TO_STRUCT)
+        if mask.any():
+            head.loc[mask, "structure"] = (
+                head.loc[mask, "method"].map(Q10_METHOD_TO_STRUCT).astype(int)
+            )
     if head.empty:
         return None
     ms_df = aggregate_ms_per_query(
@@ -1000,8 +1077,7 @@ def fig_paper_tpch_vanilla(data: SweepData) -> Optional[Path]:
                         bbox_main=(0.5, 1.20),
                         bbox_variants=(0.5, 1.10))
 
-    name = data.paper_name("paper_tpch_vanilla")
-    dest = data.figures_root / "paper" / name
+    dest = data.figures_root / data.paper_name("paper_tpch_vanilla")
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
@@ -1081,8 +1157,7 @@ def fig_paper_memory_pressure(data: SweepData, backend: str,
         fig.legend(handles=handles, loc="upper center", ncol=4,
                    fontsize=8, bbox_to_anchor=(0.5, 1.10),
                    frameon=False, columnspacing=1.5, handletextpad=0.4)
-    name = data.paper_name(f"paper_tpch_{backend}_memory_pressure")
-    dest = data.figures_root / "paper" / name
+    dest = data.figures_root / data.paper_name(f"paper_tpch_{backend}_memory_pressure")
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
@@ -1159,7 +1234,7 @@ def fig_paper_geo_condensed(data: SweepData) -> Optional[Path]:
     fig.legend(handles=handles, loc="upper center", ncol=4,
                fontsize=6, bbox_to_anchor=(0.5, 1.04),
                frameon=False, columnspacing=1.2, handletextpad=0.4)
-    dest = data.figures_root / "paper" / data.paper_name("paper_geo_condensed")
+    dest = data.figures_root / data.paper_name("paper_geo_condensed")
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
@@ -1574,76 +1649,83 @@ def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
 # CLI
 # ---------------------------------------------------------------------------
 
-FIGURE_BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
+# ---------------------------------------------------------------------------
+# Builder registry
+# ---------------------------------------------------------------------------
+#
+# BUILDERS maps the builder name (used in diagrams.yaml's ``builder:``
+# field) to a callable that accepts a ``SweepData`` and returns an
+# ``Optional[Path]``.
+#
+# Paper-mode builders produce output under paper-data/diagrams/; the
+# diagram name is the output stem. Diagnostics builders are invoked via
+# the separate --diag-tag path and output under <tag>/figures/diagnostics/.
+
+BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     # Paper-mode builders (typeset-ready, bg=2 only, S1-S4 only).
-    "paper_tpch_btree":      lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
-    "paper_tpch_lsm":        lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
-    "paper_tpch_btree_memory": lambda d: fig_paper_memory_pressure(d, "btree", include_legend=True),
-    "paper_tpch_lsm_memory":   lambda d: fig_paper_memory_pressure(d, "lsm",   include_legend=False),
-    "paper_q10":             fig_paper_q10,
-    "paper_tpch_vanilla":    fig_paper_tpch_vanilla,
-    "paper_geo_condensed":   fig_paper_geo_condensed,
-    # Diagnostics exploration — per-query 1×4 rows. btree gets the
-    # full LeanStore counter family; lsm gets RocksDB SST timing
-    # surrogates (only metrics that actually populate per backend).
-    "diag_btree_llc_miss":    fig_diag_btree_llc_miss,
-    "diag_btree_bm_rounds":   fig_diag_btree_bm_rounds,
-    "diag_btree_dt_split":    fig_diag_btree_dt_split,
-    "diag_lsm_sst_read":      fig_diag_lsm_sst_read,
-    "diag_lsm_sst_compaction": fig_diag_lsm_sst_compaction,
-    "diag_lsm_cpu_cycles":    fig_diag_lsm_cpu_cycles,
-    # SSD-only single-cell diagnostics (bar grids, not line plots).
-    "diag_ssd_lsm_breakdown":      fig_diag_ssd_lsm_breakdown,
-    "diag_ssd_btree_cache_profile": fig_diag_ssd_btree_cache_profile,
-    "diag_ssd_lsm_sst_path":       fig_diag_ssd_lsm_sst_path,
+    # Registered under the names used in diagrams.yaml's builder: field.
+    "paper_tpch_row_btree":    lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
+    "paper_tpch_row_lsm":      lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
+    "paper_tpch_memory_btree": lambda d: fig_paper_memory_pressure(d, "btree", include_legend=True),
+    "paper_tpch_memory_lsm":   lambda d: fig_paper_memory_pressure(d, "lsm",   include_legend=False),
+    "paper_q10":               fig_paper_q10,
+    "paper_tpch_vanilla":      fig_paper_tpch_vanilla,
+    "paper_geo_condensed":     fig_paper_geo_condensed,
+    # Diagnostics — invoked via --diag-tag, not via YAML diagrams.
+    "diag_btree_llc_miss":      fig_diag_btree_llc_miss,
+    "diag_btree_bm_rounds":     fig_diag_btree_bm_rounds,
+    "diag_btree_dt_split":      fig_diag_btree_dt_split,
+    "diag_lsm_sst_read":        fig_diag_lsm_sst_read,
+    "diag_lsm_sst_compaction":  fig_diag_lsm_sst_compaction,
+    "diag_lsm_cpu_cycles":      fig_diag_lsm_cpu_cycles,
+    "diag_ssd_lsm_breakdown":       fig_diag_ssd_lsm_breakdown,
+    "diag_ssd_btree_cache_profile":  fig_diag_ssd_btree_cache_profile,
+    "diag_ssd_lsm_sst_path":        fig_diag_ssd_lsm_sst_path,
 }
 
-# Curated subsets selectable via --mode. Legacy default-mode builders
-# (2×4 headline + contention + inversions + heatmap + duration + 2×2
-# diagnostics) have moved to scripts/archive/legacy_figures.py.
-DIAG_EXPLORE_FIGS = [
+# Keep FIGURE_BUILDERS as an alias so any external code that imported it
+# directly (e.g. experiments/run_paper_sweep.sh subshell imports) keeps
+# working without an immediate update.
+FIGURE_BUILDERS = BUILDERS
+
+DIAG_BUILDERS = [
     "diag_btree_llc_miss", "diag_btree_bm_rounds", "diag_btree_dt_split",
     "diag_lsm_sst_read", "diag_lsm_sst_compaction", "diag_lsm_cpu_cycles",
+    "diag_ssd_lsm_breakdown", "diag_ssd_btree_cache_profile",
+    "diag_ssd_lsm_sst_path",
 ]
-MODE_FIGURES: Dict[str, List[str]] = {
-    "paper-figures":       ["paper_tpch_btree", "paper_tpch_lsm",
-                            "paper_tpch_btree_memory",
-                            "paper_tpch_lsm_memory",
-                            "paper_q10",
-                            "paper_tpch_vanilla",
-                            "paper_geo_condensed"],
-    "diagnostics-explore": DIAG_EXPLORE_FIGS,
-    "ssd-diagnostics":     ["diag_ssd_lsm_breakdown",
-                            "diag_ssd_btree_cache_profile",
-                            "diag_ssd_lsm_sst_path"],
-    "all":                 list(FIGURE_BUILDERS.keys()),
-}
-# 'default' is an alias for paper-figures so the runner script
-# (experiments/run_paper_sweep.sh) keeps working without a flag.
-MODE_FIGURES["default"] = MODE_FIGURES["paper-figures"]
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--tag", required=True, help="sweep tag, e.g. 2026-05-18-a")
-    p.add_argument("--root", type=Path, default=None,
-                   help="paper-data/<tag>/ root (default: paper-data/<tag> relative to cwd)")
-    p.add_argument("--mode", default="default",
-                   choices=list(MODE_FIGURES.keys()),
-                   help="curated figure subset: default (sweep diagnostics), "
-                        "paper-figures (typeset-ready), diagnostics-explore "
-                        "(6-panel metric grids + diagnostics_paper.csv), all")
-    p.add_argument("--figures", default=None,
-                   help="comma list of figure names to emit; overrides --mode")
+
+    # Paper-diagram mode: reads sources from diagrams.yaml.
+    diagram_group = p.add_mutually_exclusive_group()
+    diagram_group.add_argument(
+        "--diagram", default=None,
+        metavar="NAME[,NAME,...]",
+        help="build specific diagram(s) by YAML name, e.g. paper_tpch_btree_headline")
+    diagram_group.add_argument(
+        "--all", action="store_true",
+        help="build every diagram listed in diagrams.yaml")
+
+    # Diagnostics mode: keeps the old per-sweep-tag layout.
+    p.add_argument("--diag-tag", default=None,
+                   metavar="TAG",
+                   help="build diagnostics figures for a single sweep tag "
+                        "(output goes to paper-data/<tag>/figures/diagnostics/)")
+    p.add_argument("--diag-root", type=Path, default=None,
+                   help="paper-data/<tag>/ root for --diag-tag "
+                        "(default: paper-data/<tag> relative to cwd)")
+    p.add_argument("--diag-figures", default=None,
+                   metavar="NAME[,NAME,...]",
+                   help="comma list of diag figure names; default = all diag builders")
+
     p.add_argument("--format", default="pdf", choices=["pdf", "png", "svg", "pgf"],
                    help="primary output format; pdf also emits a PNG sibling")
     args = p.parse_args()
 
-    root = args.root or (Path.cwd() / "paper-data" / args.tag)
-    if not root.exists():
-        print(f"[plotter] error: {root} does not exist", file=sys.stderr)
-        return 1
     if args.format == "pgf":
         matplotlib.rcParams.update({
             "pgf.texsystem": "pdflatex",
@@ -1652,37 +1734,80 @@ def main() -> int:
             "pgf.rcfonts": False,
         })
 
-    data = load_sweep(args.tag, root)
-    if args.figures:
-        names = [n.strip() for n in args.figures.split(",") if n.strip()]
-        unknown = [n for n in names if n not in FIGURE_BUILDERS]
-        if unknown:
-            print(f"[plotter] unknown figure(s): {unknown}", file=sys.stderr)
+    # --- diagnostics path ---
+    if args.diag_tag:
+        root = args.diag_root or (Path.cwd() / "paper-data" / args.diag_tag)
+        if not root.exists():
+            print(f"[plotter] error: {root} does not exist", file=sys.stderr)
             return 1
+        data = load_sweep_for_diag(args.diag_tag, root)
+        diag_names = (
+            [n.strip() for n in args.diag_figures.split(",") if n.strip()]
+            if args.diag_figures else DIAG_BUILDERS
+        )
+        unknown = [n for n in diag_names if n not in BUILDERS]
+        if unknown:
+            print(f"[plotter] unknown diag figure(s): {unknown}", file=sys.stderr)
+            return 1
+        emitted: List[Path] = []
+        for name in diag_names:
+            try:
+                out = BUILDERS[name](data)
+            except Exception as e:
+                print(f"[plotter] ERROR while building {name}: {e}",
+                      file=sys.stderr)
+                continue
+            if out is None:
+                print(f"[plotter] {name}: skipped (no data)", file=sys.stderr)
+            else:
+                emitted.append(out)
+                print(f"[plotter] wrote {out}", file=sys.stderr)
+        print(f"[plotter] done: {len(emitted)} diag figures in {data.figures_root}",
+              file=sys.stderr)
+        return 0
+
+    # --- paper diagram path ---
+    if not args.diagram and not args.all:
+        p.error("specify --diagram <name>[,name,...] or --all "
+                "(or --diag-tag <tag> for per-sweep diagnostics)")
+
+    meta = load_metadata()
+    if args.all:
+        diagram_names = list(meta.keys())
     else:
-        names = MODE_FIGURES[args.mode]
+        diagram_names = [n.strip() for n in args.diagram.split(",") if n.strip()]
+        unknown = [n for n in diagram_names if n not in meta]
+        if unknown:
+            print(f"[plotter] unknown diagram(s) in YAML: {unknown}",
+                  file=sys.stderr)
+            return 1
 
-    # Side effect: diagnostics-explore mode also writes the per-cell
-    # summary CSV so the writer can table-ify any metric without
-    # rerunning the analyzer.
-    if args.mode == "diagnostics-explore" and not args.figures:
-        csv_path = emit_diag_summary_csv(data)
-        if csv_path:
-            print(f"[plotter] wrote {csv_path}", file=sys.stderr)
-
-    emitted: List[Path] = []
-    for name in names:
+    emitted = []
+    for diag_name in diagram_names:
+        builder_name = meta[diag_name].get("builder", "")
+        if builder_name not in BUILDERS:
+            print(f"[plotter] WARN: no builder '{builder_name}' for "
+                  f"diagram '{diag_name}' — skipped", file=sys.stderr)
+            continue
         try:
-            out = FIGURE_BUILDERS[name](data)
+            data = load_diagram(diag_name)
         except Exception as e:
-            print(f"[plotter] ERROR while building {name}: {e}", file=sys.stderr)
+            print(f"[plotter] ERROR loading diagram '{diag_name}': {e}",
+                  file=sys.stderr)
+            continue
+        try:
+            out = BUILDERS[builder_name](data)
+        except Exception as e:
+            print(f"[plotter] ERROR while building '{diag_name}' "
+                  f"(builder={builder_name}): {e}", file=sys.stderr)
             continue
         if out is None:
-            print(f"[plotter] {name}: skipped (no data)", file=sys.stderr)
+            print(f"[plotter] {diag_name}: skipped (no data)", file=sys.stderr)
         else:
             emitted.append(out)
             print(f"[plotter] wrote {out}", file=sys.stderr)
-    print(f"[plotter] done: {len(emitted)} figures in {data.figures_root}",
+
+    print(f"[plotter] done: {len(emitted)} diagrams in {DIAGRAMS_OUTPUT_DIR}",
           file=sys.stderr)
     return 0
 

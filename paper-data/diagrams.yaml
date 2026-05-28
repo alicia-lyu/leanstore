@@ -1,0 +1,59 @@
+# Paper diagram declarations.
+#
+# Each entry: diagram name → list of tag dirs feeding it. The first entry
+# is the "primary" tag (footer/manifest base); the rest are spliced in.
+# The diagram name is the output filename stem under paper-data/diagrams/.
+# The builder field names a registered builder function in the plotter.
+#
+# Tag ordering for refresh_lsm_vs_btree: sources[0]=5L, [1]=5H, [2]=5HH.
+# Tag ordering for refresh_sales: sources[0]=primary, [1]=prewarm9, [2]=dbtoaster.
+
+diagrams:
+  paper_tpch_btree_headline:
+    sources:
+      - 2026-05-24-a-ssd
+      - q10-q10i-bg2-5L-20260526-040738   # Q10/Q10I columns
+    builder: paper_tpch_row_btree
+  paper_tpch_lsm_headline:
+    sources:
+      - 2026-05-24-a-ssd
+      - q10-q10i-bg2-5L-20260526-040738   # Q10/Q10I columns
+    builder: paper_tpch_row_lsm
+  paper_tpch_btree_memory:
+    sources: [2026-05-24-a-ssd]
+    builder: paper_tpch_memory_btree
+  paper_tpch_lsm_memory:
+    sources: [2026-05-24-a-ssd]
+    builder: paper_tpch_memory_lsm
+  paper_q10:
+    sources: [q10-q10i-bg2-5L-20260526-040738]
+    builder: paper_q10
+  paper_tpch_vanilla:
+    sources:
+      - 2026-05-24-a-ssd
+      - q10-q10i-bg2-5L-20260526-040738   # Q10 column
+    builder: paper_tpch_vanilla
+  paper_geo_condensed:
+    sources: [2026-05-18-b]
+    builder: paper_geo_condensed
+  paper_tpch_btree_headline_hdd:
+    sources: [2026-05-18-b]
+    builder: paper_tpch_row_btree
+  paper_tpch_lsm_headline_hdd:
+    sources: [2026-05-18-b]
+    builder: paper_tpch_row_lsm
+  refresh_5L_pair_latency:
+    sources: [2026-05-25-refresh-5L-bg2-ssd]
+    builder: refresh_pair_latency
+  refresh_lsm_vs_btree:
+    sources:
+      - 2026-05-25-refresh-5L-bg2-ssd   # 5L
+      - 2026-05-25-refresh-5H-bg2-ssd   # 5H
+      - 2026-05-25-refresh-5HH-bg2-ssd  # 5HH
+    builder: refresh_lsm_vs_btree
+  refresh_sales:
+    sources:
+      - 2026-05-23-refresh-sf1
+      - 2026-05-24-refresh-prewarm9    # optional 9 GiB sibling
+      - 2026-05-24-dbtoaster           # optional DBToaster overlay
+    builder: refresh_sales
