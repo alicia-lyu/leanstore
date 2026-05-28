@@ -47,6 +47,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from _diagram_metadata import sources_for, output_path
 from plot_paper_sweep import STYLE
 
 
@@ -68,10 +69,6 @@ CELL_LABEL: Dict[str, str] = {
     "5H":  r"0.4\,GiB memory budget",
     "5HH": r"0.1\,GiB memory budget",
 }
-
-DEFAULT_TAG_5L  = "2026-05-25-refresh-5L-bg2-ssd"
-DEFAULT_TAG_5H  = "2026-05-25-refresh-5H-bg2-ssd"
-DEFAULT_TAG_5HH = "2026-05-25-refresh-5HH-bg2-ssd"
 
 
 def _load_summary(tag_root: Path, expected_filename: str) -> pd.DataFrame:
@@ -178,13 +175,14 @@ def _figure_legend(fig) -> None:
                columnspacing=1.6, handletextpad=0.5)
 
 
-def _footer_text(tag_5L: str, tag_5H: str,
-                 m_5L: Dict[str, str], m_5H: Dict[str, str]) -> str:
-    parts = [f"tag {tag_5L} + {tag_5H}"]
+def _footer_text(tags: List[str],
+                 manifests: List[Dict[str, str]]) -> str:
+    parts = [f"tag {' + '.join(tags)}"]
+    primary = manifests[0] if manifests else {}
     for key, label in (("commit_sha", "commit"),
                         ("host", "host"),
                         ("disk", "disk")):
-        v = m_5L.get(key) or m_5H.get(key)
+        v = primary.get(key)
         if v:
             parts.append(f"{label} {v}")
     return "  |  ".join(parts)
@@ -193,18 +191,9 @@ def _footer_text(tag_5L: str, tag_5H: str,
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--tag-5L",  default=DEFAULT_TAG_5L)
-    p.add_argument("--tag-5H",  default=DEFAULT_TAG_5H)
-    p.add_argument("--tag-5HH", default=DEFAULT_TAG_5HH)
-    p.add_argument("--root", type=Path,
-                   default=Path.cwd() / "paper-data",
-                   help="paper-data/ root holding both tags "
-                        "(default: ./paper-data)")
-    p.add_argument("--out-tag", default=None,
-                   help="snapshot tag whose figures/paper/ dir hosts the "
-                        "output (default: --tag-5L)")
-    p.add_argument("--basename",
-                   default="refresh_lsm_vs_btree_5L_5H_5HH_bg2_ssd")
+    p.add_argument("--diagram", default="refresh_lsm_vs_btree",
+                   help="diagram name in diagrams.yaml (default: refresh_lsm_vs_btree). "
+                        "sources[0]=5L, sources[1]=5H, sources[2]=5HH.")
     p.add_argument("--csv-5L",
                    default="refresh_sales_5L_bg2_throughput.csv",
                    help="filename under <tag-5L>/summary/")
@@ -218,12 +207,20 @@ def main() -> int:
                    choices=["pdf", "png", "svg"])
     args = p.parse_args()
 
-    root_5L  = args.root / args.tag_5L
-    root_5H  = args.root / args.tag_5H
-    root_5HH = args.root / args.tag_5HH
+    tag_paths = sources_for(args.diagram)
+    if len(tag_paths) < 3:
+        print(f"[plot_refresh_lsm_vs_btree] error: diagram '{args.diagram}' "
+              f"needs 3 sources (5L/5H/5HH), got {len(tag_paths)}",
+              file=sys.stderr)
+        return 2
+    root_5L, root_5H, root_5HH = tag_paths[0], tag_paths[1], tag_paths[2]
+    tags = [p.name for p in tag_paths]
+
     df_5L  = _load_summary(root_5L,  args.csv_5L)
     df_5H  = _load_summary(root_5H,  args.csv_5H)
     df_5HH = _load_summary(root_5HH, args.csv_5HH)
+
+    manifests = [_load_manifest(r) for r in (root_5L, root_5H, root_5HH)]
 
     fig, axes = plt.subplots(1, 2, figsize=(6.6, 2.1), sharey=True)
     for ax, (backend, label) in zip(axes, BACKENDS):
@@ -238,12 +235,11 @@ def main() -> int:
     _figure_legend(fig)
     fig.tight_layout(rect=(0, 0.0, 1, 0.92))
 
-    out_tag = args.out_tag or args.tag_5L
-    out_dir = args.root / out_tag / "figures" / "paper"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_stem = output_path(args.diagram)
+    out_stem.parent.mkdir(parents=True, exist_ok=True)
     saved: List[Path] = []
     for fmt in args.formats:
-        dest = out_dir / f"{args.basename}.{fmt}"
+        dest = out_stem.with_suffix(f".{fmt}")
         # Raster formats need an explicit dpi; matplotlib's default 100
         # leaves PNGs visibly blocky next to the 6.6"-wide PDF when the
         # paper review pipeline previews them. Vector formats ignore dpi.

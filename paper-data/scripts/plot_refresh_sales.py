@@ -38,6 +38,7 @@ import yaml
 
 # Reuse colour / label / order conventions from the main plotter so the
 # RF figure visually matches the read-side headline figures.
+from _diagram_metadata import sources_for, output_path
 from plot_paper_sweep import (
     STYLE, STRUCTURE_LABELS, PAPER_LEGEND_ORDER,
 )
@@ -96,10 +97,6 @@ CSV_SCHEMAS = {
     },
 }
 
-# Sibling tag holding the 9 GiB in-memory refresh data (LeanStore-only,
-# btree). Auto-loaded alongside the primary --tag's 5L data so the
-# 1 GiB + 9 GiB panels both get real bars.
-PREWARM9_SIBLING = "2026-05-24-refresh-prewarm9"
 PREWARM9_BUDGET_GIB = 9.0
 
 
@@ -430,17 +427,21 @@ def _render_figure(ls_by_budget: Dict[float, pd.DataFrame],
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--tag", required=True)
-    p.add_argument("--root", type=Path, default=None,
-                   help="paper-data/<tag>/ root (default: paper-data/<tag>)")
+    p.add_argument("--diagram", default="refresh_sales",
+                   help="diagram name in diagrams.yaml (default: refresh_sales). "
+                        "sources[0]=primary, sources[1]=prewarm9 (optional), "
+                        "sources[2]=dbtoaster (optional).")
     p.add_argument("--format", default="pdf",
                    choices=["pdf", "png", "svg"])
-    p.add_argument("--dbtoaster", type=Path, default=None,
-                   help="optional path to dbtoaster_rf_throughput.csv "
-                        "(default: <root>/summary/dbtoaster_rf_throughput.csv)")
     args = p.parse_args()
 
-    root: Path = args.root or (Path.cwd() / "paper-data" / args.tag)
+    tag_paths = sources_for(args.diagram)
+    if not tag_paths:
+        print(f"[plot_refresh_sales] error: no sources for diagram "
+              f"'{args.diagram}'", file=sys.stderr)
+        return 1
+
+    root = tag_paths[0]
     summary = root / "summary"
     schema, csv_path = _find_schema(summary)
     if csv_path is None:
@@ -449,83 +450,68 @@ def main() -> int:
         return 1
 
     df = _load_ls(csv_path, schema)
-    disk = _disk_tag(df)
-    if not disk:
-        # Newer summary CSVs (e.g. 2026-05-24 SSD reruns) drop the
-        # `disk` column; fall back to the manifest's `disk:` line
-        # (first whitespace token) so the output basename keeps the
-        # `_ssd` suffix the paper symlinks target.
-        manifest_path = root / "manifest.yaml"
-        if manifest_path.exists():
-            with manifest_path.open() as fh:
-                try:
-                    m = yaml.safe_load(fh) or {}
-                except yaml.YAMLError:
-                    m = {}
-            raw = str(m.get("disk", "")).strip()
-            if raw:
-                disk = raw.split()[0]
-    # Auto-load the 9 GiB prewarm sibling when present. It lives in a
-    # separate tag (different binary build), but conceptually it's the
-    # second memory-budget panel of the same figure.
-    prewarm9 = root.parent / PREWARM9_SIBLING / "summary" \
-               / "refresh_prewarm9_throughput.csv"
-    df_9g = (_load_ls(prewarm9, CSV_SCHEMAS["refresh_prewarm9_throughput.csv"])
-             if prewarm9.exists() else pd.DataFrame())
 
-    # DBToaster lives in its own tag (no LeanStore rows there).
-    if args.dbtoaster is not None:
-        dbtoaster_path = args.dbtoaster
-    else:
-        db_summary = root.parent / "2026-05-24-dbtoaster" / "summary"
-        # Prefer the measured-interleaved CSV (typed on_insert/on_delete
-        # 1+1 pair) over the legacy phased throughput CSV, which carried
-        # SUPERSEDED derived rates.
+    # sources[1] = optional prewarm9 sibling (9 GiB in-memory run).
+    df_9g = pd.DataFrame()
+    lsm_9g = pd.DataFrame()
+    if len(tag_paths) >= 2:
+        prewarm9_root = tag_paths[1]
+        prewarm9_csv = prewarm9_root / "summary" / "refresh_prewarm9_throughput.csv"
+        if prewarm9_csv.exists():
+            df_9g = _load_ls(prewarm9_csv,
+                             CSV_SCHEMAS["refresh_prewarm9_throughput.csv"])
+        lsm_9g_path = prewarm9_root / "summary" / "lsm_9gib_refresh.csv"
+        lsm_9g = _load_lsm_9gib(lsm_9g_path)
+
+    # sources[2] = optional DBToaster tag.
+    db_df = pd.DataFrame()
+    if len(tag_paths) >= 3:
+        db_root = tag_paths[2]
+        db_summary = db_root / "summary"
+        # Prefer the measured-interleaved CSV over the legacy phased CSV.
         candidates = [
             db_summary / "refresh_sales_dbtoaster_interleaved.csv",
             db_summary / "refresh_sales_dbtoaster_throughput.csv",
             summary / "dbtoaster_rf_throughput.csv",
         ]
-        dbtoaster_path = next((p for p in candidates if p.exists()),
+        dbtoaster_path = next((c for c in candidates if c.exists()),
                               candidates[-1])
-    db_df = _load_dbtoaster(dbtoaster_path)
+        db_df = _load_dbtoaster(dbtoaster_path)
 
     # Bucket LeanStore data by buffer-pool budget so each panel pulls
     # its own bars. Missing budgets render as "pending" placeholders.
     primary_budget = float(df["dram_gib"].iloc[0]) if "dram_gib" in df.columns else 1.0
-    # B-tree budgets: 1 GiB (5L file) + 9 GiB (prewarm9 sibling).
+    # B-tree budgets: 1 GiB (primary file) + 9 GiB (prewarm9 sibling).
     btree_by_budget: Dict[float, pd.DataFrame] = {primary_budget: df}
     if not df_9g.empty:
         btree_by_budget[PREWARM9_BUDGET_GIB] = df_9g
 
-    # LSM budgets: the 5L file carries both backends at 1 GiB; the 9 GiB
-    # LSM point lives in its own file (different schema) in the prewarm9
-    # sibling. Both are µs/pair, so they share the panel code.
-    lsm_9g_path = root.parent / PREWARM9_SIBLING / "summary" \
-                  / "lsm_9gib_refresh.csv"
-    lsm_9g = _load_lsm_9gib(lsm_9g_path)
+    # LSM budgets: the primary file carries both backends at 1 GiB; the
+    # 9 GiB LSM point lives in its own file in the prewarm9 sibling.
     lsm_by_budget: Dict[float, pd.DataFrame] = {primary_budget: df}
     if not lsm_9g.empty:
         lsm_by_budget[PREWARM9_BUDGET_GIB] = lsm_9g
 
     ls_series = [s for s in PAPER_LEGEND_ORDER if s not in REFRESH_OMIT]
-    out_dir = root / "figures" / "paper"
-    suffix = f"_{disk}" if disk else ""
+    out_dir = output_path(args.diagram).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Output basenames: diagram name for btree figure, diagram name + _lsm
+    # for the LSM figure (mirrors the old _ssd suffix logic).
+    btree_basename = args.diagram
+    lsm_basename = f"{args.diagram}_lsm"
 
     written: List[Path] = []
-    # B-tree figure (with the DBToaster comparison) — unchanged output.
+    # B-tree figure (with the DBToaster comparison).
     written += _render_figure(
         btree_by_budget, db_df, ls_series, schema["unit"], out_dir,
-        schema["basename"] + suffix, args.format,
+        btree_basename, args.format,
         backend="btree", include_dbtoaster=True)
-    # LSM figure: same structures, no DBToaster (separate engine). The
-    # LSM rows were previously present in the CSV but never rendered;
-    # this gives the LSM backend its own honest refresh figure.
+    # LSM figure: same structures, no DBToaster (separate engine).
     has_lsm = (not df.empty) and (df["backend"] == "lsm").any()
     if has_lsm:
         written += _render_figure(
             lsm_by_budget, db_df, ls_series, schema["unit"], out_dir,
-            schema["basename"] + "_lsm" + suffix, args.format,
+            lsm_basename, args.format,
             backend="lsm", include_dbtoaster=False)
 
     for w in written:
