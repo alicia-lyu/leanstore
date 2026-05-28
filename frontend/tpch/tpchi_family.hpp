@@ -106,14 +106,14 @@ inline std::vector<BgStepFn> register_tpchi_bg_steps_at(
 
    std::vector<BgStepFn> steps;
    steps.reserve(2);
-   steps.emplace_back([wrappers, &db_traits]() {
+   steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
       std::vector<tpch::q3i::q3i_agg_row_t> out;
-      db_traits.run_tx([&]() { wrappers->q3i.query(out); }, BG_WORKER);
+      db_traits.run_tx([&]() { wrappers->q3i.query(out); }, worker_id);
    });
    if constexpr (Structure != 5) {
-      steps.emplace_back([wrappers, &db_traits]() {
+      steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
          std::vector<tpch::q5i::q5i_agg_row_t> out;
-         db_traits.run_tx([&]() { wrappers->q5i.query(out); }, BG_WORKER);
+         db_traits.run_tx([&]() { wrappers->q5i.query(out); }, worker_id);
       });
    }
    return steps;
@@ -148,7 +148,7 @@ inline BgStepFn make_tpchi_point_lookup_step(
     DBTraits& db_traits,
     TPCHIWorkload<Backend::template Adapter>& tpch)
 {
-   return [&db_traits, &tpch]() {
+   return [&db_traits, &tpch](u64 worker_id) {
       // 9 invoice-extended base tables; pick one uniformly per call.
       const Integer pick = urand(0, 8);
       db_traits.run_tx([&]() {
@@ -200,7 +200,7 @@ inline BgStepFn make_tpchi_point_lookup_step(
                break;
             }
          }
-      }, BG_LOOKUP_WORKER);
+      }, worker_id);
    };
 }
 

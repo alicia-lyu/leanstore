@@ -232,17 +232,12 @@ int main(int argc, char** argv)
 
    tpch::RefreshState<B::Adapter> refresh(tpch);
 
-   // bg=2 contention cohort (optional). Two dedicated CRM workers, mirroring
-   // the read binaries' TpchExecutableHelper:
-   //   Thread A (cohort, BG_WORKER): cycle Q3/Q5 family queries at the same
-   //     --storage_structure with smallest-cumulative-elapsed fairness.
-   //   Thread B (lookup, BG_LOOKUP_WORKER): heterogeneous base-table point
-   //     lookups when --bg_point_lookups; decoupled from Thread A so a heavy
-   //     structure (S4 all cells, btree S1 5H/5HH) no longer un-rotates
-   //     bg_txs to ~2.
-   // The foreground RF loop runs on MAIN_WORKER so all three workers occupy
-   // distinct per-worker slots (CRMG.hpp: one mutex/cv/job per worker).
-   // bg results are discarded — this is a contention axis, not a parity check.
+   // bg=2 contention cohort (optional). N parallel CRM cohort workers
+   // (one per registered Q3/Q5/... step) plus an optional point-lookup
+   // CRM worker. The foreground RF loop runs on MAIN_WORKER, distinct
+   // from all bg workers (CRMG.hpp: one mutex/cv/job per worker). bg
+   // results are discarded — this is a contention axis, not a parity
+   // check.
    LeanStoreTraits db_traits(crm);
    std::atomic<bool> keep_running = true;
    std::atomic<long> bg_cohort_count = 0;
@@ -257,36 +252,46 @@ int main(int argc, char** argv)
        (FLAGS_bg_query_thread && FLAGS_bg_point_lookups)
            ? tpch::make_tpch_point_lookup_step<B>(db_traits, tpch)
            : tpch::BgStepFn{};
-   std::thread bg_cohort_thread;
+   std::vector<std::thread> bg_cohort_threads;
    std::thread bg_lookup_thread;
    if (FLAGS_bg_query_thread) {
-      std::cout << "  (--bg_query_thread=true: cohort thread = " << bg_steps.size()
-                << " steps on BG_WORKER; lookup thread = "
+      const size_t cohort_size = bg_steps.size();
+      const u64 needed_max_id = cohort_size == 0
+          ? std::max<u64>(MAIN_WORKER, FLAGS_bg_point_lookups ? BG_LOOKUP_WORKER : 0)
+          : std::max<u64>(
+                std::max<u64>(MAIN_WORKER, FLAGS_bg_point_lookups ? BG_LOOKUP_WORKER : 0),
+                tpch::max_cohort_worker_id(cohort_size));
+      const u32 needed_workers = static_cast<u32>(needed_max_id + 1);
+      if (FLAGS_worker_threads < needed_workers) {
+         throw std::runtime_error(
+             "refresh_sales bg=2 needs --worker_threads >= "
+             + std::to_string(needed_workers)
+             + "; got " + std::to_string(FLAGS_worker_threads));
+      }
+      std::cout << "  (--bg_query_thread=true: cohort = " << cohort_size
+                << " parallel threads; lookup thread = "
                 << (FLAGS_bg_point_lookups ? "on (BG_LOOKUP_WORKER)" : "off") << ")\n";
-      bg_cohort_thread = std::thread([&]() {
-         std::vector<double> step_elapsed(bg_steps.size(), 0.0);
-         while (keep_running.load()) {
-            jumpmuTry()
-            {
-               size_t pick = 0;
-               for (size_t i = 1; i < step_elapsed.size(); ++i)
-                  if (step_elapsed[i] < step_elapsed[pick]) pick = i;
-               auto s = std::chrono::steady_clock::now();
-               bg_steps[pick]();
-               step_elapsed[pick] += std::chrono::duration<double>(
-                                         std::chrono::steady_clock::now() - s).count();
-               bg_cohort_count++;
+      bg_cohort_threads.reserve(cohort_size);
+      for (size_t i = 0; i < cohort_size; ++i) {
+         const u64 wid = tpch::cohort_worker_id(i);
+         bg_cohort_threads.emplace_back([&, i, wid]() {
+            while (keep_running.load()) {
+               jumpmuTry()
+               {
+                  bg_steps[i](wid);
+                  bg_cohort_count++;
+               }
+               jumpmuCatchNoPrint() { db_traits.rollback_tx(wid); }
             }
-            jumpmuCatchNoPrint() { db_traits.rollback_tx(BG_WORKER); }
-         }
-         db_traits.cleanup_thread(BG_WORKER);
-      });
+            db_traits.cleanup_thread(wid);
+         });
+      }
       if (FLAGS_bg_point_lookups) {
          bg_lookup_thread = std::thread([&]() {
             while (keep_running.load()) {
                jumpmuTry()
                {
-                  bg_lookup_step();
+                  bg_lookup_step(BG_LOOKUP_WORKER);
                   bg_lookup_count++;
                }
                jumpmuCatchNoPrint() { db_traits.rollback_tx(BG_LOOKUP_WORKER); }
@@ -344,9 +349,11 @@ int main(int argc, char** argv)
       }
    });
 
-   // Foreground deadline reached — stop and join both bg threads.
+   // Foreground deadline reached — stop and join all bg threads.
    keep_running = false;
-   if (bg_cohort_thread.joinable()) bg_cohort_thread.join();
+   for (auto& t : bg_cohort_threads) {
+      if (t.joinable()) t.join();
+   }
    if (bg_lookup_thread.joinable()) bg_lookup_thread.join();
 
    std::cout << "refresh_sales done — total RF1=" << total_rf1

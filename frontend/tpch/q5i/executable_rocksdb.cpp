@@ -89,6 +89,10 @@ int main(int argc, char** argv)
                                                           FLAGS_storage_structure,
                                                           FLAGS_bg_point_lookups)
                        : std::vector<tpch::BgStepFn>{};
+   tpch::BgStepFn bg_lookup_step =
+       (FLAGS_bg_query_thread && FLAGS_bg_point_lookups)
+           ? tpch::make_tpchi_point_lookup_step<B>(db_traits, tpch)
+           : tpch::BgStepFn{};
 
    using AggRow = tpch::q5i::q5i_agg_row_t;
    switch (FLAGS_storage_structure) {
@@ -96,6 +100,7 @@ int main(int argc, char** argv)
          tpch::q5i::BaseQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_merge_join");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;
       }
@@ -103,6 +108,7 @@ int main(int argc, char** argv)
          tpch::q5i::ViewQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "pipeline_view");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;
       }
@@ -110,6 +116,7 @@ int main(int argc, char** argv)
          tpch::q5i::MergedQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "mi_coli_walk");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;
       }
@@ -117,6 +124,7 @@ int main(int argc, char** argv)
          tpch::q5i::HashQ5I<B> w{q5i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_hash_join");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          break;
       }

@@ -129,6 +129,13 @@ int main(int argc, char** argv)
                                                           FLAGS_storage_structure,
                                                           FLAGS_bg_point_lookups)
                        : std::vector<tpch::BgStepFn>{};
+   // TPCHi 9-table lookup (vanilla 8 + invoice) on the dedicated
+   // BG_LOOKUP_WORKER. Helper falls back to its 8-table vanilla default
+   // if this stays empty.
+   tpch::BgStepFn bg_lookup_step =
+       (FLAGS_bg_query_thread && FLAGS_bg_point_lookups)
+           ? tpch::make_tpchi_point_lookup_step<B>(db_traits, tpch)
+           : tpch::BgStepFn{};
 
    using AggRow = tpch::q3i::q3i_agg_row_t;
    long tx_count = 0;
@@ -137,6 +144,7 @@ int main(int argc, char** argv)
          tpch::q3i::BaseQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_merge_join");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -145,6 +153,7 @@ int main(int argc, char** argv)
          tpch::q3i::ViewQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "pipeline_view");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -153,6 +162,7 @@ int main(int argc, char** argv)
          tpch::q3i::MergedQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "mi_coli_walk");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -161,6 +171,7 @@ int main(int argc, char** argv)
          tpch::q3i::HashQ3I<B> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "base_hash_join");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          tx_count = helper.tx_count();
          break;
@@ -169,6 +180,7 @@ int main(int argc, char** argv)
          tpch::AggregatedStructure<tpch::q3i::Q3IWorkload<B>, AggRow> w{q3i};
          tpch::TpchExecutableHelper<decltype(w), AggRow, B::Adapter, lineitem_i_t> helper(rocks_db, std::move(w), tpch, "acoli_aggregated");
          helper.set_bg_query_steps(std::move(bg_steps));
+         helper.set_bg_lookup_step(bg_lookup_step);
          helper.run();
          tx_count = helper.tx_count();
          break;

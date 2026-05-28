@@ -127,15 +127,15 @@ inline std::vector<BgStepFn> register_vanilla_bg_steps_at(
 
    std::vector<BgStepFn> steps;
    steps.reserve(2);
-   // Q3 step: run one TX of Q3 at Structure on BG_WORKER.
-   steps.emplace_back([wrappers, &db_traits]() {
+   // Q3 step: run one TX of Q3 at Structure on the supplied worker_id.
+   steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
       std::vector<tpch::q3::q3_agg_row_t> out;
-      db_traits.run_tx([&]() { wrappers->q3.query(out); }, BG_WORKER);
+      db_traits.run_tx([&]() { wrappers->q3.query(out); }, worker_id);
    });
-   // Q5 step: run one TX of Q5 at Structure on BG_WORKER.
-   steps.emplace_back([wrappers, &db_traits]() {
+   // Q5 step: run one TX of Q5 at Structure on the supplied worker_id.
+   steps.emplace_back([wrappers, &db_traits](u64 worker_id) {
       std::vector<tpch::q5::q5_agg_row_t> out;
-      db_traits.run_tx([&]() { wrappers->q5.query(out); }, BG_WORKER);
+      db_traits.run_tx([&]() { wrappers->q5.query(out); }, worker_id);
    });
    return steps;
 }
@@ -152,7 +152,7 @@ inline BgStepFn make_tpch_point_lookup_step(
     DBTraits& db_traits,
     TPCHWorkload<Backend::template Adapter>& tpch)
 {
-   return [&db_traits, &tpch]() {
+   return [&db_traits, &tpch](u64 worker_id) {
       // 8 vanilla base tables; pick one uniformly per call.
       const Integer pick = urand(0, 7);
       db_traits.run_tx([&]() {
@@ -199,7 +199,7 @@ inline BgStepFn make_tpch_point_lookup_step(
                break;
             }
          }
-      }, BG_LOOKUP_WORKER);
+      }, worker_id);
    };
 }
 

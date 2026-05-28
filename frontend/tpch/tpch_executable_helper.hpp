@@ -6,26 +6,48 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <type_traits>
 #include <vector>
+#include <gflags/gflags_declare.h>
 #include "../shared/db_traits.hpp"
 #include "tpch_flags.hpp"
 #include "tpch_workload.hpp"
 #include "leanstore/utils/JumpMU.hpp"
 
+DECLARE_uint32(worker_threads);
+
 namespace tpch
 {
 
 // A type-erased "one TX of a registered background query" callback. The
-// closure must internally route the TX through DBTraits on BG_WORKER,
-// manage its own out-vector, and swallow per-TX jumpmu rollbacks (see
-// register_bg_query_step() helpers in family-loader headers for the
-// canonical wrapping). Family loaders push one step per (query × foreground
-// structure) so the bg thread can round-robin family queries at the same
-// storage structure as the foreground.
-using BgStepFn = std::function<void()>;
+// closure is parametric on worker_id: the helper allocates a dedicated
+// CRM worker per cohort step and passes it in at call time, so each
+// cohort query runs on its own thread without contending for a shared
+// BG_WORKER slot. The closure must route the TX through DBTraits on the
+// passed worker_id, manage its own out-vector, and swallow per-TX
+// jumpmu rollbacks (see register_*_bg_steps in family-loader headers).
+using BgStepFn = std::function<void(u64 worker_id)>;
+
+// Worker-id allocation for the N-step parallel cohort dispatch.
+// Layout (preserving existing constants — see ../shared/db_traits.hpp):
+//   BG_WORKER (=0)        : cohort thread 0
+//   MAIN_WORKER (=1)      : foreground
+//   BG_LOOKUP_WORKER (=2) : point-lookup thread
+//   3, 4, 5, ...          : additional cohort threads 1, 2, 3, ...
+// So cohort thread i (0-indexed) uses worker_id BG_WORKER for i==0 and
+// i+2 for i>=1. Max worker_id with N-step cohort is (N==1 ? BG_LOOKUP_WORKER : N+1).
+inline u64 cohort_worker_id(size_t i)
+{
+   return (i == 0) ? BG_WORKER : static_cast<u64>(i + 2);
+}
+inline u64 max_cohort_worker_id(size_t cohort_size)
+{
+   if (cohort_size <= 1) return BG_LOOKUP_WORKER;  // 2
+   return static_cast<u64>(cohort_size + 1);
+}
 
 template <typename PerStructureWrapper, typename AggRow,
           template <typename> class AdapterType,
@@ -129,9 +151,26 @@ struct TpchExecutableHelper {
       std::cout << "Running " << tx_name << " on " << structure_name
                 << " for " << FLAGS_tx_seconds << " seconds..." << std::endl;
       if (FLAGS_bg_query_thread) {
-         std::cout << "  (--bg_query_thread=true: cohort thread = "
-                   << bg_query_steps.size() << " steps";
-         if (bg_query_steps.empty()) {
+         const size_t cohort_size = bg_query_steps.size();
+         // CRM worker budget: foreground (MAIN_WORKER) + lookup
+         // (BG_LOOKUP_WORKER, optional) + N cohort threads.
+         const u64 max_id = std::max<u64>(
+             MAIN_WORKER,
+             FLAGS_bg_point_lookups ? BG_LOOKUP_WORKER : 0);
+         const u64 needed_max_id = cohort_size == 0
+             ? max_id
+             : std::max<u64>(max_id, max_cohort_worker_id(cohort_size));
+         const u32 needed_workers = static_cast<u32>(needed_max_id + 1);
+         if (FLAGS_worker_threads < needed_workers) {
+            throw std::runtime_error(
+                "bg=2 needs --worker_threads >= " + std::to_string(needed_workers)
+                + " (cohort_size=" + std::to_string(cohort_size)
+                + ", lookup=" + (FLAGS_bg_point_lookups ? "on" : "off")
+                + "); got " + std::to_string(FLAGS_worker_threads));
+         }
+         std::cout << "  (--bg_query_thread=true: cohort = " << cohort_size
+                   << " parallel threads";
+         if (cohort_size == 0) {
             std::cout << " -> fallback: re-run foreground on BG_WORKER";
          }
          std::cout << "; lookup thread = "
@@ -145,68 +184,74 @@ struct TpchExecutableHelper {
          keep_running = false;
       }).detach();
 
-      // --bg_query_thread: spawn two dedicated read-only background workers
-      // for the duration of the foreground TX window:
+      // --bg_query_thread: spawn N+1 dedicated read-only background workers
+      // for the duration of the foreground TX window — N parallel cohort
+      // threads (one per query in bg_query_steps) plus one point-lookup
+      // thread. No time-balance fairness needed: each cohort query has its
+      // own CRM worker, so a heavy structure (S2/S4, btree S1) only slows
+      // its own thread without un-rotating the others to ~2.
       //
-      //   Thread A (cohort, BG_WORKER):
-      //     - If bg_query_steps is non-empty (family-loader case): rotate
-      //       cohort steps by smallest-cumulative-elapsed fairness. When
-      //       step costs differ widely (e.g. Q3 vs Q5 at SF=380) the
-      //       cheaper step still runs more often to keep wall-clock
-      //       allocation balanced 1:1:...:1. No point-lookup interleaving
-      //       — those run on Thread B.
-      //     - Otherwise: re-run the foreground query back-to-back on
-      //       BG_WORKER (single-binary fallback for q10/q10i/q12).
+      //   Cohort threads (i=0..N-1): worker_id = cohort_worker_id(i)
+      //     - Each runs bg_query_steps[i] in a tight loop.
+      //     - i=0 uses BG_WORKER (=0); i>=1 uses i+2 to avoid collision
+      //       with MAIN_WORKER (=1) and BG_LOOKUP_WORKER (=2).
+      //     - If bg_query_steps is empty: fall back to single re-run-fg
+      //       thread on BG_WORKER (q10/q10i/q12 with no family cohort).
       //
-      //   Thread B (lookup, BG_LOOKUP_WORKER):
+      //   Lookup thread (BG_LOOKUP_WORKER, optional):
       //     - Active when --bg_point_lookups=true.
-      //     - Runs bg_lookup_step in a tight loop if set, else falls back to
-      //       the built-in bg_point_lookup() (8 vanilla tables). TPCHi
-      //       binaries override via set_bg_lookup_step() to include invoice.
-      //     - Decoupled from Thread A so a heavy structure (S2/S4, btree S1)
-      //       no longer un-rotates bg_txs to ~2: the lookup stream keeps
-      //       firing while the cohort/foreground re-run takes its time.
+      //     - Runs bg_lookup_step closure if set (TPCHi binaries override
+      //       via set_bg_lookup_step() to include invoice), else falls
+      //       back to the helper's 8-table vanilla bg_point_lookup().
       //
-      // Both threads read whatever Params each query has most recently set;
+      // All threads read whatever Params each query has most recently set;
       // bg never mutates params (avoids the params-race; foreground is the
       // source of truth). Results are discarded — this is a contention
       // test, not a parity check.
-      std::thread bg_cohort_thread;
+      std::vector<std::thread> bg_cohort_threads;
       std::thread bg_lookup_thread;
       if (FLAGS_bg_query_thread) {
-         bg_cohort_thread = std::thread([&]() {
-            std::vector<AggRow> bg_out;
-            bg_out.reserve(8);
-            const bool use_registry = !bg_query_steps.empty();
-            std::vector<double> bg_step_elapsed(bg_query_steps.size(), 0.0);
-            while (keep_running.load()) {
-               jumpmuTry()
-               {
-                  if (use_registry) {
-                     // Smallest-cumulative-elapsed pick. With one step this
-                     // is just index 0; with N steps it time-balances 1:...:1.
-                     size_t pick = 0;
-                     for (size_t i = 1; i < bg_step_elapsed.size(); ++i) {
-                        if (bg_step_elapsed[i] < bg_step_elapsed[pick]) pick = i;
-                     }
-                     auto step_start = std::chrono::steady_clock::now();
-                     bg_query_steps[pick]();
-                     auto step_end = std::chrono::steady_clock::now();
-                     bg_step_elapsed[pick] +=
-                         std::chrono::duration<double>(step_end - step_start).count();
-                  } else {
+         const size_t cohort_size = bg_query_steps.size();
+         if (cohort_size == 0) {
+            // No registered cohort: single thread re-runs foreground on BG_WORKER.
+            bg_cohort_threads.emplace_back([&]() {
+               std::vector<AggRow> bg_out;
+               bg_out.reserve(8);
+               while (keep_running.load()) {
+                  jumpmuTry()
+                  {
                      bg_out.clear();
                      db_traits->run_tx([&]() { wrapper.query(bg_out); }, BG_WORKER);
+                     bg_cohort_count++;
                   }
-                  bg_cohort_count++;
+                  jumpmuCatchNoPrint()
+                  {
+                     db_traits->rollback_tx(BG_WORKER);
+                  }
                }
-               jumpmuCatchNoPrint()
-               {
-                  db_traits->rollback_tx(BG_WORKER);
-               }
+               db_traits->cleanup_thread(BG_WORKER);
+            });
+         } else {
+            // N parallel cohort threads.
+            bg_cohort_threads.reserve(cohort_size);
+            for (size_t i = 0; i < cohort_size; ++i) {
+               const u64 wid = cohort_worker_id(i);
+               bg_cohort_threads.emplace_back([&, i, wid]() {
+                  while (keep_running.load()) {
+                     jumpmuTry()
+                     {
+                        bg_query_steps[i](wid);
+                        bg_cohort_count++;
+                     }
+                     jumpmuCatchNoPrint()
+                     {
+                        db_traits->rollback_tx(wid);
+                     }
+                  }
+                  db_traits->cleanup_thread(wid);
+               });
             }
-            db_traits->cleanup_thread(BG_WORKER);
-         });
+         }
 
          if (FLAGS_bg_point_lookups) {
             bg_lookup_thread = std::thread([&]() {
@@ -214,7 +259,7 @@ struct TpchExecutableHelper {
                   jumpmuTry()
                   {
                      if (bg_lookup_step) {
-                        bg_lookup_step();
+                        bg_lookup_step(BG_LOOKUP_WORKER);
                      } else {
                         bg_point_lookup();
                      }
@@ -257,8 +302,8 @@ struct TpchExecutableHelper {
          }
       }
 
-      if (bg_cohort_thread.joinable()) {
-         bg_cohort_thread.join();
+      for (auto& t : bg_cohort_threads) {
+         if (t.joinable()) t.join();
       }
       if (bg_lookup_thread.joinable()) {
          bg_lookup_thread.join();
@@ -267,9 +312,9 @@ struct TpchExecutableHelper {
       std::cout << "#" << count.load() << " " << tx_name << " for "
                 << structure_name << " performed." << std::endl;
       if (FLAGS_bg_query_thread) {
-         std::cout << "  bg_cohort_thread (BG_WORKER): " << bg_cohort_count.load()
-                   << " TXs"
-                   << "  |  bg_lookup_thread (BG_LOOKUP_WORKER): "
+         std::cout << "  bg_cohort (" << bg_cohort_threads.size()
+                   << " threads): " << bg_cohort_count.load() << " TXs"
+                   << "  |  bg_lookup (BG_LOOKUP_WORKER): "
                    << bg_lookup_count.load() << " TXs"
                    << "  |  total: "
                    << (bg_cohort_count.load() + bg_lookup_count.load())
