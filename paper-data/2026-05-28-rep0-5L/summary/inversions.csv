@@ -1,0 +1,4 @@
+binary,cell,bg,rep,tx,s2_method,s3_method,s2_tx_per_s,s3_tx_per_s,ratio,s2_cpu_cycles_per_tx,s3_cpu_cycles_per_tx,s2_cpu_llc_miss_per_tx,s3_cpu_llc_miss_per_tx,s2_bm_p2_pct,s3_bm_p2_pct,attribution_hint
+q3i_lsm,c0,2,0,query,pipeline_view,mi_coli_walk,0.08645,0.07703,0.8910352805089647,13094070209.5,15931230066.0,,,,,cpu_cycles_per_tx
+q5_lsm,c0,2,0,query,pipeline_view,mi_col_walk,0.09067,0.07987,0.8808867321054372,13502663905.0,14086354536.0,,,,,cpu_cycles_per_tx
+q5i_lsm,c0,2,0,query,pipeline_view,mi_coli_walk,0.08837,0.07504,0.8491569537173248,10918731518.0,16726399084.5,,,,,cpu_cycles_per_tx

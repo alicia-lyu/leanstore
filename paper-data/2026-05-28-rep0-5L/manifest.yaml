@@ -1,0 +1,39 @@
+tag: 2026-05-28-rep0-5L
+experiment: TPC-H + TPCHi headline sweep, bg=2 cohort, --param_seed=0 (rep 0)
+commit_sha: 5f30442f
+host: c220g2-011011.wisc.cloudlab.us
+cells: [c0]   # 5L: btree SF=1550, lsm SF=3850, dram=1.0
+families: [vanilla, tpchi]
+reps: 1   # rep 0 only; reps 1, 2 pending
+runs_ok: 56
+runs_err: 0
+backends: [btree, lsm]
+binaries: [q3, q5, q3i, q5i, q10, q10i]  # × {btree, lsm}
+structures:
+  q3_q5_q3i_q5i: [1, 2, 3, 4]
+  q10_q10i: [1, 2, 3, 4, 5, 7]
+bg: 2 (--bg_query_thread=true --bg_point_lookups=true; 3-thread cohort + 1 lookup; worker_threads=5)
+disk: ssd
+note: >
+  First rep of the 5L paper-headline cell after the LSM recover fix
+  (acf78a35) and size_audit refactor (c9406c44/378e1038/f99683ee).
+  Btree side: 28 cells produced by the prior {q*_btree} sweep (2026-05-28
+  morning) and three post-fix reruns (q10_btree_7, q10i_btree_7,
+  q10i_btree_2; logger fix 35a8650e covered the q10i_btree_2 abort).
+  LSM side: 27 cells from the 2026-05-28 evening sweep + q3_lsm_3 canary
+  for the recover-fix verification — 28 cells total in 21m53s wall.
+  Each cell shows `Recover-only mode — skipping flush + compact.` and
+  `Recovering last ids...` — no reload-instead-of-recover (the LSM
+  json files were pre-touched after the load.tpp size_audit edit to
+  avoid the mtime trap; see LINUX_PENDING).
+
+  Headline numbers vary across Sx by 100×+ at the 5L disk-bound point;
+  read `ms_per_tx` (= 1000/tx_per_s) rather than tx_per_s when the
+  cell sits below ~0.1 TX/s. S5 (Q10/Q10I aCOL/aCOLI) wins decisively
+  on both backends (5–10× faster than S3); S4 hash baseline is the
+  slowest by an order of magnitude.
+
+  bg=2 fidelity: bg_lookup TX counts 36k–147k per cell during the
+  15s window confirm the point-lookup stream actually ran; bg_cohort
+  TX = 1–8 (one foreground query fills the window at this SF) which
+  matches the q10-q10i-bg2-5L precedent for slow structures.
