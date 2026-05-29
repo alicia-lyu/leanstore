@@ -396,3 +396,21 @@ project and stays in [`LINUX_PENDING.md`](LINUX_PENDING.md).
   Pairs with `2026-05-24-refresh-prewarm9` (the abundant-memory regime, where
   LSM showed no in-memory speedup) — the pressured regime is where LSM wins.
   Tags `paper-data/2026-05-24-refresh-{5L,5H}-ssd`; SWEEP_LOG entry landed.
+
+## Closed 2026-05-28 (LSM recover + sweep verification)
+
+- **LSM recover-from-image now correctly configured.** Diagnostic
+  worktree traced the prior abuse to the RocksDB destructor running
+  `Flush + WaitForCompact + close_db` unconditionally (minutes per
+  CF at SF=3850) plus `get_size()` forcing a bottommost compaction
+  every recover-only run. Fix landed as ef1d422a (skip both on
+  `!FLAGS_persist` / `FLAGS_recover`), merged via acf78a35.
+  Verified by the 2026-05-28 LSM rep=0 sweep: 27 cells of the 5L
+  cell completed in 21 min 53 s wall (vs. multi-hour reload prior).
+  Each cell shows `RocksDB::~RocksDB() Recover-only mode — skipping
+  flush + compact.` and `Recovering last ids...` instead of the
+  `Loading X records` reload path. No aborts, no `std::out_of_range`
+  (the logger fix 35a8650e covered the bg=2 cohort failure mode).
+  Results land in `build/<binary>/3850-in-1.0/structure<N>.log`;
+  size_audit WARN lines surface the known LSM default-CF
+  under-counts (per-adapter sum vs image file size).

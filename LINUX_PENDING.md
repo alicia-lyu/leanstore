@@ -32,24 +32,25 @@ actionable.
   consistent end-to-end.
 
 - **5L bg=2 sweep: `--param_seed=1,2` reps pending (2026-05-28)** —
-  the first paper-sweep run after the family-image refactor (commits
-  354dc7c4 → 1e8bd47f) covers btrees only at the 5L cell with
-  `--param_seed=0` (single rep). Reps 1 and 2 (rotated parameters
-  per `q3_family/params.hpp` PARAM_TABLE) are deferred until the
-  LSM-side recover path is fixed and per-rep parameters can run
-  on both backends symmetrically. Until then, single-rep results
-  cannot show the rep-to-rep variance the paper's headline cells
-  use to derive median + IQR; treat seed=0 as a smoke / signal
-  pass, not the publishable figure.
+  rep 0 is now complete on both backends (btree 28 cells + LSM 27
+  cells; see HISTORY for landing commits). Reps 1 and 2 (rotated
+  parameters per `q3_family/params.hpp` PARAM_TABLE) are the
+  remaining work to derive median + IQR for the publishable
+  figure. Each LSM rep should run in ~22 min thanks to the
+  recover fix (acf78a35); btree rep in similar time.
 
-- **LSM recover-from-image not set up properly (2026-05-28)** — the
-  16-image per-Sx reload completed successfully on disk
-  (`/mnt/ssd/tpch_{lsm,btree}_S{1..4}/$(scale)` and tpchi
-  equivalents), but the LSM run path doesn't restore from the
-  persisted image the way the btree path does; recovering forces
-  a full re-load each run, wasting hours per sweep. Diagnostic +
-  fix in a worktree branch; the btree sweep can proceed in the
-  meantime since btree recover works.
+- **LSM jsons are mtime-stale if load-path source files are touched.**
+  Each `$(data_disk)/tpch{,i}_lsm_S{1..4}/build/$(scale).json` target
+  in `targets.mk` depends on `tpch_workload.hpp`,
+  `tpchi_family/tpchi_workload.hpp`, `tpch_family/views_{ol,col,coli}.hpp`,
+  `tpch_family/{ol,col}_pipeline.tpp`, `tpchi_family/coli_pipeline.tpp`,
+  `tpch_vanilla_family.hpp`, `tpchi_family.hpp`,
+  `q10/load.tpp`, `q10i/load.tpp`, `q3/load.tpp`. Any edit to those
+  files bumps mtimes and forces a full reload (~15 min per cell at
+  SF=3850 LSM). When the change is non-loading (e.g. `get_size()`
+  refactor), `touch /mnt/ssd/tpch{,i}_lsm_S{1..4}/build/3850.json`
+  *before* invoking `make q*_lsm_N` to skip the reload. The btree
+  side has analogous deps; same touch idiom applies.
 
 - **No `latency.csv` from any binary (2026-05-23)** — **DEFERRED to
   next project (2026-05-23)**: btree binaries emit `cpu/bm/cr/dt.csv`
