@@ -121,10 +121,16 @@ int main(int argc, char** argv)
    tpch::q10::Q10Stats qstats;
    if (FLAGS_q10_stats) q10.stats = &qstats;
    long q10_txc = 0;
+   // q10_btree: bg cohort's Q10 thread matches foreground (naive view by
+   // default). For q3/q5/q3i/q5i binaries the cohort defaults to PREAGG to
+   // keep the contention sidekick light; here Q10 is the headline so the
+   // cohort represents "more Q10 instances of the same workload", which
+   // means naive at S=2 to match what foreground reads.
    auto bg_catalog = FLAGS_bg_query_thread
                        ? tpch::register_vanilla_bg_catalog<B>(db_traits, tpch, q3, q5, q10,
                                                             FLAGS_storage_structure,
-                                                            FLAGS_bg_point_lookups)
+                                                            FLAGS_bg_point_lookups,
+                                                            /*q10_naive_cohort=*/true)
                        : std::vector<tpch::BgCatalogFn>{};
    switch (FLAGS_storage_structure) {
       case 1: {

@@ -122,10 +122,14 @@ int main(int argc, char** argv)
    LeanStoreTraits db_traits(crm);
 
    using AggRow = tpch::q10i::q10i_agg_row_t;
+   // q10i_btree: bg cohort's Q10I thread matches foreground (naive view by
+   // default). Same rationale as q10_btree — see tpch_vanilla_family.hpp's
+   // `register_vanilla_bg_catalog_at_s2_q10_naive` comment.
    auto bg_catalog = FLAGS_bg_query_thread
                        ? tpch::register_tpchi_bg_catalog<B>(db_traits, tpch, q3i, q5i, q10i,
                                                           FLAGS_storage_structure,
-                                                          FLAGS_bg_point_lookups)
+                                                          FLAGS_bg_point_lookups,
+                                                          /*q10i_naive_cohort=*/true)
                        : std::vector<tpch::BgCatalogFn>{};
    switch (FLAGS_storage_structure) {
       case 1: {

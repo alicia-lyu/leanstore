@@ -1,39 +1,34 @@
 tag: 2026-05-28-rep0-5L
 experiment: TPC-H + TPCHi headline sweep, bg=2 cohort, --param_seed=0 (rep 0)
-commit_sha: 5f30442f
+commit_sha: 6867743d
 host: c220g2-011011.wisc.cloudlab.us
 cells: [c0]   # 5L: btree SF=1550, lsm SF=3850, dram=1.0
 families: [vanilla, tpchi]
-reps: 1   # rep 0 only; reps 1, 2 pending
+reps: 1
 runs_ok: 56
 runs_err: 0
 backends: [btree, lsm]
-binaries: [q3, q5, q3i, q5i, q10, q10i]  # × {btree, lsm}
+binaries: [q3, q5, q3i, q5i, q10, q10i]
 structures:
   q3_q5_q3i_q5i: [1, 2, 3, 4]
   q10_q10i: [1, 2, 3, 4, 5, 7]
 bg: 2 (--bg_query_thread=true --bg_point_lookups=true; 3-thread cohort + 1 lookup; worker_threads=5)
 disk: ssd
 note: >
-  First rep of the 5L paper-headline cell after the LSM recover fix
-  (acf78a35) and size_audit refactor (c9406c44/378e1038/f99683ee).
-  Btree side: 28 cells produced by the prior {q*_btree} sweep (2026-05-28
-  morning) and three post-fix reruns (q10_btree_7, q10i_btree_7,
-  q10i_btree_2; logger fix 35a8650e covered the q10i_btree_2 abort).
-  LSM side: 27 cells from the 2026-05-28 evening sweep + q3_lsm_3 canary
-  for the recover-fix verification — 28 cells total in 21m53s wall.
-  Each cell shows `Recover-only mode — skipping flush + compact.` and
-  `Recovering last ids...` — no reload-instead-of-recover (the LSM
-  json files were pre-touched after the load.tpp size_audit edit to
-  avoid the mtime trap; see LINUX_PENDING).
+  Rep 0 of the 5L cell, post LSM-recover-fix (acf78a35) +
+  size_audit (c9406c44) + S2 cohort-asymmetry fix:
 
-  Headline numbers vary across Sx by 100×+ at the 5L disk-bound point;
-  read `ms_per_tx` (= 1000/tx_per_s) rather than tx_per_s when the
-  cell sits below ~0.1 TX/s. S5 (Q10/Q10I aCOL/aCOLI) wins decisively
-  on both backends (5–10× faster than S3); S4 hash baseline is the
-  slowest by an order of magnitude.
+  - q3/q5/q3i/q5i_btree S=2 cohort: Q10 thread reads PREAGG view
+    (1.07 GiB) instead of naive (5.10 GiB). Avoids dragging Q3/Q5
+    perf via Q10's join fan-out — pre-fix Q3 btree S2 was 201 s/q,
+    post-fix ~28 s/q (matches pre-cohort-refactor baseline
+    2026-05-24-a-ssd).
+  - q10/q10i_btree S=2 cohort: Q10 thread reads NAIVE (matches
+    foreground variant). Cohort represents same-workload contention
+    for Q10's own headline.
+  - All other Sx (S1, S3, S4, S5, S7) unchanged.
 
-  bg=2 fidelity: bg_lookup TX counts 36k–147k per cell during the
-  15s window confirm the point-lookup stream actually ran; bg_cohort
-  TX = 1–8 (one foreground query fills the window at this SF) which
-  matches the q10-q10i-bg2-5L precedent for slow structures.
+  Headline numbers parsed directly from each cell's structure<N>.log
+  Summary line (size_audit / bg_cohort / bg_lookup TX counts also
+  captured for diagnostics). Avoids the umbrella TPut.csv whose
+  header is stale relative to the bg=2 cohort schema.

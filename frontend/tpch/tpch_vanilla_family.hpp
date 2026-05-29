@@ -129,11 +129,20 @@ struct VanillaWrappers<Backend, 1> {
                    tpch::q10::Q10Workload<Backend>& q10_w)
        : q3{q3_w}, q5{q5_w}, q10{q10_w} {}
 };
+// S=2 bg cohort: Q3 + Q5 read their per-query views; Q10 reads the per-order
+// PREAGG view (1.07 GiB) instead of the naive per-lineitem view (5.10 GiB at
+// 5L btree). With three parallel bg threads contending for buffer-pool slots,
+// allowing the cohort's Q10 to use the naive view loaded a 5 GiB tree onto
+// every S2 cohort run — dragging Q3/Q5 from 25 s to 200 s per query at 5L
+// btree (2026-05-28 investigation, rep-0 regression). The naive view is
+// still loaded into the S2 image; the foreground Q10 (q10_btree_2) still
+// respects --q10_view_variant for its own headline measurement. The cohort
+// is realistic-contention sidekick — not a Q10 worst-case stress test.
 template <typename Backend>
 struct VanillaWrappers<Backend, 2> {
-   tpch::q3::ViewQ3<Backend>   q3;
-   tpch::q5::ViewQ5<Backend>   q5;
-   tpch::q10::ViewQ10<Backend> q10;
+   tpch::q3::ViewQ3<Backend>         q3;
+   tpch::q5::ViewQ5<Backend>         q5;
+   tpch::q10::PreaggViewQ10<Backend> q10;
    VanillaWrappers(tpch::q3::Q3Workload<Backend>&  q3_w,
                    tpch::q5::Q5Workload<Backend>&  q5_w,
                    tpch::q10::Q10Workload<Backend>& q10_w)
@@ -286,11 +295,48 @@ inline BgCatalogFn make_tpch_point_lookup_step(
    };
 }
 
+// S=2 cohort variant that uses ViewQ10 (respects FLAGS_q10_view_variant)
+// instead of PreaggViewQ10. Used by q10_btree's executable so that the bg
+// cohort's Q10 thread reads the same view the foreground Q10 reads — the
+// realistic same-workload contention story. Q3/Q5 binaries leave this off
+// (default), so their cohort's Q10 thread reads the preagg view (the cohort
+// is a contention sidekick, not a Q10 worst-case stress).
+template <typename Backend>
+inline std::vector<BgCatalogFn> register_vanilla_bg_catalog_at_s2_q10_naive(
+    DBTraits& db_traits,
+    tpch::q3::Q3Workload<Backend>&  q3_workload,
+    tpch::q5::Q5Workload<Backend>&  q5_workload,
+    tpch::q10::Q10Workload<Backend>& q10_workload)
+{
+   auto q3_wrap = std::make_shared<tpch::q3::ViewQ3<Backend>>(q3_workload);
+   auto q5_wrap = std::make_shared<tpch::q5::ViewQ5<Backend>>(q5_workload);
+   auto q10_wrap = std::make_shared<tpch::q10::ViewQ10<Backend>>(q10_workload);
+
+   std::vector<BgCatalogFn> catalog;
+   catalog.reserve(3);
+   catalog.emplace_back([q3_wrap, &db_traits](u64 worker_id) {
+      std::vector<tpch::q3::q3_agg_row_t> out;
+      db_traits.run_tx([&]() { q3_wrap->query(out); }, worker_id);
+   });
+   catalog.emplace_back([q5_wrap, &db_traits](u64 worker_id) {
+      std::vector<tpch::q5::q5_agg_row_t> out;
+      db_traits.run_tx([&]() { q5_wrap->query(out); }, worker_id);
+   });
+   catalog.emplace_back([q10_wrap, &db_traits](u64 worker_id) {
+      std::vector<tpch::q10::q10_agg_row_t> out;
+      db_traits.run_tx([&]() { q10_wrap->query(out); }, worker_id);
+   });
+   return catalog;
+}
+
 // Convenience entry point that switches on FLAGS_storage_structure at runtime.
 // Returns the cohort catalog vector only — point-lookups are owned by the
 // helper's dedicated BG_LOOKUP_WORKER thread (see TpchExecutableHelper).
 // The `include_point_lookups` parameter is kept for source-compat with
 // existing callers but is now unused: pass any value.
+// `q10_naive_cohort=true` overrides the S=2 cohort to use ViewQ10 (naive
+// view, matching foreground default). Passed true by q10_btree's executable;
+// other binaries default to false (preagg cohort, light contention).
 template <typename Backend>
 inline std::vector<BgCatalogFn> register_vanilla_bg_catalog(
     DBTraits& db_traits,
@@ -299,12 +345,17 @@ inline std::vector<BgCatalogFn> register_vanilla_bg_catalog(
     tpch::q5::Q5Workload<Backend>&  q5_workload,
     tpch::q10::Q10Workload<Backend>& q10_workload,
     int structure,
-    bool /*include_point_lookups*/)
+    bool /*include_point_lookups*/,
+    bool q10_naive_cohort = false)
 {
    std::vector<BgCatalogFn> catalog;
    switch (structure) {
       case 1: catalog = register_vanilla_bg_catalog_at<Backend, 1>(db_traits, q3_workload, q5_workload, q10_workload); break;
-      case 2: catalog = register_vanilla_bg_catalog_at<Backend, 2>(db_traits, q3_workload, q5_workload, q10_workload); break;
+      case 2:
+         catalog = q10_naive_cohort
+                       ? register_vanilla_bg_catalog_at_s2_q10_naive<Backend>(db_traits, q3_workload, q5_workload, q10_workload)
+                       : register_vanilla_bg_catalog_at<Backend, 2>(db_traits, q3_workload, q5_workload, q10_workload);
+         break;
       case 3: catalog = register_vanilla_bg_catalog_at<Backend, 3>(db_traits, q3_workload, q5_workload, q10_workload); break;
       case 4: catalog = register_vanilla_bg_catalog_at<Backend, 4>(db_traits, q3_workload, q5_workload, q10_workload); break;
       case 5: catalog = register_vanilla_bg_catalog_at<Backend, 5>(db_traits, q3_workload, q5_workload, q10_workload); break;

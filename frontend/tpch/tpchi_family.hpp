@@ -82,11 +82,15 @@ struct TPCHiWrappers<Backend, 1> {
                  tpch::q10i::Q10IWorkload<Backend>& q10i_w)
        : q3i{q3i_w}, q5i{q5i_w}, q10i{q10i_w} {}
 };
+// S=2 bg cohort: Q10I reads PREAGG view (cohort sidekick, not Q10I worst-case
+// stress). Mirrors VanillaWrappers<Backend, 2> rationale — see comment there.
+// The naive view stays loaded in the S2 image; q10i_btree_2 foreground still
+// respects --q10i_view_variant for its own headline.
 template <typename Backend>
 struct TPCHiWrappers<Backend, 2> {
-   tpch::q3i::ViewQ3I<Backend>   q3i;
-   tpch::q5i::ViewQ5I<Backend>   q5i;
-   tpch::q10i::ViewQ10I<Backend> q10i;
+   tpch::q3i::ViewQ3I<Backend>         q3i;
+   tpch::q5i::ViewQ5I<Backend>         q5i;
+   tpch::q10i::PreaggViewQ10I<Backend> q10i;
    TPCHiWrappers(tpch::q3i::Q3IWorkload<Backend>&   q3i_w,
                  tpch::q5i::Q5IWorkload<Backend>&   q5i_w,
                  tpch::q10i::Q10IWorkload<Backend>& q10i_w)
@@ -241,6 +245,38 @@ inline BgCatalogFn make_tpchi_point_lookup_step(
    };
 }
 
+// Mirrors vanilla's S=2 q10_naive_cohort override — see
+// `register_vanilla_bg_catalog_at_s2_q10_naive` rationale. Used by
+// q10i_btree so the bg cohort's Q10I thread reads naive (matching fg)
+// instead of the preagg sidekick default.
+template <typename Backend>
+inline std::vector<BgCatalogFn> register_tpchi_bg_catalog_at_s2_q10i_naive(
+    DBTraits& db_traits,
+    tpch::q3i::Q3IWorkload<Backend>&   q3i_workload,
+    tpch::q5i::Q5IWorkload<Backend>&   q5i_workload,
+    tpch::q10i::Q10IWorkload<Backend>& q10i_workload)
+{
+   auto q3i_wrap = std::make_shared<tpch::q3i::ViewQ3I<Backend>>(q3i_workload);
+   auto q5i_wrap = std::make_shared<tpch::q5i::ViewQ5I<Backend>>(q5i_workload);
+   auto q10i_wrap = std::make_shared<tpch::q10i::ViewQ10I<Backend>>(q10i_workload);
+
+   std::vector<BgCatalogFn> catalog;
+   catalog.reserve(3);
+   catalog.emplace_back([q3i_wrap, &db_traits](u64 worker_id) {
+      std::vector<tpch::q3i::q3i_agg_row_t> out;
+      db_traits.run_tx([&]() { q3i_wrap->query(out); }, worker_id);
+   });
+   catalog.emplace_back([q5i_wrap, &db_traits](u64 worker_id) {
+      std::vector<tpch::q5i::q5i_agg_row_t> out;
+      db_traits.run_tx([&]() { q5i_wrap->query(out); }, worker_id);
+   });
+   catalog.emplace_back([q10i_wrap, &db_traits](u64 worker_id) {
+      std::vector<tpch::q10i::q10i_agg_row_t> out;
+      db_traits.run_tx([&]() { q10i_wrap->query(out); }, worker_id);
+   });
+   return catalog;
+}
+
 template <typename Backend>
 inline std::vector<BgCatalogFn> register_tpchi_bg_catalog(
     DBTraits& db_traits,
@@ -249,12 +285,17 @@ inline std::vector<BgCatalogFn> register_tpchi_bg_catalog(
     tpch::q5i::Q5IWorkload<Backend>&   q5i_workload,
     tpch::q10i::Q10IWorkload<Backend>& q10i_workload,
     int structure,
-    bool /*include_point_lookups*/)
+    bool /*include_point_lookups*/,
+    bool q10i_naive_cohort = false)
 {
    std::vector<BgCatalogFn> catalog;
    switch (structure) {
       case 1: catalog = register_tpchi_bg_catalog_at<Backend, 1>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
-      case 2: catalog = register_tpchi_bg_catalog_at<Backend, 2>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
+      case 2:
+         catalog = q10i_naive_cohort
+                       ? register_tpchi_bg_catalog_at_s2_q10i_naive<Backend>(db_traits, q3i_workload, q5i_workload, q10i_workload)
+                       : register_tpchi_bg_catalog_at<Backend, 2>(db_traits, q3i_workload, q5i_workload, q10i_workload);
+         break;
       case 3: catalog = register_tpchi_bg_catalog_at<Backend, 3>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
       case 4: catalog = register_tpchi_bg_catalog_at<Backend, 4>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
       case 5: catalog = register_tpchi_bg_catalog_at<Backend, 5>(db_traits, q3i_workload, q5i_workload, q10i_workload); break;
