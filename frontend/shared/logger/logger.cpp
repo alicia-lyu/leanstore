@@ -84,10 +84,18 @@ void Logger::summarize_shared_stats()
    header.push_back(to_string(stats.column_name));
    data.push_back(stats.elapsed_or_tput());
 
+   // Use .find() instead of .at() throughout: at SF=1550 dram=1.0 the leanstore
+   // worker threads can stall on disk hard enough that CPUTable's per-thread
+   // counter dicts are missing "cycle" / "CPU" by the time we snapshot here,
+   // and .at() throws std::out_of_range, aborting the entire run after the
+   // experiment already finished. Skip the missing thread instead — losing a
+   // CPU-stats row is soft degradation; aborting the binary is not.
    switch (stats.column_name) {
       case ColumnName::ELAPSED:
          for (auto& [t_name, worker_e] : cpu_table.workers_events) {
-            long cycles = static_cast<long>(worker_e.at("cycle"));
+            auto it = worker_e.find("cycle");
+            if (it == worker_e.end()) continue;
+            long cycles = static_cast<long>(it->second);
             if (cycles == 0)
                continue;
             header.push_back(t_name + " Cycles");
@@ -96,7 +104,9 @@ void Logger::summarize_shared_stats()
          break;
       case ColumnName::TPUT:
          for (auto& [t_name, worker_e] : cpu_table.workers_events) {
-            long cycles = static_cast<long>(worker_e.at("cycle"));
+            auto it = worker_e.find("cycle");
+            if (it == worker_e.end()) continue;
+            long cycles = static_cast<long>(it->second);
             if (cycles == 0)
                continue;
             header.push_back(t_name + " Cycles / TX");
@@ -108,10 +118,14 @@ void Logger::summarize_shared_stats()
    }
 
    for (auto& [t_name, worker_e] : cpu_table.workers_events) {
-      long cycles = static_cast<long>(worker_e.at("cycle"));
+      auto cy_it = worker_e.find("cycle");
+      if (cy_it == worker_e.end()) continue;
+      long cycles = static_cast<long>(cy_it->second);
       if (cycles == 0)
          continue;
-      double cpu_utilization = std::min(worker_e.at("CPU"), 1.0);
+      auto cpu_it = worker_e.find("CPU");
+      if (cpu_it == worker_e.end()) continue;
+      double cpu_utilization = std::min(cpu_it->second, 1.0);
       header.push_back(t_name + " CPU Util (%)");
       // 2 decimal places
       data.push_back(to_fixed(cpu_utilization * 100));
