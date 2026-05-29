@@ -22,21 +22,14 @@ actionable.
   fresh process (see CLAUDE.md workflow rule) so the MI's hot
   pages from load don't skew the buffer-pool state.
 
-- **q10_btree_7 / q10i_btree_7 rerun + size-accounting continuity
-  (2026-05-28, post-c9406c44)** — the 5L btree sweep had two aborts
-  at sx=7 (Q10/Q10I `get_size()` missing case 7); the case-7 fix
-  landed as 9697ab5f. The follow-up size_audit refactor (c9406c44)
-  then broadened every Sx's per-adapter sum (S2/S3/S5/S7 now include
-  co-resident MIs / preagg) and added a `size_audit` console line
-  per (query, sx). Returned value is still the per-adapter sum, but
-  for several Sx that sum now differs from the pre-c9406c44 value.
-  Re-running q10_btree_7 / q10i_btree_7 now writes new-accounting
-  rows into a sweep whose other 26 rows have old-accounting size
-  columns. Decision needed: (a) accept the 2-row inconsistency
-  (size column is auxiliary), (b) re-run the entire 5L btree sweep
-  with the new code for column-wise consistency. Defer until user
-  picks. Also pending: q10i_btree_2 `std::out_of_range` — pre-existing
-  abort in S2 image path; wants its own diagnostic worktree.
+- **5L btree size-column inconsistency post-c9406c44 (2026-05-28)** —
+  the size_audit refactor broadened every Sx's per-adapter sum
+  (then 378e1038 / f99683ee dropped the COL/COLI MI from S2/S7).
+  The 26 rows already in the seed=0 CSVs have the old accounting;
+  the 3 reruns landed post-refactor (q10_btree_7, q10i_btree_7,
+  q10i_btree_2) have the new accounting. User accepted the 3-row
+  inconsistency for now: future rep (seed=1, seed=2) sweeps will be
+  consistent end-to-end.
 
 - **5L bg=2 sweep: `--param_seed=1,2` reps pending (2026-05-28)** —
   the first paper-sweep run after the family-image refactor (commits
