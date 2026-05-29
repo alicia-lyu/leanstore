@@ -177,15 +177,16 @@ void Q5Workload<Backend>::load()
 template <typename Backend>
 double Q5Workload<Backend>::get_size() const
 {
-   // Per-adapter sum across what THIS binary sees. S2 image holds COL MI
-   // (view loaders walk it under load_vanilla_family) plus sibling Q3/Q10
-   // views and Q10 preagg invisible to Q5; sanity log catches the gap.
+   // Per-adapter sum across what THIS binary sees at query time. The COL
+   // MI is co-resident in the S2 image (view loader scaffolding) but not
+   // consumed at S2 query time — user directive 2026-05-28: don't touch
+   // it during measurement, and measurement should run in a fresh process.
    double base = customer.size() + orders.size() + lineitem.size()
                + supplier.size() + nation.size() + region.size();
    double sum;
    switch (FLAGS_storage_structure) {
       case 1: sum = base + col.get_split_size(); break;
-      case 2: sum = base + col.get_merged_size() + pipeline_view.size(); break;
+      case 2: sum = base + pipeline_view.size(); break;
       case 3: sum = base + col.get_merged_size(); break;
       case 4: sum = base; break;
       case 6: sum = base + shared_view.size(); break;

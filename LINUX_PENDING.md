@@ -9,6 +9,19 @@ actionable.
 
 ## Active
 
+- **Dedicated S2/S7 view loader without persisting the COL/COLI MI
+  (2026-05-28, post-378e1038)** — at sx=2 the family loader runs
+  `populate_merged()` first so the view loader has a structure to
+  walk; the COL/COLI MI is then persisted into the shared S2/S7
+  image and `get_size()` excludes it as load-time scaffolding (user
+  directive). A clean fix is a view loader that builds the views
+  without persisting the MI (e.g. an in-memory MI build, or a
+  per-orderkey two-pointer merge over base tables similar to the
+  existing q3 view loader). Until that lands, the S2/S7 image
+  contains transient MI data; perf measurement must come from a
+  fresh process (see CLAUDE.md workflow rule) so the MI's hot
+  pages from load don't skew the buffer-pool state.
+
 - **q10_btree_7 / q10i_btree_7 rerun + size-accounting continuity
   (2026-05-28, post-c9406c44)** — the 5L btree sweep had two aborts
   at sx=7 (Q10/Q10I `get_size()` missing case 7); the case-7 fix

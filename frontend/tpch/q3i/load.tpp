@@ -167,15 +167,15 @@ void Q3IWorkload<Backend>::load()
 template <typename Backend>
 double Q3IWorkload<Backend>::get_size() const
 {
-   // Per-adapter sum across what THIS binary sees. S2 image holds COLI MI
-   // (view loaders walk it under load_tpchi_family) plus sibling Q5I/Q10I
-   // views and Q10I preagg invisible to Q3I; sanity log catches the gap.
+   // Per-adapter sum across what THIS binary sees at query time. COLI MI
+   // is co-resident in the S2 image (view loader scaffolding) but not
+   // consumed at S2 query time — user directive 2026-05-28.
    double base = customer.size() + orders.size()
                + lineitem.size() + invoice.size();
    double sum;
    switch (FLAGS_storage_structure) {
       case 1: sum = base + coli.get_split_size(); break;
-      case 2: sum = base + coli.get_merged_size() + pipeline_view.size(); break;
+      case 2: sum = base + pipeline_view.size(); break;
       case 3: sum = base + coli.get_merged_size(); break;
       case 4: sum = base; break;
       case 5: sum = base + coli.get_aggregated_size(); break;

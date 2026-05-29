@@ -39,6 +39,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   will be deceptively long and the slowdown will look like a
   regression in the binary itself rather than scheduled reload.
 - **Push commits aggressively on Linux.** Linux experiment machines expire and wipe disk content without warning. After every commit on Linux — including intermediate "build passes" or "load complete" checkpoints — immediately run `git push`. Do not accumulate unpushed commits; a machine wipe will lose them permanently.
+- **S2 / S7 perf runs: always start a fresh process after load.**
+  The shared S2/S7 image carries the COL (or COLI) MI as load-time
+  scaffolding because the view loader walks it to populate the views
+  — but S2's query path reads the view, S7's reads the preagg, and
+  neither consumes the MI. If you measure in the same process that
+  loaded, the MI's pages are hot in the buffer pool and skew the
+  measured working-set behaviour. Reload + load_only path are fine;
+  the perf measurement must come from a separate invocation
+  (recover-from-image) so buffer pools start cold and the MI pages
+  fault back in only if a query actually touches them (they shouldn't,
+  at S2 / S7). `get_size()` already excludes the MI from the S2 / S7
+  per-adapter sum for the same reason.
 - When developing on macOS, add tasks pending on Linux/Leanstore to [LINUX_PENDING.md](LINUX_PENDING.md). Reference equivalent files implemented for LSM-tree. Resolved items are rotated out to [LINUX_HISTORY.md](LINUX_HISTORY.md) so the pending file stays a worklist, not an archive.
 - **Append a `RUNS.md` entry after every perf run.** Each query
   directory under `frontend/tpch/<q>/` and `frontend/geo/` has a
