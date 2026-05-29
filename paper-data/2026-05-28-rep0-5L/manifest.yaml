@@ -1,6 +1,6 @@
 tag: 2026-05-28-rep0-5L
 experiment: TPC-H + TPCHi headline sweep, bg=2 cohort, --param_seed=0 (rep 0)
-commit_sha: 6867743d
+commit_sha: 0c6f9f87
 host: c220g2-011011.wisc.cloudlab.us
 cells: [c0]   # 5L: btree SF=1550, lsm SF=3850, dram=1.0
 families: [vanilla, tpchi]
