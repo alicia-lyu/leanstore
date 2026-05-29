@@ -1,4 +1,11 @@
 binary,cell,bg,rep,tx,s2_method,s3_method,s2_tx_per_s,s3_tx_per_s,ratio,s2_cpu_cycles_per_tx,s3_cpu_cycles_per_tx,s2_cpu_llc_miss_per_tx,s3_cpu_llc_miss_per_tx,s2_bm_p2_pct,s3_bm_p2_pct,attribution_hint
+q3i_btree,c0,2,2,query,pipeline_view,mi_coli_walk,0.03662184031339506,0.034275322008081435,0.9359257130380925,,,,,,,
 q3i_lsm,c0,2,0,query,pipeline_view,mi_coli_walk,0.0891283073286642,0.0770308015363023,0.8642686464609739,,,,,,,
+q3i_lsm,c0,2,1,query,pipeline_view,mi_coli_walk,0.09453234376875877,0.07956829426264858,0.8417044483450591,,,,,,,
+q3i_lsm,c0,2,2,query,pipeline_view,mi_coli_walk,0.09039768654240601,0.07541927460233303,0.8343053620841664,,,,,,,
 q5_lsm,c0,2,0,query,pipeline_view,mi_col_walk,0.0876996812116588,0.07986812175735426,0.9107002517443198,,,,,,,
+q5_lsm,c0,2,1,query,pipeline_view,mi_col_walk,0.09166490975589635,0.0810142990237777,0.8838092923400981,,,,,,,
+q5_lsm,c0,2,2,query,pipeline_view,mi_col_walk,0.08519948607669998,0.07923817251417967,0.9300311089065291,,,,,,,
 q5i_lsm,c0,2,0,query,pipeline_view,mi_coli_walk,0.08547023157304542,0.07503597975229122,0.8779194623822122,,,,,,,
+q5i_lsm,c0,2,1,query,pipeline_view,mi_coli_walk,0.09175153683824204,0.07817092541868348,0.8519849161382312,,,,,,,
+q5i_lsm,c0,2,2,query,pipeline_view,mi_coli_walk,0.0893975410312364,0.0726449066113403,0.8126051989053865,,,,,,,
