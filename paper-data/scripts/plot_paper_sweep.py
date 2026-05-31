@@ -748,8 +748,16 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
                         xytext=(0, 2), textcoords="offset points",
                         ha="center", va="bottom", fontsize=8,
                         color=color, annotation_clip=False)
-        # Error bars suppressed: 3 reps is too few for a meaningful
-        # IQR — bars report the rep-median only.
+        # IQR whisker: with 5 reps, q25/q75 are effectively the
+        # second-best and second-worst values. Draw a vertical line with
+        # no horizontal caps. Clamp the upper end at the panel cap so a
+        # tall outlier doesn't pierce annotations / the top spine.
+        if hi > lo and np.isfinite(lo) and np.isfinite(hi):
+            whisker_hi = min(hi, ylim_top) if ylim_top is not None else hi
+            whisker_lo = max(lo, log_bottom) if (log_y and log_bottom is not None) else lo
+            if whisker_hi > whisker_lo:
+                ax.vlines(x, whisker_lo, whisker_hi,
+                          color="black", linewidth=1.6, clip_on=False)
         drew = True
     ax.set_xlabel(panel_title, fontsize=14)
     if show_ylabel:
