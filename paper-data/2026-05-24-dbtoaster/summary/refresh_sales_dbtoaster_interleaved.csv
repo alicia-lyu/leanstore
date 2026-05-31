@@ -2,3 +2,5 @@ tool,sf,mode,rf1_orders_per_s,rf2_orders_per_s,pair_orders_per_s_agg,pairs_per_s
 dbtoaster,0.36,interleaved,146244,43294.3,66810.1,33272.3,2160142,8648020,1,21f78140,c220g2-011011.wisc.cloudlab.us,measured: typed on_insert/on_delete interleaved 1+1 pair (RF_INTERLEAVE=1)
 dbtoaster,0.36,interleaved,135942,43969.8,66447.6,32896.9,2160142,8648020,2,21f78140,c220g2-011011.wisc.cloudlab.us,measured: confirmation run
 dbtoaster,0.36,phased_derived,86252.8,16416.7,27583.4,13791.7,2160142,8650300,-,21f78140,c220g2-011011.wisc.cloudlab.us,SUPERSEDED: pair derived 1/(1/rf1+1/rf2) from separate bulk phases; phased RF1 included stream/event-dispatch overhead
+dbtoaster,0.7,interleaved,147815.0,45134.2,69153.0,34437.6,4200226,16771844,1,eff08559,c220g2-011011.wisc.cloudlab.us,10L anchor — refresh_sales SF=4000 btree alignment
+dbtoaster,1.0,interleaved,135737.0,42290.5,64488.8,32324.3,6001032,21259436,1,eff08559,c220g2-011011.wisc.cloudlab.us,10L anchor — refresh_sales SF=4000 btree alignment

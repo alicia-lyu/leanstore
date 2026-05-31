@@ -14,7 +14,7 @@ update_stream: >
   process_stream_event override; RF2 deletes (delete.1) fired via on_delete_*
   triggers. Separate phases, NOT interleaved size-stable pairs.
 memory: unlimited (no ulimit sweep — DBToaster is pure in-memory, no SSD spill)
-scale_factors: [0.01, 0.1, 0.36]   # 0.36 ~= 5 GiB working set = paper 5-GiB-secondary anchor
+scale_factors: [0.01, 0.1, 0.36, 0.7, 1.0]   # 0.36 = 5L anchor; 0.7 = 10L fitting anchor (16 GiB peak); 1.0 = 10L footprint anchor (20.3 GiB peak, OOMs 20 GiB BP)
 metric: >
   RF1/RF2 orders/sec (one "order" = insert/delete 1 order + its lineitems);
   working_set_kb + peak_rss_kb in summary CSV.
@@ -29,3 +29,9 @@ caveats: >
   comparable, keys differ); RF1/RF2 separate phases so pair rate is an aggregate;
   RAM need is a MULTIPLE of the working set (peak ~= 1.7x here) — precise factor
   under sustained RF deferred. See README.md.
+addendum_2026_05_31: >
+  Added SF=0.7 and SF=1.0 (commit eff08559) as the 10L paper-anchor points.
+  SF=0.7 → 16.0 GiB peak RSS (fits 20 GiB LeanStore BP at 10LL); SF=1.0 →
+  20.3 GiB peak RSS (just exceeds 20 GiB BP — plotter renders as OOM, which
+  is the LeanStore-fits-DBToaster-doesn't paper claim at 10L scale). Each
+  ran in INTERLEAVED mode (RF_INTERLEAVE=1) via the same harness.

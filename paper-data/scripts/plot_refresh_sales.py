@@ -137,20 +137,25 @@ def _dbtoaster_pair_us(db_df: pd.DataFrame,
     """
     if db_df.empty:
         return None
-    # Pin to the largest SF DBToaster managed — that's the "comparable
-    # to LeanStore 5L" anchor (manifest: SF=0.36 ≈ 5 GiB working set).
-    # Smaller SFs aren't meaningful baselines for the LeanStore scales.
     df = db_df
     if "mode" in df.columns:
         # Drop SUPERSEDED phased_derived rows; keep measured interleaved.
         df = df[df["mode"] == "interleaved"]
         if df.empty:
             df = db_df
-    sf_max = df["sf"].max()
-    rows = df[df["sf"] == sf_max]
     budget_kb = budget_gib * 1024 * 1024
-    if float(rows["peak_rss_kb"].iloc[0]) > budget_kb:
+    # Pick the largest SF whose peak_rss fits the budget. If no SF fits
+    # (the smallest is still too big for this DRAM budget), return None
+    # and the caller renders OOM. Previously this code only checked
+    # df["sf"].max() and OOMed the panel as soon as the biggest SF
+    # didn't fit — but at 10L scale (SF=1.0 = 20.3 GiB) we want the
+    # 20 GiB DRAM panel to fall back to the largest fitting SF (e.g.
+    # SF=0.7 at 16 GiB) rather than OOM out the comparison entirely.
+    fits = df[df["peak_rss_kb"] <= budget_kb]
+    if fits.empty:
         return None  # caller renders OOM
+    sf_max = fits["sf"].max()
+    rows = fits[fits["sf"] == sf_max]
     # Prefer the directly measured interleaved pair rate when present
     # (median across runs). Falls back to the phased-derived sum of
     # per-op latencies for the legacy throughput CSV.
