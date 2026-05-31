@@ -1,0 +1,27 @@
+tag: 2026-05-30-refresh-10L
+experiment: refresh_sales RF1/RF2 at 10L scale, 4 DRAM points
+commit_sha: 545c5eea
+host: c220g2-011011.wisc.cloudlab.us
+disk: ssd (per-structure image copy under /mnt/ssd; sources on /mnt/hdd/10L_archive/tpch_{btree,lsm}/)
+backend:
+  btree: SF=4000
+  lsm:   SF=10000
+refresh_seconds: 90
+update_size: 1
+worker_threads: 5
+cells:
+  10LL: {dram_gib: 20.0, bg: 0, backends: [btree], prewarm: true,  rationale: DBToaster apples-to-apples (in-memory, btree+prewarm)}
+  10L:  {dram_gib: 1.0,  bg: 2, backends: [btree, lsm], prewarm: false, rationale: HTAP at headline-sweep DRAM (contention)}
+  10H:  {dram_gib: 0.5,  bg: 2, backends: [btree, lsm], prewarm: false, rationale: tighter pressure}
+  10HH: {dram_gib: 0.2,  bg: 2, backends: [btree, lsm], prewarm: false, rationale: severe pressure}
+structures: {1: split_S1, 2: view_S2, 3: merged_S3, 4: base_S4}
+runs_ok: 28
+runs_err: 0
+metric: per-iteration RF1 / RF2 / pair orders/s in RefreshTPut.s<N>.csv (mean over the 90s window is the headline). RF1 count == RF2 count (size-stable pair).
+methodology: cold-start per cell (drop_caches between cp and run); fresh image copy per cell × backend × structure; refresh runs on the copy, which is deleted after each cell.
+comparison: DBToaster (paper-data/2026-05-24-dbtoaster, in-memory) RF1=86253 orders/s, RF2=16417 orders/s. 10LL btree headline pair rate is the apples-to-apples LeanStore number.
+note: >
+  Sweep ran 19:32:50 → 22:24 CDT (2h52m wall). LSM rates remarkably
+  stable across 10L/10H/10HH (memtable-first writes), btree rates
+  degrade ~3× from 10L→10HH under bg=2 contention. S2 (view) slowest
+  in all cells, S3 (merged) > S1 (split) > S2 under pressure for btree.

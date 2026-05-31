@@ -1,0 +1,33 @@
+tag: 2026-05-29-rep0-10L
+experiment: TPC-H + TPCHi headline sweep at 10 GiB scale (S1 ≈ 10 GiB), bg=2 cohort, 5 reps
+commit_sha: 545c5eea
+host: c220g2-011011.wisc.cloudlab.us
+cells: [c4]   # 10L: btree SF=4000, lsm SF=10000, dram=1.0
+families: [vanilla, tpchi]
+reps: 5  # [0, 1, 2, 3, 4]
+runs_ok: 280
+runs_err: 0
+backends: [btree, lsm]
+binaries: [q3, q5, q3i, q5i, q10, q10i]
+structures:
+  q3_q5_q3i_q5i: [1, 2, 3, 4]
+  q10_q10i: [1, 2, 3, 4, 5, 7]
+bg: 2 (--bg_query_thread=true --bg_point_lookups=true; 3-thread cohort + 1 lookup; worker_threads=5)
+disk: ssd (then migrated to /mnt/hdd/10L_archive/<family>_<backend>/ between phases)
+note: >
+  Rerun of the 5L sweep at 2.6× scale: btree SF=4000, lsm SF=10000.
+  S1 secondary size targets ~2 GiB per backend; total S2 / S3 working
+  set scales proportionally. DRAM stays at 1.0 GiB so the 5L→10L step
+  acts as a memory-pressure axis (5× → 10× total-footprint pressure;
+  the more interesting axis is whether single-query working sets now
+  start exceeding 1 GiB).
+
+  Sequential build strategy (only one family+backend co-resident on
+  SSD at a time): tpch_lsm → migrate, tpchi_lsm → migrate,
+  tpch_btree → migrate, tpchi_btree → migrate. After each phase the
+  family_backend_S{1..4} dirs move to /mnt/hdd/10L_archive/.
+
+  Bg cohort Q10-view asymmetry (preagg for Q3/Q5 cohort, naive for
+  Q10's own cohort) carried over from 5L rep 0 (commit 545c5eea).
+  Headline numbers parsed directly from each cell's
+  structure<N>.log Summary line.

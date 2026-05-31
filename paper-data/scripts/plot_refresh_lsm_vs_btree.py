@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Plot refresh_sales LSM-vs-btree throughput across 5L (1.0 GiB DRAM) and
-5H (0.4 GiB DRAM) memory budgets.
+"""Plot refresh_sales LSM-vs-btree throughput across 10L (1.0 GiB DRAM) and
+10H (0.4 GiB DRAM) memory budgets.
 
-Reads ``paper-data/<tag-5L>/summary/refresh_sales_5L_throughput.csv`` and
-``paper-data/<tag-5H>/summary/refresh_sales_5H_throughput.csv``, both at
+Reads ``paper-data/<tag-10L>/summary/refresh_sales_10L_throughput.csv`` and
+``paper-data/<tag-10H>/summary/refresh_sales_10H_throughput.csv``, both at
 the same SF, and emits a 1x2 grouped-bar figure under
 
-    paper-data/<tag-5L>/figures/paper/refresh_lsm_vs_btree_5L_5H_ssd.{pdf,png}
+    paper-data/<tag-10L>/figures/paper/refresh_lsm_vs_btree_10L_10H_ssd.{pdf,png}
 
 Layout: left panel = btree, right panel = lsm. Each panel has four
 structure clusters (S1 split, S2 view, S3 merged) with two bars per
-cluster (5L solid, 5H hatched). Y axis is absolute RF1+RF2 pair
+cluster (10L solid, 10H hatched). Y axis is absolute RF1+RF2 pair
 throughput (pairs/s, tail-30s window), linear scale per the paper
 convention.
 
@@ -34,9 +34,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib
+import os
 matplotlib.use("Agg")
+# Override via MPL_USETEX=0 to skip latex (labels uglier; works without
+# tex install). Paper-ready PDFs still need latex.
+_USETEX = os.environ.get("MPL_USETEX", "1") != "0"
 matplotlib.rcParams.update({
-    "text.usetex": True,
+    "text.usetex": _USETEX,
     "font.family": "serif",
     "text.latex.preamble": r"\usepackage{lmodern}",
 })
@@ -65,9 +69,9 @@ STRUCTURE_LABELS_TEX: Dict[int, str] = {
 }
 
 CELL_LABEL: Dict[str, str] = {
-    "5L":  r"1.0\,GiB memory budget",
-    "5H":  r"0.4\,GiB memory budget",
-    "5HH": r"0.1\,GiB memory budget",
+    "10L":  r"1.0\,GiB memory budget",
+    "10H":  r"0.5\,GiB memory budget",
+    "10HH": r"0.2\,GiB memory budget",
 }
 
 
@@ -108,27 +112,27 @@ def _lookup(df: pd.DataFrame, backend: str, structure: int) -> float:
     return 1e6 / tps
 
 
-def _panel(ax, df_5L: pd.DataFrame, df_5H: pd.DataFrame,
-           df_5HH: pd.DataFrame, backend: str, backend_label: str,
+def _panel(ax, df_10L: pd.DataFrame, df_10H: pd.DataFrame,
+           df_10HH: pd.DataFrame, backend: str, backend_label: str,
            show_ylabel: bool) -> None:
     bar_w = 0.26
     xs = np.arange(len(STRUCTURES), dtype=float)
 
     for i, struct in enumerate(STRUCTURES):
         color = STYLE["structure_colors"].get(struct, "#777777")
-        v_5L  = _lookup(df_5L,  backend, struct)
-        v_5H  = _lookup(df_5H,  backend, struct)
-        v_5HH = _lookup(df_5HH, backend, struct)
-        # 5L (most memory) → solid; 5H → "////"; 5HH (least memory) → "xx".
-        if np.isfinite(v_5L):
-            ax.bar(xs[i] - bar_w, v_5L, width=bar_w,
+        v_10L  = _lookup(df_10L,  backend, struct)
+        v_10H  = _lookup(df_10H,  backend, struct)
+        v_10HH = _lookup(df_10HH, backend, struct)
+        # 10L (most memory) → solid; 10H → "////"; 10HH (least memory) → "xx".
+        if np.isfinite(v_10L):
+            ax.bar(xs[i] - bar_w, v_10L, width=bar_w,
                    color=color, linewidth=0, zorder=2)
-        if np.isfinite(v_5H):
-            ax.bar(xs[i], v_5H, width=bar_w,
+        if np.isfinite(v_10H):
+            ax.bar(xs[i], v_10H, width=bar_w,
                    facecolor=color, edgecolor="#222",
                    linewidth=0.6, hatch="////", zorder=2)
-        if np.isfinite(v_5HH):
-            ax.bar(xs[i] + bar_w, v_5HH, width=bar_w,
+        if np.isfinite(v_10HH):
+            ax.bar(xs[i] + bar_w, v_10HH, width=bar_w,
                    facecolor=color, edgecolor="#222",
                    linewidth=0.6, hatch="xx", zorder=2)
 
@@ -149,7 +153,7 @@ def _panel(ax, df_5L: pd.DataFrame, df_5H: pd.DataFrame,
 
 
 def _figure_legend(fig) -> None:
-    # Two legend groups: structure colours (top row), 5L/5H shading
+    # Two legend groups: structure colours (top row), 10L/10H shading
     # (bottom row). Plain matplotlib patches with hatch markers keep
     # the encoding self-documenting without touching the bar code.
     struct_handles = [
@@ -159,11 +163,11 @@ def _figure_legend(fig) -> None:
     ]
     cell_handles = [
         mpatches.Patch(facecolor="#888", linewidth=0,
-                       label=CELL_LABEL["5L"]),
+                       label=CELL_LABEL["10L"]),
         mpatches.Patch(facecolor="#888", edgecolor="#222", linewidth=0.6,
-                       hatch="////", label=CELL_LABEL["5H"]),
+                       hatch="////", label=CELL_LABEL["10H"]),
         mpatches.Patch(facecolor="#888", edgecolor="#222", linewidth=0.6,
-                       hatch="xx", label=CELL_LABEL["5HH"]),
+                       hatch="xx", label=CELL_LABEL["10HH"]),
     ]
     fig.legend(handles=struct_handles, loc="upper center",
                bbox_to_anchor=(0.5, 1.04), ncol=len(STRUCTURES),
@@ -193,16 +197,16 @@ def main() -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--diagram", default="refresh_lsm_vs_btree",
                    help="diagram name in diagrams.yaml (default: refresh_lsm_vs_btree). "
-                        "sources[0]=5L, sources[1]=5H, sources[2]=5HH.")
-    p.add_argument("--csv-5L",
-                   default="refresh_sales_5L_bg2_throughput.csv",
-                   help="filename under <tag-5L>/summary/")
-    p.add_argument("--csv-5H",
-                   default="refresh_sales_5H_bg2_throughput.csv",
-                   help="filename under <tag-5H>/summary/")
-    p.add_argument("--csv-5HH",
-                   default="refresh_sales_5HH_bg2_throughput.csv",
-                   help="filename under <tag-5HH>/summary/")
+                        "sources[0]=10L, sources[1]=10H, sources[2]=10HH.")
+    p.add_argument("--csv-10L",
+                   default="refresh_sales_10L_bg2_throughput.csv",
+                   help="filename under <tag-10L>/summary/")
+    p.add_argument("--csv-10H",
+                   default="refresh_sales_10H_bg2_throughput.csv",
+                   help="filename under <tag-10H>/summary/")
+    p.add_argument("--csv-10HH",
+                   default="refresh_sales_10HH_bg2_throughput.csv",
+                   help="filename under <tag-10HH>/summary/")
     p.add_argument("--formats", nargs="+", default=["pdf", "png"],
                    choices=["pdf", "png", "svg"])
     args = p.parse_args()
@@ -210,24 +214,24 @@ def main() -> int:
     tag_paths = sources_for(args.diagram)
     if len(tag_paths) < 3:
         print(f"[plot_refresh_lsm_vs_btree] error: diagram '{args.diagram}' "
-              f"needs 3 sources (5L/5H/5HH), got {len(tag_paths)}",
+              f"needs 3 sources (10L/10H/10HH), got {len(tag_paths)}",
               file=sys.stderr)
         return 2
-    root_5L, root_5H, root_5HH = tag_paths[0], tag_paths[1], tag_paths[2]
+    root_10L, root_10H, root_10HH = tag_paths[0], tag_paths[1], tag_paths[2]
     tags = [p.name for p in tag_paths]
 
-    df_5L  = _load_summary(root_5L,  args.csv_5L)
-    df_5H  = _load_summary(root_5H,  args.csv_5H)
-    df_5HH = _load_summary(root_5HH, args.csv_5HH)
+    df_10L  = _load_summary(root_10L,  args.csv_10L)
+    df_10H  = _load_summary(root_10H,  args.csv_10H)
+    df_10HH = _load_summary(root_10HH, args.csv_10HH)
 
-    manifests = [_load_manifest(r) for r in (root_5L, root_5H, root_5HH)]
+    manifests = [_load_manifest(r) for r in (root_10L, root_10H, root_10HH)]
 
     fig, axes = plt.subplots(1, 2, figsize=(6.6, 2.1), sharey=True)
     for ax, (backend, label) in zip(axes, BACKENDS):
-        _panel(ax, df_5L, df_5H, df_5HH, backend, label,
+        _panel(ax, df_10L, df_10H, df_10HH, backend, label,
                show_ylabel=(ax is axes[0]))
 
-    # Sync linear y so the 5H/5L drop is visually honest across panels.
+    # Sync linear y so the 10H/10L drop is visually honest across panels.
     ymax = max(ax.get_ylim()[1] for ax in axes)
     for ax in axes:
         ax.set_ylim(0, ymax * 1.05)

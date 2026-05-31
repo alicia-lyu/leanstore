@@ -21,12 +21,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib
+import os
 matplotlib.use("Agg")
 # usetex so \textsc{...} in the bar xticklabels renders as proper
 # small caps, matching tab:exp-baselines in the paper. Requires a
 # working LaTeX install (TeX Live's pdflatex on this machine).
+# Override via MPL_USETEX=0 to skip latex (labels are uglier but work).
+_USETEX = os.environ.get("MPL_USETEX", "1") != "0"
 matplotlib.rcParams.update({
-    "text.usetex": True,
+    "text.usetex": _USETEX,
     "font.family": "serif",
     "text.latex.preamble": r"\usepackage{lmodern}",
 })
@@ -63,6 +66,21 @@ BACKENDS = ["btree"]
 # which is the TPC-H-faithful unit; the SF=1 rf_throughput file falls
 # back to RF1-only because its RF2 reservoir drains early.
 CSV_SCHEMAS = {
+    # 10L paper-headline files (bg=2 HTAP, 1 GiB DRAM, SF=4000/10000).
+    "refresh_sales_10L_bg2_throughput.csv": {
+        "tps_col": "pair_tps_tail30",
+        "unit": r"$\mu$s / RF pair",
+        "scale": 1e6,
+        "basename": "refresh_10L_pair_latency_bg2",
+    },
+    # 10LL prewarm sibling (bg=0, 20 GiB DRAM — DBToaster apples-to-apples).
+    "refresh_sales_10LL_throughput.csv": {
+        "tps_col": "pair_tps_tail30",
+        "unit": r"$\mu$s / RF pair",
+        "scale": 1e6,
+        "basename": "refresh_10LL_pair_latency",
+    },
+    # Legacy 5L files kept for backward-compat plotting of older tags.
     "refresh_sales_5L_bg2_throughput.csv": {
         "tps_col": "pair_tps_tail30",
         "unit": r"$\mu$s / RF pair",
@@ -98,6 +116,10 @@ CSV_SCHEMAS = {
 }
 
 PREWARM9_BUDGET_GIB = 9.0
+# 10LL prewarm cell (20 GiB DRAM) is the new DBToaster apples-to-apples
+# anchor at 10L scale; kept as a separate constant so 5L/9G plot paths
+# (legacy tags) still build.
+PREWARM_10LL_BUDGET_GIB = 20.0
 
 
 def _load_dbtoaster(path: Optional[Path]) -> pd.DataFrame:
@@ -150,7 +172,7 @@ def _dbtoaster_pair_us(db_df: pd.DataFrame,
 # about. 9 GiB = LeanStore data pending; DBToaster's largest SF
 # (~8.6 GiB peak RSS) fits.
 MEMORY_BUDGETS: List[Tuple[float, str]] = [(1.0, "1 GiB DRAM"),
-                                           (9.0, "9 GiB DRAM")]
+                                           (20.0, "20 GiB DRAM")]
 
 
 # Labels frame the y-axis question: *what extra storage structure
@@ -451,13 +473,19 @@ def main() -> int:
 
     df = _load_ls(csv_path, schema)
 
-    # sources[1] = optional prewarm9 sibling (9 GiB in-memory run).
+    # sources[1] = optional prewarm sibling. New 10L scheme: refresh_sales_10LL_throughput.csv
+    # in the SAME tag dir (20 GiB DRAM, bg=0 btree+prewarm). Falls back to the
+    # legacy refresh_prewarm9_throughput.csv when present.
     df_9g = pd.DataFrame()
     lsm_9g = pd.DataFrame()
     if len(tag_paths) >= 2:
         prewarm9_root = tag_paths[1]
+        prewarm_10ll_csv = prewarm9_root / "summary" / "refresh_sales_10LL_throughput.csv"
         prewarm9_csv = prewarm9_root / "summary" / "refresh_prewarm9_throughput.csv"
-        if prewarm9_csv.exists():
+        if prewarm_10ll_csv.exists():
+            df_9g = _load_ls(prewarm_10ll_csv,
+                             CSV_SCHEMAS["refresh_sales_10LL_throughput.csv"])
+        elif prewarm9_csv.exists():
             df_9g = _load_ls(prewarm9_csv,
                              CSV_SCHEMAS["refresh_prewarm9_throughput.csv"])
         lsm_9g_path = prewarm9_root / "summary" / "lsm_9gib_refresh.csv"
@@ -481,13 +509,15 @@ def main() -> int:
     # Bucket LeanStore data by buffer-pool budget so each panel pulls
     # its own bars. Missing budgets render as "pending" placeholders.
     primary_budget = float(df["dram_gib"].iloc[0]) if "dram_gib" in df.columns else 1.0
-    # B-tree budgets: 1 GiB (primary file) + 9 GiB (prewarm9 sibling).
+    # B-tree budgets: primary file (1 GiB at 10L) + prewarm sibling
+    # (20 GiB at 10LL — new scheme — or 9 GiB legacy).
     btree_by_budget: Dict[float, pd.DataFrame] = {primary_budget: df}
     if not df_9g.empty:
-        btree_by_budget[PREWARM9_BUDGET_GIB] = df_9g
+        prewarm_budget = float(df_9g["dram_gib"].iloc[0]) if "dram_gib" in df_9g.columns else PREWARM_10LL_BUDGET_GIB
+        btree_by_budget[prewarm_budget] = df_9g
 
     # LSM budgets: the primary file carries both backends at 1 GiB; the
-    # 9 GiB LSM point lives in its own file in the prewarm9 sibling.
+    # higher-DRAM LSM point lives in its own file in the prewarm sibling.
     lsm_by_budget: Dict[float, pd.DataFrame] = {primary_budget: df}
     if not lsm_9g.empty:
         lsm_by_budget[PREWARM9_BUDGET_GIB] = lsm_9g

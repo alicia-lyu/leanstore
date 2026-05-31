@@ -1,0 +1,5 @@
+binary,backend,cell,scale,dram_gib,bg,structure,struct_label,total_rf1,total_rf2,bg_txs,elapsed_s,n_rows,rf1_tps,rf2_tps,pair_tps,pair_tps_tail30,commit,host
+refresh_sales_btree,btree,10LL,4000,20.0,0,1,split_S1,1332848,1332848,0,90.00,1332848,14809.4,14809.4,14809.4,14902.7,545c5eea,c220g2-011011.wisc.cloudlab.us
+refresh_sales_btree,btree,10LL,4000,20.0,0,2,view_S2,1016309,1016309,0,90.00,1016309,11292.3,11292.3,11292.3,11429.0,545c5eea,c220g2-011011.wisc.cloudlab.us
+refresh_sales_btree,btree,10LL,4000,20.0,0,3,merged_S3,1368701,1368701,0,90.00,1368701,15207.8,15207.8,15207.8,15307.0,545c5eea,c220g2-011011.wisc.cloudlab.us
+refresh_sales_btree,btree,10LL,4000,20.0,0,4,base_S4,2513612,2513612,0,90.00,2513612,27929.0,27929.0,27929.0,27906.6,545c5eea,c220g2-011011.wisc.cloudlab.us

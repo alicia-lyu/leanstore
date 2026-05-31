@@ -32,12 +32,16 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib
+import os
 matplotlib.use("Agg")  # no display required on the experiment host
 # usetex so \textsc{...} in legends / labels renders as proper small
 # caps, matching tab:exp-baselines in the paper. Requires a working
 # LaTeX install (TeX Live's pdflatex on the experiment host).
+# Override via MPL_USETEX=0 to render without latex (labels show
+# \textsc{...} as plain text; paper-ready PDFs still need latex).
+_USETEX = os.environ.get("MPL_USETEX", "1") != "0"
 matplotlib.rcParams.update({
-    "text.usetex": True,
+    "text.usetex": _USETEX,
     "font.family": "serif",
     "text.latex.preamble": r"\usepackage{lmodern}",
 })
@@ -151,8 +155,8 @@ def _query_title(binary: str) -> str:
 
 # Cell → (DRAM GiB, secondary GiB). Kept for reference and used by
 # anything that wants to render the cell key in a caption / legend.
-CELL_DRAM_GIB = {"c0": 1.0, "c1": 0.4, "c2": 0.1, "c3": 0.4}
-CELL_SECONDARY_GIB = {"c0": 5.0, "c1": 2.0, "c2": 0.5, "c3": 5.0}
+CELL_DRAM_GIB = {"c0": 1.0, "c1": 0.4, "c2": 0.1, "c3": 0.4, "c4": 1.0}
+CELL_SECONDARY_GIB = {"c0": 5.0, "c1": 2.0, "c2": 0.5, "c3": 5.0, "c4": 10.0}
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +536,7 @@ Q10_METHOD_TO_STRUCT = {
     "base_merge_join":      1,
     "pipeline_view":        2,
     "pipeline_view_preagg": 22,
+    "preagg_view":          22,  # Q10/Q10I S7 — partial-agg view (current method label)
     "mi_col_walk":          3,
     "mi_coli_walk":         3,
     "mi_acol_preagg":       33,
@@ -567,7 +572,7 @@ PAPER_CELLS = ["c1", "c0", "c3"]
 # Headline figure focuses on a single cell (5L = biggest data, low memory
 # pressure) so each panel is one group of 4 coloured bars, not a crowded
 # scale-up + pressure overlay. Memory pressure gets its own figure.
-PAPER_HEADLINE_CELL = "c0"
+PAPER_HEADLINE_CELL = "c4"
 # Queries shown in the memory-pressure / scale figure (drop q3/q3i to keep
 # the figure focused — q5 is the canonical headline; q5i covers tpchi).
 MEMORY_PRESSURE_QUERIES = ["q5", "q5i"]

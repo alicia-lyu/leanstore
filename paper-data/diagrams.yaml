@@ -5,19 +5,16 @@
 # The diagram name is the output filename stem under paper-data/diagrams/.
 # The builder field names a registered builder function in the plotter.
 #
-# Tag ordering for refresh_lsm_vs_btree: sources[0]=5L, [1]=5H, [2]=5HH.
-# Tag ordering for refresh_sales: sources[0]=primary, [1]=prewarm9, [2]=dbtoaster.
+# Tag ordering for refresh_lsm_vs_btree: sources[0]=10L, [1]=10H, [2]=10HH.
+# Tag ordering for refresh_sales: sources[0]=primary 10L, [1]=10LL prewarm sibling,
+# [2]=dbtoaster overlay.
 
 diagrams:
   paper_tpch_btree_headline:
-    sources:
-      - 2026-05-24-a-ssd
-      - q10-q10i-bg2-5L-20260526-040738   # Q10/Q10I columns
+    sources: [2026-05-29-rep0-10L]
     builder: paper_tpch_row_btree
   paper_tpch_lsm_headline:
-    sources:
-      - 2026-05-24-a-ssd
-      - q10-q10i-bg2-5L-20260526-040738   # Q10/Q10I columns
+    sources: [2026-05-29-rep0-10L]
     builder: paper_tpch_row_lsm
   paper_tpch_btree_memory:
     sources: [2026-05-24-a-ssd]
@@ -26,12 +23,10 @@ diagrams:
     sources: [2026-05-24-a-ssd]
     builder: paper_tpch_memory_lsm
   paper_q10:
-    sources: [q10-q10i-bg2-5L-20260526-040738]
+    sources: [2026-05-29-rep0-10L]
     builder: paper_q10
   paper_tpch_vanilla:
-    sources:
-      - 2026-05-24-a-ssd
-      - q10-q10i-bg2-5L-20260526-040738   # Q10 column
+    sources: [2026-05-29-rep0-10L]
     builder: paper_tpch_vanilla
   paper_geo_condensed:
     sources: [2026-05-18-b]
@@ -43,17 +38,17 @@ diagrams:
     sources: [2026-05-18-b]
     builder: paper_tpch_row_lsm
   refresh_5L_pair_latency:
-    sources: [2026-05-25-refresh-5L-bg2-ssd]
+    sources: [2026-05-30-refresh-10L]
     builder: refresh_sales
   refresh_lsm_vs_btree:
     sources:
-      - 2026-05-25-refresh-5L-bg2-ssd   # 5L
-      - 2026-05-25-refresh-5H-bg2-ssd   # 5H
-      - 2026-05-25-refresh-5HH-bg2-ssd  # 5HH
+      - 2026-05-30-refresh-10L   # 10L cell
+      - 2026-05-30-refresh-10L   # 10H cell (same tag, different summary CSV)
+      - 2026-05-30-refresh-10L   # 10HH cell (same tag, different summary CSV)
     builder: refresh_lsm_vs_btree
   refresh_sales:
     sources:
-      - 2026-05-25-refresh-5L-bg2-ssd  # primary: 5L bg2, c0 = 1 GiB DRAM
-      - 2026-05-24-refresh-prewarm9    # optional 9 GiB DRAM sibling
+      - 2026-05-30-refresh-10L         # primary: 10L bg=2, 1 GiB DRAM
+      - 2026-05-30-refresh-10L         # 10LL prewarm sibling (same tag)
       - 2026-05-24-dbtoaster           # optional DBToaster overlay
     builder: refresh_sales
