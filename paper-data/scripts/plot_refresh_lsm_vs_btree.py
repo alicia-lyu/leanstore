@@ -69,9 +69,9 @@ STRUCTURE_LABELS_TEX: Dict[int, str] = {
 }
 
 CELL_LABEL: Dict[str, str] = {
-    "10L":  r"1.0\,GiB memory budget",
-    "10H":  r"0.5\,GiB memory budget",
-    "10HH": r"0.2\,GiB memory budget",
+    "10L":  r"1.0\,GiB DRAM",
+    "10H":  r"0.5\,GiB DRAM",
+    "10HH": r"0.2\,GiB DRAM",
 }
 
 
@@ -153,14 +153,8 @@ def _panel(ax, df_10L: pd.DataFrame, df_10H: pd.DataFrame,
 
 
 def _figure_legend(fig) -> None:
-    # Two legend groups: structure colours (top row), 10L/10H shading
-    # (bottom row). Plain matplotlib patches with hatch markers keep
-    # the encoding self-documenting without touching the bar code.
-    struct_handles = [
-        mpatches.Patch(facecolor=STYLE["structure_colors"][s], linewidth=0,
-                       label=STRUCTURE_LABELS_TEX[s])
-        for s in STRUCTURES
-    ]
+    # Only the DRAM-cell shading legend remains; structure colours are
+    # already labelled by xticklabels under each bar.
     cell_handles = [
         mpatches.Patch(facecolor="#888", linewidth=0,
                        label=CELL_LABEL["10L"]),
@@ -169,12 +163,8 @@ def _figure_legend(fig) -> None:
         mpatches.Patch(facecolor="#888", edgecolor="#222", linewidth=0.6,
                        hatch="xx", label=CELL_LABEL["10HH"]),
     ]
-    fig.legend(handles=struct_handles, loc="upper center",
-               bbox_to_anchor=(0.5, 1.04), ncol=len(STRUCTURES),
-               fontsize=9, frameon=False,
-               columnspacing=1.6, handletextpad=0.5)
     fig.legend(handles=cell_handles, loc="upper center",
-               bbox_to_anchor=(0.5, 0.97), ncol=3,
+               bbox_to_anchor=(0.5, 1.00), ncol=3,
                fontsize=8, frameon=False,
                columnspacing=1.6, handletextpad=0.5)
 
@@ -226,7 +216,7 @@ def main() -> int:
 
     manifests = [_load_manifest(r) for r in (root_10L, root_10H, root_10HH)]
 
-    fig, axes = plt.subplots(1, 2, figsize=(6.6, 2.1), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(5.94, 1.68), sharey=True)
     for ax, (backend, label) in zip(axes, BACKENDS):
         _panel(ax, df_10L, df_10H, df_10HH, backend, label,
                show_ylabel=(ax is axes[0]))

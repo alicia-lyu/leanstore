@@ -33,6 +33,7 @@ matplotlib.rcParams.update({
     "font.family": "serif",
     "text.latex.preamble": r"\usepackage{lmodern}",
 })
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -230,70 +231,62 @@ def _panel(ax, ls_df: pd.DataFrame, ls_series: List[int],
     fit we render an "OOM ↑" hatched bar capped at the top of the
     axis after y-limits sync.
     """
-    bar_w = 0.7
+    # Bars touch in a single centred cluster (headline style). The
+    # budget label is rendered along the bottom via set_xlabel; per-bar
+    # identity comes from a figure-level legend, not xticklabels.
+    n_bars = len(ls_series) + (1 if include_dbtoaster else 0)
+    bar_w = 0.9 / max(n_bars, 1)
 
     # In-memory budgets (9 GiB here) compress into a narrow ~30-100 µs
-    # range — linear scale shows the spread honestly. Memory-pressured
-    # budgets span 10-1000+ µs, so log stays.
+    # range. Memory-pressured budgets span 10-1000+ µs.
     use_log = budget_gib < PREWARM9_BUDGET_GIB
-    ax.set_yscale("log" if use_log else "linear")
+    ax.set_yscale("linear")
+    if use_log:
+        unit_scale = 1e-3
+        panel_unit = r"ms / RF pair"
+    else:
+        unit_scale = 1.0
+        panel_unit = r"$\mu$s / RF pair"
 
-    panel_xlabels: List[str] = []
-    for i, struct in enumerate(ls_series):
-        color, label = _series_style(struct)
-        panel_xlabels.append(label)
+    def _slot_x(k: int) -> float:
+        return (k - (n_bars - 1) / 2) * bar_w
+
+    for k, struct in enumerate(ls_series):
+        color, _ = _series_style(struct)
+        x = _slot_x(k)
         row = (ls_df[(ls_df["backend"] == backend)
                      & (ls_df["structure"] == struct)]
                if not ls_df.empty else pd.DataFrame())
         if row.empty:
-            ax.text(i, 0.5, "pending", ha="center", va="center",
+            ax.text(x, 0.5, "pending", ha="center", va="center",
                     transform=blended_transform(ax),
                     fontsize=7, color="#999", style="italic")
             continue
         pair_ms = float(row["pair_ms"].iloc[0])
         if not np.isfinite(pair_ms) or pair_ms <= 0:
             continue
-        ax.bar([i], [pair_ms], width=bar_w, color=color, linewidth=0)
+        ax.bar([x], [pair_ms * unit_scale], width=bar_w, color=color, linewidth=0)
 
     if include_dbtoaster:
-        db_x = len(ls_series)
-        panel_xlabels.append(DBTOASTER_LABEL_TEX)
+        db_x = _slot_x(len(ls_series))
         db_us = _dbtoaster_pair_us(db_df, budget_gib)
         if db_us is not None:
-            ax.bar([db_x], [db_us], width=bar_w,
+            ax.bar([db_x], [db_us * unit_scale], width=bar_w,
                    color=DBTOASTER_COLOR, linewidth=0)
         elif not db_df.empty:
             # OOM: defer to _annotate_oom after shared y-limits are known.
             ax._oom_bar = (db_x, bar_w)
 
-    ax.set_title(budget_label, fontsize=9)
-    ax.set_xticks(np.arange(len(panel_xlabels)))
-    # Two-line labels via LaTeX \shortstack so horizontal labels fit
-    # without overlapping. Splits on the first hyphen inside \textsc{}.
-    def _two_line(lbl: str) -> str:
-        m = re.match(r"\\textsc\{([^-}]+)-([^}]+)\}$", lbl)
-        if not m:
-            return lbl
-        head, tail = m.group(1), m.group(2)
-        return r"\shortstack{\textsc{" + head + r"-}\\\textsc{" + tail + r"}}"
-    panel_xlabels = [_two_line(l) for l in panel_xlabels]
-    ax.set_xticklabels(panel_xlabels, fontsize=8)
-    ax.set_xlim(-0.5, len(panel_xlabels) - 0.5)
-    if use_log:
-        # Ticks at 1×, 2×, 5× of each decade with plain decimal labels —
-        # log autoscale otherwise leaves narrow ranges tickless.
-        ax.yaxis.set_major_locator(
-            mticker.LogLocator(base=10.0, subs=(1.0, 2.0, 5.0), numticks=10))
-        ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
-        ax.yaxis.set_minor_locator(mticker.NullLocator())
-    else:
-        ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
-        ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
+    ax.set_xticks([])
+    ax.set_xlabel(budget_label, fontsize=9)
+    half = (n_bars / 2) * bar_w + bar_w * 0.5
+    ax.set_xlim(-half, half)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
+    ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
     ax.tick_params(axis="y", which="major", labelsize=7)
     ax.yaxis.grid(True, linestyle=":", alpha=0.4)
     ax.set_axisbelow(True)
-    if show_ylabel:
-        ax.set_ylabel(y_unit, fontsize=8)
+    ax.set_ylabel(panel_unit, fontsize=8)
 
 
 def blended_transform(ax):
@@ -312,8 +305,8 @@ def _annotate_oom(ax) -> None:
     x, bar_w = spec
     ymin, ymax = ax.get_ylim()
     ax.bar([x], [ymax - ymin], width=bar_w, bottom=ymin,
-           color="none", edgecolor=DBTOASTER_COLOR,
-           hatch="///", linewidth=0.8, clip_on=False)
+           facecolor=DBTOASTER_COLOR, edgecolor="white",
+           hatch="///", linewidth=0.0, clip_on=False)
     # Re-pin y-limits — the bar would otherwise expand the autoscale.
     ax.set_ylim(ymin, ymax)
     # Label sits in axes coords just above the top spine so it can't
@@ -408,7 +401,7 @@ def _render_figure(ls_by_budget: Dict[float, pd.DataFrame],
     write it. The B-tree figure includes the DBToaster comparison; the
     LSM figure does not (DBToaster is a separate engine, shown once)."""
     # LSM gets a wider canvas to fit horizontal x-tick labels without crowding.
-    figsize = (7.2, 1.6) if backend == "lsm" else (5.6, 1.4)
+    figsize = (7.2, 1.28) if backend == "lsm" else (5.6, 1.12)
     fig, axes = plt.subplots(1, len(MEMORY_BUDGETS), figsize=figsize,
                              sharey=False)
     for j, (budget, label) in enumerate(MEMORY_BUDGETS):
@@ -424,16 +417,31 @@ def _render_figure(ls_by_budget: Dict[float, pd.DataFrame],
     # doesn't leave a gap above them).
     for ax in axes:
         ymin, ymax = ax.get_ylim()
-        if ax.get_yscale() == "log" and ymin > 0:
-            floor = 10 ** np.floor(np.log10(ymin))
-            ax.set_ylim(floor, ymax * 1.30)
-        elif ax.get_yscale() == "linear":
-            ax.set_ylim(0, ymax * 1.08)
+        ax.set_ylim(0, ymax * 1.08)
     for ax in axes:
         _annotate_oom(ax)
+
+    # Figure-level legend mapping colour → approach (replaces per-bar
+    # xticklabels). Keeps the headline-style "bars touch under a single
+    # budget label" layout.
+    legend_handles = []
+    for struct in ls_series:
+        color, label = _series_style(struct)
+        legend_handles.append(mpatches.Patch(facecolor=color, linewidth=0,
+                                             label=label))
+    if include_dbtoaster:
+        legend_handles.append(mpatches.Patch(facecolor=DBTOASTER_COLOR,
+                                             linewidth=0,
+                                             label=DBTOASTER_LABEL_TEX))
+    fig.legend(handles=legend_handles, loc="center left",
+               bbox_to_anchor=(0.84, 0.5), ncol=1,
+               fontsize=8, frameon=False,
+               handletextpad=0.4, labelspacing=0.5,
+               borderaxespad=0.0)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     base = out_dir / basename
-    fig.subplots_adjust(left=0.10, right=0.98, top=0.90, bottom=0.16,
+    fig.subplots_adjust(left=0.10, right=0.83, top=0.92, bottom=0.18,
                         wspace=0.30)
     primary = base.with_suffix(f".{fmt}")
     fig.savefig(primary, format=fmt, bbox_inches="tight")

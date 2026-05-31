@@ -101,7 +101,7 @@ STYLE = {
 # (set as a class invariant — every drawing or legend path that handles
 # a "raw" structure id should go through _struct_style below).
 VARIANT_PARENT = {22: 2, 33: 3}
-VARIANT_HATCH = "////"
+VARIANT_HATCH = "..."
 
 
 def _struct_style(struct: int) -> Tuple[str, Optional[str]]:
@@ -871,7 +871,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     # column width at \includegraphics time. constrained_layout
     # handles the external legend bbox without leaving stray
     # whitespace that tight_layout sometimes does with sharey=False.
-    fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 1.82),
+    fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 1.5),
                              sharey=False, constrained_layout=True)
     # Compute a shared y-ceiling so all four panels clip at the same
     # height. Per-panel logic clips the top n_overflow bars (default 1):
