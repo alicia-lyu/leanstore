@@ -174,8 +174,8 @@ SPECS: list[Macro] = [
           "vanilla,btree,bg=2,c4; S7.q10 partial-agg view delta over base",
           lambda c: view_delta_gib(c["hd"], "q10_btree", 7)),
     Macro("db_size_mi_q10_partial_btree", r"\autoDbSizeMiQTenPartialBtree", "GiB", "{:.2f}",
-          "vanilla,btree,bg=2,c4; S5.q10 partial-agg MI delta over base",
-          lambda c: view_delta_gib(c["hd"], "q10_btree", 5)),
+          "vanilla,btree,bg=2,c4; S5.q10 partial-agg MI incremental size (S5 minus shared MI_B baseline)",
+          lambda c: view_delta_gib(c["hd"], "q10_btree", 5) - view_delta_gib(c["hd"], "q3_btree", 3)),
 
     # ----- line 206 (total views across family, B-tree) -----
     Macro("db_size_views_total_btree", r"\autoDbSizeViewsTotalBtree", "GiB", "{:.2f}",
