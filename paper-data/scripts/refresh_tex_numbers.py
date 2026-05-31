@@ -240,6 +240,28 @@ SPECS: list[Macro] = [
     Macro("sf_lsm", r"\autoSfLsm", "SF", "{:.0f}",
           "SF_TPCH[lsm][c4]",
           lambda c: 10000.0),
+
+    # ----- base-image footprint (for environment footnote) -----
+    Macro("base_size_btree", r"\autoBaseSizeBtree", "GiB", "{:.1f}",
+          "vanilla,btree,bg=2,c4; S4 base tables only",
+          lambda c: base_size_gib(c["hd"], "q3_btree")),
+    Macro("base_size_lsm", r"\autoBaseSizeLsm", "GiB", "{:.1f}",
+          "vanilla,lsm,bg=2,c4; S4 base tables only",
+          lambda c: base_size_gib(c["hd"], "q3_lsm")),
+    Macro("density_ratio_lsm_btree", r"\autoDensityRatioLsmBtree", "x", "{:.1f}",
+          "(btree base GiB / btree SF) / (lsm base GiB / lsm SF); RocksDB-vs-LeanStore density",
+          lambda c: (base_size_gib(c["hd"], "q3_btree") / 4000.0)
+                    / (base_size_gib(c["hd"], "q3_lsm") / 10000.0)),
+
+    # ----- update pair_tps ratios -----
+    Macro("ratio_update_merged_vs_merge_btree", r"\autoRatioUpdateMergedVsMergeBtree", "x", "{:.1f}",
+          "10L bg=2 btree; S3.pair_tps / S1.pair_tps (Merged-Idx faster than Base-Merge if >1)",
+          lambda c: float(c["rf"][(c["rf"]["backend"] == "btree") & (c["rf"]["structure"] == 3)]["pair_tps"].iloc[0])
+                    / float(c["rf"][(c["rf"]["backend"] == "btree") & (c["rf"]["structure"] == 1)]["pair_tps"].iloc[0])),
+    Macro("ratio_update_hash_vs_merge_lsm", r"\autoRatioUpdateHashVsMergeLsm", "x", "{:.2f}",
+          "10L bg=2 lsm; S4.pair_tps / S1.pair_tps (<1 means Base-Hash slower than Base-Merge — flipped from btree)",
+          lambda c: float(c["rf"][(c["rf"]["backend"] == "lsm") & (c["rf"]["structure"] == 4)]["pair_tps"].iloc[0])
+                    / float(c["rf"][(c["rf"]["backend"] == "lsm") & (c["rf"]["structure"] == 1)]["pair_tps"].iloc[0])),
 ]
 
 
