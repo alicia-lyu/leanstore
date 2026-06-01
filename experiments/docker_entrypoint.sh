@@ -102,8 +102,15 @@ require_hdd() {
     src=$(findmnt -no SOURCE --target /mnt/hdd 2>/dev/null) || { log "WARN: could not resolve /mnt/hdd backing device; trusting the mount."; return 0; }
     dev=${src##*/}
     [[ -z "$dev" ]] && { log "WARN: could not resolve /mnt/hdd backing device; trusting the mount."; return 0; }
-    base=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)
+    # lsblk exits 32 when the device node is absent (e.g. inside a container the
+    # host block device isn't exposed); `|| true` keeps set -e from killing us so
+    # we fall through to the "can't classify → trust the mount" path below.
+    base=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1 || true)
     [[ -z "$base" ]] && base="$dev"
+    if [[ ! -r "/sys/block/$base/queue/rotational" ]]; then
+        log "WARN: cannot read rotational flag for /mnt/hdd (dev=$base); trusting the mount."
+        return 0
+    fi
     rot=$(cat "/sys/block/$base/queue/rotational" 2>/dev/null) || { log "WARN: could not read rotational flag for /mnt/hdd (dev=$base); trusting the mount."; return 0; }
     if [[ "$rot" == "0" ]]; then
         echo "[entrypoint] ERROR: /mnt/hdd is backed by non-rotational storage (rotational=0, dev=$base)." >&2
