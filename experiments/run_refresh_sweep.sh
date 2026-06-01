@@ -155,7 +155,9 @@ cell_backends() { [[ "$1" == 10LL ]] && echo "btree" || echo "btree lsm" ; }
 cell_prewarm()  { [[ "$1" == 10LL ]] && echo 1 || echo 0 ; }
 
 sf_for()  { [[ "$1" == btree ]] && echo "$SF_BTREE" || echo "$SF_LSM" ; }
-img_dir() { echo "${DATA_DISK}/tpch_$1" ; }
+# Per-Sx image layout (post-2026-05-28 refactor): structure N's image lives in
+# tpch_<be>_S<n>/ (loaded by `make <that json>` with storage_structure=N).
+img_dir() { echo "${DATA_DISK}/tpch_$1_S$2" ; }
 
 # ---------------- helpers ----------------
 
@@ -164,14 +166,15 @@ drop_caches() {
     sync; sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
 }
 
-# Build the family image if absent (unless --skip-load). Same make-target the
-# headline runner uses; keyed on the recover .json under the chosen data disk.
+# Build the per-Sx image for (backend, structure) if absent (unless
+# --skip-load). The per-Sx json target loads only (persist), no query run;
+# same image the headline runner's `make <binary>_<n>` produces, so they share.
 declare -A LOAD_DONE
 trigger_load() {
-    local backend="$1" sf="$2"
-    local key="${backend}/${sf}"
+    local backend="$1" sf="$2" n="$3"
+    local key="${backend}/${sf}/S${n}"
     [[ -n "${LOAD_DONE[$key]:-}" ]] && return "${LOAD_DONE[$key]}"
-    local json="$(img_dir "$backend")/build/${sf}.json"
+    local json="$(img_dir "$backend" "$n")/build/${sf}.json"
     if [[ $SKIP_LOAD -eq 1 || -f "$json" ]]; then
         [[ -f "$json" ]] && log "  load: present  $json" || log "  load: (skip-load) assuming $json"
         LOAD_DONE[$key]=0; return 0
@@ -180,11 +183,11 @@ trigger_load() {
         log "  load: (dry-run) make $json scale=$sf data_disk=$DATA_DISK"
         LOAD_DONE[$key]=0; return 0
     fi
-    log "  load: triggering refresh_sales family image  ($json)"
+    log "  load: triggering per-Sx image S${n}  ($json)"
     if make "$json" scale="$sf" dram="0.1" data_disk="$DATA_DISK" >> "$LOG" 2>&1; then
         LOAD_DONE[$key]=0; return 0
     fi
-    log "  ERROR: load failed for backend=$backend sf=$sf"
+    log "  ERROR: load failed for backend=$backend sf=$sf S${n}"
     LOAD_DONE[$key]=1; return 1
 }
 
@@ -193,10 +196,16 @@ trigger_load() {
 run_one() {
     local cell="$1" be="$2" n="$3" dram="$4" bg="$5" prewarm="$6" sf="$7"
     local bin="${REPO_ROOT}/build/frontend/refresh_sales_${be}"
-    local dir; dir="$(img_dir "$be")"
+    local dir; dir="$(img_dir "$be" "$n")"
     local cell_raw="${RAW_DIR}/${cell}"
     local suf="rf${cell}_s${n}"
     mkdir -p "$cell_raw"
+
+    # Ensure the per-Sx image for this structure exists (loads on demand).
+    if ! trigger_load "$be" "$sf" "$n"; then
+        log "        skip ${cell}/${be} S${n} (load unavailable)"
+        return 0
+    fi
 
     local bg_flags=""
     [[ "$bg" == 2 ]] && bg_flags="--bg_query_thread=true --bg_point_lookups=true"
@@ -265,10 +274,7 @@ for cell in "${CELL_LIST[@]}"; do
     for be in $(cell_backends "$cell"); do
         want_backend "$be" || { log "  skip $be (not in --backends)"; continue; }
         sf=$(sf_for "$be")
-        if ! trigger_load "$be" "$sf"; then
-            log "  skip ${cell}/${be} (load unavailable)"
-            continue
-        fi
+        # Each structure loads its own per-Sx image on demand (see run_one).
         for n in 1 2 3 4; do
             run_one "$cell" "$be" "$n" "$dram" "$bg" "$prewarm" "$sf"
         done

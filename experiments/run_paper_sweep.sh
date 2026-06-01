@@ -412,20 +412,13 @@ for cell in "${CELL_LIST[@]}"; do
     for family in "${FAM_LIST[@]}"; do
         binaries=$(families_for "$family") || continue
         log "  family $family"
-        # Trigger one load per backend per family per SF.
-        for backend in "${BACKEND_LIST[@]}"; do
-            sample_binary=$(family_dep_target "$family" "$backend")
-            sf=$(binary_sf "$sample_binary" "$cell")
-            load_key="${family}/${backend}/${sf}"
-            if [[ -z "${LOAD_DONE[$load_key]:-}" ]]; then
-                if trigger_load "$family" "$backend" "$sf"; then
-                    LOAD_DONE[$load_key]=1
-                else
-                    log "    skipping family=$family backend=$backend (load failed)"
-                    LOAD_DONE[$load_key]=0
-                fi
-            fi
-        done
+        # Per-Sx image layout (post-2026-05-28 refactor): each structure run
+        # target `make <binary>_<n>` loads its own per-Sx image
+        # ($(data_disk)/tpch_<be>_S<n>/build/<sf>.json) on demand as a make
+        # dependency, and same-family/backend binaries share it via the
+        # persisted .json. There is no separate shared-image pre-load step
+        # (the old trigger_load targeted a tpch_<be>/build/<sf>.json path that
+        # the per-Sx refactor removed).
         for binary in $binaries; do
             # Determine backend from binary name suffix.
             backend="lsm"
@@ -433,11 +426,6 @@ for cell in "${CELL_LIST[@]}"; do
             # Honour the --backends subset.
             want_backend "$backend" || continue
             sf=$(binary_sf "$binary" "$cell")
-            load_key="${family}/${backend}/${sf}"
-            if [[ "${LOAD_DONE[$load_key]:-0}" == "0" ]]; then
-                log "    skipping $binary (load failed)"
-                continue
-            fi
             log "    binary $binary  sf=$sf"
             for bg in $(bg_for); do
                 bg_flags=$(bg_make_flags "$binary" "$bg")
