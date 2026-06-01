@@ -58,6 +58,7 @@ RUN mkdir -p build \
         q5i_lsm q5i_btree \
         q10_lsm q10_btree \
         q10i_lsm q10i_btree \
+        refresh_sales_lsm refresh_sales_btree \
         -j"$(nproc)"
 
 # ── DBToaster refresh_sales binary ────────────────────────────────────────────

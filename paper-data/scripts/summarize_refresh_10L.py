@@ -9,13 +9,20 @@ the 5L sweep summarizers so downstream plotters see the same columns.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-TAG_DIR = Path("/users/alicial/leanstore/paper-data/2026-05-30-refresh-10L")
+# Default authoring tag dir (back-compat when invoked with no --root). The
+# artifact dispatcher overrides this with --root /results/refresh.
+DEFAULT_TAG_DIR = Path("/users/alicial/leanstore/paper-data/2026-05-30-refresh-10L")
+TAG_DIR = DEFAULT_TAG_DIR
+# Repo root is derived from this script's location (paper-data/scripts/...),
+# not from TAG_DIR, so commit_sha() works when --root points outside the repo.
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SECS = 90
 TAIL_WIN = 30
 
@@ -83,9 +90,12 @@ def parse_iters(path: Path):
 
 
 def commit_sha():
-    return subprocess.run(
-        ["git", "-C", str(TAG_DIR.parent.parent), "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True, check=True).stdout.strip()
+    try:
+        return subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
 
 
 def host():
@@ -98,6 +108,18 @@ def host():
 
 
 def main():
+    global TAG_DIR
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--root", type=Path, default=DEFAULT_TAG_DIR,
+                    help="Tag dir holding raw/ and summary/ (default: the "
+                         "authoring 2026-05-30-refresh-10L dir). The artifact "
+                         "dispatcher passes /results/refresh.")
+    ap.add_argument("--tag", default=None,
+                    help="Label for logs only; defaults to the root basename.")
+    args = ap.parse_args()
+    TAG_DIR = args.root
+    tag = args.tag or TAG_DIR.name
+
     summary_dir = TAG_DIR / "summary"
     summary_dir.mkdir(parents=True, exist_ok=True)
     sha = commit_sha()

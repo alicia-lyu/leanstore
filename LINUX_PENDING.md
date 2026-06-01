@@ -9,36 +9,36 @@ actionable.
 
 ## Active
 
-- **Extend `experiments/run_paper_sweep.sh` with `--root`, `--backends`,
-  `--disk` flags (2026-06-01, post-artifact-dispatcher)** — the
-  artifact dispatcher (`experiments/docker_entrypoint.sh`) invokes
-  `run_paper_sweep.sh --root /results/<cell> --backends lsm --disk hdd`,
-  but none of those three flags exist today. `--root` is needed to
-  redirect output away from the in-tree `paper-data/<tag>/` default
-  (the artifact must write under `/results/`); `--backends` and
-  `--disk` are needed for the `tpch-headline-hdd` cell (LSM-only,
-  data on `/mnt/hdd`). `data_disk` is currently hardcoded to
-  `/mnt/ssd` at line 247. Until these flags land, the dispatcher's
-  `tpch-headline` and `tpch-headline-hdd` cells run the sweep but
-  output ends up at `/leanstore/paper-data/<cell>/` inside the
-  container, not `/results/<cell>/` — the plots cell will not find
-  it. Acceptance: a `CELL=tpch-headline` run inside the image
-  populates `/results/tpch-headline/{manifest.yaml,raw/,summary/}`,
-  and a `CELL=tpch-headline-hdd` run populates the same shape under
-  `/mnt/hdd`-backed data files.
-
-- **Commit `experiments/run_refresh_sweep.sh` — refresh runner for Fig. 6+7
-  (2026-06-01, post-artifact-dispatcher)** — the dedicated refresh runner
-  (`build/scratch/run_refresh_{5L,5H,5HH,10L,...}_ssd.sh` on the author's
-  Linux machine) was never committed. The artifact `refresh` cell in
-  `experiments/docker_entrypoint.sh` exits with an error until this lands.
-  Pattern: recover from per-structure image copies, drop OS page caches,
-  `--update_size=1 --refresh_seconds=90`, run S1–S4 on both backends, emit
-  `raw/<cell>/<be>.s{1..4}.csv` consumed by
-  `paper-data/scripts/summarize_refresh_10L.py`. See
-  `frontend/tpch/refresh_sales/RUNS.md` for the existing hand-run pattern.
-  Until committed, Figs. 6+7 are not reproducible from the artifact image;
-  the authoring-run CSVs live in `paper-data/2026-05-30-refresh-10L/`.
+- **Artifact dispatcher runner plumbing — CODE LANDED, e2e run pending
+  (2026-06-01)** — the two missing runner pieces for the Docker artifact
+  are now committed and statically verified (`bash -n`, dry-runs,
+  summarizer byte-parity); only the Linux end-to-end cell runs remain.
+  What landed:
+  - `run_paper_sweep.sh` now has `--root` (output redirect, used
+    directly as the out dir), `--backends` (subset filter), and
+    `--disk` (bare token → `/mnt/<token>`, threaded into **both** the
+    load and run `make` as `data_disk=`). The old hardcoded
+    `/mnt/ssd` is gone.
+  - `run_refresh_sweep.sh` (new) generalizes the untracked
+    `build/scratch/run_refresh_bg2_ssd.sh` to the 10-scale cells
+    (10LL/10L/10H/10HH), per-structure image **copy** + drop-caches +
+    `--update_size=1 --refresh_seconds=90`, emits
+    `raw/<cell>/<be>.s{1..4}.csv`, hands off to
+    `summarize_refresh_10L.py` (now `--root`/`--tag` aware).
+  - `docker_entrypoint.sh`: `refresh` cell un-stubbed; every cell now
+    **fails fast** unless its bind-mounts are real (`mountpoint -q`);
+    `tpch-headline-hdd` additionally refuses non-rotational `/mnt/hdd`
+    (no SSD-mislabeled-as-HDD data).
+  - `Dockerfile` now builds `refresh_sales_{lsm,btree}`.
+  Pending (next session, needs a Linux node with the 10-scale images
+  loaded): run `CELL=tpch-headline`, `tpch-headline-hdd`, `refresh`
+  end-to-end and confirm each populates
+  `/results/<cell>/{manifest.yaml,raw/,summary/}`, then
+  `CELL=plots`. Acceptance unchanged from before. Unverified
+  assumptions to watch: SF defaults 4000(btree)/10000(lsm); the
+  recovered tpch family image must carry all secondaries at 10-scale;
+  single-rep; `refresh_sales_*` must compile clean in the haswell
+  image. Once the cells pass, rotate this item to `LINUX_HISTORY.md`.
 
 - **Dedicated S2/S7 view loader without persisting the COL/COLI MI
   (2026-05-28, post-378e1038)** — at sx=2 the family loader runs

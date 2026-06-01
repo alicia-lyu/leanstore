@@ -25,9 +25,21 @@
 #   BACKENDS    lsm, btree, or lsm,btree (default: both)
 #   REPS        Repetitions per (binary,cell,structure,bg) (default: 5)
 #
+# Mount contract (bind-mounts are REQUIRED — the cell fails fast otherwise):
+#   /results   every cell (output CSVs + paper-ready PDFs)
+#   /mnt/ssd   tpch-headline, refresh (family images + per-structure copies)
+#   /mnt/hdd   tpch-headline-hdd ONLY — must be rotational media (enforced)
+# A separate physical disk is NOT required; any host directory works (your boot
+# disk is fine), except /mnt/hdd which must be backed by a real HDD.
+#
 # Usage in docker_run.sh:
-#   docker run -e CELL=tpch-headline -v $RESULTS:/results \
-#              -v /mnt/ssd:/mnt/ssd \
+#   docker run -e CELL=tpch-headline \
+#              -v /host/out:/results \
+#              -v /host/fast-disk:/mnt/ssd \
+#              ghcr.io/alicia-lyu/leanstore:vldb26
+#   # HDD cell additionally needs a rotational disk:
+#   docker run -e CELL=tpch-headline-hdd \
+#              -v /host/out:/results -v /host/hdd:/mnt/hdd \
 #              ghcr.io/alicia-lyu/leanstore:vldb26
 
 set -euo pipefail
@@ -39,6 +51,55 @@ REPO="/leanstore"
 SCRIPTS="$REPO/paper-data/scripts"
 
 log() { echo "[entrypoint] $*" >&2; }
+
+# ---------------------------------------------------------------------------
+# Mount guards. The image ships /mnt/ssd, /mnt/hdd, /results as empty
+# directories purely as bind-mount targets — the host provides the storage at
+# `docker run -v <host>:<target>` time. If a path is NOT a real mount, writes
+# would silently land in the container's ephemeral overlay (lost on exit; can
+# fill the host root disk). So we FAIL FAST when an expected mount is missing.
+#
+# A separate physical disk is NOT required: any host directory works, including
+# one on the reviewer's boot disk. The exception is the HDD cell, which
+# measures rotational-media behavior — see require_hdd().
+# ---------------------------------------------------------------------------
+require_mount() {
+    local p="$1"
+    if mountpoint -q "$p" 2>/dev/null; then
+        return 0
+    fi
+    echo "[entrypoint] ERROR: $p is not a mounted host path." >&2
+    echo "[entrypoint]   Re-run with: -v /host/path:$p" >&2
+    echo "[entrypoint]   Any host directory works — a separate physical disk is NOT" >&2
+    echo "[entrypoint]   required; your boot disk is fine. Refusing to write to the" >&2
+    echo "[entrypoint]   ephemeral container layer (data would be lost on exit)." >&2
+    exit 1
+}
+
+# The tpch-headline-hdd cell is only meaningful on rotational media. Fail fast
+# if /mnt/hdd is not mounted, and refuse to run if we can CONFIDENTLY determine
+# the backing device is non-rotational (an SSD/NVMe mislabeled as HDD) — we do
+# not produce SSD numbers wearing an "hdd" label. If the backing device cannot
+# be classified (LVM/dm/overlay/network fs), we trust the reviewer's deliberate
+# mount and proceed with a warning.
+require_hdd() {
+    require_mount /mnt/hdd
+    local src dev base rot
+    src=$(findmnt -no SOURCE --target /mnt/hdd 2>/dev/null) || { log "WARN: could not resolve /mnt/hdd backing device; trusting the mount."; return 0; }
+    dev=${src##*/}
+    [[ -z "$dev" ]] && { log "WARN: could not resolve /mnt/hdd backing device; trusting the mount."; return 0; }
+    base=$(lsblk -no PKNAME "$src" 2>/dev/null | head -1)
+    [[ -z "$base" ]] && base="$dev"
+    rot=$(cat "/sys/block/$base/queue/rotational" 2>/dev/null) || { log "WARN: could not read rotational flag for /mnt/hdd (dev=$base); trusting the mount."; return 0; }
+    if [[ "$rot" == "0" ]]; then
+        echo "[entrypoint] ERROR: /mnt/hdd is backed by non-rotational storage (rotational=0, dev=$base)." >&2
+        echo "[entrypoint]   The tpch-headline-hdd figure measures HDD behavior; refusing to" >&2
+        echo "[entrypoint]   produce SSD numbers mislabeled as HDD. Mount a rotational disk at" >&2
+        echo "[entrypoint]   /mnt/hdd, or omit this cell." >&2
+        exit 1
+    fi
+    log "/mnt/hdd backing device $base is rotational (rotational=1)."
+}
 
 if [[ -z "$CELL" ]]; then
     echo "[entrypoint] ERROR: CELL env var not set." >&2
@@ -69,6 +130,24 @@ run_sweep() {
     log "sweep done → $out_dir"
 }
 
+# Helper: run run_refresh_sweep.sh (RF1/RF2 update throughput, single-rep)
+# writing output directly to /results/<tag>/. Mirrors run_sweep's --root
+# contract; reps are fixed at 1 (refresh figures are single-rep).
+run_refresh() {
+    local neutral_tag="$1"; shift
+    local extra_args=("$@")
+
+    local out_dir="$RESULTS/$neutral_tag"
+    mkdir -p "$out_dir"
+
+    "$REPO/experiments/run_refresh_sweep.sh" \
+        --tag "$neutral_tag" \
+        --root "$out_dir" \
+        "${extra_args[@]}"
+
+    log "refresh sweep done → $out_dir"
+}
+
 case "$CELL" in
 
     # -----------------------------------------------------------------------
@@ -77,6 +156,8 @@ case "$CELL" in
         # Drives Fig. 4 (btree + lsm), Fig. 5 (q10), the supplementary
         # paper_tpch_vanilla panel, and SST diagnostics (Fig. diag_ssd_lsm_sst_path).
         # sstables.csv is captured by run_paper_sweep.sh for every LSM run.
+        require_mount /mnt/ssd
+        require_mount /results
         log "running SSD headline sweep..."
         run_sweep "tpch-headline" \
             --families tpch,tpchi
@@ -85,7 +166,10 @@ case "$CELL" in
     # -----------------------------------------------------------------------
     tpch-headline-hdd)
         # HDD LSM subset. Drives the supplementary tpch_lsm_headline_hdd figure.
-        # Requires /mnt/hdd to be present on the host (bind-mounted).
+        # Fails fast unless /mnt/hdd is a real mount on rotational media — we do
+        # not produce SSD numbers mislabeled as HDD (see require_hdd).
+        require_hdd
+        require_mount /results
         log "running HDD headline sweep (LSM only)..."
         run_sweep "tpch-headline-hdd" \
             --families tpch,tpchi \
@@ -95,28 +179,22 @@ case "$CELL" in
 
     # -----------------------------------------------------------------------
     refresh)
-        # KNOWN GAP — this cell cannot currently reproduce Fig. 6 and Fig. 7.
-        #
-        # The refresh figures require a dedicated runner that:
-        #   1. Invokes the LeanStore binary in RF1+RF2 update mode (not query mode).
-        #   2. Emits raw/<cell>/<be>.s<N>.csv consumed by summarize_refresh_10L.py.
-        #   3. Recovers from per-structure image copies and drops OS page caches.
-        #
-        # This runner (build/scratch/run_refresh_10L_*.sh on the author's Linux
-        # machine) was never committed. See frontend/tpch/refresh_sales/RUNS.md
-        # for the pattern and REPRODUCE.md §Known gaps for the full explanation.
-        #
-        # Linux follow-up: commit experiments/run_refresh_sweep.sh that implements
-        # the above layout and replace this error with a real invocation.
-        echo "[entrypoint] ERROR: refresh cell is not yet implemented." >&2
-        echo "[entrypoint] The refresh runner was not committed to the repo." >&2
-        echo "[entrypoint] See REPRODUCE.md §Known gaps and LINUX_PENDING.md for details." >&2
-        exit 1
+        # Refresh benchmark (Fig. 6 + 7): refresh_sales RF1/RF2 update throughput
+        # across the 10-scale memory-pressure cells (10LL/10L/10H/10HH), both
+        # backends, S1-S4. run_refresh_sweep.sh recovers each (backend,structure)
+        # run from a per-structure copy of the canonical tpch family image, drops
+        # OS page caches, and hands off to summarize_refresh_10L.py. Output lands
+        # at /results/refresh/{manifest.yaml,raw/,summary/}.
+        require_mount /mnt/ssd
+        require_mount /results
+        log "running refresh sweep..."
+        run_refresh "refresh"
         ;;
 
     # -----------------------------------------------------------------------
     dbtoaster)
         # Run the pre-built DBToaster refresh_sales binary and capture output.
+        require_mount /results
         log "running DBToaster refresh_sales baseline..."
         out_dir="$RESULTS/dbtoaster"
         mkdir -p "$out_dir/summary"
@@ -151,6 +229,7 @@ YAML
         #
         # Tag map: authored diagrams.yaml tag → neutral cell dir under /results/.
         # CPU/memory authoring-only diagrams are excluded (not tex-referenced).
+        require_mount /results
         log "running paper plotter and macro generators..."
 
         PAPER_READY="$RESULTS/paper-ready"

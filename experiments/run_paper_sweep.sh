@@ -29,6 +29,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [--tag <tag>] [--cells c2,c1,c3,c0]
                        [--families tpch,tpchi,geo] [--reps N]
+                       [--root <dir>] [--backends lsm,btree] [--disk <token|path>]
                        [--smoke-test] [--dry-run] [--skip-load]
                        [--continue]
 
@@ -39,6 +40,16 @@ Usage: $(basename "$0") [--tag <tag>] [--cells c2,c1,c3,c0]
                 Default: all three.
   --reps        Override repetitions per (binary,cell,structure,bg).
                 Default: 3 (from sweep.yaml).
+  --root        Output directory. When set, output lands directly under
+                <dir>/{manifest.yaml,raw/,summary/} (the artifact
+                dispatcher passes the full cell dir, e.g.
+                /results/tpch-headline). Default: paper-data/<tag>.
+  --backends    Comma-separated backend subset (lsm,btree). Default: both.
+                Filters both the family load and the binary runs.
+  --disk        Data-disk for the family images. A bare token maps to
+                /mnt/<token> (e.g. "hdd" -> /mnt/hdd); a value with a
+                slash is used verbatim. Default: /mnt/ssd. Threaded into
+                the load and run make invocations as data_disk=<path>.
   --smoke-test  One cell (c2), one binary per family, structures 1+3,
                 bg0 only, 1 rep. ~5-10 min end-to-end validation.
   --dry-run     Print the commands; don't execute.
@@ -54,6 +65,7 @@ Usage: $(basename "$0") [--tag <tag>] [--cells c2,c1,c3,c0]
 
 Tag dir layout:
   paper-data/<tag>/{manifest.yaml,run.log,raw/,summary/}
+  (or <root>/{...} when --root is given)
 EOF
 }
 
@@ -61,6 +73,9 @@ TAG=""
 CELLS="c2,c1,c3,c0"
 FAMILIES="tpch,tpchi,geo"
 REPS=""
+ROOT=""
+BACKENDS="lsm,btree"
+DISK=""
 DRY_RUN=0
 SKIP_LOAD=0
 SMOKE_TEST=0
@@ -73,6 +88,9 @@ while [[ $# -gt 0 ]]; do
         --cells)      CELLS="$2"; shift 2 ;;
         --families)   FAMILIES="$2"; shift 2 ;;
         --reps)       REPS="$2"; shift 2 ;;
+        --root)       ROOT="$2"; shift 2 ;;
+        --backends)   BACKENDS="$2"; shift 2 ;;
+        --disk)       DISK="$2"; shift 2 ;;
         --dry-run)    DRY_RUN=1; shift ;;
         --skip-load)  SKIP_LOAD=1; shift ;;
         --smoke-test) SMOKE_TEST=1; shift ;;
@@ -83,6 +101,25 @@ while [[ $# -gt 0 ]]; do
         *)            echo "unknown arg: $1" >&2; usage; exit 1 ;;
     esac
 done
+
+# Resolve the data disk: bare token -> /mnt/<token>; a path is used verbatim.
+if [[ -z "$DISK" ]]; then
+    DATA_DISK="/mnt/ssd"
+elif [[ "$DISK" == */* ]]; then
+    DATA_DISK="$DISK"
+else
+    DATA_DISK="/mnt/$DISK"
+fi
+
+# Parse the backend subset into a list + membership helper.
+IFS=',' read -ra BACKEND_LIST <<< "$BACKENDS"
+want_backend() {
+    local b
+    for b in "${BACKEND_LIST[@]}"; do
+        [[ "$b" == "$1" ]] && return 0
+    done
+    return 1
+}
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -113,7 +150,14 @@ if [[ -z "$TAG" ]]; then
     TAG="${DAY}-${SUFFIX}"
 fi
 
-OUT_DIR="paper-data/${TAG}"
+# When --root is given (artifact dispatcher), output lands directly under it;
+# otherwise fall back to the in-tree paper-data/<tag> default. TAG stays the
+# manifest/analyzer label either way.
+if [[ -n "$ROOT" ]]; then
+    OUT_DIR="$ROOT"
+else
+    OUT_DIR="paper-data/${TAG}"
+fi
 RAW_DIR="${OUT_DIR}/raw"
 SUMMARY_DIR="${OUT_DIR}/summary"
 LOG="${OUT_DIR}/run.log"
@@ -135,6 +179,7 @@ run() {
 COMMIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 HOST=$(hostname)
 log "tag=$TAG cells=$CELLS families=$FAMILIES reps=$REPS dry_run=$DRY_RUN skip_load=$SKIP_LOAD smoke_test=$SMOKE_TEST"
+log "backends=$BACKENDS data_disk=$DATA_DISK out_dir=$OUT_DIR"
 log "commit_sha=$COMMIT_SHA host=$HOST repo=$REPO_ROOT"
 
 # ---------------- cell lookup table ----------------
@@ -244,7 +289,7 @@ trigger_load() {
     # waste a structure run.
     local family="$1" backend="$2" sf="$3"
     [[ $SKIP_LOAD -eq 1 ]] && return 0
-    local data_disk="/mnt/ssd"
+    local data_disk="$DATA_DISK"
     case "$family" in
         tpch)  local img_dir="tpch_${backend}" ;;
         tpchi) local img_dir="tpchi_${backend}" ;;
@@ -263,7 +308,7 @@ trigger_load() {
     # Use the recover-file target directly. dram is irrelevant for the
     # load (load_dram=8 is pinned inside the recipe); pass it just to
     # satisfy the Makefile.
-    if ! make "$json" scale="$sf" dram="0.1" >> "$LOG" 2>&1; then
+    if ! make "$json" scale="$sf" dram="0.1" data_disk="$data_disk" >> "$LOG" 2>&1; then
         log "  ERROR: load failed for family=$family backend=$backend sf=$sf"
         return 1
     fi
@@ -368,7 +413,7 @@ for cell in "${CELL_LIST[@]}"; do
         binaries=$(families_for "$family") || continue
         log "  family $family"
         # Trigger one load per backend per family per SF.
-        for backend in lsm btree; do
+        for backend in "${BACKEND_LIST[@]}"; do
             sample_binary=$(family_dep_target "$family" "$backend")
             sf=$(binary_sf "$sample_binary" "$cell")
             load_key="${family}/${backend}/${sf}"
@@ -385,6 +430,8 @@ for cell in "${CELL_LIST[@]}"; do
             # Determine backend from binary name suffix.
             backend="lsm"
             [[ "$binary" == *_btree ]] && backend="btree"
+            # Honour the --backends subset.
+            want_backend "$backend" || continue
             sf=$(binary_sf "$binary" "$cell")
             load_key="${family}/${backend}/${sf}"
             if [[ "${LOAD_DONE[$load_key]:-0}" == "0" ]]; then
@@ -416,7 +463,7 @@ for cell in "${CELL_LIST[@]}"; do
                     fi
                     for n in $(structures_for "$binary"); do
                         target="${binary}_${n}"
-                        cmd="make $target scale=$sf dram=$dram $bg_flags $param_seed_flag"
+                        cmd="make $target scale=$sf dram=$dram data_disk=$DATA_DISK $bg_flags $param_seed_flag"
                         log "        $cmd"
                         if [[ $DRY_RUN -eq 1 ]]; then
                             continue
@@ -462,6 +509,8 @@ started_at: $(head -1 "$LOG" | awk '{print $1}' | tr -d '[]')
 finished_at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
 cells: ${CELLS}
 families: ${FAMILIES}
+backends: ${BACKENDS}
+disk: ${DATA_DISK}
 reps: ${REPS}
 runs_ok: ${RUN_OK}
 runs_err: ${RUN_ERR}
