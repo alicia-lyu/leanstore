@@ -1,2 +1,9 @@
 build/
 build-debug/
+.git/
+# paper-data is ~19 GB of dated authoring-run dirs (2026-*, q10-*) that no cell
+# reads — the plots cell consumes /results via --results-root + --tag-map. Ship
+# only paper-data/scripts/ (entrypoint needs it) and the top-level files
+# (diagrams.yaml = the tag->builder map the plotter reads).
+paper-data/*/
+!paper-data/scripts/

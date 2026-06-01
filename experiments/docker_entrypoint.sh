@@ -18,12 +18,15 @@
 # The diagnostics plotter is invoked by the "plots" cell against the
 # tpch-headline tag dir — no extra sweep is needed.
 #
-# Env knobs (forwarded to runners; all optional):
-#   SF          TPC-H scale factor override (default: per-cell table in run_paper_sweep.sh)
-#   DRAM_GIB    DRAM budget in GiB (default: per-cell table)
-#   QUERIES     Comma-separated binary names to restrict the sweep
-#   BACKENDS    lsm, btree, or lsm,btree (default: both)
-#   REPS        Repetitions per (binary,cell,structure,bg) (default: 5)
+# Env knobs (all optional):
+#   SMOKE       1 = fast small-scale validation: tpch-headline/-hdd run
+#               run_paper_sweep.sh --smoke-test (cell c2: SF lsm 380 / btree 150,
+#               DRAM 0.1, structures S1+S3, 1 rep); refresh runs its smallest cell
+#               (10HH) at the same SFs. Use to verify build + code end-to-end.
+#   REPS        Repetitions per (binary,cell,structure,bg) (default: 5; forced to
+#               1 under SMOKE).
+#   SF, DRAM_GIB, QUERIES   RESERVED — not yet forwarded to the runners. Use SMOKE
+#               for a small run, or edit the cell table in run_paper_sweep.sh.
 #
 # Mount contract (bind-mounts are REQUIRED — the cell fails fast otherwise):
 #   /results   every cell (output CSVs + paper-ready PDFs)
@@ -46,11 +49,16 @@ set -euo pipefail
 
 CELL="${CELL:-}"
 REPS="${REPS:-5}"
+SMOKE="${SMOKE:-0}"
 RESULTS="/results"
 REPO="/leanstore"
 SCRIPTS="$REPO/paper-data/scripts"
 
 log() { echo "[entrypoint] $*" >&2; }
+
+# Small-scale validation args appended to the headline runners when SMOKE=1.
+SMOKE_ARGS=()
+[[ "$SMOKE" == 1 ]] && SMOKE_ARGS+=(--smoke-test)
 
 # ---------------------------------------------------------------------------
 # Mount guards. The image ships /mnt/ssd, /mnt/hdd, /results as empty
@@ -160,7 +168,8 @@ case "$CELL" in
         require_mount /results
         log "running SSD headline sweep..."
         run_sweep "tpch-headline" \
-            --families tpch,tpchi
+            --families tpch,tpchi \
+            "${SMOKE_ARGS[@]}"
         ;;
 
     # -----------------------------------------------------------------------
@@ -174,7 +183,8 @@ case "$CELL" in
         run_sweep "tpch-headline-hdd" \
             --families tpch,tpchi \
             --backends lsm \
-            --disk hdd
+            --disk hdd \
+            "${SMOKE_ARGS[@]}"
         ;;
 
     # -----------------------------------------------------------------------
@@ -188,7 +198,13 @@ case "$CELL" in
         require_mount /mnt/ssd
         require_mount /results
         log "running refresh sweep..."
-        run_refresh "refresh"
+        if [[ "$SMOKE" == 1 ]]; then
+            # Smallest refresh cell at the c2 SFs, so it reuses the family images
+            # the headline cell already loaded (no extra load).
+            run_refresh "refresh" --cells 10HH --sf-btree 150 --sf-lsm 380
+        else
+            run_refresh "refresh"
+        fi
         ;;
 
     # -----------------------------------------------------------------------
