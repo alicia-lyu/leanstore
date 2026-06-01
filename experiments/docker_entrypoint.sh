@@ -27,7 +27,7 @@
 #
 # Usage in docker_run.sh:
 #   docker run -e CELL=tpch-headline -v $RESULTS:/results \
-#              -v /mnt/nvme/leanstore:/mnt/nvme/leanstore \
+#              -v /mnt/ssd:/mnt/ssd \
 #              ghcr.io/alicia-lyu/leanstore:vldb26
 
 set -euo pipefail
@@ -85,7 +85,7 @@ case "$CELL" in
     # -----------------------------------------------------------------------
     tpch-headline-hdd)
         # HDD LSM subset. Drives the supplementary tpch_lsm_headline_hdd figure.
-        # Requires /mnt/hdd/leanstore to be present on the host (bind-mounted).
+        # Requires /mnt/hdd to be present on the host (bind-mounted).
         log "running HDD headline sweep (LSM only)..."
         run_sweep "tpch-headline-hdd" \
             --families tpch,tpchi \

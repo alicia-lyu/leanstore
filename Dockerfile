@@ -76,9 +76,9 @@ COPY paper-data/ paper-data/
 RUN chmod +x experiments/docker_entrypoint.sh
 
 # ── Runtime directories ───────────────────────────────────────────────────────
-# /mnt/nvme/leanstore — bind-mount point for SSD image files (host provides).
-# /mnt/hdd/leanstore  — bind-mount point for HDD image files (tpch-headline-hdd cell).
-# /results            — bind-mount point for output CSVs and paper-ready PDFs.
-RUN mkdir -p /mnt/nvme/leanstore /mnt/hdd/leanstore /results
+# /mnt/ssd  — bind-mount point for SSD image files (host provides; ROTA=0).
+# /mnt/hdd  — bind-mount point for HDD image files (tpch-headline-hdd cell).
+# /results  — bind-mount point for output CSVs and paper-ready PDFs.
+RUN mkdir -p /mnt/ssd /mnt/hdd /results
 
 ENTRYPOINT ["/leanstore/experiments/docker_entrypoint.sh"]

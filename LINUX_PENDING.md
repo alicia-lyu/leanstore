@@ -9,6 +9,24 @@ actionable.
 
 ## Active
 
+- **Extend `experiments/run_paper_sweep.sh` with `--root`, `--backends`,
+  `--disk` flags (2026-06-01, post-artifact-dispatcher)** — the
+  artifact dispatcher (`experiments/docker_entrypoint.sh`) invokes
+  `run_paper_sweep.sh --root /results/<cell> --backends lsm --disk hdd`,
+  but none of those three flags exist today. `--root` is needed to
+  redirect output away from the in-tree `paper-data/<tag>/` default
+  (the artifact must write under `/results/`); `--backends` and
+  `--disk` are needed for the `tpch-headline-hdd` cell (LSM-only,
+  data on `/mnt/hdd`). `data_disk` is currently hardcoded to
+  `/mnt/ssd` at line 247. Until these flags land, the dispatcher's
+  `tpch-headline` and `tpch-headline-hdd` cells run the sweep but
+  output ends up at `/leanstore/paper-data/<cell>/` inside the
+  container, not `/results/<cell>/` — the plots cell will not find
+  it. Acceptance: a `CELL=tpch-headline` run inside the image
+  populates `/results/tpch-headline/{manifest.yaml,raw/,summary/}`,
+  and a `CELL=tpch-headline-hdd` run populates the same shape under
+  `/mnt/hdd`-backed data files.
+
 - **Commit `experiments/run_refresh_sweep.sh` — refresh runner for Fig. 6+7
   (2026-06-01, post-artifact-dispatcher)** — the dedicated refresh runner
   (`build/scratch/run_refresh_{5L,5H,5HH,10L,...}_ssd.sh` on the author's
