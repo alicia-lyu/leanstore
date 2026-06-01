@@ -66,7 +66,10 @@ RUN mkdir -p build \
 # prebuilt distribution already installed above.
 COPY dbtoaster/ /leanstore/dbtoaster/
 WORKDIR /leanstore/dbtoaster
-RUN mkdir -p data_files \
+# rm -rf build: never reuse a host-side cmake cache that may have been copied
+# in (CMakeCache.txt bakes an absolute source path and aborts on mismatch).
+RUN rm -rf build \
+    && mkdir -p data_files \
     && make refresh_sales.hpp \
     && make build
 
