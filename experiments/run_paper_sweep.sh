@@ -519,7 +519,7 @@ EOF
 log "manifest written: ${OUT_DIR}/manifest.yaml"
 
 # Run analyzer over the snapshot tree.
-ANALYZER="${REPO_ROOT}/scripts/analyze_paper_sweep.py"
+ANALYZER="${REPO_ROOT}/paper-data/scripts/analyze_paper_sweep.py"
 if [[ -x "$ANALYZER" || -f "$ANALYZER" ]]; then
     log "running analyzer..."
     if python3 "$ANALYZER" --tag "$TAG" --root "$OUT_DIR" >> "$LOG" 2>&1; then
@@ -531,12 +531,13 @@ else
     log "analyzer not found at $ANALYZER; skipping summary CSV emission"
 fi
 
-# Run plotter — emits paper-data/<tag>/figures/{...}.{pdf,png}.
-# See scripts/PLOTTING.md for the figure catalog.
-PLOTTER="${REPO_ROOT}/scripts/plot_paper_sweep.py"
+# Run the per-sweep diagnostics plotter — emits <tag>/figures/diagnostics/.
+# (Paper figures are built separately by the dispatcher's `plots` cell.)
+# See paper-data/scripts/PLOTTING.md for the figure catalog.
+PLOTTER="${REPO_ROOT}/paper-data/scripts/plot_paper_sweep.py"
 if [[ -x "$PLOTTER" || -f "$PLOTTER" ]]; then
     log "running plotter..."
-    if python3 "$PLOTTER" --tag "$TAG" --root "$OUT_DIR" >> "$LOG" 2>&1; then
+    if python3 "$PLOTTER" --diag-tag "$TAG" --diag-root "$OUT_DIR" >> "$LOG" 2>&1; then
         log "plotter: ok"
     else
         log "plotter: FAILED (see $LOG) — non-fatal, summary CSVs still valid"

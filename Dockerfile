@@ -75,6 +75,9 @@ RUN rm -rf build \
 
 # ── Runtime scripts ───────────────────────────────────────────────────────────
 WORKDIR /leanstore
+# The runners drive every load/run through `make`, so the image needs the
+# Makefile + generated targets.mk (and generate_targets.py to regenerate it).
+COPY Makefile targets.mk generate_targets.py ./
 COPY experiments/ experiments/
 COPY paper-data/ paper-data/
 RUN chmod +x experiments/docker_entrypoint.sh
