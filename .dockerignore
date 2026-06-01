@@ -1,9 +1,12 @@
 build/
 build-debug/
 .git/
-# paper-data is ~19 GB of dated authoring-run dirs (2026-*, q10-*) that no cell
-# reads — the plots cell consumes /results via --results-root + --tag-map. Ship
-# only paper-data/scripts/ (entrypoint needs it) and the top-level files
-# (diagrams.yaml = the tag->builder map the plotter reads).
-paper-data/*/
-!paper-data/scripts/
+.claude/
+.vscode/
+# paper-data is ~19 GB of dated authoring-run dirs that no cell reads (the plots
+# cell consumes /results via --results-root + --tag-map). Exclude them by
+# directory-name prefix so the whole subtree is dropped (the legacy builder does
+# not recurse a trailing-slash glob, and a `!` negation forces a full walk).
+# Kept: paper-data/scripts/, paper-data/diagrams.yaml, paper-data/*.md.
+paper-data/2026-*
+paper-data/q10-*
