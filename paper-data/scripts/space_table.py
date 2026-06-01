@@ -45,11 +45,14 @@ PAPER_DATA = REPO_ROOT / "paper-data"
 
 # Data sources: the main sweep covers q3/q5/q3i/q5i with bg=2; Q10 and
 # Q10i live in their own tags (bg=0, dedicated method variants).
-SOURCES = [
+# These defaults are the authoring tags; override via --root + --sources
+# when running inside the artifact container.
+_DEFAULT_SOURCES = [
     ("2026-05-24-a-ssd", 2),
     ("2026-05-25-q10", 0),
     ("2026-05-25-q10i", 0),
 ]
+SOURCES = _DEFAULT_SOURCES
 
 FAMILIES = {
     "vanilla (MI_B)": ["q3", "q5", "q10"],
@@ -85,7 +88,30 @@ def _gib(mib: float) -> float:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", type=Path, default=None,
+                    metavar="DIR",
+                    help="root directory containing the tag sub-directories. "
+                         "Default: in-repo paper-data/. "
+                         "Pass /results when running inside the artifact container.")
+    ap.add_argument("--sources", default=None,
+                    metavar="TAG:BG[,TAG:BG,...]",
+                    help="comma-separated tag:bg pairs that replace the built-in "
+                         "SOURCES list. Example: "
+                         "\"tpch-headline:2,tpch-q10:0,tpch-q10i:0\". "
+                         "Requires --root.")
     args = ap.parse_args()
+
+    global PAPER_DATA, SOURCES
+    if args.root is not None:
+        PAPER_DATA = args.root.resolve()
+    if args.sources is not None:
+        SOURCES = []
+        for pair in args.sources.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            tag, bg_str = pair.rsplit(":", 1)
+            SOURCES.append((tag.strip(), int(bg_str.strip())))
 
     sizes = _sizes()
 

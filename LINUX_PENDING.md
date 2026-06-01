@@ -9,6 +9,19 @@ actionable.
 
 ## Active
 
+- **Commit `experiments/run_refresh_sweep.sh` — refresh runner for Fig. 6+7
+  (2026-06-01, post-artifact-dispatcher)** — the dedicated refresh runner
+  (`build/scratch/run_refresh_{5L,5H,5HH,10L,...}_ssd.sh` on the author's
+  Linux machine) was never committed. The artifact `refresh` cell in
+  `experiments/docker_entrypoint.sh` exits with an error until this lands.
+  Pattern: recover from per-structure image copies, drop OS page caches,
+  `--update_size=1 --refresh_seconds=90`, run S1–S4 on both backends, emit
+  `raw/<cell>/<be>.s{1..4}.csv` consumed by
+  `paper-data/scripts/summarize_refresh_10L.py`. See
+  `frontend/tpch/refresh_sales/RUNS.md` for the existing hand-run pattern.
+  Until committed, Figs. 6+7 are not reproducible from the artifact image;
+  the authoring-run CSVs live in `paper-data/2026-05-30-refresh-10L/`.
+
 - **Dedicated S2/S7 view loader without persisting the COL/COLI MI
   (2026-05-28, post-378e1038)** — at sx=2 the family loader runs
   `populate_merged()` first so the view loader has a structure to

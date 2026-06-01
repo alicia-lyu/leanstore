@@ -294,7 +294,9 @@ def _disk_from_dfs(*dfs: pd.DataFrame) -> Optional[str]:
     return sorted(seen)[0]
 
 
-def load_diagram(name: str) -> SweepData:
+def load_diagram(name: str,
+                 tag_path_resolver: Optional[Callable[[str], Path]] = None,
+                 ) -> SweepData:
     """Load a named diagram from diagrams.yaml.
 
     Reads all source tags, concatenates their summary CSVs (each row
@@ -303,9 +305,22 @@ def load_diagram(name: str) -> SweepData:
 
     The primary tag's manifest supplies commit/host metadata. When
     sources differ in commit SHA the footer shows ``commit varies``.
+
+    ``tag_path_resolver`` maps an authored tag string (from diagrams.yaml)
+    to the on-disk directory that holds its summary/ tree. When ``None``
+    the default ``sources_for()`` lookup is used (in-repo paper-data/<tag>/).
+    Pass a resolver produced from ``--tag-map`` + ``--results-root`` to
+    redirect reads to a neutral artifact results directory.
     """
-    tag_paths = sources_for(name)
-    tags = [p.name for p in tag_paths]
+    if tag_path_resolver is not None:
+        meta = load_metadata()
+        authored_tags: List[str] = meta[name]["sources"]
+        tag_paths = [tag_path_resolver(t) for t in authored_tags]
+        # Use the neutral directory name as the tag label for footer/manifest.
+        tags = [p.name for p in tag_paths]
+    else:
+        tag_paths = sources_for(name)
+        tags = [p.name for p in tag_paths]
 
     all_headlines: List[pd.DataFrame] = []
     all_stats: List[pd.DataFrame] = []
@@ -2042,7 +2057,46 @@ def main() -> int:
 
     p.add_argument("--format", default="pdf", choices=["pdf", "png", "svg", "pgf"],
                    help="primary output format; pdf also emits a PNG sibling")
+    p.add_argument("--tag-map", default=None, metavar="YAML_OR_JSON",
+                   help="path to a YAML/JSON file (or an inline YAML string) mapping "
+                        "authoring tag names from diagrams.yaml to neutral result-dir "
+                        "names under the results root. Example: "
+                        "'{\"2026-05-29-rep0-10L\": \"tpch-headline\"}'. "
+                        "The plotter resolves sources_for() through this map before "
+                        "reading from the results root. Set PAPER_TAG_MAP env var "
+                        "as an alternative to this flag.")
+    p.add_argument("--results-root", type=Path, default=None,
+                   help="root directory that contains the neutral tag dirs written by "
+                        "the artifact sweep (e.g. /results). When omitted, the plotter "
+                        "reads from the in-repo paper-data/<tag>/ dirs as usual.")
     args = p.parse_args()
+
+    # ------------------------------------------------------------------ tag-map
+    # Resolve a tag-map: {authored-tag: neutral-dir-name}.
+    # Source: --tag-map flag, else PAPER_TAG_MAP env var, else identity.
+    _tag_map: Dict[str, str] = {}
+    _tag_map_raw = args.tag_map or os.environ.get("PAPER_TAG_MAP", "")
+    if _tag_map_raw:
+        import json as _json
+        _src = Path(_tag_map_raw)
+        if _src.exists():
+            with _src.open() as _fh:
+                _raw = yaml.safe_load(_fh) or {}
+        else:
+            # Treat as an inline YAML/JSON string.
+            _raw = yaml.safe_load(_tag_map_raw) or {}
+        if not isinstance(_raw, dict):
+            p.error("--tag-map must resolve to a YAML/JSON object (mapping)")
+        _tag_map = {str(k): str(v) for k, v in _raw.items()}
+
+    _results_root: Optional[Path] = args.results_root
+
+    def _resolve_tag_path(authored_tag: str) -> Path:
+        """Map an authored tag to its on-disk path via --tag-map + --results-root."""
+        neutral = _tag_map.get(authored_tag, authored_tag)
+        if _results_root is not None:
+            return _results_root / neutral
+        return PAPER_DATA_ROOT / neutral
 
     if args.format == "pgf":
         matplotlib.rcParams.update({
@@ -2108,7 +2162,7 @@ def main() -> int:
                   f"diagram '{diag_name}' — skipped", file=sys.stderr)
             continue
         try:
-            data = load_diagram(diag_name)
+            data = load_diagram(diag_name, tag_path_resolver=_resolve_tag_path)
         except Exception as e:
             print(f"[plotter] ERROR loading diagram '{diag_name}': {e}",
                   file=sys.stderr)

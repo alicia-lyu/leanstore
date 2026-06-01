@@ -468,9 +468,51 @@ def main() -> int:
                         "sources[2]=dbtoaster (optional).")
     p.add_argument("--format", default="pdf",
                    choices=["pdf", "png", "svg"])
+    p.add_argument("--tag-map", default=None, metavar="YAML_OR_JSON",
+                   help="path to a YAML/JSON file (or an inline YAML string) mapping "
+                        "authoring tag names from diagrams.yaml to neutral result-dir "
+                        "names under the results root. Example: "
+                        "'{\"2026-05-30-refresh-10L\": \"refresh\"}'. "
+                        "Set PAPER_TAG_MAP env var as an alternative.")
+    p.add_argument("--results-root", type=Path, default=None,
+                   help="root directory containing neutral tag dirs (e.g. /results). "
+                        "When omitted, reads from the in-repo paper-data/<tag>/ dirs.")
     args = p.parse_args()
 
-    tag_paths = sources_for(args.diagram)
+    # Build tag resolver from --tag-map / PAPER_TAG_MAP env var.
+    _tag_map: dict = {}
+    _tag_map_raw = args.tag_map or __import__("os").environ.get("PAPER_TAG_MAP", "")
+    if _tag_map_raw:
+        _src = Path(_tag_map_raw)
+        if _src.exists():
+            with _src.open() as _fh:
+                _raw = yaml.safe_load(_fh) or {}
+        else:
+            _raw = yaml.safe_load(_tag_map_raw) or {}
+        if not isinstance(_raw, dict):
+            p.error("--tag-map must resolve to a YAML/JSON object (mapping)")
+        _tag_map = {str(k): str(v) for k, v in _raw.items()}
+
+    _results_root = args.results_root
+    from _diagram_metadata import load_metadata, PAPER_DATA_ROOT as _PDR
+
+    def _resolve(authored_tag: str) -> Path:
+        neutral = _tag_map.get(authored_tag, authored_tag)
+        if _results_root is not None:
+            return _results_root / neutral
+        return _PDR / neutral
+
+    # Resolve tag paths through the map (or direct lookup when no map).
+    if _tag_map or _results_root is not None:
+        meta = load_metadata()
+        if args.diagram not in meta:
+            print(f"[plot_refresh_sales] error: diagram '{args.diagram}' not in diagrams.yaml",
+                  file=sys.stderr)
+            return 1
+        authored_tags: List[str] = meta[args.diagram]["sources"]
+        tag_paths = [_resolve(t) for t in authored_tags]
+    else:
+        tag_paths = sources_for(args.diagram)
     if not tag_paths:
         print(f"[plot_refresh_sales] error: no sources for diagram "
               f"'{args.diagram}'", file=sys.stderr)
