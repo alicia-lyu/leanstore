@@ -16,6 +16,18 @@ diagrams:
   paper_tpch_lsm_headline:
     sources: [2026-05-29-rep0-10L]
     builder: paper_tpch_row_lsm
+  paper_tpch_btree_cpu:
+    sources: [2026-05-24-a-ssd]   # only tag with non-null cpu_util_pct
+    builder: paper_tpch_cpu_row_btree
+  paper_tpch_lsm_cpu:
+    sources: [2026-05-24-a-ssd]
+    builder: paper_tpch_cpu_row_lsm
+  paper_lsm_sst_path:
+    # SST counters only present in 2026-05-24-a-ssd (10L sweeps don't
+    # carry sst_read_us_per_tx / sst_compaction_us). Matches the
+    # paper_tpch_{btree,lsm}_cpu source for consistency.
+    sources: [2026-05-24-a-ssd]
+    builder: paper_lsm_sst_path
   paper_tpch_btree_memory:
     sources: [2026-05-24-a-ssd]
     builder: paper_tpch_memory_btree

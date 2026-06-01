@@ -45,6 +45,7 @@ matplotlib.rcParams.update({
     "font.family": "serif",
     "text.latex.preamble": r"\usepackage{lmodern}",
 })
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
@@ -936,6 +937,162 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
+def _paper_cpu_panel(ax, cpu_df: pd.DataFrame, binary: str, cell: str,
+                     *, show_ylabel: bool, structures: Sequence[int],
+                     y_cap: Optional[float],
+                     unit_scale: float = 1.0,
+                     ylabel: str = "CPU cores / worker") -> bool:
+    """One CPU-utilization panel. Same x layout / colours / hatching as
+    `_paper_bar_panel` but plots ``cpu_util_pct`` directly (linear, %),
+    no log scale, no over-cap overflow."""
+    panel_structs = list(structures or PAPER_LEGEND_ORDER)
+    sub = cpu_df[(cpu_df["binary"] == binary) & (cpu_df["cell"] == cell)
+                 & (cpu_df["bg"] == PAPER_HEADLINE_BG)
+                 & (cpu_df["structure"].isin(panel_structs))]
+    if sub.empty:
+        _all_or_empty(plt.gcf(), ax, "—")
+        ax.set_xlabel(_query_title(binary), fontsize=14)
+        return False
+    n = len(panel_structs)
+    bar_w = 0.72 / max(n, 1)
+    drew = False
+    plotted: List[Tuple[float, float, int, float, float]] = []
+    for k, struct in enumerate(panel_structs):
+        row = sub[sub["structure"] == struct]
+        if row.empty or pd.isna(row["cpu_med"].iloc[0]):
+            continue
+        x = (k - (n - 1) / 2) * bar_w
+        h = float(row["cpu_med"].iloc[0]) * unit_scale
+        lo = (float(row["cpu_q25"].iloc[0]) * unit_scale) if "cpu_q25" in row.columns \
+            and not pd.isna(row["cpu_q25"].iloc[0]) else h
+        hi = (float(row["cpu_q75"].iloc[0]) * unit_scale) if "cpu_q75" in row.columns \
+            and not pd.isna(row["cpu_q75"].iloc[0]) else h
+        plotted.append((x, h, struct, lo, hi))
+    if not plotted:
+        ax.set_xlabel(_query_title(binary), fontsize=14)
+        return False
+    for x, h, struct, lo, hi in plotted:
+        color, hatch = _struct_style(struct)
+        bar_kwargs = dict(facecolor=color, edgecolor=color, linewidth=0)
+        if hatch is not None:
+            bar_kwargs.update(hatch=hatch, edgecolor="white", linewidth=0)
+        ax.bar([x], [h], width=bar_w, clip_on=False, **bar_kwargs)
+        if hi > lo and np.isfinite(lo) and np.isfinite(hi):
+            whisker_hi = min(hi, y_cap) if y_cap is not None else hi
+            if whisker_hi > lo:
+                ax.vlines(x, lo, whisker_hi,
+                          color="black", linewidth=1.6, clip_on=False)
+        drew = True
+    ax.set_xlabel(_query_title(binary), fontsize=14)
+    if show_ylabel:
+        # cpu_util_pct is mean(task_clock / wall_clock) across worker
+        # threads — core-equivalents per worker. B-tree: cleanly in
+        # [0,1], so we scale ×100 and call it CPU util %. LSM: values
+        # routinely exceed 1.0 because the worker's perf fd inherits
+        # RocksDB background threads, so we keep raw cores / worker.
+        ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_xticks([])
+    ax.set_ylim(0, y_cap if y_cap is not None else None)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
+    ax.tick_params(axis="y", which="major", labelsize=11)
+    ax.yaxis.grid(True, linestyle=":", alpha=0.4)
+    ax.set_axisbelow(True)
+    return drew
+
+
+def fig_paper_tpch_cpu_row(data: SweepData, backend: str,
+                           include_legend: bool) -> Optional[Path]:
+    """1×4 CPU-utilization row mirroring fig_paper_tpch_row.
+
+    Pulls ``cpu_util_pct`` from ``diagnostics.csv``, medianed across
+    reps (q25/q75 for whiskers), filtered to the headline cell + bg=2
+    cohort. Linear y, shared ymax across panels, no log treatment.
+    """
+    assert backend in ("btree", "lsm")
+    if data.diagnostics is None or data.diagnostics.empty:
+        return None
+    diag = data.diagnostics
+    diag = diag[diag["family"].isin(["vanilla", "tpchi"])
+                & (diag["backend"] == backend)
+                & (diag["tx"] == "query")
+                & diag["cpu_util_pct"].notna()]
+    if diag.empty:
+        return None
+    # Pick the cell with the most cpu rows — different sweeps tag the
+    # headline cohort as c0 (older) or c4 (10L). PAPER_HEADLINE_CELL is
+    # query-throughput-specific; CPU diagnostics may live in a different
+    # cell label entirely.
+    cell_counts = diag["cell"].value_counts()
+    headline_cell = cell_counts.index[0]
+    if "method" in diag.columns:
+        mask = diag["method"].isin(Q10_METHOD_TO_STRUCT)
+        if mask.any():
+            diag = diag.copy()
+            mapped = diag.loc[mask, "method"].map(Q10_METHOD_TO_STRUCT)
+            diag.loc[mask, "structure"] = mapped.astype(int)
+    grouped = (diag.groupby(["binary", "cell", "structure", "bg"])
+                   ["cpu_util_pct"]
+                   .agg(cpu_med="median",
+                        cpu_q25=lambda s: float(np.nanpercentile(s, 25)),
+                        cpu_q75=lambda s: float(np.nanpercentile(s, 75)))
+                   .reset_index())
+
+    binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
+    n_panels = len(binaries)
+    fig, axes = plt.subplots(1, n_panels, figsize=(2.1 * n_panels, 1.638),
+                             sharey=True, constrained_layout=True)
+
+    # B-tree: scale raw fractional-core values to "% of one core per
+    # worker" — the perf fd is single-thread so values are cleanly in
+    # [0,1]. LSM: leave as raw cores/worker (inherits RocksDB background
+    # threads, often >1.0; a % label would mislead).
+    if backend == "btree":
+        unit_scale = 100.0
+        ylabel = r"CPU util.\ (\%)"
+    else:
+        unit_scale = 1.0
+        ylabel = "CPU cores / worker"
+
+    panel_caps: List[float] = []
+    for binary in binaries:
+        panel_sub = grouped[(grouped["binary"] == binary)
+                            & (grouped["cell"] == headline_cell)
+                            & (grouped["bg"] == PAPER_HEADLINE_BG)]
+        if panel_sub.empty:
+            continue
+        tops = panel_sub[["cpu_med", "cpu_q75"]].max(axis=1).tolist()
+        panel_caps.extend([float(v) * unit_scale for v in tops
+                           if v == v and v > 0])
+    y_cap = max(panel_caps) * 1.15 if panel_caps else None
+
+    has_any = False
+    legend_structs: List[int] = list(PAPER_LEGEND_ORDER)
+    for j, (binary, q) in enumerate(zip(binaries, PAPER_TPCH_QUERIES)):
+        panel_structs = PAPER_PANEL_STRUCTURES.get(q, PAPER_LEGEND_ORDER)
+        for s in panel_structs:
+            if s not in legend_structs:
+                legend_structs.append(s)
+        drew = _paper_cpu_panel(axes[j], grouped, binary, headline_cell,
+                                show_ylabel=(j == 0),
+                                structures=panel_structs,
+                                y_cap=y_cap,
+                                unit_scale=unit_scale,
+                                ylabel=ylabel)
+        has_any = has_any or drew
+    if not has_any:
+        plt.close(fig)
+        return None
+    for j, ax in enumerate(axes):
+        ax.tick_params(axis="y", labelleft=(j == 0))
+    if include_legend:
+        _add_two_row_legend(fig, legend_structs, fontsize=13,
+                            bbox_main=(0.5, 1.42),
+                            bbox_variants=(0.5, 1.24),
+                            bbox_main_no_variants=(0.5, 1.26))
+    dest = data.figures_root / data.paper_name(f"paper_tpch_{backend}_cpu")
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
 def fig_paper_q10(data: SweepData) -> Optional[Path]:
     """1×4 dedicated Q10/Q10I figure: Q10 btree | Q10 lsm | Q10i btree |
     Q10i lsm. Both queries carry an extra Mat-View bar (naive per-lineitem
@@ -1554,7 +1711,109 @@ def fig_diag_ssd_btree_cache_profile(data: SweepData) -> Optional[Path]:
     return _save_ssd_diag(data, fig, "diag_ssd_btree_cache_profile")
 
 
-def fig_diag_ssd_lsm_sst_path(data: SweepData) -> Optional[Path]:
+def _paper_lsm_sst_path(data: SweepData, agg: pd.DataFrame,
+                        metrics: Sequence[Tuple[str, str, float, str]],
+                        diag_queries: Sequence[str]) -> Optional[Path]:
+    """Paper-ready LSM SST-path figure: q3 and q3i share one panel,
+    bars touch within each query cluster, structures encoded by colour
+    via a figure-level legend (no per-bar xticklabels). Two metrics:
+    sst_read on the left axis, sst_compaction on the twinx right axis,
+    distinguished by solid vs hatched fill.
+    """
+    structs = list(PAPER_LEGEND_ORDER)
+    n_struct = len(structs)
+    n_metric = len(metrics)
+    # Cluster width sized so n_struct * n_metric bars touch under each
+    # query label without crowding the gap between q3 and q3i.
+    cluster_w = 0.78
+    bar_w = cluster_w / (n_struct * n_metric)
+
+    # constrained_layout reserves space for the legend attached to
+    # sec_ax (see legend call below). Manual subplots_adjust would
+    # collide with it and trigger a warning.
+    fig, ax = plt.subplots(figsize=(5.6, 1.18), constrained_layout=True)
+    sec_ax = ax.twinx()
+    COMPACTION_COLOR = "#7f7f7f"
+
+    drew = False
+    for qi, q in enumerate(diag_queries):
+        sub = agg[agg["query"] == q]
+        if sub.empty:
+            continue
+        # Bar order within a cluster: for each structure, primary metric
+        # then secondary metric, so colour groups stay contiguous.
+        slot = 0
+        for s in structs:
+            row = sub[sub["structure"] == s]
+            if row.empty:
+                continue
+            for mi, (col, _, scale, _) in enumerate(metrics):
+                if col not in row.columns:
+                    slot += 1
+                    continue
+                val = row[col].iloc[0]
+                if pd.isna(val):
+                    slot += 1
+                    continue
+                target = sec_ax if col == "sst_compaction_us" else ax
+                x = qi + (slot - (n_struct * n_metric - 1) / 2) * bar_w
+                # Reproduce the diagnostic version's exact call shape
+                # (color= sets both face+edge; hatch shows because the
+                # edge is rendered at minimal linewidth atop a dimmed
+                # alpha fill).
+                target.bar([x], [val / scale], bar_w,
+                           color=STYLE["structure_colors"][s],
+                           linewidth=0,
+                           alpha=1.0 if mi == 0 else 0.55,
+                           hatch="" if mi == 0 else "//")
+                drew = True
+                slot += 1
+    if not drew:
+        plt.close(fig)
+        return None
+
+    ax.set_xticks(list(range(len(diag_queries))))
+    ax.set_xticklabels([_query_title(f"{q}_lsm") for q in diag_queries],
+                       fontsize=11)
+    ax.set_xlim(-0.5, len(diag_queries) - 0.5)
+    ax.set_ylabel(metrics[0][1], fontsize=10)
+    sec_ax.set_ylabel(metrics[1][1], fontsize=10, color="#444")
+    ax.set_ylim(bottom=0)
+    sec_ax.set_ylim(bottom=0)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
+    sec_ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=5))
+    ax.tick_params(axis="y", labelsize=8)
+    sec_ax.tick_params(axis="y", labelsize=8, colors="#444")
+    ax.yaxis.grid(True, linestyle=":", alpha=0.4)
+    ax.set_axisbelow(True)
+
+    # Two legend groups, both on the right side stacked: structures
+    # (colour) + metric (solid / hatched).
+    struct_handles = [
+        mpatches.Patch(facecolor=STYLE["structure_colors"][s], linewidth=0,
+                       label=PAPER_STRUCTURE_LABELS[s])
+        for s in structs
+    ]
+    metric_handles = [
+        mpatches.Patch(facecolor=COMPACTION_COLOR, linewidth=0,
+                       label=metrics[0][3]),
+        mpatches.Patch(facecolor=COMPACTION_COLOR, linewidth=0,
+                       alpha=0.55, hatch="//", label=metrics[1][3]),
+    ]
+    # Anchor on the secondary axis (right side) and offset outward by
+    # ~10% of the axes width. bbox_inches="tight" in _save then expands
+    # the savefig bounds so the legend sits cleanly outside the chart.
+    sec_ax.legend(handles=struct_handles + metric_handles,
+                  loc="center left", bbox_to_anchor=(1.20, 0.5),
+                  ncol=1, fontsize=8, frameon=False,
+                  handletextpad=0.4, labelspacing=0.5,
+                  borderaxespad=0.0)
+    dest = data.figures_root / data.paper_name("paper_lsm_sst_path")
+    return _save(fig, dest, data.footer, include_footer=False)[0]
+
+
+def fig_diag_ssd_lsm_sst_path(data: SweepData,
+                              paper_mode: bool = False) -> Optional[Path]:
     """1×4 LSM SST-path panel. sst_read (per tx, parallel) on the
     left axis; sst_compaction (per run total) on the right axis via
     twinx. The two metrics live in different magnitudes (read µs/tx
@@ -1574,6 +1833,8 @@ def fig_diag_ssd_lsm_sst_path(data: SweepData) -> Optional[Path]:
     # 2-table-deep pipelines (Q5/Q5i add cross-table I/O that muddies
     # the read-vs-compaction split). Keeps the figure narrower too.
     diag_queries = ["q3", "q3i"]
+    if paper_mode:
+        return _paper_lsm_sst_path(data, agg, metrics, diag_queries)
     n_panels = len(diag_queries)
     # Wide-and-short layout: 4 xtick labels per panel sit horizontally
     # (no rotation) and need ~1.4" of width each to keep
@@ -1634,6 +1895,9 @@ def fig_diag_ssd_lsm_sst_path(data: SweepData) -> Optional[Path]:
     fig.legend(handles=metric_handles, loc="upper center", ncol=2,
                fontsize=10, bbox_to_anchor=(0.5, 1.10),
                frameon=False, columnspacing=1.5, handletextpad=0.4)
+    if paper_mode:
+        dest = data.figures_root / data.paper_name("paper_lsm_sst_path")
+        return _save(fig, dest, data.footer, include_footer=False)[0]
     return _save_ssd_diag(data, fig, "diag_ssd_lsm_sst_path")
 
 
@@ -1713,6 +1977,9 @@ BUILDERS: Dict[str, Callable[[SweepData], Optional[Path]]] = {
     # Registered under the names used in diagrams.yaml's builder: field.
     "paper_tpch_row_btree":    lambda d: fig_paper_tpch_row(d, "btree", include_legend=True),
     "paper_tpch_row_lsm":      lambda d: fig_paper_tpch_row(d, "lsm",   include_legend=False),
+    "paper_tpch_cpu_row_btree": lambda d: fig_paper_tpch_cpu_row(d, "btree", include_legend=True),
+    "paper_tpch_cpu_row_lsm":   lambda d: fig_paper_tpch_cpu_row(d, "lsm",   include_legend=False),
+    "paper_lsm_sst_path":       lambda d: fig_diag_ssd_lsm_sst_path(d, paper_mode=True),
     "paper_tpch_memory_btree": lambda d: fig_paper_memory_pressure(d, "btree", include_legend=True),
     "paper_tpch_memory_lsm":   lambda d: fig_paper_memory_pressure(d, "lsm",   include_legend=False),
     "paper_q10":               fig_paper_q10,
