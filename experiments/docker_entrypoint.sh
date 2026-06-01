@@ -62,7 +62,7 @@ log() { echo "[entrypoint] $*" >&2; }
 # complete (S2-vs-S3 present) while staying fast — for build + code e2e checks.
 SMOKE_ARGS=()
 if [[ "$SMOKE" == 1 ]]; then
-    SMOKE_ARGS+=(--cells c2)
+    SMOKE_ARGS+=(--cells c2 --sf-lsm "${SMOKE_SF:-15}" --sf-btree "${SMOKE_SF:-15}")
     REPS=1
 fi
 
@@ -207,7 +207,7 @@ case "$CELL" in
         if [[ "$SMOKE" == 1 ]]; then
             # Smallest refresh cell at the c2 SFs, so it reuses the family images
             # the headline cell already loaded (no extra load).
-            run_refresh "refresh" --cells 10HH --sf-btree 150 --sf-lsm 380
+            run_refresh "refresh" --cells 10HH --sf-btree "${SMOKE_SF:-15}" --sf-lsm "${SMOKE_SF:-15}"
         else
             run_refresh "refresh"
         fi

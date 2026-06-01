@@ -214,20 +214,22 @@ run_one() {
     [[ "$prewarm" == 1 && "$be" == btree ]] && pw_flag="--prewarm=true"
 
     local scratch cmd
+    # bg=2 cohort requires worker_threads >= 5 (refresh_sales default is 4).
+    local wt="--worker_threads=8"
     if [[ "$be" == btree ]]; then
         scratch="${dir}/${sf}.${suf}.image"
         cmd=("$bin" --recover --recover_file="${dir}/build/${sf}.json" \
              --ssd_path="$scratch" --trunc=false --wal=true \
              --dram_gib="$dram" --tpch_scale_factor="$sf" \
              --storage_structure="$n" --update_size="$UPDATE_SIZE" \
-             --refresh_seconds="$REFRESH_SECONDS" $bg_flags $pw_flag)
+             --refresh_seconds="$REFRESH_SECONDS" $wt $bg_flags $pw_flag)
     else
         scratch="${dir}/${sf}_${suf}"
         cmd=("$bin" --recover --ssd_path="$scratch" \
              --csv_path="${cell_raw}/lc${n}" \
              --dram_gib="$dram" --tpch_scale_factor="$sf" \
              --storage_structure="$n" --update_size="$UPDATE_SIZE" \
-             --refresh_seconds="$REFRESH_SECONDS" $bg_flags)
+             --refresh_seconds="$REFRESH_SECONDS" $wt $bg_flags)
     fi
 
     log "      ${cell}/${be} S${n} (dram=$dram bg=$bg sf=$sf)"

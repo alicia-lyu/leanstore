@@ -76,6 +76,8 @@ REPS=""
 ROOT=""
 BACKENDS="lsm,btree"
 DISK=""
+SF_LSM=""
+SF_BTREE=""
 DRY_RUN=0
 SKIP_LOAD=0
 SMOKE_TEST=0
@@ -91,6 +93,8 @@ while [[ $# -gt 0 ]]; do
         --root)       ROOT="$2"; shift 2 ;;
         --backends)   BACKENDS="$2"; shift 2 ;;
         --disk)       DISK="$2"; shift 2 ;;
+        --sf-lsm)     SF_LSM="$2"; shift 2 ;;
+        --sf-btree)   SF_BTREE="$2"; shift 2 ;;
         --dry-run)    DRY_RUN=1; shift ;;
         --skip-load)  SKIP_LOAD=1; shift ;;
         --smoke-test) SMOKE_TEST=1; shift ;;
@@ -207,8 +211,8 @@ binary_sf() {
     case "$binary" in
         geo_lsm)    cell_field "$cell" sf_geo_lsm ;;
         geo_btree)  cell_field "$cell" sf_geo_btree ;;
-        *_lsm)      cell_field "$cell" sf_lsm ;;
-        *_btree)    cell_field "$cell" sf_btree ;;
+        *_lsm)      [[ -n "$SF_LSM" ]]   && echo "$SF_LSM"   || cell_field "$cell" sf_lsm ;;
+        *_btree)    [[ -n "$SF_BTREE" ]] && echo "$SF_BTREE" || cell_field "$cell" sf_btree ;;
     esac
 }
 
@@ -451,7 +455,9 @@ for cell in "${CELL_LIST[@]}"; do
                     fi
                     for n in $(structures_for "$binary"); do
                         target="${binary}_${n}"
-                        cmd="make $target scale=$sf dram=$dram data_disk=$DATA_DISK $bg_flags $param_seed_flag"
+                        # bg=2 cohort (query thread + point lookups) requires
+                        # worker_threads >= 5; Makefile defaults to 2.
+                        cmd="make $target scale=$sf dram=$dram data_disk=$DATA_DISK worker_threads=8 $bg_flags $param_seed_flag"
                         log "        $cmd"
                         if [[ $DRY_RUN -eq 1 ]]; then
                             continue
