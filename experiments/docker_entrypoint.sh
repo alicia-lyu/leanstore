@@ -19,10 +19,11 @@
 # tpch-headline tag dir — no extra sweep is needed.
 #
 # Env knobs (all optional):
-#   SMOKE       1 = fast small-scale validation: tpch-headline/-hdd run
-#               run_paper_sweep.sh --smoke-test (cell c2: SF lsm 380 / btree 150,
-#               DRAM 0.1, structures S1+S3, 1 rep); refresh runs its smallest cell
-#               (10HH) at the same SFs. Use to verify build + code end-to-end.
+#   SMOKE       1 = fast small-scale validation: tpch-headline/-hdd run the
+#               smallest cell c2 (SF lsm 380 / btree 150, DRAM 0.1) at all four
+#               structures, 1 rep; refresh runs its smallest cell (10HH) at the
+#               same SFs. Use to verify build + code end-to-end with complete
+#               (if small) figures.
 #   REPS        Repetitions per (binary,cell,structure,bg) (default: 5; forced to
 #               1 under SMOKE).
 #   SF, DRAM_GIB, QUERIES   RESERVED — not yet forwarded to the runners. Use SMOKE
@@ -56,9 +57,14 @@ SCRIPTS="$REPO/paper-data/scripts"
 
 log() { echo "[entrypoint] $*" >&2; }
 
-# Small-scale validation args appended to the headline runners when SMOKE=1.
+# Small-scale validation when SMOKE=1: the smallest cell c2 (SF lsm 380 /
+# btree 150, DRAM 0.1) at all four structures, single rep. Keeps the figures
+# complete (S2-vs-S3 present) while staying fast — for build + code e2e checks.
 SMOKE_ARGS=()
-[[ "$SMOKE" == 1 ]] && SMOKE_ARGS+=(--smoke-test)
+if [[ "$SMOKE" == 1 ]]; then
+    SMOKE_ARGS+=(--cells c2)
+    REPS=1
+fi
 
 # ---------------------------------------------------------------------------
 # Mount guards. The image ships /mnt/ssd, /mnt/hdd, /results as empty
@@ -262,8 +268,7 @@ YAML
         # refresh_5L_pair_latency and refresh_lsm_vs_btree are attempted but
         # will emit "no data" panels when the refresh cell was not run.
         DIAGRAMS="paper_tpch_btree_headline,paper_tpch_lsm_headline,paper_q10,\
-paper_tpch_vanilla,paper_tpch_lsm_headline_hdd,\
-refresh_5L_pair_latency,refresh_lsm_vs_btree"
+paper_tpch_lsm_headline_hdd,refresh_lsm_vs_btree"
 
         python3 "$SCRIPTS/plot_paper_sweep.py" \
             --diagram "$DIAGRAMS" \

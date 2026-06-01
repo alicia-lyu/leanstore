@@ -216,8 +216,8 @@ binary_sf() {
 families_for() {
     local f="$1"
     case "$f" in
-        tpch)  echo "q3_lsm q3_btree q5_lsm q5_btree" ;;
-        tpchi) echo "q3i_lsm q3i_btree q5i_lsm q5i_btree" ;;
+        tpch)  echo "q3_lsm q3_btree q5_lsm q5_btree q10_lsm q10_btree" ;;
+        tpchi) echo "q3i_lsm q3i_btree q5i_lsm q5i_btree q10i_lsm q10i_btree" ;;
         geo)   echo "geo_lsm geo_btree" ;;
         *)     echo ""; return 1 ;;
     esac
