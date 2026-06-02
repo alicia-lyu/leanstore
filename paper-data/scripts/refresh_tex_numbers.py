@@ -40,7 +40,13 @@ DEFAULT_TEX_DIR = _REPO.parent.parent / "merged_index_interesting_orderings" / "
 
 def load_headline() -> pd.DataFrame:
     df = pd.read_csv(REPO / HEADLINE_TAG / "summary" / "headline.csv")
-    df = df[(df["cell"] == "c4") & (df["bg"] == 2) & (df["tx"] == "query")]
+    df = df[(df["bg"] == 2) & (df["tx"] == "query")]
+    # Prefer the paper headline cell c4; fall back to the present cell so a
+    # --smoke sweep (cell c2) still computes whatever macros it can.
+    cells = set(df["cell"].dropna())
+    pick = "c4" if "c4" in cells else (
+        df["cell"].dropna().value_counts().idxmax() if cells else "c4")
+    df = df[df["cell"] == pick]
     return df.groupby(
         ["binary", "family", "backend", "query", "structure", "method"],
         as_index=False,
@@ -351,8 +357,18 @@ def main():
         "% Do not edit by hand.",
         "",
     ]
+    skipped: list[str] = []
     for spec in SPECS:
-        value, formatted = spec.render(ctx)
+        try:
+            value, formatted = spec.render(ctx)
+        except Exception as e:  # noqa: BLE001 — any compute failure → skip macro
+            # The macro needs data this sweep didn't produce (e.g. a --smoke run
+            # lacks S5/S7 structures or the DBToaster baseline). Emit every macro
+            # that CAN be computed instead of aborting the whole file.
+            skipped.append(spec.macro)
+            print(f"[refresh_tex_numbers] note: skipping {spec.macro} ({e})",
+                  file=sys.stderr)
+            continue
         results[spec.key] = {
             "value": value,
             "formatted": formatted,
@@ -362,12 +378,15 @@ def main():
             "macro": spec.macro,
         }
         tex_lines.append(f"\\newcommand{{{spec.macro}}}{{{formatted}}}% {spec.unit}; {spec.filter}")
+    if skipped:
+        tex_lines.append(f"% SKIPPED (insufficient data this sweep): {', '.join(skipped)}")
 
     payload = {
         "_meta": {
             "headline_tag": HEADLINE_TAG,
             "refresh_tag": REFRESH_TAG,
             "dbtoaster_tag": DBT_TAG,
+            "skipped_macros": skipped,
             "note_dbtoaster_scale": (
                 "DBToaster numbers are from its largest viable SF (0.36, ~8.65 GiB RSS); "
                 "the 10LL Mat-View / Merged-Idx baselines run at SF=4000 (DRAM=20 GiB, bg=0). "
