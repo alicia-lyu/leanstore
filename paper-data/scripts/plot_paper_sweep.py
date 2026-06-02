@@ -1724,7 +1724,8 @@ def fig_diag_ssd_lsm_breakdown(data: SweepData) -> Optional[Path]:
     fig.legend(handles=metric_handles, loc="upper center", ncol=2,
                fontsize=10, bbox_to_anchor=(0.5, 1.10),
                frameon=False, columnspacing=1.5, handletextpad=0.4)
-    return _save_ssd_diag(data, fig, "diag_ssd_lsm_breakdown")
+    dest = DIAGRAMS_OUTPUT_DIR / data.paper_name("diag_ssd_lsm_breakdown")
+    return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
 def fig_diag_ssd_btree_cache_profile(data: SweepData) -> Optional[Path]:
@@ -1952,7 +1953,8 @@ def fig_diag_ssd_lsm_sst_path(data: SweepData,
     if paper_mode:
         dest = data.figures_root / data.paper_name("paper_lsm_sst_path")
         return _save(fig, dest, data.footer, include_footer=False)[0]
-    return _save_ssd_diag(data, fig, "diag_ssd_lsm_sst_path")
+    dest = DIAGRAMS_OUTPUT_DIR / data.paper_name("diag_ssd_lsm_sst_path")
+    return _save(fig, dest, data.footer, include_footer=False)[0]
 
 
 def emit_diag_summary_csv(data: SweepData) -> Optional[Path]:
