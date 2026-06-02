@@ -264,35 +264,29 @@ YAML
         PAPER_READY="$RESULTS/paper-ready"
         mkdir -p "$PAPER_READY"
 
+        # The SST-path diagnostic (paper_lsm_sst_path) and the headline/refresh
+        # figures all source authoring tags; map each to its neutral /results
+        # cell dir. paper_lsm_sst_path reads the LSM SST counters captured under
+        # tpch-headline (sstables.csv per LSM run).
         TAG_MAP='{
           "2026-05-29-rep0-10L":    "tpch-headline",
+          "2026-05-24-a-ssd":       "tpch-headline",
           "2026-05-18-b":           "tpch-headline-hdd",
           "2026-05-30-refresh-10L": "refresh",
           "2026-05-24-dbtoaster":   "dbtoaster"
         }'
 
-        # Tex-referenced diagrams + two supplementary ones.
-        # refresh_5L_pair_latency and refresh_lsm_vs_btree are attempted but
-        # will emit "no data" panels when the refresh cell was not run.
+        # Tex-referenced diagrams + the SST-path + HDD supplementary figures.
+        # refresh_lsm_vs_btree renders whatever refresh cells ran (sparse under
+        # --smoke); paper_lsm_sst_path is built by the fig_diag_ssd_lsm_sst_path
+        # builder (replacing the old standalone diagnostics script).
         DIAGRAMS="paper_tpch_btree_headline,paper_tpch_lsm_headline,paper_q10,\
-paper_tpch_lsm_headline_hdd,refresh_lsm_vs_btree"
+paper_tpch_lsm_headline_hdd,refresh_lsm_vs_btree,paper_lsm_sst_path"
 
         python3 "$SCRIPTS/plot_paper_sweep.py" \
             --diagram "$DIAGRAMS" \
             --tag-map "$TAG_MAP" \
             --results-root "$RESULTS"
-
-        # SST diagnostics: invoke against the tpch-headline results dir.
-        # sstables.csv was captured there by run_paper_sweep.sh for every LSM run.
-        DIAG_ROOT="$RESULTS/tpch-headline"
-        if [[ -d "$DIAG_ROOT" ]]; then
-            python3 "$SCRIPTS/plot_lsm_s3_vs_s2_diagnostics.py" \
-                --tag "tpch-headline" \
-                --root "$DIAG_ROOT" 2>/dev/null \
-                || log "WARN: SST diagnostics plotter failed (non-fatal)"
-        else
-            log "WARN: tpch-headline dir not found; skipping SST diagnostics"
-        fi
 
         # Copy all produced figures (PDF + PNG siblings) to paper-ready/.
         DIAGRAMS_DIR="$REPO/paper-data/diagrams"

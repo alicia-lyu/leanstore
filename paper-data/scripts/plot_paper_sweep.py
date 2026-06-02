@@ -2118,13 +2118,15 @@ def main() -> int:
     _tag_map: Dict[str, str] = {}
     _tag_map_raw = args.tag_map or os.environ.get("PAPER_TAG_MAP", "")
     if _tag_map_raw:
-        import json as _json
-        _src = Path(_tag_map_raw)
-        if _src.exists():
-            with _src.open() as _fh:
-                _raw = yaml.safe_load(_fh) or {}
-        else:
-            # Treat as an inline YAML/JSON string.
+        # Only treat the value as a file path when it isn't inline JSON/YAML —
+        # otherwise Path(long_inline_json).exists() raises ENAMETOOLONG.
+        _raw = None
+        if not _tag_map_raw.lstrip().startswith(("{", "[")):
+            _src = Path(_tag_map_raw)
+            if _src.exists():
+                with _src.open() as _fh:
+                    _raw = yaml.safe_load(_fh) or {}
+        if _raw is None:
             _raw = yaml.safe_load(_tag_map_raw) or {}
         if not isinstance(_raw, dict):
             p.error("--tag-map must resolve to a YAML/JSON object (mapping)")

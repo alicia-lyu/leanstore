@@ -229,11 +229,15 @@ def main() -> int:
     _tag_map: dict = {}
     _tag_map_raw = args.tag_map or _os.environ.get("PAPER_TAG_MAP", "")
     if _tag_map_raw:
-        _src = Path(_tag_map_raw)
-        if _src.exists():
-            with _src.open() as _fh:
-                _raw = _yaml.safe_load(_fh) or {}
-        else:
+        # Only treat as a path when not inline JSON/YAML (else Path().exists()
+        # raises ENAMETOOLONG on a long inline mapping).
+        _raw = None
+        if not _tag_map_raw.lstrip().startswith(("{", "[")):
+            _src = Path(_tag_map_raw)
+            if _src.exists():
+                with _src.open() as _fh:
+                    _raw = _yaml.safe_load(_fh) or {}
+        if _raw is None:
             _raw = _yaml.safe_load(_tag_map_raw) or {}
         if not isinstance(_raw, dict):
             p.error("--tag-map must resolve to a YAML/JSON object (mapping)")
