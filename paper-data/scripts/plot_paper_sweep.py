@@ -33,13 +33,16 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib
 import os
+import shutil
 matplotlib.use("Agg")  # no display required on the experiment host
 # usetex so \textsc{...} in legends / labels renders as proper small
 # caps, matching tab:exp-baselines in the paper. Requires a working
-# LaTeX install (TeX Live's pdflatex on the experiment host).
-# Override via MPL_USETEX=0 to render without latex (labels show
-# \textsc{...} as plain text; paper-ready PDFs still need latex).
-_USETEX = os.environ.get("MPL_USETEX", "1") != "0"
+# LaTeX install (TeX Live's pdflatex on the experiment host) — so it is
+# auto-disabled when latex is absent (e.g. the reproduction container),
+# in which case figures still render via matplotlib's mathtext and
+# \textsc{...} is stripped to plain text. Force off with MPL_USETEX=0.
+_USETEX = (os.environ.get("MPL_USETEX", "1") != "0"
+           and shutil.which("latex") is not None)
 matplotlib.rcParams.update({
     "text.usetex": _USETEX,
     "font.family": "serif",
@@ -144,6 +147,15 @@ PAPER_STRUCTURE_LABELS = {
     # q3/q5/q10, vs the per-query \textsc{Mat-View} (S2).
     6: r"\textsc{Mat-View} (shared)",
 }
+
+# Without latex (usetex off), \textsc{X} would render literally; strip it to
+# plain text so legends read cleanly via matplotlib's default text path.
+if not _USETEX:
+    import re as _re
+    PAPER_STRUCTURE_LABELS = {
+        _k: _re.sub(r"\\textsc\{([^}]*)\}", r"\1", _v)
+        for _k, _v in PAPER_STRUCTURE_LABELS.items()
+    }
 
 def _query_title(binary: str) -> str:
     """Strip backend suffix and uppercase the leading Q so panel titles
@@ -858,6 +870,21 @@ def _add_two_row_legend(fig, legend_structs: Sequence[int],
 
 
 
+def _resolve_headline_cell(ms_df: pd.DataFrame) -> str:
+    """Cell to draw headline panels at. Prefer PAPER_HEADLINE_CELL; if the data
+    has no rows there (e.g. a --smoke sweep run at a different cell), fall back
+    to whichever cell IS present so any sweep still renders a (sparse) figure
+    instead of "no data". The full paper sweep has PAPER_HEADLINE_CELL, so its
+    output is unchanged."""
+    if ms_df.empty:
+        return PAPER_HEADLINE_CELL
+    cells = set(ms_df["cell"].dropna())
+    if PAPER_HEADLINE_CELL in cells:
+        return PAPER_HEADLINE_CELL
+    counts = ms_df["cell"].dropna().value_counts()
+    return counts.idxmax() if not counts.empty else PAPER_HEADLINE_CELL
+
+
 def fig_paper_tpch_row(data: SweepData, backend: str,
                        include_legend: bool) -> Optional[Path]:
     """1×4 row of (q3, q5, q3i, q5i) for one backend, single-column-wide.
@@ -888,6 +915,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
             head.loc[mask, "structure"] = mapped.astype(int)
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
+    headline_cell = _resolve_headline_cell(ms_df)
     binaries = [f"{q}_{backend}" for q in PAPER_TPCH_QUERIES]
     n_panels = len(binaries)
     # Author the figure at full-page width (~6.5") so each panel has
@@ -907,7 +935,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
     panel_caps: List[float] = []
     for binary in binaries:
         panel_sub = ms_df[(ms_df["binary"] == binary)
-                          & (ms_df["cell"] == PAPER_HEADLINE_CELL)
+                          & (ms_df["cell"] == headline_cell)
                           & (ms_df["bg"] == PAPER_HEADLINE_BG)]
         heights = sorted((float(v) / 1000.0 for v in panel_sub["ms_median"]
                           if v == v and v > 0), reverse=True)
@@ -923,7 +951,7 @@ def fig_paper_tpch_row(data: SweepData, backend: str,
         for s in panel_structs:
             if s not in legend_structs:
                 legend_structs.append(s)
-        drew = _paper_bar_panel(axes[j], ms_df, binary, PAPER_HEADLINE_CELL,
+        drew = _paper_bar_panel(axes[j], ms_df, binary, headline_cell,
                                 show_ylabel=(j == 0),
                                 structures=panel_structs,
                                 cap_override=cap_override)
@@ -1132,6 +1160,7 @@ def fig_paper_q10(data: SweepData) -> Optional[Path]:
         return None
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
+    headline_cell = _resolve_headline_cell(ms_df)
 
     # 1×4 row: Q10 btree | Q10 lsm | Q10i btree | Q10i lsm. Single row
     # keeps the figure narrow enough to slot under the main headline
@@ -1158,7 +1187,7 @@ def fig_paper_q10(data: SweepData) -> Optional[Path]:
                 legend_structs.append(s)
         binary = f"{query}_{backend}"
         drew = _paper_bar_panel(axes[j], ms_df, binary,
-                                PAPER_HEADLINE_CELL,
+                                headline_cell,
                                 show_ylabel=(j == 0),
                                 structures=panel_structs,
                                 title=title,
@@ -1216,6 +1245,7 @@ def fig_paper_tpch_vanilla(data: SweepData) -> Optional[Path]:
         return None
     ms_df = aggregate_ms_per_query(
         head, group_cols=["binary", "cell", "structure", "bg"])
+    headline_cell = _resolve_headline_cell(ms_df)
 
     n_rows, n_cols = len(backends), len(queries)
     fig, axes = plt.subplots(n_rows, n_cols,
@@ -1237,7 +1267,7 @@ def fig_paper_tpch_vanilla(data: SweepData) -> Optional[Path]:
             backend_label = "B-tree" if backend == "btree" else "LSM-tree"
             title = f"{q.upper()} ({backend_label})"
             drew = _paper_bar_panel(axes[r, c], ms_df, binary,
-                                    PAPER_HEADLINE_CELL,
+                                    headline_cell,
                                     show_ylabel=(c == 0),
                                     structures=panel_structs,
                                     title=title,

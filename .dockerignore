@@ -11,3 +11,6 @@ dbtoaster/build/
 # Kept: paper-data/scripts/, paper-data/diagrams.yaml, paper-data/*.md.
 paper-data/2026-*
 paper-data/q10-*
+# Don't ship pre-rendered diagrams — the plots cell generates them fresh from
+# /results; shipping them caused stale baked PDFs to leak into paper-ready/.
+paper-data/diagrams
