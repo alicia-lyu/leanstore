@@ -294,10 +294,11 @@ paper_tpch_lsm_headline_hdd,refresh_lsm_vs_btree"
             log "WARN: tpch-headline dir not found; skipping SST diagnostics"
         fi
 
-        # Copy all produced PDFs to paper-ready/.
+        # Copy all produced figures (PDF + PNG siblings) to paper-ready/.
         DIAGRAMS_DIR="$REPO/paper-data/diagrams"
         if [[ -d "$DIAGRAMS_DIR" ]]; then
             cp "$DIAGRAMS_DIR"/*.pdf "$PAPER_READY/" 2>/dev/null || true
+            cp "$DIAGRAMS_DIR"/*.png "$PAPER_READY/" 2>/dev/null || true
         fi
 
         # Macro generator: writes experiment_numbers.{json,tex}.
