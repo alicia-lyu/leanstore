@@ -74,7 +74,14 @@ def _sizes() -> pd.DataFrame:
     frames = []
     for tag, bg in SOURCES:
         df = pd.read_csv(PAPER_DATA / tag / "summary" / "headline.csv")
-        df = df[(df["cell"] == "c0") & (df["bg"] == bg) & (df["tx"] == "query")]
+        df = df[(df["bg"] == bg) & (df["tx"] == "query")]
+        # Prefer the paper headline cell c0; if a sweep ran a different cell
+        # (e.g. --smoke runs c2), fall back to whichever cell is present so the
+        # table still populates.
+        cells = set(df["cell"].dropna())
+        pick = "c0" if "c0" in cells else (
+            df["cell"].dropna().value_counts().idxmax() if cells else "c0")
+        df = df[df["cell"] == pick]
         frames.append(df)
     df = pd.concat(frames, ignore_index=True)
     return (df.groupby(["query", "backend", "structure", "method"])["size_mib"]

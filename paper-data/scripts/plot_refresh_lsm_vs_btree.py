@@ -29,16 +29,19 @@ within-LeanStore engine + memory-pressure interaction.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 import os
+import shutil
 matplotlib.use("Agg")
 # Override via MPL_USETEX=0 to skip latex (labels uglier; works without
 # tex install). Paper-ready PDFs still need latex.
-_USETEX = os.environ.get("MPL_USETEX", "1") != "0"
+_USETEX = (os.environ.get("MPL_USETEX", "1") != "0"
+           and shutil.which("latex") is not None)
 matplotlib.rcParams.update({
     "text.usetex": _USETEX,
     "font.family": "serif",
@@ -74,18 +77,28 @@ CELL_LABEL: Dict[str, str] = {
     "10HH": r"0.2\,GiB DRAM",
 }
 
+# Without latex, strip \textsc{} / \, so labels read cleanly via mathtext.
+if not _USETEX:
+    def _detex(v):
+        return re.sub(r'\\textsc\{([^}]*)\}', r'\1', v).replace('\\,', ' ')
+    STRUCTURE_LABELS_TEX = {k: _detex(v) for k, v in STRUCTURE_LABELS_TEX.items()}
+    CELL_LABEL = {k: _detex(v) for k, v in CELL_LABEL.items()}
+
 
 def _load_summary(tag_root: Path, expected_filename: str) -> pd.DataFrame:
     csv_path = tag_root / "summary" / expected_filename
+    # Missing/mismatched cell (e.g. a --smoke sweep ran only one refresh cell):
+    # return an empty frame so the figure renders whatever cells ARE present
+    # rather than aborting. _panel already guards each bar with np.isfinite.
     if not csv_path.exists():
-        print(f"[plot_refresh_lsm_vs_btree] error: {csv_path} missing",
-              file=sys.stderr)
-        sys.exit(2)
+        print(f"[plot_refresh_lsm_vs_btree] note: {csv_path} absent; "
+              f"skipping that memory point", file=sys.stderr)
+        return pd.DataFrame(columns=["backend", "structure", METRIC_COL])
     df = pd.read_csv(csv_path)
     if METRIC_COL not in df.columns:
-        print(f"[plot_refresh_lsm_vs_btree] error: {csv_path.name} has no "
-              f"{METRIC_COL} column", file=sys.stderr)
-        sys.exit(2)
+        print(f"[plot_refresh_lsm_vs_btree] note: {csv_path.name} has no "
+              f"{METRIC_COL} column; skipping", file=sys.stderr)
+        return pd.DataFrame(columns=["backend", "structure", METRIC_COL])
     df[METRIC_COL] = pd.to_numeric(df[METRIC_COL], errors="coerce")
     return df
 
@@ -227,6 +240,10 @@ def main() -> int:
         _tag_map = {str(k): str(v) for k, v in _raw.items()}
 
     _results_root = args.results_root
+    # The in-process refresh shim in plot_paper_sweep can't pass --results-root,
+    # so honor PAPER_RESULTS_ROOT from the env too (same source as PAPER_TAG_MAP).
+    if _results_root is None and _os.environ.get("PAPER_RESULTS_ROOT"):
+        _results_root = Path(_os.environ["PAPER_RESULTS_ROOT"])
     from _diagram_metadata import load_metadata, PAPER_DATA_ROOT as _PDR
 
     def _resolve(authored_tag: str) -> Path:

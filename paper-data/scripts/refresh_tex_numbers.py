@@ -52,11 +52,34 @@ def load_headline() -> pd.DataFrame:
 
 
 def load_refresh(name: str) -> pd.DataFrame:
-    return pd.read_csv(REPO / REFRESH_TAG / "summary" / name)
+    summary = REPO / REFRESH_TAG / "summary"
+    path = summary / name
+    if not path.exists():
+        # Requested cell absent (e.g. a --smoke sweep ran a different refresh
+        # cell) — fall back to whichever refresh summary IS present so the
+        # macros still derive from real data instead of crashing.
+        alts = sorted(summary.glob("refresh_sales_*throughput.csv")) \
+            if summary.exists() else []
+        if alts:
+            print(f"[refresh_tex_numbers] note: {name} absent; using "
+                  f"{alts[0].name}", file=sys.stderr)
+            return pd.read_csv(alts[0])
+        print(f"[refresh_tex_numbers] note: no refresh summary under {summary}; "
+              f"returning empty", file=sys.stderr)
+        return pd.DataFrame()
+    return pd.read_csv(path)
 
 
 def load_dbtoaster() -> pd.DataFrame:
-    return pd.read_csv(REPO / DBT_TAG / "summary" / "refresh_sales_dbtoaster_throughput.csv")
+    path = REPO / DBT_TAG / "summary" / "refresh_sales_dbtoaster_throughput.csv"
+    try:
+        return pd.read_csv(path)
+    except (FileNotFoundError, pd.errors.ParserError, pd.errors.EmptyDataError) as e:
+        # DBToaster baseline absent/garbled (e.g. its data-gen segfaulted in a
+        # --smoke run) — return empty so the other macros still generate.
+        print(f"[refresh_tex_numbers] note: dbtoaster CSV unusable ({e}); skipping",
+              file=sys.stderr)
+        return pd.DataFrame()
 
 
 # --------------------------------------------------------------- helpers

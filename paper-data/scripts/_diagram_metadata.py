@@ -7,6 +7,7 @@ paper-data root path live in exactly one place.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -44,6 +45,20 @@ def sources_for(name: str,
     if name not in meta:
         raise KeyError(f"diagram '{name}' not found in {path}")
     tags: List[str] = meta[name]["sources"]
+    # When the artifact runs the plotter against neutral result dirs, the
+    # parent exports PAPER_RESULTS_ROOT (+ optional PAPER_TAG_MAP) so even the
+    # in-process refresh shim resolves to /results/<neutral> instead of the
+    # in-repo authoring tag dir (which the reproduction image doesn't ship).
+    results_root = os.environ.get("PAPER_RESULTS_ROOT")
+    tag_map: Dict[str, str] = {}
+    raw_map = os.environ.get("PAPER_TAG_MAP", "")
+    if raw_map:
+        try:
+            tag_map = yaml.safe_load(raw_map) or {}
+        except yaml.YAMLError:
+            tag_map = {}
+    if results_root:
+        return [Path(results_root) / tag_map.get(tag, tag) for tag in tags]
     return [PAPER_DATA_ROOT / tag for tag in tags]
 
 

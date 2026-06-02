@@ -673,6 +673,15 @@ def _paper_bar_panel(ax, ms_df: pd.DataFrame, binary: str,
         _all_or_empty(plt.gcf(), ax, "—")
         ax.set_xlabel(panel_title, fontsize=14)
         return False
+    # Drop structures absent from the data so the bar layout has no interior
+    # gaps / trailing empties (e.g. a --smoke run lacks Q10's partial-agg
+    # variants 22/33). The full paper sweep has them all, so it is unchanged.
+    _present = set(sub["structure"].unique())
+    panel_structs = [s for s in panel_structs if s in _present]
+    if not panel_structs:
+        _all_or_empty(plt.gcf(), ax, "—")
+        ax.set_xlabel(panel_title, fontsize=14)
+        return False
     sub = sub.copy()
     sub["s_median"] = sub["ms_median"] / 1000.0
     for col in ("ms_q25", "ms_q75"):
@@ -2120,6 +2129,15 @@ def main() -> int:
         _tag_map = {str(k): str(v) for k, v in _raw.items()}
 
     _results_root: Optional[Path] = args.results_root
+
+    # Export the resolution so the in-process refresh shims (plot_refresh_*.py,
+    # which resolve sources via _diagram_metadata.sources_for) read the same
+    # neutral /results dirs instead of the in-repo authoring tag dirs.
+    if _results_root is not None:
+        os.environ["PAPER_RESULTS_ROOT"] = str(_results_root)
+    if _tag_map:
+        import json as _json_env
+        os.environ["PAPER_TAG_MAP"] = _json_env.dumps(_tag_map)
 
     def _resolve_tag_path(authored_tag: str) -> Path:
         """Map an authored tag to its on-disk path via --tag-map + --results-root."""
